@@ -4,8 +4,8 @@ import pytest
 
 
 def build_lineage_workbook() -> bytes:
-    """Classeur riche pour les tests de lineage : formules étirées,
-    références inter-feuilles, nom défini, fonctions composées."""
+    """Rich workbook for lineage tests: stretched formulas,
+    cross-sheet references, defined name, composite functions."""
     from openpyxl import Workbook
     from openpyxl.workbook.defined_name import DefinedName
 
@@ -17,7 +17,7 @@ def build_lineage_workbook() -> bytes:
         ws.cell(row=r, column=1, value=f"P{r - 1}")
         ws.cell(row=r, column=2, value=r % 7 + 1)
         ws.cell(row=r, column=3, value=10.5 + (r % 13))
-        ws.cell(row=r, column=4, value=f"=B{r}*C{r}")  # formule étirée ×100
+        ws.cell(row=r, column=4, value=f"=B{r}*C{r}")  # stretched formula ×100
 
     syn = wb.create_sheet("Synthese")
     syn["B1"] = "=SUM(Ventes!D2:D101)"

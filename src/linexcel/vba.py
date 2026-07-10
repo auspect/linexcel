@@ -1,9 +1,9 @@
-"""Extraction et lignage statique du code VBA embarqué.
+"""Extraction and static lineage of embedded VBA code.
 
-L'extraction s'appuie sur oletools (olevba). L'analyse est statique et
-volontairement heuristique : elle repère les procédures, le graphe
-d'appels interne et les accès aux cellules/plages exprimés littéralement
-(Range("A1"), Cells(2, 3), [A1:B4], Worksheets("X").Range(...)).
+Extraction relies on oletools (olevba). Analysis is static and deliberately
+heuristic: it identifies procedures, the internal call graph, and cell/range
+access expressed literally (Range("A1"), Cells(2, 3), [A1:B4],
+Worksheets("X").Range(...)).
 """
 
 from __future__ import annotations
@@ -20,14 +20,14 @@ _END_PROC_RE = re.compile(
     r"^[ \t]*End\s+(Sub|Function|Property)\b", re.IGNORECASE | re.MULTILINE
 )
 
-# Worksheets("Nom").  /  Sheets("Nom").  — capture le nom de feuille
+# Worksheets("Name").  /  Sheets("Name").  — captures sheet name
 _SHEET_QUAL = (
     r"(?:(?:ThisWorkbook|ActiveWorkbook|\w+)\.)?"
     r"(?:Worksheets|Sheets)\(\s*\"(?P<sheet>[^\"]+)\"\s*\)\s*\."
 )
 # Range("A1") / Range("A1:B2") / Range("A1", "B2")
 _RANGE_CALL = r"Range\(\s*\"(?P<a1>[^\"]+)\"\s*(?:,\s*\"(?P<a2>[^\"]+)\"\s*)?\)"
-# Cells(2, 3) avec arguments littéraux uniquement
+# Cells(2, 3) with literal arguments only
 _CELLS_CALL = (
     r"Cells\(\s*(?P<row>\d+)\s*,"
     r"\s*(?P<colq>\"?)(?P<col>[A-Za-z]{1,3}|\d+)(?P=colq)\s*\)"
@@ -37,7 +37,7 @@ _REF_RE = re.compile(
     rf"(?:{_SHEET_QUAL})?(?:(?P<range>{_RANGE_CALL})|(?P<cells>{_CELLS_CALL}))",
     re.IGNORECASE,
 )
-# Raccourci [A1] / [A1:B2]
+# Shortcut [A1] / [A1:B2]
 _BRACKET_RE = re.compile(
     r"\[(?P<ref>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)\]"
 )
@@ -48,7 +48,7 @@ _STRINGS_KEEP = re.compile(r'"[^"]*"')
 
 @dataclass
 class VbaRef:
-    """Accès à une plage détecté dans une procédure."""
+    """A range access detected in a procedure."""
 
     sheet: str | None
     ref: str
@@ -69,10 +69,10 @@ class VbaProc:
 
 
 def extract_vba_modules(data: bytes, filename: str) -> dict[str, str]:
-    """Extrait {nom de module: code} via olevba. Dict vide si pas de VBA."""
+    """Extract {module_name: code} via olevba. Empty dict if no VBA."""
     try:
         from oletools.olevba import VBA_Parser
-    except ImportError:  # pragma: no cover - dépendance installée en prod
+    except ImportError:  # pragma: no cover - dependency installed in prod
         return {}
     try:
         parser = VBA_Parser(filename, data=data)
@@ -98,7 +98,7 @@ def extract_vba_modules(data: bytes, filename: str) -> dict[str, str]:
 
 
 def _strip_comments(line: str) -> str:
-    """Retire un commentaire final en respectant les chaînes littérales."""
+    """Strip a trailing comment while respecting string literals."""
     in_str = False
     for i, ch in enumerate(line):
         if ch == '"':
@@ -137,9 +137,9 @@ def _split_procedures(module: str, code: str) -> list[VbaProc]:
 
 
 def _detect_access(line: str, match_end: int) -> str:
-    """Écriture si la référence est suivie d'une affectation au niveau instruction."""
+    """Write if the reference is followed by an assignment at statement level."""
     rest = line[match_end:]
-    # saute les membres (.Value, .Formula, .Offset(...)) après la référence
+    # skip members (.Value, .Formula, .Offset(...)) after the reference
     rest = re.sub(r"^(?:\.\w+(?:\([^()]*\))?)*", "", rest).lstrip()
     if rest.startswith("=") and not rest.startswith("=="):
         return "write"
@@ -187,7 +187,7 @@ def _find_calls(proc: VbaProc, known: set[str]) -> list[str]:
 
 
 def analyze_vba(modules: dict[str, str]) -> list[VbaProc]:
-    """Analyse statique complète : procédures, accès plages, graphe d'appels."""
+    """Full static analysis: procedures, range access, call graph."""
     procs: list[VbaProc] = []
     for module, code in modules.items():
         procs.extend(_split_procedures(module, code))

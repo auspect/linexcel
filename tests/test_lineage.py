@@ -1,4 +1,4 @@
-"""Tests du module de lineage : références, regroupement, graphe, VBA, API."""
+"""Tests for the lineage module: references, grouping, graph, VBA, API."""
 
 import io
 
@@ -38,7 +38,7 @@ class TestRefs:
 
     def test_structured_ref_rejected(self):
         assert parse_ref("Table1[Col]") is None
-        assert parse_ref("MonNom") is None
+        assert parse_ref("MyName") is None
 
     def test_r1c1_relative(self):
         assert ref_to_r1c1("A2", 2, 2) == "RC[-1]"
@@ -100,7 +100,7 @@ class TestAnalyze:
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
         names = [n for n in graph["nodes"] if n["kind"] == "name"]
         assert names and names[0]["label"] == "TauxCible"
-        # le nom est alimenté par Params!A1 et alimente Synthese!B3
+        # name is fed by Params!A1 and feeds Synthese!B3
         edges = graph["edges"]
         assert any(
             e["target"] == names[0]["id"] and "Params" in e["source"] for e in edges
@@ -116,7 +116,7 @@ class TestAnalyze:
         steps = node["steps"]
         assert steps["label"] == "IF"
         assert steps["evaluated"] and steps["value"] == node["value"]
-        # la comparaison et le SUM interne sont évalués individuellement
+        # the comparison and inner SUM are evaluated individually
         flat = _flatten(steps)
         by_label = {s["label"]: s for s in flat}
         assert by_label[">"]["value"] is True
@@ -137,7 +137,7 @@ def _flatten(step):
 
 
 class TestPackageApi:
-    """L'outil doit être utilisable comme bibliothèque, sans FastAPI ni IA."""
+    """The tool must be usable as a library, without FastAPI or AI."""
 
     def test_analyze_from_bytes(self, lineage_excel):
         result = analyze(lineage_excel, filename="demo.xlsx")
@@ -146,13 +146,13 @@ class TestPackageApi:
         assert "Ventes" in result.sheets
 
     def test_analyze_from_path(self, tmp_path, lineage_excel):
-        path = tmp_path / "classeur.xlsx"
+        path = tmp_path / "workbook.xlsx"
         path.write_bytes(lineage_excel)
         result = analyze(path)
         assert result.stats["totalFormulas"] == 103
 
     def test_analyze_from_filelike(self, lineage_excel):
-        result = analyze(io.BytesIO(lineage_excel), filename="flux.xlsx")
+        result = analyze(io.BytesIO(lineage_excel), filename="stream.xlsx")
         assert result.stats["totalFormulas"] == 103
 
     def test_navigation_helpers(self, lineage_excel):
@@ -175,10 +175,10 @@ class TestPackageApi:
         result = analyze(lineage_excel)
         html = result.to_html()
         assert html.startswith("<!doctype html>")
-        # Cytoscape embarqué, pas de dépendance réseau
+        # Cytoscape embedded, no network dependency
         assert "cdn.jsdelivr" not in html
         assert "cytoscape" in html
-        # la formule composée et sa décomposition sont dans les données injectées
+        # the composite formula and its decomposition are in the injected data
         assert "Synthese!B3" in html
 
     def test_repr_html_wraps_in_data_iframe(self, lineage_excel):
@@ -202,7 +202,7 @@ class TestPackageApi:
         except AiDocError:
             pass
         else:  # pragma: no cover
-            raise AssertionError("AiDocError attendue en l'absence de clé")
+            raise AssertionError("AiDocError expected when no key is provided")
 
 
 class TestVba:
@@ -237,6 +237,6 @@ class TestVba:
 
     def test_comments_ignored(self):
         procs = analyze_vba(
-            {"M": 'Sub S()\n    \' Range("Z9") = 1 en commentaire\nEnd Sub\n'}
+            {"M": 'Sub S()\n    \' Range("Z9") = 1 in comment\nEnd Sub\n'}
         )
         assert procs[0].refs == []

@@ -1,14 +1,14 @@
-"""Construction du graphe de lineage d'un classeur Excel.
+"""Builds the lineage graph of an Excel workbook.
 
-Étapes :
-1. structure (feuilles, dimensions, noms définis) via openpyxl en lecture seule ;
-2. formules + valeurs calculées via le moteur Rust formualizer ;
-3. regroupement des formules étirées par canonicalisation R1C1 —
-   une colonne de 50 000 formules recopiées devient UN nœud ;
-4. résolution des précédents (cellules, plages, noms, autres feuilles) ;
-5. décomposition de chaque formule composée en étapes évaluées une à une
-   dans une feuille de brouillon du moteur ;
-6. lignage du code VBA extrait (oletools).
+Steps:
+1. structure (sheets, dimensions, defined names) via openpyxl read-only;
+2. formulas + computed values via the Rust engine formualizer;
+3. grouping of stretched formulas by R1C1 canonicalization —
+   a column of 50,000 copied formulas becomes ONE node;
+4. resolution of precedents (cells, ranges, names, other sheets);
+5. decomposition of each composite formula into individually evaluated steps
+   in a scratch sheet of the engine;
+6. lineage of extracted VBA code (oletools).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from linexcel.refs import (
 from linexcel.rewrite import canonical_r1c1, qualify_sheet
 from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
-# Garde-fous pour rester fluide sur de gros classeurs.
+# Guards to stay responsive on large workbooks.
 SCAN_CHUNK_ROWS = 20_000
 MAX_CELLS_PER_SHEET = 4_000_000
 SMALL_RANGE_CELLS = 20_000
@@ -47,7 +47,7 @@ SCRATCH_SHEET = "__lineage_scratch__"
 
 @dataclass
 class FormulaGroup:
-    """Ensemble de cellules d'une feuille portant la même formule R1C1."""
+    """A set of cells on a sheet sharing the same R1C1 formula."""
 
     sheet: str
     r1c1: str
@@ -80,8 +80,8 @@ def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
 
-def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, Any]:
-    """Analyse complète : retourne le graphe JSON-sérialisable et le moteur."""
+def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, Any]:
+    """Full analysis: returns the JSON-serializable graph and the engine."""
     warnings: list[str] = []
 
     # --- 1. structure -----------------------------------------------------
@@ -95,15 +95,15 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
     defined_names = _collect_defined_names(owb)
     owb.close()
 
-    # --- 2. moteur de calcul ----------------------------------------------
+    # --- 2. computation engine -------------------------------------------
     engine = fz.Workbook.from_bytes(data)
     engine_sheets = set(engine.sheet_names)
     try:
         engine.evaluate_all()
-    except Exception as exc:  # le graphe reste utile sans valeurs
-        warnings.append(f"Évaluation globale incomplète : {exc}")
+    except Exception as exc:  # graph remains useful without values
+        warnings.append(f"Global evaluation incomplete: {exc}")
 
-    # --- 3. extraction + regroupement --------------------------------------
+    # --- 3. extraction + grouping ----------------------------------------
     groups: dict[tuple[str, str], FormulaGroup] = {}
     cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
     formula_count = 0
@@ -111,7 +111,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
 
     for sheet, (max_row, max_col) in sheet_dims.items():
         if sheet not in engine_sheets:
-            warnings.append(f"Feuille « {sheet} » ignorée (non chargée par le moteur)")
+            warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
             continue
         n_formulas = 0
         scanned = 0
@@ -120,14 +120,14 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
             r1 = min(r0 + SCAN_CHUNK_ROWS - 1, max_row)
             if scanned > MAX_CELLS_PER_SHEET:
                 warnings.append(
-                    f"Feuille « {sheet} » tronquée après {scanned:,} cellules"
+                    f"Sheet '{sheet}' truncated after {scanned:,} cells"
                 )
                 break
             ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
             try:
                 rows = fsheet.get_formulas(ra)
             except Exception as exc:
-                warnings.append(f"Lecture des formules impossible sur {sheet} : {exc}")
+                warnings.append(f"Could not read formulas on {sheet}: {exc}")
                 break
             scanned += (r1 - r0 + 1) * max_col
             for i, row_vals in enumerate(rows):
@@ -142,8 +142,8 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
                     if grp is None:
                         grp = groups[key] = FormulaGroup(sheet, key[1])
                     grp.cells.append((r, c))
-                    # balayage en ordre ligne/colonne : la 1re cellule vue est
-                    # la représentante (min), on garde 3 formules d'exemple
+                    # row/col order scan: first cell seen is the representative
+                    # (min), keep 3 example formulas
                     if len(grp.formulas) < 3:
                         grp.formulas[(r, c)] = f
         formula_count += n_formulas
@@ -156,7 +156,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
             }
         )
 
-    # --- 4. nœuds de formules ----------------------------------------------
+    # --- 4. formula nodes -------------------------------------------------
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
 
@@ -185,20 +185,20 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
                 "id": misc_id,
                 "kind": "misc",
                 "sheet": sheet,
-                "label": f"{len(dropped)} autres motifs ({n_cells} cellules)",
+                "label": f"{len(dropped)} other patterns ({n_cells} cells)",
                 "count": n_cells,
                 "patterns": len(dropped),
             }
             warnings.append(
-                f"Feuille « {sheet} » : {len(dropped)} motifs de formule agrégés "
-                f"dans un nœud « divers » (limite {MAX_NODES_PER_SHEET})"
+                f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
+                f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
             )
             for grp in dropped:
                 for cell in grp.cells:
                     cell_owner[sheet][cell] = misc_id
 
     ast_cache: dict[str, Any] = {}
-    input_nodes: dict[str, str] = {}  # clé A1 complète -> node id
+    input_nodes: dict[str, str] = {}  # full A1 key -> node id
 
     def ensure_input_node(rect: Rect, opaque_label: str | None = None) -> str:
         label = opaque_label or rect.to_a1()
@@ -244,7 +244,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
             e["approx"] = False
 
     def resolve_rect_edges(rect: Rect, target_id: str, kind: str = "dep") -> None:
-        """Crée les arêtes precedent → target pour une plage référencée."""
+        """Create precedent → target edges for a referenced range."""
         sheet = rect.sheet
         if sheet not in sheet_dims:
             ensure_input_node(rect, opaque_label=rect.to_a1())
@@ -268,7 +268,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
             if has_plain:
                 add_edge(ensure_input_node(clipped), target_id, kind)
         else:
-            # Plage énorme : intersection approchée avec les boîtes des nœuds.
+            # Huge range: approximate intersection with node bounding boxes.
             for node_id, grp in kept_groups:
                 if grp.sheet != sheet:
                     continue
@@ -277,7 +277,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
                     add_edge(node_id, target_id, kind, approx=True)
             add_edge(ensure_input_node(clipped), target_id, kind, approx=True)
 
-    # noms définis -----------------------------------------------------------
+    # defined names -----------------------------------------------------------
     name_nodes: dict[str, str] = {}
     for name, targets in defined_names.items():
         node_id = f"n:{name}"
@@ -292,7 +292,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
         for rect in targets:
             resolve_rect_edges(rect, node_id, kind="name")
 
-    # nœuds formule + arêtes -------------------------------------------------
+    # formula nodes + edges -------------------------------------------------
     scratch_ready = _ensure_scratch(engine)
     budget = _Budget(MAX_SCRATCH_EVALS)
 
@@ -367,7 +367,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
             "addr": a1(rep_r, rep_c),
             "label": (
                 f"{sheet}!{a1(rep_r, rep_c)}"
-                + (f" ×{len(grp.cells)}" if is_group else "")
+                + (f" x{len(grp.cells)}" if is_group else "")
             ),
             "formula": formula if formula.startswith("=") else "=" + formula,
             "r1c1": grp.r1c1,
@@ -451,7 +451,7 @@ def analyze_workbook(data: bytes, filename: str = "classeur.xlsx") -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# Décomposition des fonctions composées
+# Composite function decomposition
 # ---------------------------------------------------------------------------
 
 _STEP_KINDS = {"Function", "BinaryOp", "UnaryOp"}
@@ -466,7 +466,7 @@ def _decompose(
     engine_sheets: set[str],
     defined_names: dict[str, list[Rect]] | None = None,
 ) -> dict | None:
-    """Arbre d'étapes : chaque fonction / opérateur devient une étape évaluée."""
+    """Step tree: each function / operator becomes an evaluated step."""
     counter = itertools.count()
 
     def expr_of(node: dict) -> str:
@@ -528,7 +528,7 @@ def _decompose(
 
 
 def _render_expr(node: dict) -> str:
-    """Reconstruit l'expression d'un sous-arbre AST (forme lisible)."""
+    """Reconstruct the expression of an AST subtree (readable form)."""
     ntype = node.get("node_type")
     if ntype == "Function":
         args = ", ".join(_render_expr(a) for a in node.get("args", []))
@@ -553,7 +553,7 @@ def _render_expr(node: dict) -> str:
             return str(int(v))
         return str(v)
     if ntype == "Array":
-        return "{…}"
+        return "{...}"
     if ntype == "Paren":
         inner = node.get("expr") or node.get("inner") or {}
         return f"({_render_expr(inner)})"
@@ -579,7 +579,7 @@ def _ensure_scratch(engine) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Aides diverses
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -636,7 +636,7 @@ def _collect_ref_strings(ast_dict: dict) -> list[str]:
                 walk(v)
 
     walk(ast_dict)
-    # dédoublonne en conservant l'ordre
+    # dedupe preserving order
     seen: set[str] = set()
     out = []
     for r in refs:
@@ -705,7 +705,7 @@ def _ref_preview(
 ):
     detail = parse_ref_detailed(ref, default_sheet=sheet)
     if detail is None:
-        # peut être un nom défini : on montre la valeur de sa cible
+        # may be a defined name: show the value of its target
         if defined_names:
             for name, rects in defined_names.items():
                 if name.upper() == ref.upper() and rects:
@@ -725,7 +725,7 @@ def _ref_preview(
 def _resolve_vba_write(
     rect: Rect, pid: str, sheet_dims, cell_owner, add_edge, ensure_input_node
 ) -> None:
-    """Une écriture VBA alimente les cellules cibles : arête proc → cible."""
+    """A VBA write feeds the target cells: edge proc → target."""
     sheet = rect.sheet
     if sheet not in sheet_dims:
         opaque = ensure_input_node(rect, opaque_label=rect.to_a1())

@@ -1,16 +1,15 @@
-"""Visualiseur HTML autonome du graphe de lineage.
+"""Standalone HTML viewer for the lineage graph.
 
-Génère un document HTML complet et **hors-ligne** : les bibliothèques
-Cytoscape sont embarquées dans le fichier (dossier ``assets/``), donc aucun
-accès réseau n'est requis. Il est destiné à être :
+Generates a complete, **offline** HTML document: Cytoscape libraries are
+embedded in the file (``assets/`` folder), so no network access is required.
+It is meant to be:
 
-- enregistré et ouvert dans un navigateur (``result.save_html(...)``) ;
-- affiché en ligne dans marimo / Jupyter via ``result._repr_html_()`` qui
-  l'enveloppe dans une ``<iframe srcdoc>`` isolée.
+- saved and opened in a browser (``result.save_html(...)``);
+- displayed inline in marimo / Jupyter via ``result._repr_html_()`` which
+  wraps it in an isolated ``<iframe srcdoc>``.
 
-Aucune dépendance sur FastAPI ni sur le frontend Svelte : le rendu vit
-entièrement dans ce fichier. Si les assets sont absents, un repli CDN est
-utilisé (nécessite alors le réseau).
+No dependency on FastAPI or the Svelte frontend: rendering lives entirely in
+this file. If assets are missing, a CDN fallback is used (requires network).
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from typing import Any
 
 _ASSETS = Path(__file__).parent / "assets"
 
-# Ordre de chargement (chaîne UMD) : cytoscape, puis la pile de dispositions.
+# Load order (UMD chain): cytoscape, then the layout stack.
 _ASSET_FILES = (
     "cytoscape.min.js",
     "layout-base.js",
@@ -31,7 +30,7 @@ _ASSET_FILES = (
     "cytoscape-dagre.min.js",
 )
 
-# Repli CDN si les assets ne sont pas embarqués (accès réseau nécessaire).
+# CDN fallback if assets are not embedded (network access needed).
 _CDN = (
     "https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js",
     "https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js",
@@ -43,23 +42,23 @@ _CDN = (
 
 @lru_cache(maxsize=1)
 def _inline_scripts() -> str | None:
-    """Concatène les JS embarqués en balises <script> inline (ou ``None``)."""
+    """Concatenate embedded JS into inline <script> tags (or ``None``)."""
     if not all((_ASSETS / f).exists() for f in _ASSET_FILES):
         return None
     parts = []
     for fname in _ASSET_FILES:
         code = (_ASSETS / fname).read_text(encoding="utf-8")
-        code = code.replace("</script>", "<\\/script>")  # sécurité anti-fermeture
+        code = code.replace("</script>", "<\\/script>")  # prevent tag closure
         parts.append(f"<script>{code}</script>")
     return "\n".join(parts)
 
 
 def _safe_json(obj: Any) -> str:
-    """JSON embarquable dans une balise <script>.
+    """JSON embeddable in a <script> tag.
 
-    Échappe ``<`` (pour ne pas fermer la balise ni ouvrir un ``<!--``) et
-    les séparateurs U+2028/U+2029, fins de ligne en JavaScript qui
-    casseraient le littéral.
+    Escapes ``<`` (to prevent closing the tag or opening a ``<!--``) and
+    U+2028/U+2029, line terminators in JavaScript that would break the
+    literal.
     """
     blob = json.dumps(obj, ensure_ascii=False, default=str)
     return (
@@ -70,11 +69,11 @@ def _safe_json(obj: Any) -> str:
 
 
 def wrap_iframe(document_html: str, height: int = 640) -> str:
-    """Enveloppe un document HTML dans une iframe isolée (pour notebooks).
+    """Wrap an HTML document in an isolated iframe (for notebooks).
 
-    Le document (Cytoscape embarqué compris) est encodé en base64 dans une URI
-    ``data:`` : pas d'échappement d'attribut coûteux, et l'iframe est isolée
-    dans une origine opaque (``allow-scripts`` autorise le JS embarqué).
+    The document (including embedded Cytoscape) is base64-encoded in a
+    ``data:`` URI: no costly attribute escaping, and the iframe is isolated
+    in an opaque origin (``allow-scripts`` allows the embedded JS).
     """
     import base64
 
@@ -90,7 +89,7 @@ def wrap_iframe(document_html: str, height: int = 640) -> str:
 def render_html(
     graph: dict[str, Any], title: str = "Lineage Excel", full_document: bool = True
 ) -> str:
-    """Construit le HTML du visualiseur pour un graphe donné."""
+    """Build the viewer HTML for a given graph."""
     data = _safe_json(graph)
     body = _TEMPLATE.replace("__GRAPH_JSON__", data).replace(
         "__TITLE__", _escape_text(title)
@@ -101,7 +100,7 @@ def render_html(
     if scripts is None:
         scripts = "\n".join(f'<script src="{url}"></script>' for url in _CDN)
     return (
-        "<!doctype html><html lang='fr'><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{_escape_text(title)}</title>{scripts}</head>"
         f"<body>{body}</body></html>"
@@ -111,11 +110,12 @@ def render_html(
 def _escape_text(text: str) -> str:
     return (
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace('"', "&quot;")
     )
 
 
-# Le corps : styles + conteneurs + logique JS. Palette issue du design system
-# dataviz (validée CVD). Les couleurs suivent le TYPE de nœud, jamais recyclées.
+# Body: styles + containers + JS logic. Palette from the validated CVD-safe
+# dataviz design system. Colors follow node TYPE, never recycled.
 _TEMPLATE = r"""
 <style>
   .lin-root {
@@ -202,6 +202,7 @@ _TEMPLATE = r"""
   .lin-doc ul,.lin-doc ol { padding-left: 1.2rem; margin: .25rem 0; }
   .lin-doc code { background: #f0efec; padding: .1rem .3rem; border-radius: 3px;
     font-family: ui-monospace, monospace; font-size: .78rem; }
+  .lin-doc strong { font-weight: 600; }
   .lin-hint { color: var(--muted); font-size: .76rem; margin: .2rem 0; }
   .lin-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 1rem; }
   .lin-fallback { position: absolute; inset: 0; display: flex; align-items: center;
@@ -213,10 +214,10 @@ _TEMPLATE = r"""
     <h1>__TITLE__</h1>
     <span class="stat" id="lin-stats"></span>
     <span style="flex:1"></span>
-    <input id="lin-search" placeholder="Rechercher… ⏎" />
-    <button id="lin-lay-dagre" class="active">Flux</button>
-    <button id="lin-lay-fcose">Organique</button>
-    <button id="lin-fit">Ajuster</button>
+    <input id="lin-search" placeholder="Search… ⏎" />
+    <button id="lin-lay-dagre" class="active">Flow</button>
+    <button id="lin-lay-fcose">Organic</button>
+    <button id="lin-fit">Fit</button>
   </div>
   <div class="lin-main">
     <div class="lin-cy" id="lin-cy">
@@ -230,13 +231,13 @@ _TEMPLATE = r"""
 (function () {
   var GRAPH = __GRAPH_JSON__;
   var KIND = {
-    cell:  { color: '#2a78d6', shape: 'round-rectangle', label: 'Formule' },
-    group: { color: '#4a3aa7', shape: 'round-rectangle', label: 'Formules étirées' },
-    input: { color: '#1baf7a', shape: 'ellipse', label: 'Données source' },
-    name:  { color: '#eda100', shape: 'diamond', label: 'Nom défini' },
+    cell:  { color: '#2a78d6', shape: 'round-rectangle', label: 'Formula' },
+    group: { color: '#4a3aa7', shape: 'round-rectangle', label: 'Stretched formulas' },
+    input: { color: '#1baf7a', shape: 'ellipse', label: 'Source data' },
+    name:  { color: '#eda100', shape: 'diamond', label: 'Defined name' },
     vba:   { color: '#eb6834', shape: 'hexagon', label: 'VBA' },
-    misc:  { color: '#898781', shape: 'octagon', label: 'Divers (agrégé)' },
-    opaque:{ color: '#898781', shape: 'ellipse', label: 'Référence externe' }
+    misc:  { color: '#898781', shape: 'octagon', label: 'Other (aggregated)' },
+    opaque:{ color: '#898781', shape: 'ellipse', label: 'External reference' }
   };
   var byId = {};
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
@@ -246,22 +247,22 @@ _TEMPLATE = r"""
     if (typeof cytoscape === 'undefined') {
       var f = document.createElement('div');
       f.className = 'lin-fallback';
-      f.textContent = 'Cytoscape n\'a pas pu être chargé (accès réseau au CDN requis). '
-        + 'Le graphe JSON reste disponible via result.to_dict().';
+      f.textContent = 'Cytoscape could not be loaded (CDN access required). '
+        + 'The JSON graph remains available via result.to_dict().';
       cyContainer.appendChild(f);
       return;
     }
-    // Enregistre les extensions de disposition si présentes.
+    // Register layout extensions if present.
     var hasFcose = false;
     try {
       if (window.cytoscapeFcose) { cytoscape.use(window.cytoscapeFcose); hasFcose = true; }
       if (window.cytoscapeDagre) { cytoscape.use(window.cytoscapeDagre); }
-    } catch (e) { /* déjà enregistrées */ }
+    } catch (e) { /* already registered */ }
 
     var stats = GRAPH.meta.stats;
     document.getElementById('lin-stats').textContent =
-      stats.totalFormulas.toLocaleString('fr-FR') + ' formules · ' +
-      stats.totalNodes + ' nœuds · ' + stats.totalEdges + ' liens' +
+      stats.totalFormulas.toLocaleString('en') + ' formulas · ' +
+      stats.totalNodes + ' nodes · ' + stats.totalEdges + ' edges' +
       (stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '');
 
     var big = GRAPH.nodes.length + GRAPH.edges.length > 2500;
@@ -385,9 +386,9 @@ _TEMPLATE = r"""
   function fmt(v) {
     if (v === null || v === undefined) return '—';
     if (typeof v === 'number') return Number.isInteger(v) ? String(v)
-      : v.toLocaleString('fr-FR', { maximumFractionDigits: 4 });
-    if (typeof v === 'boolean') return v ? 'VRAI' : 'FAUX';
-    if (typeof v === 'object') return v.range ? (v.range + ' (' + v.n + ' cellules)')
+      : v.toLocaleString('en', { maximumFractionDigits: 4 });
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v === 'object') return v.range ? (v.range + ' (' + v.n + ' cells)')
       : JSON.stringify(v);
     return String(v);
   }
@@ -415,6 +416,30 @@ _TEMPLATE = r"""
   }
   function section(title) { var s = el('div'); s.appendChild(el('h3', null, title)); return s; }
 
+  // ponytail: mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###.
+  // Enough for Gemini cards, no external dep.
+  function _md(src) {
+    var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    var lines = esc.split('\n'), out = [], inList = false;
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      if (/^###\s/.test(l)) { if (inList) { out.push('</ul>'); inList = false; } out.push('<h3>' + l.slice(4).trim() + '</h3>'); continue; }
+      if (/^##\s/.test(l))  { if (inList) { out.push('</ul>'); inList = false; } out.push('<h2>' + l.slice(3).trim() + '</h2>'); continue; }
+      if (/^#\s/.test(l))   { if (inList) { out.push('</ul>'); inList = false; } out.push('<h1>' + l.slice(2).trim() + '</h1>'); continue; }
+      if (/^[-*]\s/.test(l)) { if (!inList) { out.push('<ul>'); inList = true; } out.push('<li>' + _mdInline(l.replace(/^[-*]\s+/, '')) + '</li>'); continue; }
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push('<p>' + _mdInline(l) + '</p>');
+    }
+    if (inList) out.push('</ul>');
+    return out.join('');
+  }
+  function _mdInline(s) {
+    return s
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  }
+
   function renderPanel(cy, n) {
     var p = document.getElementById('lin-panel');
     p.classList.remove('hidden'); p.innerHTML = '';
@@ -427,15 +452,14 @@ _TEMPLATE = r"""
     p.appendChild(el('h2', null, n.label));
 
     if (n.formula) {
-      var sf = section('Formule'); sf.appendChild(el('code', 'lin-formula', n.formula));
+      var sf = section('Formula'); sf.appendChild(el('code', 'lin-formula', n.formula));
       if (n.kind === 'group') {
         sf.appendChild(el('p', 'lin-hint',
-          'Motif étiré sur ' + n.count.toLocaleString('fr-FR') + ' cellules (' + n.bbox + ').'));
+          'Stretched pattern over ' + n.count.toLocaleString('en') + ' cells (' + n.bbox + ').'));
         sf.appendChild(el('code', 'lin-formula', n.r1c1));
       }
       p.appendChild(sf);
-      var sv = section('Valeur calculée');
-      sv.appendChild(el('div', 'lin-val', fmt(n.value)));
+      var sv = section('Computed value'); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
       if (n.samples && n.samples.length) {
         n.samples.forEach(function (s) {
           sv.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
@@ -444,21 +468,21 @@ _TEMPLATE = r"""
       p.appendChild(sv);
     }
     if (n.kind === 'input' && n.values && n.values.length) {
-      var si = section('Aperçu des valeurs');
+      var si = section('Value samples');
       n.values.forEach(function (s) {
         si.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
       });
       if (n.count > n.values.length)
-        si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString('fr-FR') + ' cellules'));
+        si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString('en') + ' cells'));
       p.appendChild(si);
     }
     if (n.kind === 'name' && n.targets) {
-      var sn = section('Cible'); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
+      var sn = section('Target'); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
     }
     if (n.steps && (n.steps.children && n.steps.children.length || (n.steps.inputs && n.steps.inputs.length))) {
-      var ss = section('Décomposition pas à pas');
-      ss.appendChild(el('p', 'lin-hint', 'Chaque fonction/opérateur est évalué individuellement.'));
+      var ss = section('Step-by-step decomposition');
+      ss.appendChild(el('p', 'lin-hint', 'Each function/operator is evaluated individually.'));
       renderStep(ss, n.steps, 0);
       p.appendChild(ss);
     }
@@ -466,20 +490,16 @@ _TEMPLATE = r"""
       var sc = section(n.procKind + ' — module ' + n.module);
       sc.appendChild(el('pre', 'lin-code', n.code || '')); p.appendChild(sc);
     }
-    // ponytail: markdown rendu côté JS via marked.min.js si présent, sinon brut
+    // ponytail: mini-markdown renderer for AI docs (no external dep)
     if (n.doc) {
-      var sd = section('Documentation IA');
+      var sd = section('AI Documentation');
       var dv = el('div', 'lin-doc');
-      if (typeof marked !== 'undefined' && marked.parse) {
-        dv.innerHTML = marked.parse(n.doc, { async: false })
-          .replace(/<script[\s\S]*?<\/script>/gi, '')
-          .replace(/\son\w+="[^"]*"/gi, '');
-      } else { dv.textContent = n.doc; }
+      dv.innerHTML = _md(n.doc);
       sd.appendChild(dv); p.appendChild(sd);
     }
-    appendNav(cy, p, 'Précédents', GRAPH.edges.filter(function (e) { return e.target === n.id; })
+    appendNav(cy, p, 'Precedents', GRAPH.edges.filter(function (e) { return e.target === n.id; })
       .map(function (e) { return { node: byId[e.source], kind: e.kind }; }));
-    appendNav(cy, p, 'Dépendants', GRAPH.edges.filter(function (e) { return e.source === n.id; })
+    appendNav(cy, p, 'Dependents', GRAPH.edges.filter(function (e) { return e.source === n.id; })
       .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
   }
 
@@ -493,7 +513,7 @@ _TEMPLATE = r"""
     var val = el('div');
     if (s.evaluated) { val.appendChild(document.createTextNode('= '));
       var b = el('b', null, fmt(s.value)); val.appendChild(b); }
-    else val.appendChild(el('span', 'lin-hint', 'non évaluée'));
+    else val.appendChild(el('span', 'lin-hint', 'not evaluated'));
     d.appendChild(val);
     (s.inputs || []).forEach(function (inp) {
       if (inp.ref !== undefined) d.appendChild(el('span', 'lin-in', inp.ref + ' = ' + fmt(inp.value)));

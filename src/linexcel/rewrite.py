@@ -1,12 +1,10 @@
-"""Réécriture de formules via le tokenizer formualizer (Rust).
+"""Formula rewriting via the formualizer tokenizer (Rust).
 
-Deux usages :
-- canonicalisation R1C1 relative à la cellule porteuse, pour détecter les
-  formules « étirées » (recopiées) : deux cellules dont la forme R1C1 est
-  identique portent la même logique ;
-- qualification des références par un nom de feuille, pour évaluer une
-  sous-expression dans une feuille de brouillon sans casser les références
-  relatives.
+Two uses:
+- R1C1 canonicalization relative to the host cell, to detect "stretched"
+  (copied) formulas: two cells with the same R1C1 form carry the same logic;
+- qualifying references with a sheet name, to evaluate a sub-expression in a
+  scratch sheet without breaking relative references.
 """
 
 from __future__ import annotations
@@ -27,16 +25,16 @@ def _is_range_operand(token) -> bool:
 
 
 def canonical_r1c1(formula: str, row: int, col: int) -> str:
-    """Forme canonique R1C1 d'une formule, relative à (row, col).
+    """Canonical R1C1 form of a formula, relative to (row, col).
 
-    Les références A1 sont converties en offsets relatifs ; les noms définis
-    et références structurées restent tels quels. Deux cellules issues d'une
-    même recopie (étirement) produisent la même chaîne.
+    A1 references are converted to relative offsets; defined names and
+    structured references stay as-is. Two cells from the same copy (stretch)
+    produce the same string.
     """
     try:
         toks = _tokens(formula)
     except Exception:
-        # Formule que le tokenizer ne comprend pas : la chaîne brute sert de clé.
+        # Formula the tokenizer can't understand: raw string serves as key.
         return formula
     out: list[str] = []
     for t in toks:
@@ -50,10 +48,10 @@ def canonical_r1c1(formula: str, row: int, col: int) -> str:
 
 
 def qualify_sheet(formula: str, sheet: str) -> str:
-    """Préfixe toutes les références non qualifiées par ``sheet``.
+    """Prefix all unqualified references with ``sheet``.
 
-    Permet d'évaluer ``=SUM(A1:A10)`` (écrit dans Feuil1) depuis une feuille
-    de brouillon : ``=SUM(Feuil1!A1:A10)``.
+    Allows evaluating ``=SUM(A1:A10)`` (written in Sheet1) from a scratch
+    sheet: ``=SUM(Sheet1!A1:A10)``.
     """
     try:
         toks = _tokens(formula)

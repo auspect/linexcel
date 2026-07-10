@@ -1,7 +1,7 @@
-"""Utilitaires de références Excel : A1 ↔ (ligne, colonne), R1C1, plages.
+"""Excel reference utilities: A1 ↔ (row, col), R1C1, ranges.
 
-Toutes les conversions sont indépendantes du moteur de calcul afin de
-rester testables unitairement.
+All conversions are independent of the computation engine so they remain
+unit-testable.
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ _CELL_RE = re.compile(r"^(\$?)([A-Za-z]{1,3})(\$?)(\d+)$")
 _COL_RE = re.compile(r"^(\$?)([A-Za-z]{1,3})$")
 _ROW_RE = re.compile(r"^(\$?)(\d+)$")
 
-# Référence complète éventuellement préfixée d'une feuille :
-#   'Ma Feuille'!A1:B2   Feuil1!$C$3   A1   A:B   1:4
+# Full reference optionally prefixed with a sheet:
+#   'My Sheet'!A1:B2   Sheet1!$C$3   A1   A:B   1:4
 _SHEET_PREFIX_RE = re.compile(
     r"^(?:(?P<q>'(?:[^']|'')+')|(?P<p>[^'!()+\-*/^&=<>,; ]+))!"
 )
 
 
 def col_to_num(col: str) -> int:
-    """Convertit une colonne alphabétique (A, B, …, XFD) en numéro 1-indexé."""
+    """Convert a column letter (A, B, ..., XFD) to a 1-indexed number."""
     n = 0
     for ch in col.upper():
         n = n * 26 + (ord(ch) - 64)
@@ -32,7 +32,7 @@ def col_to_num(col: str) -> int:
 
 
 def num_to_col(n: int) -> str:
-    """Convertit un numéro de colonne 1-indexé en lettres."""
+    """Convert a 1-indexed column number to letters."""
     out = ""
     while n > 0:
         n, rem = divmod(n - 1, 26)
@@ -42,7 +42,7 @@ def num_to_col(n: int) -> str:
 
 @dataclass(frozen=True)
 class Rect:
-    """Rectangle de cellules (bornes incluses), avec feuille optionnelle."""
+    """Cell rectangle (inclusive bounds), with optional sheet."""
 
     sheet: str | None
     r1: int
@@ -55,7 +55,7 @@ class Rect:
         return (self.r2 - self.r1 + 1) * (self.c2 - self.c1 + 1)
 
     def clipped(self, max_row: int, max_col: int) -> Rect | None:
-        """Restreint la plage aux dimensions utilisées de la feuille."""
+        """Clip the range to the used dimensions of the sheet."""
         r2 = min(self.r2, max(max_row, 1))
         c2 = min(self.c2, max(max_col, 1))
         if r2 < self.r1 or c2 < self.c1:
@@ -78,14 +78,14 @@ class Rect:
 
 
 def quote_sheet(sheet: str) -> str:
-    """Cite un nom de feuille si nécessaire pour l'insérer dans une formule."""
+    """Quote a sheet name if necessary for inclusion in a formula."""
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", sheet):
         return sheet
     return "'" + sheet.replace("'", "''") + "'"
 
 
 def split_sheet_prefix(ref: str) -> tuple[str | None, str]:
-    """Sépare le préfixe de feuille d'une référence ('Feuil 1'!A1 → (Feuil 1, A1))."""
+    """Split the sheet prefix from a reference ('Sheet 1'!A1 → (Sheet 1, A1))."""
     m = _SHEET_PREFIX_RE.match(ref)
     if not m:
         return None, ref
@@ -97,16 +97,16 @@ def split_sheet_prefix(ref: str) -> tuple[str | None, str]:
 
 
 def parse_ref(ref: str, default_sheet: str | None = None) -> Rect | None:
-    """Analyse une référence A1 (cellule, plage, colonnes ou lignes entières).
+    """Parse an A1 reference (cell, range, whole columns or rows).
 
-    Retourne ``None`` si la chaîne n'est pas une référence A1 valide
-    (nom défini, référence structurée de tableau, …).
+    Returns ``None`` if the string is not a valid A1 reference
+    (defined name, structured table reference, ...).
     """
     sheet, body = split_sheet_prefix(ref)
     if sheet is None:
         sheet = default_sheet
     elif ":" in sheet:
-        # Référence 3D (Feuil1:Feuil3!A1) : hors périmètre du graphe cellule.
+        # 3D reference (Sheet1:Sheet3!A1): out of scope for cell graph.
         return None
     body = body.strip()
     if ":" in body:
@@ -129,7 +129,7 @@ def parse_ref(ref: str, default_sheet: str | None = None) -> Rect | None:
 
 
 def _parse_endpoint(part: str) -> tuple[int, int] | None:
-    """Borne d'une plage : cellule, colonne entière ou ligne entière."""
+    """Range endpoint: cell, whole column, or whole row."""
     part = part.strip()
     m = _CELL_RE.match(part)
     if m:
@@ -139,7 +139,7 @@ def _parse_endpoint(part: str) -> tuple[int, int] | None:
         col = col_to_num(m.group(2))
         if col > MAX_COL:
             return None
-        # Colonne entière : les lignes seront bornées par _COL/_ROW jumelé.
+        # Whole column: rows will be bounded by the paired endpoint.
         return -1, col
     m = _ROW_RE.match(part)
     if m:
@@ -151,7 +151,7 @@ def _parse_endpoint(part: str) -> tuple[int, int] | None:
 
 
 def normalize_whole_ranges(rect: Rect) -> Rect:
-    """Remplace les marqueurs -1 (colonne/ligne entière) par les bornes max."""
+    """Replace -1 markers (whole column/row) with max bounds."""
     r1 = 1 if rect.r1 == -1 else rect.r1
     r2 = MAX_ROW if rect.r2 == -1 else rect.r2
     c1 = 1 if rect.c1 == -1 else rect.c1
@@ -161,7 +161,7 @@ def normalize_whole_ranges(rect: Rect) -> Rect:
 
 @dataclass(frozen=True)
 class RefDetail:
-    """Référence analysée avec ses ancres $ (pour l'étirement des groupes)."""
+    """Parsed reference with $ anchors (for group stretching)."""
 
     rect: Rect
     row1_abs: bool
@@ -171,7 +171,7 @@ class RefDetail:
 
 
 def parse_ref_detailed(ref: str, default_sheet: str | None = None) -> RefDetail | None:
-    """Comme :func:`parse_ref`, mais conserve les ancres absolues de chaque borne."""
+    """Like :func:`parse_ref`, but preserves absolute anchors on each bound."""
     sheet, body = split_sheet_prefix(ref)
     if sheet is None:
         sheet = default_sheet
@@ -190,13 +190,13 @@ def parse_ref_detailed(ref: str, default_sheet: str | None = None) -> RefDetail 
     if len(ends) == 1:
         (row, col, row_abs, col_abs) = ends[0]
         if row == -1 or col == -1:
-            return None  # une colonne/ligne entière seule n'est pas une cellule
+            return None  # a whole column/row alone is not a cell
         rect = Rect(sheet, row, col, row, col)
         return RefDetail(rect, row_abs, col_abs, row_abs, col_abs)
     (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = ends
     if (r1, c1) > (r2, c2):
         (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = (r2, c2, r2a, c2a), (r1, c1, r1a, c1a)
-    # Les axes « entiers » (A:A, 1:1) sont figés : ils ne s'étirent pas.
+    # Whole-axis refs (A:A, 1:1) are frozen: they don't stretch.
     if r1 == -1:
         r1, r2, r1a, r2a = 1, MAX_ROW, True, True
     if c1 == -1:
@@ -233,11 +233,11 @@ def stretch_ref(
     rows_span: tuple[int, int],
     cols_span: tuple[int, int],
 ) -> Rect:
-    """Étend la référence d'une cellule représentative à tout un groupe étiré.
+    """Stretch a representative cell's reference to an entire stretched group.
 
-    ``rows_span``/``cols_span`` sont les bornes (min, max) des cellules membres
-    du groupe. Les bornes relatives suivent le déplacement, les bornes ancrées
-    ($) restent fixes.
+    ``rows_span``/``cols_span`` are the (min, max) bounds of the group's
+    member cells. Relative bounds follow the displacement, anchored bounds
+    ($) stay fixed.
     """
     rect = detail.rect
     r1 = rect.r1 if detail.row1_abs else rect.r1 + (rows_span[0] - rep_row)
@@ -250,7 +250,7 @@ def stretch_ref(
 
 
 def cell_to_r1c1(cell: str, base_row: int, base_col: int) -> str | None:
-    """Convertit une référence de cellule A1 en R1C1 relatif à (base_row, base_col)."""
+    """Convert an A1 cell reference to R1C1 relative to (base_row, base_col)."""
     m = _CELL_RE.match(cell)
     if m:
         abs_col, col, abs_row, row = (
@@ -278,7 +278,7 @@ def _rel(axis: str, delta: int) -> str:
 
 
 def ref_to_r1c1(ref: str, base_row: int, base_col: int) -> str | None:
-    """Convertit une référence complète (avec feuille et ':') en forme R1C1."""
+    """Convert a full reference (with sheet and ':') to R1C1 form."""
     sheet, body = split_sheet_prefix(ref)
     parts = body.split(":")
     if len(parts) > 2:

@@ -1,16 +1,16 @@
-"""API haut-niveau, utilisable comme bibliothèque (marimo, Jupyter, scripts).
+"""High-level API, usable as a library (marimo, Jupyter, scripts).
 
-Exemple minimal, sans backend ni clé IA :
+Minimal example, without backend or AI key:
 
     from linexcel import analyze
-    result = analyze("mon_classeur.xlsx")
-    result                      # s'affiche en graphe interactif dans marimo
+    result = analyze("my_workbook.xlsx")
+    result                      # interactive graph in marimo
     result.save_html("out.html")
     print(result.stats)
 
-La documentation IA reste optionnelle :
+AI documentation is optional:
 
-    result.document(api_key="…")   # ou via la variable GOOGLE_API_KEY
+    result.document(api_key="...")   # or via GOOGLE_API_KEY env var
 """
 
 from __future__ import annotations
@@ -27,32 +27,32 @@ Source = str | Path | bytes | bytearray | BinaryIO
 
 
 def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
-    """Normalise chemin / bytes / objet fichier en (octets, nom de fichier)."""
+    """Normalize path / bytes / file object into (bytes, filename)."""
     if isinstance(source, (bytes, bytearray)):
-        return bytes(source), filename or "classeur.xlsx"
+        return bytes(source), filename or "workbook.xlsx"
     if isinstance(source, (str, Path)):
         path = Path(source)
         return path.read_bytes(), filename or path.name
     if hasattr(source, "read"):
         data = source.read()
         if not isinstance(data, (bytes, bytearray)):
-            raise TypeError("Le flux doit être ouvert en mode binaire ('rb').")
-        name = filename or getattr(source, "name", None) or "classeur.xlsx"
+            raise TypeError("Stream must be opened in binary mode ('rb').")
+        name = filename or getattr(source, "name", None) or "workbook.xlsx"
         return bytes(data), Path(str(name)).name
     raise TypeError(
-        "source doit être un chemin, des octets ou un fichier binaire ouvert."
+        "source must be a path, bytes, or a binary file object."
     )
 
 
 def analyze(source: Source, filename: str | None = None) -> LineageResult:
-    """Analyse un classeur Excel et retourne un :class:`LineageResult`.
+    """Analyze an Excel workbook and return a :class:`LineageResult`.
 
-    Paramètres
+    Parameters
     ----------
-    source : str | Path | bytes | fichier binaire
-        Chemin vers le fichier, contenu brut, ou objet ouvert en ``rb``.
-    filename : str, optionnel
-        Nom logique (sert aux libellés et à la détection VBA).
+    source : str | Path | bytes | binary file
+        Path to the file, raw content, or file object opened in ``rb``.
+    filename : str, optional
+        Logical name (used for labels and VBA detection).
     """
     data, name = _read_source(source, filename)
     payload = analyze_workbook(data, filename=name)
@@ -64,11 +64,11 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
 
 
 class LineageResult:
-    """Résultat d'analyse : graphe déterministe + moteur de calcul + rendus.
+    """Analysis result: deterministic graph + computation engine + renderers.
 
-    L'objet est directement affichable dans un notebook (``_repr_html_``) et
-    expose le graphe JSON, des accès pratiques, l'export HTML autonome et la
-    documentation IA optionnelle.
+    The object is directly displayable in a notebook (``_repr_html_``) and
+    exposes the JSON graph, convenience accessors, standalone HTML export,
+    and optional AI documentation.
     """
 
     def __init__(
@@ -79,7 +79,7 @@ class LineageResult:
         self.analysis_id = analysis_id or uuid.uuid4().hex[:16]
         self._by_id = {n["id"]: n for n in graph.get("nodes", [])}
 
-    # -- accès pratiques ---------------------------------------------------
+    # -- convenience accessors --------------------------------------------
     @property
     def nodes(self) -> list[dict[str, Any]]:
         return self.graph["nodes"]
@@ -101,11 +101,11 @@ class LineageResult:
         return self.graph["meta"]["warnings"]
 
     def node(self, node_id: str) -> dict[str, Any] | None:
-        """Renvoie le nœud d'identifiant donné (ou ``None``)."""
+        """Return the node with the given id (or ``None``)."""
         return self._by_id.get(node_id)
 
     def find(self, text: str) -> list[dict[str, Any]]:
-        """Nœuds dont le libellé ou la formule contient ``text`` (insensible casse)."""
+        """Nodes whose label or formula contains ``text`` (case-insensitive)."""
         q = text.lower()
         return [
             n
@@ -115,7 +115,7 @@ class LineageResult:
         ]
 
     def precedents(self, node_id: str) -> list[dict[str, Any]]:
-        """Nœuds qui alimentent ``node_id``."""
+        """Nodes that feed into ``node_id``."""
         return [
             self._by_id[e["source"]]
             for e in self.edges
@@ -123,14 +123,14 @@ class LineageResult:
         ]
 
     def dependents(self, node_id: str) -> list[dict[str, Any]]:
-        """Nœuds alimentés par ``node_id``."""
+        """Nodes fed by ``node_id``."""
         return [
             self._by_id[e["target"]]
             for e in self.edges
             if e["source"] == node_id and e["target"] in self._by_id
         ]
 
-    # -- sérialisation -----------------------------------------------------
+    # -- serialization -----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         return self.graph
 
@@ -142,18 +142,21 @@ class LineageResult:
         path.write_text(self.to_json(indent=1), encoding="utf-8")
         return path
 
-    # -- documentation IA (optionnelle) -----------------------------------
+    # -- AI documentation (optional) --------------------------------------
     def document(
         self,
         node_ids: list[str] | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
+        language: str = "en",
     ) -> dict[str, str]:
-        """Documente les nœuds via Gemini à partir du lignage déterministe.
+        """Document nodes via Gemini from the deterministic lineage.
 
-        Sans ``node_ids``, documente tous les calculs (cellules, groupes, VBA).
-        Nécessite ``google-genai`` et une clé (``api_key`` ou ``GOOGLE_API_KEY``).
+        Without ``node_ids``, documents all calculation nodes (cells, groups, VBA).
+        Requires ``google-genai`` and a key (``api_key`` or ``GOOGLE_API_KEY``).
+
+        ``language`` selects the system prompt ("en" or "fr").
         """
         from linexcel.aidoc import document_nodes
 
@@ -161,17 +164,19 @@ class LineageResult:
             node_ids = [
                 n["id"] for n in self.nodes if n.get("kind") in ("cell", "group", "vba")
             ]
-        return document_nodes(self.graph, node_ids, model=model, api_key=api_key)
+        return document_nodes(
+            self.graph, node_ids, model=model, api_key=api_key, language=language
+        )
 
-    # -- visualisation -----------------------------------------------------
+    # -- visualization -----------------------------------------------------
     def to_html(
         self, *, title: str | None = None, full_document: bool = True,
         docs: dict[str, str] | None = None,
     ) -> str:
-        """Document HTML autonome (Cytoscape) — ouvrable dans un navigateur.
+        """Standalone HTML document (Cytoscape) — openable in a browser.
 
-        Si ``docs`` est fourni (issu de :meth:`document`), la documentation IA
-        de chaque nœud est embarquée dans le panneau de détail.
+        If ``docs`` is provided (from :meth:`document`), AI documentation
+        for each node is embedded in the detail panel.
         """
         graph = self.graph
         if docs:
@@ -194,13 +199,13 @@ class LineageResult:
         return self.graph.get("meta", {}).get("filename", "Lineage Excel")
 
     def _repr_html_(self) -> str:
-        """Rendu inline pour marimo / Jupyter (iframe isolée)."""
+        """Inline rendering for marimo / Jupyter (isolated iframe)."""
         return wrap_iframe(self.to_html(), height=640)
 
     def __repr__(self) -> str:
         s = self.stats
         return (
             f"<LineageResult {self._title()!r}: "
-            f"{s['totalFormulas']} formules, {s['totalNodes']} nœuds, "
-            f"{s['totalEdges']} liens, {s['vbaProcs']} proc. VBA>"
+            f"{s['totalFormulas']} formulas, {s['totalNodes']} nodes, "
+            f"{s['totalEdges']} edges, {s['vbaProcs']} VBA procs>"
         )
