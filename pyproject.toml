@@ -1,0 +1,59 @@
+[project]
+name = "linexcel"
+version = "0.1.0"
+description = "Data lineage analysis for Excel workbooks — formula extraction, dependency graph, step-by-step evaluation, AI documentation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Philippe Calvet", email = "phcalvet@gmail.com" }]
+keywords = ["excel", "lineage", "formula", "dependency-graph", "vba", "openpyxl"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+dependencies = [
+    "openpyxl>=3.1",
+    "formualizer>=0.7.1",
+    "oletools>=0.60.2",
+]
+
+[project.optional-dependencies]
+ai = ["google-genai>=2.10.0"]
+dev = ["pytest>=8.0", "ruff>=0.9"]
+
+[project.urls]
+Homepage = "https://github.com/auspect/linexcel"
+Repository = "https://github.com/auspect/linexcel"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/linexcel"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/linexcel/assets/*.js"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/linexcel/viewer.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:::oletools.olevba",
+]
