@@ -13,7 +13,7 @@ import json
 import os
 from typing import Any
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_DOSSIER_CHARS = 6_000
 
 _SYSTEM = {
@@ -54,7 +54,9 @@ def _client(api_key: str | None = None):
             "google-genai is not installed "
             "(pip install 'linexcel[ai]' or pip install google-genai)"
         ) from exc
-    api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    api_key = (
+        api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    )
     if not api_key:
         raise AiDocError(
             "No Gemini API key provided: pass api_key=... or set "
@@ -63,8 +65,12 @@ def _client(api_key: str | None = None):
     return genai.Client(api_key=api_key)
 
 
-def build_dossier(graph: dict[str, Any], node_id: str) -> dict[str, Any] | None:
-    """Deterministic dossier for a node: everything the AI is allowed to use."""
+def build_dossier(
+    graph: dict[str, Any], node_id: str
+) -> dict[str, Any] | None:
+    """
+    Deterministic dossier for a node: everything the AI is allowed to use.
+    """
     nodes = {n["id"]: n for n in graph["nodes"]}
     node = nodes.get(node_id)
     if node is None:
@@ -119,7 +125,9 @@ def _compact_steps(step: dict | None) -> dict | None:
     out = {
         "expression": step.get("expr"),
         "operation": step.get("label"),
-        "value": step.get("value") if step.get("evaluated") else "not evaluated",
+        "value": step.get("value")
+        if step.get("evaluated")
+        else "not evaluated",
     }
     if step.get("inputs"):
         out["inputs"] = step["inputs"]
@@ -142,7 +150,9 @@ def document_nodes(
     ``language`` selects the system prompt ("en" or "fr").
     """
     if language not in _LANGUAGES:
-        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
+        raise ValueError(
+            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
+        )
     client = _client(api_key)
     model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
     system = _SYSTEM[language]

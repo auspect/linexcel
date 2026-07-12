@@ -23,7 +23,7 @@ def build_lineage_workbook() -> bytes:
     syn["B1"] = "=SUM(Ventes!D2:D101)"
     syn["B2"] = "=ROUND(AVERAGE(Ventes!D2:D101), 2)"
     syn["B3"] = (
-        '=IF(SUM(Ventes!D2:D101)>TauxCible, '
+        "=IF(SUM(Ventes!D2:D101)>TauxCible, "
         'CONCATENATE("OK: ", ROUND(B1/1000,1), "k"), "KO")'
     )
 

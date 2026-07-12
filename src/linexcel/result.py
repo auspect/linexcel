@@ -39,9 +39,7 @@ def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
             raise TypeError("Stream must be opened in binary mode ('rb').")
         name = filename or getattr(source, "name", None) or "workbook.xlsx"
         return bytes(data), Path(str(name)).name
-    raise TypeError(
-        "source must be a path, bytes, or a binary file object."
-    )
+    raise TypeError("source must be a path, bytes, or a binary file object.")
 
 
 def analyze(source: Source, filename: str | None = None) -> LineageResult:
@@ -72,7 +70,10 @@ class LineageResult:
     """
 
     def __init__(
-        self, graph: dict[str, Any], engine: Any, analysis_id: str | None = None
+        self,
+        graph: dict[str, Any],
+        engine: Any,
+        analysis_id: str | None = None,
     ):
         self.graph = graph
         self.engine = engine
@@ -101,11 +102,13 @@ class LineageResult:
         return self.graph["meta"]["warnings"]
 
     def node(self, node_id: str) -> dict[str, Any] | None:
-        """Return the node with the given id (or ``None``)."""
+        """Return the node with the given id (or ``None``)"""
         return self._by_id.get(node_id)
 
     def find(self, text: str) -> list[dict[str, Any]]:
-        """Nodes whose label or formula contains ``text`` (case-insensitive)."""
+        """
+        Nodes whose label or formula contains ``text`` (case-insensitive)
+        """
         q = text.lower()
         return [
             n
@@ -115,7 +118,7 @@ class LineageResult:
         ]
 
     def precedents(self, node_id: str) -> list[dict[str, Any]]:
-        """Nodes that feed into ``node_id``."""
+        """Nodes that feed into ``node_id``"""
         return [
             self._by_id[e["source"]]
             for e in self.edges
@@ -123,7 +126,7 @@ class LineageResult:
         ]
 
     def dependents(self, node_id: str) -> list[dict[str, Any]]:
-        """Nodes fed by ``node_id``."""
+        """Nodes fed by ``node_id``"""
         return [
             self._by_id[e["target"]]
             for e in self.edges
@@ -135,7 +138,9 @@ class LineageResult:
         return self.graph
 
     def to_json(self, *, indent: int | None = None) -> str:
-        return json.dumps(self.graph, ensure_ascii=False, indent=indent, default=str)
+        return json.dumps(
+            self.graph, ensure_ascii=False, indent=indent, default=str
+        )
 
     def save_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -153,8 +158,10 @@ class LineageResult:
     ) -> dict[str, str]:
         """Document nodes via Gemini from the deterministic lineage.
 
-        Without ``node_ids``, documents all calculation nodes (cells, groups, VBA).
-        Requires ``google-genai`` and a key (``api_key`` or ``GOOGLE_API_KEY``).
+        Without ``node_ids``, documents all calculation nodes
+        (cells, groups, VBA).
+        Requires ``google-genai`` and a key
+        (``api_key`` or ``GOOGLE_API_KEY``).
 
         ``language`` selects the system prompt ("en" or "fr").
         """
@@ -162,15 +169,24 @@ class LineageResult:
 
         if node_ids is None:
             node_ids = [
-                n["id"] for n in self.nodes if n.get("kind") in ("cell", "group", "vba")
+                n["id"]
+                for n in self.nodes
+                if n.get("kind") in ("cell", "group", "vba")
             ]
         return document_nodes(
-            self.graph, node_ids, model=model, api_key=api_key, language=language
+            self.graph,
+            node_ids,
+            model=model,
+            api_key=api_key,
+            language=language,
         )
 
     # -- visualization -----------------------------------------------------
     def to_html(
-        self, *, title: str | None = None, full_document: bool = True,
+        self,
+        *,
+        title: str | None = None,
+        full_document: bool = True,
         docs: dict[str, str] | None = None,
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
@@ -180,15 +196,21 @@ class LineageResult:
         """
         graph = self.graph
         if docs:
-            graph = {**graph, "nodes": [
-                {**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]
-            ]}
+            graph = {
+                **graph,
+                "nodes": [
+                    {**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]
+                ],
+            }
         return render_html(
             graph, title=title or self._title(), full_document=full_document
         )
 
     def save_html(
-        self, path: str | Path, *, title: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        title: str | None = None,
         docs: dict[str, str] | None = None,
     ) -> Path:
         path = Path(path)

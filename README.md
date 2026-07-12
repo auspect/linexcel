@@ -37,3 +37,17 @@ result.save_html("out.html", docs=docs)      # docs embedded in HTML
 - **Step-by-step evaluation** — each operator/function evaluated individually
 - **Standalone HTML viewer** — Cytoscape.js embedded, fully offline
 - **AI documentation** — Gemini generates provable docs from deterministic lineage
+
+
+## Sample output
+
+### Global overview
+
+![Global overview](imgs/overview_example_01.png)
+
+
+![Global overview (node selected)](imgs/overview_example_02.png)
+
+### Sample doc
+
+![Sample Doc](imgs/zoom_formula_doc.png)

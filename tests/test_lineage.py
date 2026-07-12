@@ -92,7 +92,9 @@ class TestAnalyze:
 
     def test_group_inputs_are_aggregated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        input_labels = {n["label"] for n in graph["nodes"] if n["kind"] == "input"}
+        input_labels = {
+            n["label"] for n in graph["nodes"] if n["kind"] == "input"
+        }
         assert "Ventes!B2:B101" in input_labels
         assert "Ventes!C2:C101" in input_labels
 
@@ -103,16 +105,20 @@ class TestAnalyze:
         # name is fed by Params!A1 and feeds Synthese!B3
         edges = graph["edges"]
         assert any(
-            e["target"] == names[0]["id"] and "Params" in e["source"] for e in edges
+            e["target"] == names[0]["id"] and "Params" in e["source"]
+            for e in edges
         )
         assert any(
-            e["source"] == names[0]["id"] and e["target"].endswith("Synthese!B3")
+            e["source"] == names[0]["id"]
+            and e["target"].endswith("Synthese!B3")
             for e in edges
         )
 
     def test_composed_formula_steps_evaluated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        node = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B3"))
+        node = next(
+            n for n in graph["nodes"] if n["id"].endswith("Synthese!B3")
+        )
         steps = node["steps"]
         assert steps["label"] == "IF"
         assert steps["evaluated"] and steps["value"] == node["value"]
@@ -191,7 +197,9 @@ class TestPackageApi:
         out = result.save_html(tmp_path / "graph.html")
         assert out.exists() and out.stat().st_size > 100_000
 
-    def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
+    def test_document_without_key_raises_aidocerror(
+        self, lineage_excel, monkeypatch
+    ):
         from linexcel.aidoc import AiDocError
 
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -208,14 +216,15 @@ class TestPackageApi:
 class TestVba:
     MODULES = {
         "Module1": (
-            'Public Sub MAJ()\n'
-            '    total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))\n'
-            '    Worksheets("Synthese").Range("B10").Value = total * Taux()\n'
-            '    Cells(3, 2) = "ok"\n'
-            'End Sub\n'
-            'Private Function Taux() As Double\n'
-            '    Taux = Sheets("Params").Range("A1").Value\n'
-            'End Function\n'
+            """Public Sub MAJ()
+        total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))
+        Worksheets("Synthese").Range("B10").Value = total * Taux()
+        Cells(3, 2) = "ok"
+    End Sub
+    Private Function Taux() As Double
+        Taux = Sheets("Params").Range("A1").Value
+    End Function
+"""
         )
     }
 
