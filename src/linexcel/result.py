@@ -58,6 +58,8 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
         graph=payload["graph"],
         engine=payload["engine"],
         analysis_id=payload["analysisId"],
+        source_data=data,
+        filename=name,
     )
 
 
@@ -74,11 +76,18 @@ class LineageResult:
         graph: dict[str, Any],
         engine: Any,
         analysis_id: str | None = None,
+        source_data: bytes | None = None,
+        filename: str | None = None,
     ):
         self.graph = graph
         self.engine = engine
         self.analysis_id = analysis_id or uuid.uuid4().hex[:16]
         self._by_id = {n["id"]: n for n in graph.get("nodes", [])}
+        self._source_data = source_data
+        self._source_filename = filename or graph.get("meta", {}).get(
+            "filename", "workbook.xlsx"
+        )
+        self._workbook_context: dict[str, Any] | None = None
 
     # -- convenience accessors --------------------------------------------
     @property
@@ -100,6 +109,22 @@ class LineageResult:
     @property
     def warnings(self) -> list[str]:
         return self.graph["meta"]["warnings"]
+
+    @property
+    def workbook_context(self) -> dict[str, Any]:
+        """Bounded sheet previews, comments, and layout markers.
+
+        Context is extracted with ``openpyxl`` only; Excel or LibreOffice is
+        not launched. It deliberately preserves first rows and columns rather
+        than assuming a tabular header convention.
+        """
+        if self._workbook_context is None:
+            from linexcel.insights import extract_workbook_context
+
+            self._workbook_context = extract_workbook_context(
+                self._source_bytes(), self._source_filename
+            )
+        return self._workbook_context
 
     def node(self, node_id: str) -> dict[str, Any] | None:
         """Return the node with the given id (or ``None``)"""
@@ -146,6 +171,29 @@ class LineageResult:
         path = Path(path)
         path.write_text(self.to_json(indent=1), encoding="utf-8")
         return path
+
+    def save_screenshots(
+        self,
+        output_dir: str | Path,
+        *,
+        dpi: int = 144,
+        timeout: int = 60,
+    ) -> list[Path]:
+        """Render workbook pages to PNG using LibreOffice headless on Linux.
+
+        The optional renderer requires ``libreoffice`` (or ``soffice``) and
+        ``pdftoppm`` from Poppler. Use :attr:`workbook_context` when only the
+        non-rendered context is needed.
+        """
+        from linexcel.insights import render_workbook_screenshots
+
+        return render_workbook_screenshots(
+            self._source_bytes(),
+            self._source_filename,
+            output_dir,
+            dpi=dpi,
+            timeout=timeout,
+        )
 
     # -- AI documentation (optional) --------------------------------------
     def document(
@@ -219,6 +267,13 @@ class LineageResult:
 
     def _title(self) -> str:
         return self.graph.get("meta", {}).get("filename", "Lineage Excel")
+
+    def _source_bytes(self) -> bytes:
+        if self._source_data is None:
+            raise RuntimeError(
+                "Workbook bytes are unavailable. Create the result with analyze()."
+            )
+        return self._source_data
 
     def _repr_html_(self) -> str:
         """Inline rendering for marimo / Jupyter (isolated iframe)."""

@@ -29,6 +29,25 @@ docs = result.document(node_ids=["A1"], api_key="...")
 result.save_html("out.html", docs=docs)      # docs embedded in HTML
 ```
 
+## Workbook context and screenshots
+
+`result.workbook_context` extracts bounded first rows and columns for every
+sheet, without assuming a header row. It also exposes comments, merged cells,
+frozen panes, hidden columns, and sheet visibility using `openpyxl`; Excel is
+not launched.
+
+```python
+context = result.workbook_context
+sales_preview = context["sheets"][0]["preview"]
+
+# Optional Linux rendering: one PNG per printed workbook page.
+screenshots = result.save_screenshots("screenshots/")
+```
+
+Screenshots require LibreOffice and Poppler's `pdftoppm`, for example on Debian
+or Ubuntu: `sudo apt install libreoffice-calc poppler-utils`. Rendering runs via
+LibreOffice headless, without opening a desktop Excel application.
+
 ## AI data handling
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic

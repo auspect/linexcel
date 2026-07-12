@@ -18,6 +18,7 @@ a FastAPI server or AI key:
 """
 
 from linexcel.analyzer import analyze_workbook
+from linexcel.insights import WorkbookRenderError
 from linexcel.result import LineageResult, analyze
 
-__all__ = ["analyze", "LineageResult", "analyze_workbook"]
+__all__ = ["analyze", "LineageResult", "WorkbookRenderError", "analyze_workbook"]
