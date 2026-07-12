@@ -142,7 +142,9 @@ _TEMPLATE = r"""
     background: #fff; cursor: pointer; font: inherit;
   }
   .lin-bar button.active { background: var(--ink); color: #fff; }
+  .lin-tab[hidden] { display: none; }
   .lin-main { flex: 1; display: flex; min-height: 0; }
+  .lin-main.hidden { display: none; }
   .lin-cy { flex: 1; position: relative; min-width: 0; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
@@ -207,23 +209,32 @@ _TEMPLATE = r"""
   .lin-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 1rem; }
   .lin-fallback { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; text-align: center; padding: 2rem; color: var(--ink2); }
+  .lin-overview { flex: 1; overflow-y: auto; padding: 1.4rem clamp(1rem, 4vw, 4rem) 3rem; }
+  .lin-overview-inner { max-width: 880px; }
+  .lin-overview h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  .lin-overview .lin-doc { font-size: .92rem; line-height: 1.55; }
 </style>
 
 <div class="lin-root">
   <div class="lin-bar">
     <h1>__TITLE__</h1>
     <span class="stat" id="lin-stats"></span>
+    <button id="lin-tab-graph" class="lin-tab active">Graph</button>
+    <button id="lin-tab-overview" class="lin-tab" hidden>Workbook overview</button>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
     <button id="lin-lay-dagre" class="active">Flow</button>
     <button id="lin-lay-fcose">Organic</button>
     <button id="lin-fit">Fit</button>
   </div>
-  <div class="lin-main">
+  <div class="lin-main" id="lin-graph-main">
     <div class="lin-cy" id="lin-cy">
       <div class="lin-legend" id="lin-legend"></div>
     </div>
     <aside class="lin-panel hidden" id="lin-panel"></aside>
+  </div>
+  <div class="lin-main hidden" id="lin-overview-main">
+    <article class="lin-overview"><div class="lin-overview-inner" id="lin-overview"></div></article>
   </div>
 </div>
 
@@ -243,6 +254,7 @@ _TEMPLATE = r"""
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
 
   function boot() {
+    setupTabs();
     var cyContainer = document.getElementById('lin-cy');
     if (typeof cytoscape === 'undefined') {
       var f = document.createElement('div');
@@ -315,6 +327,29 @@ _TEMPLATE = r"""
           zoom: Math.max(cy.zoom(), 1), duration: 300 }); }
     });
     buildLegend();
+  }
+
+  function setupTabs() {
+    var overview = GRAPH.meta.workbookDoc;
+    if (!overview) return;
+    var graphButton = document.getElementById('lin-tab-graph');
+    var overviewButton = document.getElementById('lin-tab-overview');
+    var graphMain = document.getElementById('lin-graph-main');
+    var overviewMain = document.getElementById('lin-overview-main');
+    var target = document.getElementById('lin-overview');
+    overviewButton.hidden = false;
+    target.appendChild(el('h2', null, 'Workbook overview'));
+    var documentBody = el('div', 'lin-doc');
+    documentBody.innerHTML = _md(overview);
+    target.appendChild(documentBody);
+    graphButton.onclick = function () {
+      graphButton.classList.add('active'); overviewButton.classList.remove('active');
+      graphMain.classList.remove('hidden'); overviewMain.classList.add('hidden');
+    };
+    overviewButton.onclick = function () {
+      overviewButton.classList.add('active'); graphButton.classList.remove('active');
+      overviewMain.classList.remove('hidden'); graphMain.classList.add('hidden');
+    };
   }
 
   function setActive(on, off) { on.classList.add('active'); off.classList.remove('active'); }

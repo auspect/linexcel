@@ -27,16 +27,21 @@ result.warnings           # list[str]
 docs = result.document(api_key="...")        # all calculation nodes
 docs = result.document(node_ids=["A1"], api_key="...")
 result.save_html("out.html", docs=docs)      # docs embedded in HTML
+
+# Workbook-level overview, shown in its own viewer tab:
+workbook_doc = result.document_workbook(api_key="...")
+result.save_html("out.html", docs=docs, workbook_doc=workbook_doc)
 ```
 
 ## AI data handling
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic
-dossier for each requested node to the configured Gemini model. The dossier can
-include formulas, computed values, precedent/dependent labels, formula
-decomposition, and extracted VBA code. Do not enable this feature for a
-workbook whose contents must remain local, unless its data-sharing requirements
-permit processing by Google. See the
+dossier for each requested node, while `result.document_workbook()` sends a
+workbook-level dossier, to the configured Gemini model. The dossiers can include
+formulas, computed values, precedent/dependent labels, formula decomposition,
+sheet structure, defined names, and extracted VBA code. Do not enable this
+feature for a workbook whose contents must remain local, unless its data-sharing
+requirements permit processing by Google. See the
 [Google Generative AI Terms of Service](https://ai.google.dev/terms).
 
 ## Features
