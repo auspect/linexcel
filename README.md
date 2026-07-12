@@ -29,6 +29,16 @@ docs = result.document(node_ids=["A1"], api_key="...")
 result.save_html("out.html", docs=docs)      # docs embedded in HTML
 ```
 
+## AI data handling
+
+AI documentation is opt-in. Calling `result.document()` sends a deterministic
+dossier for each requested node to the configured Gemini model. The dossier can
+include formulas, computed values, precedent/dependent labels, formula
+decomposition, and extracted VBA code. Do not enable this feature for a
+workbook whose contents must remain local, unless its data-sharing requirements
+permit processing by Google. See the
+[Google Generative AI Terms of Service](https://ai.google.dev/terms).
+
 ## Features
 
 - **Formula extraction** via [formualizer](https://pypi.org/project/formualizer/) (Rust engine)
@@ -37,6 +47,12 @@ result.save_html("out.html", docs=docs)      # docs embedded in HTML
 - **Step-by-step evaluation** — each operator/function evaluated individually
 - **Standalone HTML viewer** — Cytoscape.js embedded, fully offline
 - **AI documentation** — Gemini generates provable docs from deterministic lineage
+
+## Security
+
+Please report vulnerabilities privately according to
+[SECURITY.md](SECURITY.md). Do not include sensitive workbooks or credentials in
+public issues.
 
 
 ## Sample output

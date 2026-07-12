@@ -17,7 +17,8 @@ DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_DOSSIER_CHARS = 6_000
 
 _SYSTEM = {
-    "en": """You document Excel calculations for a business reader.
+    "en": """
+You document Excel calculations for a business reader.
 For the provided node, write a short Markdown card:
 1. **Role** — one sentence on what the formula computes;
 2. **How** — the logic, step by step, relying STRICTLY on the provided
@@ -26,8 +27,10 @@ For the provided node, write a short Markdown card:
 4. **Proof** — the exact formula and, if available, the computed value.
 Absolute rules: do not invent data; do not assert anything not in the
 dossier; if information is missing, write "not determined by lineage".
-Respond ONLY with the Markdown card, no JSON, no delimiters.""",
-    "fr": """Tu documentes des calculs Excel pour un lecteur métier francophone.
+Respond ONLY with the Markdown card, no JSON, no delimiters.
+""".strip(),
+    "fr": """
+Tu documentes des calculs Excel pour un lecteur métier francophone.
 Pour le nœud fourni, rédige une fiche courte en Markdown :
 1. **Rôle** — une phrase sur ce que calcule la formule ;
 2. **Comment** — la logique, étape par étape, en t'appuyant STRICTEMENT sur la
@@ -36,7 +39,8 @@ Pour le nœud fourni, rédige une fiche courte en Markdown :
 4. **Preuve** — la formule exacte et, si disponible, la valeur calculée.
 Règles absolues : n'invente aucune donnée ; n'affirme rien qui ne soit pas dans
 le dossier ; si une information manque, écris « non déterminé par le lignage ».
-Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.""",
+Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.
+""".strip(),
 }
 
 _LANGUAGES = ("en", "fr")
