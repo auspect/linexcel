@@ -180,11 +180,20 @@ class TestPackageApi:
         data = json.loads(result.to_json())
         assert data["meta"]["stats"]["totalFormulas"] == 103
 
-    def test_workbook_context_preserves_preview_and_comments(self, lineage_excel):
+    def test_workbook_context_preserves_preview_and_comments(
+        self, lineage_excel
+    ):
         result = analyze(lineage_excel, filename="context.xlsx")
         context = result.workbook_context
-        ventes = next(sheet for sheet in context["sheets"] if sheet["name"] == "Ventes")
-        assert ventes["preview"][0]["values"][:4] == ["Produit", "Qté", "Prix", "CA"]
+        ventes = next(
+            sheet for sheet in context["sheets"] if sheet["name"] == "Ventes"
+        )
+        assert ventes["preview"][0]["values"][:4] == [
+            "Produit",
+            "Qté",
+            "Prix",
+            "CA",
+        ]
         assert ventes["comments"] == [
             {
                 "cell": "A1",
@@ -202,7 +211,9 @@ class TestPackageApi:
         from linexcel import WorkbookRenderError
 
         monkeypatch.setattr("linexcel.insights.shutil.which", lambda _: None)
-        with pytest.raises(WorkbookRenderError, match="LibreOffice and pdftoppm"):
+        with pytest.raises(
+            WorkbookRenderError, match="LibreOffice and pdftoppm"
+        ):
             analyze(lineage_excel).save_screenshots(tmp_path)
 
     def test_screenshots_run_headless_conversion_pipeline(
