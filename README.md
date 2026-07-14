@@ -6,7 +6,17 @@ Extracts every formula, groups stretched patterns (R1C1 canonicalization), build
 
 ## Install
 
-```bash
+### uv
+
+```Shell
+uv add linexcel
+# AI documentation (optional)
+uv add linexcel[ai]
+```
+
+### pip
+
+```Shell
 pip install linexcel
 # AI documentation (optional):
 pip install "linexcel[ai]"
@@ -73,13 +83,11 @@ Please report vulnerabilities privately according to
 [SECURITY.md](SECURITY.md). Do not include sensitive workbooks or credentials in
 public issues.
 
-
 ## Sample output
 
 ### Global overview
 
 ![Global overview](imgs/overview_example_01.png)
-
 
 ![Global overview (node selected)](imgs/overview_example_02.png)
 
