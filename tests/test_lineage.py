@@ -247,6 +247,25 @@ class TestPackageApi:
         # the composite formula and its decomposition are in the injected data
         assert "Synthese!B3" in html
 
+    def test_workbook_doc_has_a_separate_html_tab(self, lineage_excel):
+        result = analyze(lineage_excel)
+        html = result.to_html(workbook_doc="# Workbook role\n\nA test overview.")
+        assert "Workbook overview" in html
+        assert "workbookDoc" in html
+        assert "A test overview." in html
+
+    def test_build_workbook_dossier(self, lineage_excel):
+        from linexcel.aidoc import build_workbook_dossier
+
+        dossier = build_workbook_dossier(analyze(lineage_excel).graph)
+        sheets = {sheet["name"]: sheet for sheet in dossier["sheets"]}
+        assert sheets["Ventes"]["formula_cells"] == 100
+        assert sheets["Ventes"]["dimensions"]["columns"] == 4
+        assert dossier["defined_names"] == [
+            {"name": "TauxCible", "targets": ["Params!A1"]}
+        ]
+        assert dossier["formula_patterns"][0]["cells"] == 100
+
     def test_repr_html_wraps_in_data_iframe(self, lineage_excel):
         result = analyze(lineage_excel)
         frame = result._repr_html_()

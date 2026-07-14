@@ -229,6 +229,28 @@ class LineageResult:
             language=language,
         )
 
+    def document_workbook(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        language: str = "en",
+    ) -> str:
+        """Document the workbook structure and calculation flow via Gemini.
+
+        The response is grounded in workbook-level deterministic lineage data.
+        Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
+        display it in the viewer's separate overview tab.
+        """
+        from linexcel.aidoc import document_workbook
+
+        return document_workbook(
+            self.graph,
+            model=model,
+            api_key=api_key,
+            language=language,
+        )
+
     # -- visualization -----------------------------------------------------
     def to_html(
         self,
@@ -236,18 +258,26 @@ class LineageResult:
         title: str | None = None,
         full_document: bool = True,
         docs: dict[str, str] | None = None,
+        workbook_doc: str | None = None,
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
 
         If ``docs`` is provided (from :meth:`document`), AI documentation
-        for each node is embedded in the detail panel.
+        for each node is embedded in the detail panel. If ``workbook_doc`` is
+        provided (from :meth:`document_workbook`), it is shown in a separate
+        overview tab.
         """
         graph = self.graph
-        if docs:
+        if docs or workbook_doc:
+            meta = dict(graph.get("meta", {}))
+            if workbook_doc:
+                meta["workbookDoc"] = workbook_doc
             graph = {
                 **graph,
+                "meta": meta,
                 "nodes": [
-                    {**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]
+                    {**n, "doc": docs.get(n["id"], "") if docs else ""}
+                    for n in graph["nodes"]
                 ],
             }
         return render_html(
@@ -260,9 +290,13 @@ class LineageResult:
         *,
         title: str | None = None,
         docs: dict[str, str] | None = None,
+        workbook_doc: str | None = None,
     ) -> Path:
         path = Path(path)
-        path.write_text(self.to_html(title=title, docs=docs), encoding="utf-8")
+        path.write_text(
+            self.to_html(title=title, docs=docs, workbook_doc=workbook_doc),
+            encoding="utf-8",
+        )
         return path
 
     def _title(self) -> str:
