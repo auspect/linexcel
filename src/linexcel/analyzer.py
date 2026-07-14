@@ -282,12 +282,24 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     for name, targets in defined_names.items():
         node_id = f"n:{name}"
         name_nodes[name.upper()] = node_id
+        val = None
+        if targets:
+            first = targets[0]
+            if first.r1 == first.r2 and first.c1 == first.c2:
+                val = _cell_value(
+                    engine, first.sheet, first.r1, first.c1, engine_sheets
+                )
+            else:
+                val_samples = _sample_range_values(engine, first, engine_sheets)
+                if val_samples:
+                    val = val_samples[0]["value"]
         nodes[node_id] = {
             "id": node_id,
             "kind": "name",
             "label": name,
             "sheet": targets[0].sheet if targets else None,
             "targets": [t.to_a1() for t in targets],
+            "value": val,
         }
         for rect in targets:
             resolve_rect_edges(rect, node_id, kind="name")

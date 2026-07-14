@@ -34,13 +34,13 @@ result.stats              # {totalFormulas, totalNodes, ...}
 result.warnings           # list[str]
 
 # AI documentation (optional, requires google-genai):
-docs = result.document(api_key="...")        # all calculation nodes
-docs = result.document(node_ids=["A1"], api_key="...")
-result.save_html("out.html", docs=docs)      # docs embedded in HTML
+# Supports "en" (default) or "fr" language for both documentation and UI
+docs = result.document(api_key="...", language="en")
+result.save_html("out.html", docs=docs, language="en")
 
-# Workbook-level overview, shown in its own viewer tab:
-workbook_doc = result.document_workbook(api_key="...")
-result.save_html("out.html", docs=docs, workbook_doc=workbook_doc)
+# Workbook-level overview, shown in the separate overview tab:
+workbook_doc = result.document_workbook(api_key="...", language="en")
+result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
 ## Workbook context and screenshots
@@ -50,17 +50,27 @@ sheet, without assuming a header row. It also exposes comments, merged cells,
 frozen panes, hidden columns, and sheet visibility using `openpyxl`; Excel is
 not launched.
 
-```python
-context = result.workbook_context
-sales_preview = context["sheets"][0]["preview"]
+These structural details are automatically rendered in a structured summary list
+within the **Workbook overview** tab of the HTML report.
 
-# Optional Linux rendering: one PNG per printed workbook page.
+You can also generate and embed high-resolution sheet screenshots using LibreOffice Calc:
+
+```python
+# 1. Render one PNG per printed workbook page
 screenshots = result.save_screenshots("screenshots/")
+
+# 2. Map pages to sheet names to display them inline under each sheet card
+sheets_screenshots = {
+    "Ventes": screenshots[0:3],
+    "Synthese": [screenshots[3]],
+    "Params": [screenshots[4]]
+}
+
+# 3. Embed them directly inside the offline HTML report
+result.save_html("out.html", screenshots=sheets_screenshots)
 ```
 
-Screenshots require LibreOffice and Poppler's `pdftoppm`, for example on Debian
-or Ubuntu: `sudo apt install libreoffice-calc poppler-utils`. Rendering runs via
-LibreOffice headless, without opening a desktop Excel application.
+Screenshots require LibreOffice and Poppler's `pdftoppm` installed on the system (e.g. on Debian/Ubuntu: `sudo apt install libreoffice-calc poppler-utils`). Rendering runs via LibreOffice headless, without opening a desktop Excel application.
 
 ## AI data handling
 

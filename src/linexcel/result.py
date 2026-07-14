@@ -259,29 +259,69 @@ class LineageResult:
         full_document: bool = True,
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
+        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        language: str = "en",
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
 
         If ``docs`` is provided (from :meth:`document`), AI documentation
         for each node is embedded in the detail panel. If ``workbook_doc`` is
         provided (from :meth:`document_workbook`), it is shown in a separate
-        overview tab.
+        overview tab. If ``screenshots`` is provided (paths or base64), they
+        are displayed in a preview tab.
         """
         graph = self.graph
-        if docs or workbook_doc:
-            meta = dict(graph.get("meta", {}))
-            if workbook_doc:
-                meta["workbookDoc"] = workbook_doc
-            graph = {
-                **graph,
-                "meta": meta,
-                "nodes": [
-                    {**n, "doc": docs.get(n["id"], "") if docs else ""}
-                    for n in graph["nodes"]
-                ],
-            }
+        meta = dict(graph.get("meta", {}))
+        meta["workbookContext"] = self.workbook_context
+
+        if workbook_doc:
+            meta["workbookDoc"] = workbook_doc
+
+        if screenshots:
+            import base64
+            if isinstance(screenshots, dict):
+                embeds_dict = {}
+                for sheet_name, s_list in screenshots.items():
+                    embeds = []
+                    for s in s_list:
+                        p = Path(s) if isinstance(s, (str, Path)) else None
+                        if p and p.exists():
+                            if p.suffix.lower() == ".png":
+                                b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                                embeds.append(f"data:image/png;base64,{b64}")
+                            else:
+                                embeds.append(str(s))
+                        else:
+                            embeds.append(str(s))
+                    embeds_dict[sheet_name] = embeds
+                meta["screenshots"] = embeds_dict
+            else:
+                embeds = []
+                for s in screenshots:
+                    p = Path(s) if isinstance(s, (str, Path)) else None
+                    if p and p.exists():
+                        if p.suffix.lower() == ".png":
+                            b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                            embeds.append(f"data:image/png;base64,{b64}")
+                        else:
+                            embeds.append(str(s))
+                    else:
+                        embeds.append(str(s))
+                meta["screenshots"] = embeds
+
+        graph = {
+            **graph,
+            "meta": meta,
+            "nodes": [
+                {**n, "doc": docs.get(n["id"], "") if docs else ""}
+                for n in graph["nodes"]
+            ],
+        }
         return render_html(
-            graph, title=title or self._title(), full_document=full_document
+            graph,
+            title=title or self._title(),
+            full_document=full_document,
+            language=language,
         )
 
     def save_html(
@@ -291,10 +331,18 @@ class LineageResult:
         title: str | None = None,
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
+        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        language: str = "en",
     ) -> Path:
         path = Path(path)
         path.write_text(
-            self.to_html(title=title, docs=docs, workbook_doc=workbook_doc),
+            self.to_html(
+                title=title,
+                docs=docs,
+                workbook_doc=workbook_doc,
+                screenshots=screenshots,
+                language=language,
+            ),
             encoding="utf-8",
         )
         return path

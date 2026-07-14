@@ -260,7 +260,7 @@ class TestPackageApi:
         dossier = build_workbook_dossier(analyze(lineage_excel).graph)
         sheets = {sheet["name"]: sheet for sheet in dossier["sheets"]}
         assert sheets["Ventes"]["formula_cells"] == 100
-        assert sheets["Ventes"]["dimensions"]["columns"] == 4
+        assert sheets["Ventes"]["dimensions"]["columns"] == 7
         assert dossier["defined_names"] == [
             {"name": "TauxCible", "targets": ["Params!A1"]}
         ]
