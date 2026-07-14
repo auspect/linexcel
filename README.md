@@ -1,8 +1,14 @@
 # linexcel
 
+[![PyPI](https://img.shields.io/pypi/v/linexcel)](https://pypi.org/project/linexcel/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![CI](https://github.com/auspect/linexcel/actions/workflows/ci.yml/badge.svg)
+
 Data lineage analysis for Excel workbooks.
 
 Extracts every formula, groups stretched patterns (R1C1 canonicalization), builds a dependency graph (cells, ranges, defined names, VBA), decomposes composite functions with step-by-step evaluation, and optionally documents calculations via AI.
+
+![Global overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_01.png)
 
 ## Install
 
@@ -21,6 +27,8 @@ pip install linexcel
 # AI documentation (optional):
 pip install "linexcel[ai]"
 ```
+
+> **Note:** `linexcel` depends on [formualizer](https://pypi.org/project/formualizer/), a Rust-based spreadsheet engine. Prebuilt wheels are available for Linux, macOS, and Windows. If no wheel matches your platform, a Rust toolchain is required to build from source.
 
 ## Usage
 
@@ -92,20 +100,28 @@ requirements permit processing by Google. See the
 - **Standalone HTML viewer** — Cytoscape.js embedded, fully offline
 - **AI documentation** — Gemini generates provable docs from deterministic lineage
 
+## Sample output
+
+### Global overview
+
+![Global overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_01.png)
+
+![Global overview (node selected)](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_02.png)
+
+### Sample doc
+
+![Sample Doc](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/zoom_formula_doc.png)
+
 ## Security
 
 Please report vulnerabilities privately according to
 [SECURITY.md](SECURITY.md). Do not include sensitive workbooks or credentials in
 public issues.
 
-## Sample output
+## Changelog
 
-### Global overview
+See [CHANGELOG.md](CHANGELOG.md).
 
-![Global overview](imgs/overview_example_01.png)
+## License
 
-![Global overview (node selected)](imgs/overview_example_02.png)
-
-### Sample doc
-
-![Sample Doc](imgs/zoom_formula_doc.png)
+MIT — see [LICENSE](LICENSE).
