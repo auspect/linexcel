@@ -87,12 +87,14 @@ def wrap_iframe(document_html: str, height: int = 640) -> str:
 
 
 def render_html(
-    graph: dict[str, Any], title: str = "Lineage Excel", full_document: bool = True
+    graph: dict[str, Any], title: str = "Lineage Excel", full_document: bool = True, language: str = "en"
 ) -> str:
     """Build the viewer HTML for a given graph."""
     data = _safe_json(graph)
     body = _TEMPLATE.replace("__GRAPH_JSON__", data).replace(
         "__TITLE__", _escape_text(title)
+    ).replace(
+        "__LANG__", language
     )
     if not full_document:
         return body
@@ -100,7 +102,7 @@ def render_html(
     if scripts is None:
         scripts = "\n".join(f'<script src="{url}"></script>' for url in _CDN)
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<!doctype html><html lang='{language}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{_escape_text(title)}</title>{scripts}</head>"
         f"<body>{body}</body></html>"
@@ -142,7 +144,9 @@ _TEMPLATE = r"""
     background: #fff; cursor: pointer; font: inherit;
   }
   .lin-bar button.active { background: var(--ink); color: #fff; }
+  .lin-tab[hidden] { display: none; }
   .lin-main { flex: 1; display: flex; min-height: 0; }
+  .lin-main.hidden { display: none; }
   .lin-cy { flex: 1; position: relative; min-width: 0; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
@@ -207,48 +211,207 @@ _TEMPLATE = r"""
   .lin-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 1rem; }
   .lin-fallback { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; text-align: center; padding: 2rem; color: var(--ink2); }
+  .lin-overview { flex: 1; overflow-y: auto; padding: 1.4rem clamp(1rem, 4vw, 4rem) 3rem; }
+  .lin-overview-inner { max-width: 880px; }
+  .lin-overview h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
+  .lin-overview .lin-doc { font-size: .92rem; line-height: 1.55; }
+  .lin-ai-box {
+    background: #fbf9ff; border: 1px solid #e5dbff; border-radius: 8px;
+    padding: .75rem; margin: .8rem 0;
+  }
+  .lin-ai-badge {
+    display: inline-block; font-size: .65rem; font-weight: 700;
+    color: #5f3dc4; background: #efe9ff; border: 1px solid #d0bfff;
+    border-radius: 4px; padding: .1rem .35rem; margin-bottom: .4rem;
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+  #lin-sheets-sidebar button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: .5rem .8rem;
+    font-size: .85rem;
+    font-weight: 500;
+    color: var(--ink2);
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  #lin-sheets-sidebar button:hover {
+    background: var(--hair);
+    color: var(--ink);
+  }
+  #lin-sheets-sidebar button.active {
+    background: var(--ink) !important;
+    color: #fff !important;
+    font-weight: 600;
+  }
 </style>
 
 <div class="lin-root">
   <div class="lin-bar">
     <h1>__TITLE__</h1>
     <span class="stat" id="lin-stats"></span>
+    <button id="lin-tab-graph" class="lin-tab active">Graph</button>
+    <button id="lin-tab-overview" class="lin-tab" hidden>Workbook overview</button>
+    <button id="lin-tab-sheets" class="lin-tab" hidden>Sheets</button>
+    <button id="lin-tab-screenshots" class="lin-tab" hidden>Aperçu visuel</button>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
     <button id="lin-lay-dagre" class="active">Flow</button>
     <button id="lin-lay-fcose">Organic</button>
-    <button id="lin-fit">Fit</button>
+    <button id="lin-zoom-in" title="Zoom In">+</button>
+    <button id="lin-zoom-out" title="Zoom Out">−</button>
+    <button id="lin-fit" title="Fit All">Fit</button>
+    <button id="lin-fit-sel" style="display: none;" title="Fit Selection">Fit Selection</button>
   </div>
-  <div class="lin-main">
+  <div class="lin-main" id="lin-graph-main">
     <div class="lin-cy" id="lin-cy">
       <div class="lin-legend" id="lin-legend"></div>
     </div>
     <aside class="lin-panel hidden" id="lin-panel"></aside>
+  </div>
+  <div class="lin-main hidden" id="lin-overview-main">
+    <article class="lin-overview"><div class="lin-overview-inner" id="lin-overview"></div></article>
+  </div>
+  <div class="lin-main hidden" id="lin-sheets-main">
+    <div id="lin-sheets-container" style="display: flex; flex: 1; overflow: hidden; height: 100%;">
+      <aside id="lin-sheets-sidebar"></aside>
+      <article style="flex: 1; overflow-y: auto; padding: 1.5rem clamp(1rem, 4vw, 4rem) 3rem; background: #fff;">
+        <div id="lin-sheet-details" class="lin-overview-inner"></div>
+      </article>
+    </div>
+  </div>
+  <div class="lin-main hidden" id="lin-screenshots-main">
+    <article class="lin-overview"><div class="lin-overview-inner" id="lin-screenshots"></div></article>
   </div>
 </div>
 
 <script>
 (function () {
   var GRAPH = __GRAPH_JSON__;
+  var LANG = "__LANG__";
+  var I18N = {
+    en: {
+      graph: "Graph",
+      overview: "Workbook overview",
+      visual: "Visual preview",
+      search: "Search… ⏎",
+      fit_all: "Fit",
+      fit_sel: "Fit Selection",
+      zoom_in: "Zoom In",
+      zoom_out: "Zoom Out",
+      formula: "Formula",
+      stretched_pattern: "Stretched pattern over {count} cells ({bbox}).",
+      computed_value: "Computed value",
+      value_samples: "Value samples",
+      target: "Target",
+      step_decomp: "Step-by-step decomposition",
+      step_hint: "Each function/operator is evaluated individually.",
+      not_evaluated: "not evaluated",
+      precedents: "Precedents",
+      dependents: "Dependents",
+      ai_doc: "🤖 AI Documentation (Generated)",
+      ai_overview: "🤖 AI Generated Overview",
+      ai_overview_desc: "This overview was written by an AI model (Gemini) based on deterministic lineage. The facts presented are derived from the workbook's formulas and data.",
+      fallback: "Cytoscape could not be loaded (CDN access required). The JSON graph remains available via result.to_dict().",
+      stats: "{formulas} formulas · {nodes} nodes · {edges} edges{vba}",
+      kind_cell: "Formula",
+      kind_group: "Stretched formulas",
+      kind_input: "Source data",
+      kind_name: "Named cell/range",
+      kind_vba: "VBA",
+      kind_misc: "Other (aggregated)",
+      kind_opaque: "External reference",
+      sheets_summary_title: "Sheets Summary (Deterministic)",
+      placeholder_title: "Select a node",
+      placeholder_desc: "Select a node in the graph to inspect its formula, computed value, step-by-step evaluation, and AI-generated documentation.",
+      sheets_tab: "Sheets"
+    },
+    fr: {
+      graph: "Graphe",
+      overview: "Synthèse générale",
+      visual: "Aperçu visuel",
+      search: "Rechercher… ⏎",
+      fit_all: "Ajuster",
+      fit_sel: "Ajuster la sélection",
+      zoom_in: "Zoom avant",
+      zoom_out: "Zoom arrière",
+      formula: "Formule",
+      stretched_pattern: "Formule étirée sur {count} cellules ({bbox}).",
+      computed_value: "Valeur calculée",
+      value_samples: "Échantillons de valeurs",
+      target: "Cible",
+      step_decomp: "Décomposition pas-à-pas",
+      step_hint: "Chaque fonction et opérateur est évalué individuellement.",
+      not_evaluated: "non évalué",
+      precedents: "Précédents",
+      dependents: "Dépendants",
+      ai_doc: "🤖 Documentation IA (Générée)",
+      ai_overview: "🤖 Synthèse Générée par IA",
+      ai_overview_desc: "Cette synthèse a été rédigée par un modèle d'IA (Gemini) à partir du lignage de calculs déterministe. Les faits présentés proviennent des formules et des données du classeur.",
+      fallback: "Cytoscape n'a pas pu être chargé (accès CDN requis). Le graphe JSON reste disponible via result.to_dict().",
+      stats: "{formulas} formules · {nodes} nœuds · {edges} liens{vba}",
+      kind_cell: "Formule",
+      kind_group: "Formules étirées",
+      kind_input: "Source de données",
+      kind_name: "Cellule/plage nommée",
+      kind_vba: "VBA",
+      kind_misc: "Autre (agrégé)",
+      kind_opaque: "Référence externe",
+      sheets_summary_title: "Synthèse par feuille (Déterministe)",
+      placeholder_title: "Sélectionner un nœud",
+      placeholder_desc: "Sélectionnez un nœud dans le graphe pour afficher sa formule, sa valeur calculée, sa décomposition pas à pas et sa documentation IA.",
+      sheets_tab: "Feuilles"
+    }
+  };
+
+  function _t(key, replacements) {
+    var langDict = I18N[LANG] || I18N.en;
+    var str = langDict[key] || I18N.en[key] || key;
+    if (replacements) {
+      Object.keys(replacements).forEach(function (k) {
+        str = str.replace('{' + k + '}', replacements[k]);
+      });
+    }
+    return str;
+  }
+
   var KIND = {
-    cell:  { color: '#2a78d6', shape: 'round-rectangle', label: 'Formula' },
-    group: { color: '#4a3aa7', shape: 'round-rectangle', label: 'Stretched formulas' },
-    input: { color: '#1baf7a', shape: 'ellipse', label: 'Source data' },
-    name:  { color: '#eda100', shape: 'diamond', label: 'Defined name' },
-    vba:   { color: '#eb6834', shape: 'hexagon', label: 'VBA' },
-    misc:  { color: '#898781', shape: 'octagon', label: 'Other (aggregated)' },
-    opaque:{ color: '#898781', shape: 'ellipse', label: 'External reference' }
+    cell:  { color: '#2a78d6', shape: 'round-rectangle', labelKey: 'kind_cell' },
+    group: { color: '#4a3aa7', shape: 'round-rectangle', labelKey: 'kind_group' },
+    input: { color: '#1baf7a', shape: 'ellipse', labelKey: 'kind_input' },
+    name:  { color: '#eda100', shape: 'diamond', labelKey: 'kind_name' },
+    vba:   { color: '#eb6834', shape: 'hexagon', labelKey: 'kind_vba' },
+    misc:  { color: '#898781', shape: 'octagon', labelKey: 'kind_misc' },
+    opaque:{ color: '#898781', shape: 'ellipse', labelKey: 'kind_opaque' }
   };
   var byId = {};
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
 
   function boot() {
+    setupTabs();
+
+    // Set UI labels in the correct language
+    document.getElementById('lin-tab-graph').textContent = _t('graph');
+    document.getElementById('lin-tab-overview').textContent = _t('overview');
+    document.getElementById('lin-tab-sheets').textContent = _t('sheets_tab');
+    document.getElementById('lin-tab-screenshots').textContent = _t('visual');
+    document.getElementById('lin-search').placeholder = _t('search');
+    document.getElementById('lin-zoom-in').title = _t('zoom_in');
+    document.getElementById('lin-zoom-out').title = _t('zoom_out');
+    document.getElementById('lin-fit').title = _t('fit_all');
+    document.getElementById('lin-fit').textContent = _t('fit_all');
+    document.getElementById('lin-fit-sel').title = _t('fit_sel');
+    document.getElementById('lin-fit-sel').textContent = _t('fit_sel');
+
     var cyContainer = document.getElementById('lin-cy');
     if (typeof cytoscape === 'undefined') {
       var f = document.createElement('div');
       f.className = 'lin-fallback';
-      f.textContent = 'Cytoscape could not be loaded (CDN access required). '
-        + 'The JSON graph remains available via result.to_dict().';
+      f.textContent = _t('fallback');
       cyContainer.appendChild(f);
       return;
     }
@@ -260,10 +423,13 @@ _TEMPLATE = r"""
     } catch (e) { /* already registered */ }
 
     var stats = GRAPH.meta.stats;
-    document.getElementById('lin-stats').textContent =
-      stats.totalFormulas.toLocaleString('en') + ' formulas · ' +
-      stats.totalNodes + ' nodes · ' + stats.totalEdges + ' edges' +
-      (stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '');
+    var vbaText = stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '';
+    document.getElementById('lin-stats').textContent = _t('stats', {
+      formulas: stats.totalFormulas.toLocaleString(LANG),
+      nodes: stats.totalNodes,
+      edges: stats.totalEdges,
+      vba: vbaText
+    });
 
     var big = GRAPH.nodes.length + GRAPH.edges.length > 2500;
     var elements = [];
@@ -281,17 +447,50 @@ _TEMPLATE = r"""
     var initial = hasDagre ? 'dagre' : (hasFcose ? 'fcose' : 'cose');
     var cy = cytoscape({
       container: cyContainer, elements: elements,
-      minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.25,
+      minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.75,
       pixelRatio: big ? 1 : 'auto', textureOnViewport: big, hideEdgesOnViewport: big,
       style: buildStyle(big), layout: layoutOpts(initial, hasFcose)
     });
 
     cy.on('tap', 'node', function (ev) { select(cy, ev.target.id()); });
     cy.on('tap', function (ev) { if (ev.target === cy) clearSel(cy); });
+    renderPlaceholder();
 
     document.getElementById('lin-fit').onclick = function () {
       cy.animate({ fit: { padding: 40 }, duration: 250 });
     };
+    document.getElementById('lin-zoom-in').onclick = function () {
+      var currentZoom = cy.zoom();
+      var newZoom = Math.min(currentZoom * 1.4, cy.maxZoom());
+      cy.zoom({
+        level: newZoom,
+        renderedPosition: { x: cyContainer.clientWidth / 2, y: cyContainer.clientHeight / 2 }
+      });
+    };
+    document.getElementById('lin-zoom-out').onclick = function () {
+      var currentZoom = cy.zoom();
+      var newZoom = Math.max(currentZoom / 1.4, cy.minZoom());
+      cy.zoom({
+        level: newZoom,
+        renderedPosition: { x: cyContainer.clientWidth / 2, y: cyContainer.clientHeight / 2 }
+      });
+    };
+    var fitSelBtn = document.getElementById('lin-fit-sel');
+    fitSelBtn.onclick = function () {
+      var sel = cy.nodes(':selected');
+      if (sel.length > 0) {
+        cy.animate({ fit: { eles: sel, padding: 40 }, duration: 250 });
+      }
+    };
+    cy.on('select unselect', function () {
+      var sel = cy.nodes(':selected');
+      if (sel.length > 0) {
+        fitSelBtn.style.display = 'inline-block';
+      } else {
+        fitSelBtn.style.display = 'none';
+      }
+    });
+
     var bd = document.getElementById('lin-lay-dagre');
     var bf = document.getElementById('lin-lay-fcose');
     bd.onclick = function () {
@@ -315,6 +514,291 @@ _TEMPLATE = r"""
           zoom: Math.max(cy.zoom(), 1), duration: 300 }); }
     });
     buildLegend();
+    setupScreenshots();
+  }
+
+  function switchTab(activeBtn, activeMain) {
+    var graphButton = document.getElementById('lin-tab-graph');
+    var overviewButton = document.getElementById('lin-tab-overview');
+    var sheetsButton = document.getElementById('lin-tab-sheets');
+    var screenshotsButton = document.getElementById('lin-tab-screenshots');
+
+    var graphMain = document.getElementById('lin-graph-main');
+    var overviewMain = document.getElementById('lin-overview-main');
+    var sheetsMain = document.getElementById('lin-sheets-main');
+    var screenshotsMain = document.getElementById('lin-screenshots-main');
+
+    var allBtns = [graphButton, overviewButton, sheetsButton, screenshotsButton];
+    var allMains = [graphMain, overviewMain, sheetsMain, screenshotsMain];
+
+    allBtns.forEach(function(btn) { btn.classList.remove('active'); });
+    allMains.forEach(function(m) { m.classList.add('hidden'); });
+
+    activeBtn.classList.add('active');
+    activeMain.classList.remove('hidden');
+  }
+
+  function setupScreenshots() {
+    var images = GRAPH.meta.screenshots;
+    if (!images || !images.length) return;
+    if (typeof images === 'object' && !Array.isArray(images)) return;
+
+    var btn = document.getElementById('lin-tab-screenshots');
+    btn.hidden = false;
+
+    var container = document.getElementById('lin-screenshots');
+    container.appendChild(el('h2', null, 'Aperçu visuel du classeur'));
+
+    var activeIdx = 0;
+
+    var viewerContainer = el('div');
+    viewerContainer.style.display = 'flex';
+    viewerContainer.style.flexDirection = 'column';
+    viewerContainer.style.gap = '1.2rem';
+    viewerContainer.style.alignItems = 'center';
+
+    var switcher = el('div');
+    switcher.style.display = 'flex';
+    switcher.style.gap = '.4rem';
+    switcher.style.flexWrap = 'wrap';
+    switcher.style.marginBottom = '.5rem';
+
+    var imgEl = el('img');
+    imgEl.style.maxWidth = '100%';
+    imgEl.style.border = '1px solid var(--line)';
+    imgEl.style.borderRadius = '8px';
+    imgEl.style.boxShadow = '0 6px 16px rgba(11,11,11,.08)';
+    imgEl.style.background = '#fff';
+
+    function showPage(idx) {
+      activeIdx = idx;
+      imgEl.src = images[idx];
+      Array.from(switcher.children).forEach(function(child, cIdx) {
+        if (cIdx === idx) {
+          child.className = 'active';
+        } else {
+          child.className = '';
+        }
+      });
+    }
+
+    images.forEach(function(src, idx) {
+      var pBtn = document.createElement('button');
+      pBtn.textContent = 'Page ' + (idx + 1);
+      pBtn.style.padding = '.35rem .7rem';
+      pBtn.style.border = '1px solid var(--line)';
+      pBtn.style.borderRadius = '6px';
+      pBtn.style.background = '#fff';
+      pBtn.style.cursor = 'pointer';
+      pBtn.style.font = 'inherit';
+      pBtn.onclick = function() { showPage(idx); };
+      switcher.appendChild(pBtn);
+    });
+
+    viewerContainer.appendChild(switcher);
+    viewerContainer.appendChild(imgEl);
+    container.appendChild(viewerContainer);
+
+    var styleNode = document.createElement('style');
+    styleNode.innerHTML = '#lin-screenshots button.active { background: var(--ink) !important; color: #fff !important; }';
+    document.head.appendChild(styleNode);
+
+    var screenshotsButton = document.getElementById('lin-tab-screenshots');
+    var screenshotsMain = document.getElementById('lin-screenshots-main');
+
+    screenshotsButton.onclick = function () {
+      switchTab(screenshotsButton, screenshotsMain);
+      showPage(activeIdx);
+    };
+  }
+
+  function setupTabs() {
+    var overview = GRAPH.meta.workbookDoc;
+    var ctx = GRAPH.meta.workbookContext;
+
+    var graphButton = document.getElementById('lin-tab-graph');
+    var overviewButton = document.getElementById('lin-tab-overview');
+    var sheetsButton = document.getElementById('lin-tab-sheets');
+    var screenshotsButton = document.getElementById('lin-tab-screenshots');
+
+    var graphMain = document.getElementById('lin-graph-main');
+    var overviewMain = document.getElementById('lin-overview-main');
+    var sheetsMain = document.getElementById('lin-sheets-main');
+    var screenshotsMain = document.getElementById('lin-screenshots-main');
+
+    var overviewTarget = document.getElementById('lin-overview');
+
+    if (overview) {
+      overviewButton.hidden = false;
+      overviewTarget.innerHTML = '';
+
+      var banner = el('div', 'lin-ai-box');
+      var badge = el('span', 'lin-ai-badge', _t('ai_overview'));
+      banner.appendChild(badge);
+      var desc = el('p', 'lin-hint', _t('ai_overview_desc'));
+      banner.appendChild(desc);
+      overviewTarget.appendChild(banner);
+
+      var documentBody = el('div', 'lin-doc');
+      documentBody.innerHTML = _md(overview);
+      overviewTarget.appendChild(documentBody);
+    }
+
+    if (ctx && ctx.sheets && ctx.sheets.length) {
+      sheetsButton.hidden = false;
+
+      var sidebar = document.getElementById('lin-sheets-sidebar');
+      var detailsContainer = document.getElementById('lin-sheet-details');
+      sidebar.innerHTML = '';
+      detailsContainer.innerHTML = '';
+
+      function showSheetDetails(sheet) {
+        detailsContainer.innerHTML = '';
+
+        var card = el('div');
+        card.style.background = '#fff';
+
+        var header = el('div');
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.flexWrap = 'wrap';
+        header.style.gap = '.5rem';
+        header.style.borderBottom = '1px solid var(--hair)';
+        header.style.paddingBottom = '.6rem';
+        header.style.marginBottom = '.8rem';
+
+        var title = el('h3', null, '📄 ' + sheet.name);
+        title.style.margin = '0';
+        title.style.fontSize = '1.25rem';
+        title.style.color = 'var(--ink)';
+
+        var dims = el('span', 'lin-hint', sheet.dimensions.rows + ' rows × ' + sheet.dimensions.columns + ' cols');
+        dims.style.fontSize = '.85rem';
+
+        header.appendChild(title);
+        header.appendChild(dims);
+        card.appendChild(header);
+
+        var metaRow = el('div');
+        metaRow.style.display = 'flex';
+        metaRow.style.gap = '.4rem';
+        metaRow.style.flexWrap = 'wrap';
+        metaRow.style.marginBottom = '1rem';
+
+        if (sheet.visibility !== 'visible') {
+          var visBadge = el('span', 'lin-badge', '👁 ' + sheet.visibility);
+          visBadge.style.background = '#e5dbff'; visBadge.style.color = '#5f3dc4';
+          metaRow.appendChild(visBadge);
+        }
+        if (sheet.freeze_panes) {
+          var fBadge = el('span', 'lin-badge', '❄ Freeze: ' + sheet.freeze_panes);
+          fBadge.style.background = '#e3faf2'; fBadge.style.color = '#0ca678';
+          metaRow.appendChild(fBadge);
+        }
+        if (sheet.hidden_columns && sheet.hidden_columns.length) {
+          var hBadge = el('span', 'lin-badge', '🚫 Hidden cols: ' + sheet.hidden_columns.join(', '));
+          hBadge.style.background = '#fff0f6'; hBadge.style.color = '#d6336c';
+          metaRow.appendChild(hBadge);
+        }
+        if (sheet.merged_ranges && sheet.merged_ranges.length) {
+          var mBadge = el('span', 'lin-badge', '🔗 Merged: ' + sheet.merged_ranges.length);
+          mBadge.style.background = '#e8f7ff'; mBadge.style.color = '#0066cc';
+          metaRow.appendChild(mBadge);
+        }
+        if (metaRow.children.length > 0) {
+          card.appendChild(metaRow);
+        }
+
+        var comments = sheet.comments || [];
+        if (comments.length > 0) {
+          var commTitle = el('h4', null, '💬 Comments (' + comments.length + ')');
+          commTitle.style.fontSize = '.9rem';
+          commTitle.style.margin = '1rem 0 .5rem';
+          commTitle.style.color = 'var(--ink)';
+          card.appendChild(commTitle);
+
+          var commList = el('div');
+          commList.style.display = 'flex';
+          commList.style.flexDirection = 'column';
+          commList.style.gap = '.5rem';
+          comments.forEach(function(c) {
+            var cBox = el('div');
+            cBox.style.background = '#fcfcfb';
+            cBox.style.border = '1px solid var(--hair)';
+            cBox.style.borderRadius = '6px';
+            cBox.style.padding = '.6rem .8rem';
+            cBox.style.fontSize = '.85rem';
+
+            var cHead = el('div');
+            cHead.style.fontWeight = 'bold';
+            cHead.style.marginBottom = '.25rem';
+            cHead.style.color = 'var(--ink)';
+            cHead.appendChild(document.createTextNode(c.cell + ' (' + c.author + ')'));
+
+            var cText = el('div');
+            cText.style.color = 'var(--ink2)';
+            cText.appendChild(document.createTextNode(c.text));
+
+            cBox.appendChild(cHead);
+            cBox.appendChild(cText);
+            commList.appendChild(cBox);
+          });
+          card.appendChild(commList);
+        }
+
+        var screens = GRAPH.meta.screenshots;
+        if (screens && typeof screens === 'object' && !Array.isArray(screens) && screens[sheet.name] && screens[sheet.name].length) {
+          var sheetImgs = screens[sheet.name];
+          var imgTitle = el('h4', null, '📸 ' + _t('visual'));
+          imgTitle.style.fontSize = '.9rem';
+          imgTitle.style.margin = '1.5rem 0 .5rem';
+          imgTitle.style.color = 'var(--ink)';
+          card.appendChild(imgTitle);
+
+          var imgGallery = el('div');
+          imgGallery.style.display = 'flex';
+          imgGallery.style.flexDirection = 'column';
+          imgGallery.style.gap = '1rem';
+          imgGallery.style.alignItems = 'center';
+          imgGallery.style.marginTop = '.5rem';
+
+          sheetImgs.forEach(function(imgSrc) {
+            var img = el('img');
+            img.src = imgSrc;
+            img.style.maxWidth = '100%';
+            img.style.border = '1px solid var(--line)';
+            img.style.borderRadius = '6px';
+            img.style.boxShadow = '0 3px 12px rgba(11,11,11,.05)';
+            img.style.background = '#fff';
+            imgGallery.appendChild(img);
+          });
+          card.appendChild(imgGallery);
+        }
+
+        detailsContainer.appendChild(card);
+      }
+
+      ctx.sheets.forEach(function(sheet, idx) {
+        var sBtn = document.createElement('button');
+        sBtn.textContent = '📄 ' + sheet.name;
+        sBtn.onclick = function() {
+          Array.from(sidebar.children).forEach(function(child) { child.className = ''; });
+          sBtn.className = 'active';
+          showSheetDetails(sheet);
+        };
+        sidebar.appendChild(sBtn);
+        if (idx === 0) {
+          sBtn.className = 'active';
+          showSheetDetails(sheet);
+        }
+      });
+    }
+
+    graphButton.onclick = function() { switchTab(graphButton, graphMain); };
+    overviewButton.onclick = function() { switchTab(overviewButton, overviewMain); };
+    sheetsButton.onclick = function() { switchTab(sheetsButton, sheetsMain); };
+    screenshotsButton.onclick = function() { switchTab(screenshotsButton, screenshotsMain); };
   }
 
   function setActive(on, off) { on.classList.add('active'); off.classList.remove('active'); }
@@ -378,7 +862,7 @@ _TEMPLATE = r"""
       var sw = document.createElement('span');
       sw.className = 'lin-sw'; sw.style.background = KIND[k].color;
       span.appendChild(sw);
-      span.appendChild(document.createTextNode(KIND[k].label));
+      span.appendChild(document.createTextNode(_t(KIND[k].labelKey)));
       el.appendChild(span);
     });
   }
@@ -386,9 +870,9 @@ _TEMPLATE = r"""
   function fmt(v) {
     if (v === null || v === undefined) return '—';
     if (typeof v === 'number') return Number.isInteger(v) ? String(v)
-      : v.toLocaleString('en', { maximumFractionDigits: 4 });
+      : v.toLocaleString(LANG, { maximumFractionDigits: 4 });
     if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-    if (typeof v === 'object') return v.range ? (v.range + ' (' + v.n + ' cells)')
+    if (typeof v === 'object') return v.range ? (v.range + ' (' + v.n + ' ' + _t('cells') + ')')
       : JSON.stringify(v);
     return String(v);
   }
@@ -405,7 +889,32 @@ _TEMPLATE = r"""
   }
   function clearSel(cy) {
     cy.elements().removeClass('dimmed hl'); cy.nodes(':selected').unselect();
-    document.getElementById('lin-panel').classList.add('hidden');
+    renderPlaceholder();
+  }
+
+  function renderPlaceholder() {
+    var p = document.getElementById('lin-panel');
+    p.classList.remove('hidden'); p.innerHTML = '';
+
+    var icon = el('div');
+    icon.style.textAlign = 'center';
+    icon.style.fontSize = '2.5rem';
+    icon.style.marginTop = '4rem';
+    icon.style.color = 'var(--muted)';
+    icon.textContent = '🔍';
+    p.appendChild(icon);
+
+    var title = el('h2', null, _t('placeholder_title'));
+    title.style.textAlign = 'center';
+    title.style.marginTop = '1rem';
+    p.appendChild(title);
+
+    var desc = el('p', 'lin-hint');
+    desc.style.textAlign = 'center';
+    desc.style.lineHeight = '1.45';
+    desc.style.padding = '0 .5rem';
+    desc.textContent = _t('placeholder_desc');
+    p.appendChild(desc);
   }
 
   function el(tag, cls, txt) {
@@ -444,7 +953,8 @@ _TEMPLATE = r"""
     var p = document.getElementById('lin-panel');
     p.classList.remove('hidden'); p.innerHTML = '';
     var head = el('div'); head.style.display = 'flex'; head.style.alignItems = 'center';
-    var badge = el('span', 'lin-badge', (KIND[n.kind] || {}).label || n.kind);
+    var badgeLabel = (KIND[n.kind] || {}).labelKey ? _t(KIND[n.kind].labelKey) : n.kind;
+    var badge = el('span', 'lin-badge', badgeLabel);
     badge.style.background = (KIND[n.kind] || {}).color || '#898781';
     head.appendChild(badge);
     var close = el('button', 'lin-close', '✕'); close.onclick = function () { clearSel(cy); };
@@ -452,14 +962,14 @@ _TEMPLATE = r"""
     p.appendChild(el('h2', null, n.label));
 
     if (n.formula) {
-      var sf = section('Formula'); sf.appendChild(el('code', 'lin-formula', n.formula));
+      var sf = section(_t('formula')); sf.appendChild(el('code', 'lin-formula', n.formula));
       if (n.kind === 'group') {
         sf.appendChild(el('p', 'lin-hint',
-          'Stretched pattern over ' + n.count.toLocaleString('en') + ' cells (' + n.bbox + ').'));
+          _t('stretched_pattern', { count: n.count.toLocaleString(LANG), bbox: n.bbox })));
         sf.appendChild(el('code', 'lin-formula', n.r1c1));
       }
       p.appendChild(sf);
-      var sv = section('Computed value'); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
+      var sv = section(_t('computed_value')); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
       if (n.samples && n.samples.length) {
         n.samples.forEach(function (s) {
           sv.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
@@ -468,21 +978,25 @@ _TEMPLATE = r"""
       p.appendChild(sv);
     }
     if (n.kind === 'input' && n.values && n.values.length) {
-      var si = section('Value samples');
+      var si = section(_t('value_samples'));
       n.values.forEach(function (s) {
         si.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
       });
       if (n.count > n.values.length)
-        si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString('en') + ' cells'));
+        si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString(LANG) + ' ' + _t('cells')));
       p.appendChild(si);
     }
     if (n.kind === 'name' && n.targets) {
-      var sn = section('Target'); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
+      var sn = section(_t('target')); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
+      if (n.value !== undefined && n.value !== null) {
+        var sv = section(_t('computed_value')); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
+        p.appendChild(sv);
+      }
     }
     if (n.steps && (n.steps.children && n.steps.children.length || (n.steps.inputs && n.steps.inputs.length))) {
-      var ss = section('Step-by-step decomposition');
-      ss.appendChild(el('p', 'lin-hint', 'Each function/operator is evaluated individually.'));
+      var ss = section(_t('step_decomp'));
+      ss.appendChild(el('p', 'lin-hint', _t('step_hint')));
       renderStep(ss, n.steps, 0);
       p.appendChild(ss);
     }
@@ -492,14 +1006,16 @@ _TEMPLATE = r"""
     }
     // ponytail: mini-markdown renderer for AI docs (no external dep)
     if (n.doc) {
-      var sd = section('AI Documentation');
+      var sd = el('div', 'lin-ai-box');
+      var badge = el('span', 'lin-ai-badge', _t('ai_doc'));
+      sd.appendChild(badge);
       var dv = el('div', 'lin-doc');
       dv.innerHTML = _md(n.doc);
       sd.appendChild(dv); p.appendChild(sd);
     }
-    appendNav(cy, p, 'Precedents', GRAPH.edges.filter(function (e) { return e.target === n.id; })
+    appendNav(cy, p, _t('precedents'), GRAPH.edges.filter(function (e) { return e.target === n.id; })
       .map(function (e) { return { node: byId[e.source], kind: e.kind }; }));
-    appendNav(cy, p, 'Dependents', GRAPH.edges.filter(function (e) { return e.source === n.id; })
+    appendNav(cy, p, _t('dependents'), GRAPH.edges.filter(function (e) { return e.source === n.id; })
       .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
   }
 
@@ -513,7 +1029,7 @@ _TEMPLATE = r"""
     var val = el('div');
     if (s.evaluated) { val.appendChild(document.createTextNode('= '));
       var b = el('b', null, fmt(s.value)); val.appendChild(b); }
-    else val.appendChild(el('span', 'lin-hint', 'not evaluated'));
+    else val.appendChild(el('span', 'lin-hint', _t('not_evaluated')));
     d.appendChild(val);
     (s.inputs || []).forEach(function (inp) {
       if (inp.ref !== undefined) d.appendChild(el('span', 'lin-in', inp.ref + ' = ' + fmt(inp.value)));

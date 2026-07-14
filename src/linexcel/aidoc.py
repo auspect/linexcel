@@ -15,6 +15,7 @@ from typing import Any
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_DOSSIER_CHARS = 6_000
+MAX_WORKBOOK_DOSSIER_CHARS = 12_000
 
 _SYSTEM = {
     "en": """
@@ -44,6 +45,35 @@ Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.
 }
 
 _LANGUAGES = ("en", "fr")
+
+_WORKBOOK_SYSTEM = {
+    "en": """
+You document an Excel workbook for a business reader.
+Write a concise Markdown overview with these sections:
+1. **Purpose** — the workbook's apparent role, only when supported by the dossier;
+2. **Structure** — its sheets and how calculations are distributed;
+3. **Calculation flow** — important formula patterns, defined names, and links;
+4. **Automation and caveats** — VBA, external references, warnings, and analysis limits;
+5. **Questions to validate** — up to five concrete items that cannot be determined.
+Use only facts in the deterministic dossier. Do not infer a business purpose from
+sheet names alone. State "not determined by lineage" for missing information.
+Respond ONLY with the Markdown overview, no JSON or delimiters.
+""".strip(),
+    "fr": """
+Tu documentes un classeur Excel pour un lecteur métier.
+Rédige une synthèse concise en Markdown avec les sections suivantes :
+1. **Rôle** — la fonction apparente du classeur, uniquement si le dossier le confirme ;
+2. **Structure** — ses feuilles et la répartition des calculs ;
+3. **Flux de calcul** — les principaux motifs de formules, noms définis et liens ;
+4. **Automatisation et limites** — VBA, références externes,
+   avertissements et limites d'analyse ;
+5. **Questions à valider** — au plus cinq points concrets indéterminables.
+Utilise uniquement les faits présents dans le dossier déterministe. N'infère pas
+un rôle métier à partir des seuls noms de feuilles. Écris « non déterminé par le
+lignage » lorsqu'une information manque. Réponds UNIQUEMENT avec la synthèse
+Markdown, sans JSON ni délimiteur.
+""".strip(),
+}
 
 
 class AiDocError(RuntimeError):
@@ -139,6 +169,115 @@ def _compact_steps(step: dict | None) -> dict | None:
     if children:
         out["sub_steps"] = children
     return out
+
+
+def build_workbook_dossier(graph: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact, deterministic dossier for a whole-workbook overview."""
+    nodes = graph.get("nodes", [])
+    meta = graph.get("meta", {})
+    stats = meta.get("stats", {})
+    sheet_stats = stats.get("sheets", [])
+    nodes_by_sheet: dict[str, dict[str, int]] = {}
+    for node in nodes:
+        sheet = node.get("sheet")
+        if not sheet:
+            continue
+        kinds = nodes_by_sheet.setdefault(sheet, {})
+        kind = node.get("kind", "unknown")
+        kinds[kind] = kinds.get(kind, 0) + 1
+
+    sheets = [
+        {
+            "name": sheet.get("name"),
+            "dimensions": {"rows": sheet.get("rows"), "columns": sheet.get("cols")},
+            "formula_cells": sheet.get("formulaCells", 0),
+            "lineage_nodes": nodes_by_sheet.get(sheet.get("name"), {}),
+        }
+        for sheet in sheet_stats
+    ]
+    formula_patterns = sorted(
+        (
+            {
+                "sheet": node.get("sheet"),
+                "address": node.get("addr"),
+                "formula": node.get("formula"),
+                "cells": node.get("count", 1),
+                "extent": node.get("bbox"),
+            }
+            for node in nodes
+            if node.get("kind") in {"cell", "group"}
+        ),
+        key=lambda item: item["cells"],
+        reverse=True,
+    )[:20]
+    defined_names = [
+        {"name": node.get("label"), "targets": node.get("targets", [])}
+        for node in nodes
+        if node.get("kind") == "name"
+    ]
+    vba = [
+        {
+            "module": node.get("module"),
+            "procedure": node.get("proc"),
+            "type": node.get("procKind"),
+        }
+        for node in nodes
+        if node.get("kind") == "vba"
+    ]
+    opaque_references = [
+        node.get("label") for node in nodes if node.get("kind") == "opaque"
+    ]
+    return {
+        "filename": meta.get("filename"),
+        "analysis": {
+            "formula_cells": stats.get("totalFormulas", 0),
+            "lineage_nodes": stats.get("totalNodes", 0),
+            "lineage_edges": stats.get("totalEdges", 0),
+            "grouped_patterns": stats.get("groupedPatterns", 0),
+        },
+        "sheets": sheets,
+        "formula_patterns": formula_patterns,
+        "defined_names": defined_names,
+        "vba_procedures": vba,
+        "external_or_unresolved_references": opaque_references,
+        "warnings": meta.get("warnings", []),
+    }
+
+
+def document_workbook(
+    graph: dict[str, Any],
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    language: str = "en",
+) -> str:
+    """Generate a Markdown overview grounded in the workbook dossier."""
+    if language not in _LANGUAGES:
+        raise ValueError(
+            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
+        )
+    dossier = build_workbook_dossier(graph)
+    blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
+        dossier["formula_patterns"] = dossier["formula_patterns"][:5]
+        dossier["vba_procedures"] = dossier["vba_procedures"][:10]
+        blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    client = _client(api_key)
+    try:
+        response = client.models.generate_content(
+            model=model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
+            contents=(
+                _WORKBOOK_SYSTEM[language]
+                + "\n\nWorkbook dossier (deterministic, extracted from workbook):\n"
+                + blob
+            ),
+            config={"temperature": 0.2},
+        )
+        return (response.text or "").strip()
+    except AiDocError:
+        raise
+    except Exception as exc:
+        raise AiDocError(f"Gemini API call failed: {exc}") from exc
 
 
 def document_nodes(

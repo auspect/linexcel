@@ -58,6 +58,8 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
         graph=payload["graph"],
         engine=payload["engine"],
         analysis_id=payload["analysisId"],
+        source_data=data,
+        filename=name,
     )
 
 
@@ -74,11 +76,18 @@ class LineageResult:
         graph: dict[str, Any],
         engine: Any,
         analysis_id: str | None = None,
+        source_data: bytes | None = None,
+        filename: str | None = None,
     ):
         self.graph = graph
         self.engine = engine
         self.analysis_id = analysis_id or uuid.uuid4().hex[:16]
         self._by_id = {n["id"]: n for n in graph.get("nodes", [])}
+        self._source_data = source_data
+        self._source_filename = filename or graph.get("meta", {}).get(
+            "filename", "workbook.xlsx"
+        )
+        self._workbook_context: dict[str, Any] | None = None
 
     # -- convenience accessors --------------------------------------------
     @property
@@ -100,6 +109,22 @@ class LineageResult:
     @property
     def warnings(self) -> list[str]:
         return self.graph["meta"]["warnings"]
+
+    @property
+    def workbook_context(self) -> dict[str, Any]:
+        """Bounded sheet previews, comments, and layout markers.
+
+        Context is extracted with ``openpyxl`` only; Excel or LibreOffice is
+        not launched. It deliberately preserves first rows and columns rather
+        than assuming a tabular header convention.
+        """
+        if self._workbook_context is None:
+            from linexcel.insights import extract_workbook_context
+
+            self._workbook_context = extract_workbook_context(
+                self._source_bytes(), self._source_filename
+            )
+        return self._workbook_context
 
     def node(self, node_id: str) -> dict[str, Any] | None:
         """Return the node with the given id (or ``None``)"""
@@ -147,6 +172,29 @@ class LineageResult:
         path.write_text(self.to_json(indent=1), encoding="utf-8")
         return path
 
+    def save_screenshots(
+        self,
+        output_dir: str | Path,
+        *,
+        dpi: int = 144,
+        timeout: int = 60,
+    ) -> list[Path]:
+        """Render workbook pages to PNG using LibreOffice headless on Linux.
+
+        The optional renderer requires ``libreoffice`` (or ``soffice``) and
+        ``pdftoppm`` from Poppler. Use :attr:`workbook_context` when only the
+        non-rendered context is needed.
+        """
+        from linexcel.insights import render_workbook_screenshots
+
+        return render_workbook_screenshots(
+            self._source_bytes(),
+            self._source_filename,
+            output_dir,
+            dpi=dpi,
+            timeout=timeout,
+        )
+
     # -- AI documentation (optional) --------------------------------------
     def document(
         self,
@@ -181,6 +229,28 @@ class LineageResult:
             language=language,
         )
 
+    def document_workbook(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        language: str = "en",
+    ) -> str:
+        """Document the workbook structure and calculation flow via Gemini.
+
+        The response is grounded in workbook-level deterministic lineage data.
+        Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
+        display it in the viewer's separate overview tab.
+        """
+        from linexcel.aidoc import document_workbook
+
+        return document_workbook(
+            self.graph,
+            model=model,
+            api_key=api_key,
+            language=language,
+        )
+
     # -- visualization -----------------------------------------------------
     def to_html(
         self,
@@ -188,22 +258,70 @@ class LineageResult:
         title: str | None = None,
         full_document: bool = True,
         docs: dict[str, str] | None = None,
+        workbook_doc: str | None = None,
+        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        language: str = "en",
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
 
         If ``docs`` is provided (from :meth:`document`), AI documentation
-        for each node is embedded in the detail panel.
+        for each node is embedded in the detail panel. If ``workbook_doc`` is
+        provided (from :meth:`document_workbook`), it is shown in a separate
+        overview tab. If ``screenshots`` is provided (paths or base64), they
+        are displayed in a preview tab.
         """
         graph = self.graph
-        if docs:
-            graph = {
-                **graph,
-                "nodes": [
-                    {**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]
-                ],
-            }
+        meta = dict(graph.get("meta", {}))
+        meta["workbookContext"] = self.workbook_context
+
+        if workbook_doc:
+            meta["workbookDoc"] = workbook_doc
+
+        if screenshots:
+            import base64
+            if isinstance(screenshots, dict):
+                embeds_dict = {}
+                for sheet_name, s_list in screenshots.items():
+                    embeds = []
+                    for s in s_list:
+                        p = Path(s) if isinstance(s, (str, Path)) else None
+                        if p and p.exists():
+                            if p.suffix.lower() == ".png":
+                                b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                                embeds.append(f"data:image/png;base64,{b64}")
+                            else:
+                                embeds.append(str(s))
+                        else:
+                            embeds.append(str(s))
+                    embeds_dict[sheet_name] = embeds
+                meta["screenshots"] = embeds_dict
+            else:
+                embeds = []
+                for s in screenshots:
+                    p = Path(s) if isinstance(s, (str, Path)) else None
+                    if p and p.exists():
+                        if p.suffix.lower() == ".png":
+                            b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                            embeds.append(f"data:image/png;base64,{b64}")
+                        else:
+                            embeds.append(str(s))
+                    else:
+                        embeds.append(str(s))
+                meta["screenshots"] = embeds
+
+        graph = {
+            **graph,
+            "meta": meta,
+            "nodes": [
+                {**n, "doc": docs.get(n["id"], "") if docs else ""}
+                for n in graph["nodes"]
+            ],
+        }
         return render_html(
-            graph, title=title or self._title(), full_document=full_document
+            graph,
+            title=title or self._title(),
+            full_document=full_document,
+            language=language,
         )
 
     def save_html(
@@ -212,13 +330,32 @@ class LineageResult:
         *,
         title: str | None = None,
         docs: dict[str, str] | None = None,
+        workbook_doc: str | None = None,
+        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        language: str = "en",
     ) -> Path:
         path = Path(path)
-        path.write_text(self.to_html(title=title, docs=docs), encoding="utf-8")
+        path.write_text(
+            self.to_html(
+                title=title,
+                docs=docs,
+                workbook_doc=workbook_doc,
+                screenshots=screenshots,
+                language=language,
+            ),
+            encoding="utf-8",
+        )
         return path
 
     def _title(self) -> str:
         return self.graph.get("meta", {}).get("filename", "Lineage Excel")
+
+    def _source_bytes(self) -> bytes:
+        if self._source_data is None:
+            raise RuntimeError(
+                "Workbook bytes are unavailable. Create the result with analyze()."
+            )
+        return self._source_data
 
     def _repr_html_(self) -> str:
         """Inline rendering for marimo / Jupyter (isolated iframe)."""
