@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/linexcel)](https://pypi.org/project/linexcel/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![CI](https://github.com/auspect/linexcel/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/auspect/linexcel/actions/workflows/publish.yml/badge.svg)
 
 Data lineage analysis for Excel workbooks.
 
