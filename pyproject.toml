@@ -46,6 +46,7 @@ pattern = "(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)"
 packages = ["src/linexcel"]
 
 [tool.hatch.build.targets.wheel.force-include]
+"src/linexcel/py.typed" = "linexcel/py.typed"
 "THIRD_PARTY_NOTICES.md" = "linexcel/THIRD_PARTY_NOTICES.md"
 
 [tool.hatch.build.targets.sdist]
