@@ -202,16 +202,22 @@ class LineageResult:
         *,
         api_key: str | None = None,
         model: str | None = None,
+        base_url: str | None = None,
+        provider: Any = None,
         language: str = "en",
     ) -> dict[str, str]:
-        """Document nodes via Gemini from the deterministic lineage.
+        """Document nodes via AI from the deterministic lineage.
 
         Without ``node_ids``, documents all calculation nodes
         (cells, groups, VBA).
-        Requires ``google-genai`` and a key
-        (``api_key`` or ``GOOGLE_API_KEY``).
 
-        ``language`` selects the system prompt ("en" or "fr").
+        Provider resolution (first match wins):
+        1. ``provider`` — custom LLMProvider instance or callable
+        2. ``base_url`` or ``LINEXCEL_AI_BASE_URL`` — OpenAI-compatible endpoint
+           (Ollama, vLLM, LM Studio, OpenAI, …)
+        3. Google Gemini (default — requires ``google-genai`` and a key)
+
+        ``language`` selects the system prompt (\"en\" or \"fr\").
         """
         from linexcel.aidoc import document_nodes
 
@@ -226,6 +232,8 @@ class LineageResult:
             node_ids,
             model=model,
             api_key=api_key,
+            base_url=base_url,
+            provider=provider,
             language=language,
         )
 
@@ -234,13 +242,17 @@ class LineageResult:
         *,
         api_key: str | None = None,
         model: str | None = None,
+        base_url: str | None = None,
+        provider: Any = None,
         language: str = "en",
     ) -> str:
-        """Document the workbook structure and calculation flow via Gemini.
+        """Document the workbook structure and calculation flow via AI.
 
         The response is grounded in workbook-level deterministic lineage data.
         Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
         display it in the viewer's separate overview tab.
+
+        Provider resolution is the same as :meth:`document`.
         """
         from linexcel.aidoc import document_workbook
 
@@ -248,6 +260,8 @@ class LineageResult:
             self.graph,
             model=model,
             api_key=api_key,
+            base_url=base_url,
+            provider=provider,
             language=language,
         )
 
