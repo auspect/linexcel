@@ -80,6 +80,52 @@ result.save_html("out.html", screenshots=sheets_screenshots)
 
 Screenshots require LibreOffice and Poppler's `pdftoppm` installed on the system (e.g. on Debian/Ubuntu: `sudo apt install libreoffice-calc poppler-utils`). Rendering runs via LibreOffice headless, without opening a desktop Excel application.
 
+## AI documentation (optional, multi-provider)
+
+AI documentation is opt-in and supports any LLM provider.
+
+### Google Gemini (default)
+
+```python
+docs = result.document(api_key="...", language="en")
+```
+
+Requires `google-genai` (`pip install linexcel[ai]`).
+
+### OpenAI-compatible (Ollama, vLLM, LM Studio, OpenAI, …)
+
+```python
+# Ollama (local)
+docs = result.document(
+    base_url="http://localhost:11434/v1",
+    model="llama3.1",
+    language="en",
+)
+
+# Or via env vars
+# LINEXCEL_AI_BASE_URL=http://localhost:11434/v1
+# LINEXCEL_AI_MODEL=llama3.1
+```
+
+Requires `openai` (`pip install linexcel[openai]`).
+
+### Custom provider (any callable)
+
+```python
+def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
+    # call your model here
+    return response_text
+
+docs = result.document(provider=my_llm)
+```
+
+### Workbook-level overview
+
+```python
+workbook_doc = result.document_workbook(language="en")
+result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
+```
+
 ## AI data handling
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic
