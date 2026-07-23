@@ -432,11 +432,12 @@ def document_nodes(
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
         for fut in as_completed(futures):
+            node_id = futures[fut]
             try:
                 nid, text = fut.result()
-            except AiDocError:
-                raise
             except Exception as exc:
-                raise AiDocError(f"AI documentation failed: {exc}") from exc
+                raise AiDocError(
+                    f"AI documentation failed for node {node_id}: {exc}"
+                ) from exc
             docs[nid] = text
     return docs
