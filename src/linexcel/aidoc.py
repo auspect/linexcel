@@ -431,6 +431,5 @@ def document_nodes(
             raise
         except Exception as exc:
             raise AiDocError(f"AI documentation failed: {exc}") from exc
-        if text:
-            docs[nid] = text
+        docs[nid] = text or "(AI returned empty response)"
     return docs
