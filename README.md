@@ -154,10 +154,6 @@ requirements permit processing by Google. See the
 
 ![Global overview (node selected)](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_02.png)
 
-### Sample doc
-
-![Sample Doc](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/zoom_formula_doc.png)
-
 ## Security
 
 Please report vulnerabilities privately according to
