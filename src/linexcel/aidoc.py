@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Protocol, runtime_checkable
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
@@ -421,16 +422,21 @@ def document_nodes(
                 blob = json.dumps(d, ensure_ascii=False, default=str)
             dossiers.append((nid, blob))
 
-    for nid, blob in dossiers:
-        user = (
-            "Lineage dossier (deterministic, extracted from workbook):\n" + blob
-        )
-        try:
-            text = llm.generate(system, user, temperature=0.2)
-        except AiDocError:
-            raise
-        except Exception as exc:
-            raise AiDocError(f"AI documentation failed: {exc}") from exc
-        if text:
+    def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str]:
+        nid, blob = nid_blob
+        user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
+        text = llm.generate(system, user, temperature=0.2)
+        return nid, text or "(AI returned empty response)"
+
+    # ponytail: 4 workers, bump if API rate limits allow
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
+        for fut in as_completed(futures):
+            try:
+                nid, text = fut.result()
+            except AiDocError:
+                raise
+            except Exception as exc:
+                raise AiDocError(f"AI documentation failed: {exc}") from exc
             docs[nid] = text
     return docs
