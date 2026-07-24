@@ -42,8 +42,8 @@ _BRACKET_RE = re.compile(
     r"\[(?P<ref>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)\]"
 )
 
-_COMMENT_RE = re.compile(r"(?<!\")'.*$", re.MULTILINE)
-_STRINGS_KEEP = re.compile(r'"[^"]*"')
+_COMMENT_RE = re.compile(r"(?<!\*)'.*$", re.MULTILINE)
+_STRINGS_KEEP = re.compile(r'"(?:""|[^"])*"')  # ponytail: handles VBA "" escape
 
 
 @dataclass
