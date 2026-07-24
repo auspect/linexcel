@@ -86,14 +86,16 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
 
     # --- 1. structure -----------------------------------------------------
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
-    sheet_dims: dict[str, tuple[int, int]] = {}
-    for ws in owb.worksheets:
-        max_row, max_col = ws.max_row, ws.max_column
-        if not max_row or not max_col:
-            max_row, max_col = _force_dimensions(ws)
-        sheet_dims[ws.title] = (max_row or 1, max_col or 1)
-    defined_names = _collect_defined_names(owb)
-    owb.close()
+    try:
+        sheet_dims: dict[str, tuple[int, int]] = {}
+        for ws in owb.worksheets:
+            max_row, max_col = ws.max_row, ws.max_column
+            if not max_row or not max_col:
+                max_row, max_col = _force_dimensions(ws)
+            sheet_dims[ws.title] = (max_row or 1, max_col or 1)
+        defined_names = _collect_defined_names(owb)
+    finally:
+        owb.close()
 
     # --- 2. computation engine -------------------------------------------
     engine = fz.Workbook.from_bytes(data)
