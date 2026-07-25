@@ -1,6 +1,9 @@
 """Tests for the lineage module: references, grouping, graph, VBA, API."""
 
 import io
+from pathlib import Path
+
+import pytest
 
 from linexcel import LineageResult, analyze
 from linexcel.analyzer import analyze_workbook
@@ -92,7 +95,9 @@ class TestAnalyze:
 
     def test_group_inputs_are_aggregated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        input_labels = {n["label"] for n in graph["nodes"] if n["kind"] == "input"}
+        input_labels = {
+            n["label"] for n in graph["nodes"] if n["kind"] == "input"
+        }
         assert "Ventes!B2:B101" in input_labels
         assert "Ventes!C2:C101" in input_labels
 
@@ -103,16 +108,20 @@ class TestAnalyze:
         # name is fed by Params!A1 and feeds Synthese!B3
         edges = graph["edges"]
         assert any(
-            e["target"] == names[0]["id"] and "Params" in e["source"] for e in edges
+            e["target"] == names[0]["id"] and "Params" in e["source"]
+            for e in edges
         )
         assert any(
-            e["source"] == names[0]["id"] and e["target"].endswith("Synthese!B3")
+            e["source"] == names[0]["id"]
+            and e["target"].endswith("Synthese!B3")
             for e in edges
         )
 
     def test_composed_formula_steps_evaluated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        node = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B3"))
+        node = next(
+            n for n in graph["nodes"] if n["id"].endswith("Synthese!B3")
+        )
         steps = node["steps"]
         assert steps["label"] == "IF"
         assert steps["evaluated"] and steps["value"] == node["value"]
@@ -171,6 +180,63 @@ class TestPackageApi:
         data = json.loads(result.to_json())
         assert data["meta"]["stats"]["totalFormulas"] == 103
 
+    def test_workbook_context_preserves_preview_and_comments(
+        self, lineage_excel
+    ):
+        result = analyze(lineage_excel, filename="context.xlsx")
+        context = result.workbook_context
+        ventes = next(
+            sheet for sheet in context["sheets"] if sheet["name"] == "Ventes"
+        )
+        assert ventes["preview"][0]["values"][:4] == [
+            "Produit",
+            "Qté",
+            "Prix",
+            "CA",
+        ]
+        assert ventes["comments"] == [
+            {
+                "cell": "A1",
+                "author": "Data team",
+                "text": "Exported product category",
+            }
+        ]
+        assert ventes["freeze_panes"] == "A2"
+        assert ventes["hidden_columns"] == ["C"]
+        assert "F1:G1" in ventes["merged_ranges"]
+
+    def test_screenshots_report_missing_linux_renderer(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        from linexcel import WorkbookRenderError
+
+        monkeypatch.setattr("linexcel.insights.shutil.which", lambda _: None)
+        with pytest.raises(
+            WorkbookRenderError, match="LibreOffice and pdftoppm"
+        ):
+            analyze(lineage_excel).save_screenshots(tmp_path)
+
+    def test_screenshots_run_headless_conversion_pipeline(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        calls = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            if command[0] == "libreoffice":
+                pdf_dir = Path(command[command.index("--outdir") + 1])
+                (pdf_dir / "workbook.pdf").write_bytes(b"%PDF-1.4")
+            else:
+                Path(f"{command[-1]}-1.png").write_bytes(b"png")
+
+        commands = {"libreoffice": "libreoffice", "pdftoppm": "pdftoppm"}
+        monkeypatch.setattr("linexcel.insights.shutil.which", commands.get)
+        monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
+        screenshots = analyze(lineage_excel).save_screenshots(tmp_path)
+        assert [path.name for path in screenshots] == ["workbook-1.png"]
+        assert calls[0][1:4] == ["--headless", "--convert-to", "pdf"]
+        assert calls[1][1:3] == ["-png", "-r"]
+
     def test_to_html_is_offline_and_self_contained(self, lineage_excel):
         result = analyze(lineage_excel)
         html = result.to_html()
@@ -180,6 +246,25 @@ class TestPackageApi:
         assert "cytoscape" in html
         # the composite formula and its decomposition are in the injected data
         assert "Synthese!B3" in html
+
+    def test_workbook_doc_has_a_separate_html_tab(self, lineage_excel):
+        result = analyze(lineage_excel)
+        html = result.to_html(workbook_doc="# Workbook role\n\nA test overview.")
+        assert "Workbook overview" in html
+        assert "workbookDoc" in html
+        assert "A test overview." in html
+
+    def test_build_workbook_dossier(self, lineage_excel):
+        from linexcel.aidoc import build_workbook_dossier
+
+        dossier = build_workbook_dossier(analyze(lineage_excel).graph)
+        sheets = {sheet["name"]: sheet for sheet in dossier["sheets"]}
+        assert sheets["Ventes"]["formula_cells"] == 100
+        assert sheets["Ventes"]["dimensions"]["columns"] == 7
+        assert dossier["defined_names"] == [
+            {"name": "TauxCible", "targets": ["Params!A1"]}
+        ]
+        assert dossier["formula_patterns"][0]["cells"] == 100
 
     def test_repr_html_wraps_in_data_iframe(self, lineage_excel):
         result = analyze(lineage_excel)
@@ -191,7 +276,9 @@ class TestPackageApi:
         out = result.save_html(tmp_path / "graph.html")
         assert out.exists() and out.stat().st_size > 100_000
 
-    def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
+    def test_document_without_key_raises_aidocerror(
+        self, lineage_excel, monkeypatch
+    ):
         from linexcel.aidoc import AiDocError
 
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -208,14 +295,15 @@ class TestPackageApi:
 class TestVba:
     MODULES = {
         "Module1": (
-            "Public Sub MAJ()\n"
-            '    total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))\n'
-            '    Worksheets("Synthese").Range("B10").Value = total * Taux()\n'
-            '    Cells(3, 2) = "ok"\n'
-            "End Sub\n"
-            "Private Function Taux() As Double\n"
-            '    Taux = Sheets("Params").Range("A1").Value\n'
-            "End Function\n"
+            """Public Sub MAJ()
+        total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))
+        Worksheets("Synthese").Range("B10").Value = total * Taux()
+        Cells(3, 2) = "ok"
+    End Sub
+    Private Function Taux() As Double
+        Taux = Sheets("Params").Range("A1").Value
+    End Function
+"""
         )
     }
 

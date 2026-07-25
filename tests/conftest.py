@@ -7,6 +7,7 @@ def build_lineage_workbook() -> bytes:
     """Rich workbook for lineage tests: stretched formulas,
     cross-sheet references, defined name, composite functions."""
     from openpyxl import Workbook
+    from openpyxl.comments import Comment
     from openpyxl.workbook.defined_name import DefinedName
 
     wb = Workbook()
@@ -18,6 +19,11 @@ def build_lineage_workbook() -> bytes:
         ws.cell(row=r, column=2, value=r % 7 + 1)
         ws.cell(row=r, column=3, value=10.5 + (r % 13))
         ws.cell(row=r, column=4, value=f"=B{r}*C{r}")  # stretched formula ×100
+    ws["A1"].comment = Comment("Exported product category", "Data team")
+    ws.freeze_panes = "A2"
+    ws.column_dimensions["C"].hidden = True
+    ws.merge_cells("F1:G1")
+    ws["F1"] = "Presentation context"
 
     syn = wb.create_sheet("Synthese")
     syn["B1"] = "=SUM(Ventes!D2:D101)"
