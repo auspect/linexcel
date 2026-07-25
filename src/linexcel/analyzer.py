@@ -400,7 +400,8 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     proc_ids: dict[str, str] = {}
     for proc in vba_procs:
         pid = f"vp:{proc.module}.{proc.name}"
-        proc_ids[f"{proc.module}.{proc.name}"] = pid  # ponytail: keyed on module.name to avoid collision
+        # ponytail: keyed on module.name to avoid collision
+        proc_ids[f"{proc.module}.{proc.name}"] = pid
         nodes[pid] = {
             "id": pid,
             "kind": "vba",
