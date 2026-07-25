@@ -39,9 +39,7 @@ def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
             raise TypeError("Stream must be opened in binary mode ('rb').")
         name = filename or getattr(source, "name", None) or "workbook.xlsx"
         return bytes(data), Path(str(name)).name
-    raise TypeError(
-        "source must be a path, bytes, or a binary file object."
-    )
+    raise TypeError("source must be a path, bytes, or a binary file object.")
 
 
 def analyze(source: Source, filename: str | None = None) -> LineageResult:
@@ -170,7 +168,10 @@ class LineageResult:
 
     # -- visualization -----------------------------------------------------
     def to_html(
-        self, *, title: str | None = None, full_document: bool = True,
+        self,
+        *,
+        title: str | None = None,
+        full_document: bool = True,
         docs: dict[str, str] | None = None,
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
@@ -180,15 +181,19 @@ class LineageResult:
         """
         graph = self.graph
         if docs:
-            graph = {**graph, "nodes": [
-                {**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]
-            ]}
+            graph = {
+                **graph,
+                "nodes": [{**n, "doc": docs.get(n["id"], "")} for n in graph["nodes"]],
+            }
         return render_html(
             graph, title=title or self._title(), full_document=full_document
         )
 
     def save_html(
-        self, path: str | Path, *, title: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        title: str | None = None,
         docs: dict[str, str] | None = None,
     ) -> Path:
         path = Path(path)

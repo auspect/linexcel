@@ -25,8 +25,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ai = ["google-genai>=2.10.0"]
-dev = ["pytest>=8.0", "ruff>=0.9"]
+ai-google = ["google-genai>=2.10.0"]
+ai = ["google-genai>=2.10.0"]  # backward compat
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.9", "ty>=0.0.1a8"]
 
 [project.urls]
 Homepage = "https://github.com/auspect/linexcel"
@@ -57,8 +58,21 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "src/linexcel/viewer.py" = ["E501"]
 
+[tool.ty]
+# google-genai is optional (linexcel[ai-google]), not installed in dev
+# unresolved-import ignored via CLI flag in CI / prek
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-v --tb=short --strict-markers"
 filterwarnings = [
     "ignore:::oletools.olevba",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.63",
 ]

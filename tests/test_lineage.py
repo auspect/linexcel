@@ -208,14 +208,14 @@ class TestPackageApi:
 class TestVba:
     MODULES = {
         "Module1": (
-            'Public Sub MAJ()\n'
+            "Public Sub MAJ()\n"
             '    total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))\n'
             '    Worksheets("Synthese").Range("B10").Value = total * Taux()\n'
             '    Cells(3, 2) = "ok"\n'
-            'End Sub\n'
-            'Private Function Taux() As Double\n'
+            "End Sub\n"
+            "Private Function Taux() As Double\n"
             '    Taux = Sheets("Params").Range("A1").Value\n'
-            'End Function\n'
+            "End Function\n"
         )
     }
 

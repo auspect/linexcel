@@ -119,9 +119,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         for r0 in range(1, max_row + 1, SCAN_CHUNK_ROWS):
             r1 = min(r0 + SCAN_CHUNK_ROWS - 1, max_row)
             if scanned > MAX_CELLS_PER_SHEET:
-                warnings.append(
-                    f"Sheet '{sheet}' truncated after {scanned:,} cells"
-                )
+                warnings.append(f"Sheet '{sheet}' truncated after {scanned:,} cells")
                 break
             ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
             try:
