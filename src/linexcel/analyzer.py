@@ -400,7 +400,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     proc_ids: dict[str, str] = {}
     for proc in vba_procs:
         pid = f"vp:{proc.module}.{proc.name}"
-        proc_ids[proc.name] = pid
+        proc_ids[f"{proc.module}.{proc.name}"] = pid  # ponytail: keyed on module.name to avoid collision
         nodes[pid] = {
             "id": pid,
             "kind": "vba",
@@ -413,7 +413,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             "code": proc.code[:MAX_VBA_CODE_CHARS],
         }
     for proc in vba_procs:
-        pid = proc_ids[proc.name]
+        pid = proc_ids[f"{proc.module}.{proc.name}"]
         for callee in proc.calls:
             if callee in proc_ids:
                 add_edge(pid, proc_ids[callee], "call")
