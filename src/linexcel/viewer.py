@@ -260,18 +260,12 @@ _TEMPLATE = r"""
     <button id="lin-tab-screenshots" class="lin-tab" hidden>Aperçu visuel</button>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
-<<<<<<< HEAD
     <button id="lin-lay-dagre">Flow</button>
     <button id="lin-lay-fcose" class="active">Organic</button>
-    <button id="lin-fit">Fit</button>
-=======
-    <button id="lin-lay-dagre" class="active">Flow</button>
-    <button id="lin-lay-fcose">Organic</button>
     <button id="lin-zoom-in" title="Zoom In">+</button>
     <button id="lin-zoom-out" title="Zoom Out">−</button>
     <button id="lin-fit" title="Fit All">Fit</button>
     <button id="lin-fit-sel" style="display: none;" title="Fit Selection">Fit Selection</button>
->>>>>>> origin/main
   </div>
   <div class="lin-main" id="lin-graph-main">
     <div class="lin-cy" id="lin-cy">
@@ -438,10 +432,16 @@ _TEMPLATE = r"""
     });
 
     var big = GRAPH.nodes.length + GRAPH.edges.length > 2500;
+    var degreeMap = {};
+    GRAPH.edges.forEach(function (e) {
+      degreeMap[e.source] = (degreeMap[e.source] || 0) + 1;
+      degreeMap[e.target] = (degreeMap[e.target] || 0) + 1;
+    });
     var elements = [];
     GRAPH.nodes.forEach(function (n) {
       elements.push({ data: {
-        id: n.id, label: shortLabel(n), size: nodeSize(n)
+        id: n.id, label: shortLabel(n), size: nodeSize(n),
+        degree: degreeMap[n.id] || 0
       }, classes: n.kind });
     });
     GRAPH.edges.forEach(function (e) {
