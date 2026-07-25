@@ -300,7 +300,7 @@ _TEMPLATE = r"""
     bf.onclick = function () {
       setActive(bf, bd); cy.layout(layoutOpts('fcose', hasFcose)).run();
     };
-    if (initial !== 'fcose') setActive(bd, bf);
+    if (initial === 'dagre') setActive(bd, bf);
     var search = document.getElementById('lin-search');
     search.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter') return;
