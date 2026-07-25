@@ -5,10 +5,23 @@ __pycache__/
 dist/
 build/
 .venv/
+.pytest_cache/
+.ruff_cache/
+coverage.xml
 
 # IDE
 .vscode/
 .idea/
+
+# Local data and secrets
+.env
+.env.*
+!.env.example
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+out.html
 
 # OS
 .DS_Store

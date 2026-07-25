@@ -86,14 +86,16 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
 
     # --- 1. structure -----------------------------------------------------
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
-    sheet_dims: dict[str, tuple[int, int]] = {}
-    for ws in owb.worksheets:
-        max_row, max_col = ws.max_row, ws.max_column
-        if not max_row or not max_col:
-            max_row, max_col = _force_dimensions(ws)
-        sheet_dims[ws.title] = (max_row or 1, max_col or 1)
-    defined_names = _collect_defined_names(owb)
-    owb.close()
+    try:
+        sheet_dims: dict[str, tuple[int, int]] = {}
+        for ws in owb.worksheets:
+            max_row, max_col = ws.max_row, ws.max_column
+            if not max_row or not max_col:
+                max_row, max_col = _force_dimensions(ws)
+            sheet_dims[ws.title] = (max_row or 1, max_col or 1)
+        defined_names = _collect_defined_names(owb)
+    finally:
+        owb.close()
 
     # --- 2. computation engine -------------------------------------------
     engine = fz.Workbook.from_bytes(data)
@@ -118,7 +120,8 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         fsheet = engine.sheet(sheet)
         for r0 in range(1, max_row + 1, SCAN_CHUNK_ROWS):
             r1 = min(r0 + SCAN_CHUNK_ROWS - 1, max_row)
-            if scanned > MAX_CELLS_PER_SHEET:
+            chunk_cells = (r1 - r0 + 1) * max_col
+            if scanned + chunk_cells > MAX_CELLS_PER_SHEET:
                 warnings.append(
                     f"Sheet '{sheet}' truncated after {scanned:,} cells"
                 )
@@ -282,12 +285,24 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     for name, targets in defined_names.items():
         node_id = f"n:{name}"
         name_nodes[name.upper()] = node_id
+        val = None
+        if targets:
+            first = targets[0]
+            if first.r1 == first.r2 and first.c1 == first.c2:
+                val = _cell_value(
+                    engine, first.sheet, first.r1, first.c1, engine_sheets
+                )
+            else:
+                val_samples = _sample_range_values(engine, first, engine_sheets)
+                if val_samples:
+                    val = val_samples[0]["value"]
         nodes[node_id] = {
             "id": node_id,
             "kind": "name",
             "label": name,
             "sheet": targets[0].sheet if targets else None,
             "targets": [t.to_a1() for t in targets],
+            "value": val,
         }
         for rect in targets:
             resolve_rect_edges(rect, node_id, kind="name")
@@ -385,7 +400,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     proc_ids: dict[str, str] = {}
     for proc in vba_procs:
         pid = f"vp:{proc.module}.{proc.name}"
-        proc_ids[proc.name] = pid
+        proc_ids[f"{proc.module}.{proc.name}"] = pid  # ponytail: keyed on module.name to avoid collision
         nodes[pid] = {
             "id": pid,
             "kind": "vba",
@@ -398,7 +413,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             "code": proc.code[:MAX_VBA_CODE_CHARS],
         }
     for proc in vba_procs:
-        pid = proc_ids[proc.name]
+        pid = proc_ids[f"{proc.module}.{proc.name}"]
         for callee in proc.calls:
             if callee in proc_ids:
                 add_edge(pid, proc_ids[callee], "call")
