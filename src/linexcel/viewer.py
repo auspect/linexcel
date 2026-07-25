@@ -215,8 +215,8 @@ _TEMPLATE = r"""
     <span class="stat" id="lin-stats"></span>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
-    <button id="lin-lay-dagre" class="active">Flow</button>
-    <button id="lin-lay-fcose">Organic</button>
+    <button id="lin-lay-dagre">Flow</button>
+    <button id="lin-lay-fcose" class="active">Organic</button>
     <button id="lin-fit">Fit</button>
   </div>
   <div class="lin-main">
@@ -278,7 +278,7 @@ _TEMPLATE = r"""
     });
 
     var hasDagre = typeof dagre !== 'undefined' || window.cytoscapeDagre;
-    var initial = hasDagre ? 'dagre' : (hasFcose ? 'fcose' : 'cose');
+    var initial = hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose');
     var cy = cytoscape({
       container: cyContainer, elements: elements,
       minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.25,
@@ -300,7 +300,7 @@ _TEMPLATE = r"""
     bf.onclick = function () {
       setActive(bf, bd); cy.layout(layoutOpts('fcose', hasFcose)).run();
     };
-    if (initial !== 'dagre') setActive(bf, bd);
+    if (initial !== 'fcose') setActive(bd, bf);
     var search = document.getElementById('lin-search');
     search.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter') return;
@@ -344,6 +344,8 @@ _TEMPLATE = r"""
         'font-size': 9, 'min-zoomed-font-size': 8, 'text-valign': 'bottom',
         'text-margin-y': 4, 'text-wrap': 'ellipsis', 'text-max-width': 130,
         color: '#52514e', 'border-width': 1.5, 'border-color': 'rgba(11,11,11,0.18)' } },
+      { selector: 'node[degree <= 1]', style: { 'opacity': 0.55 } },
+      { selector: 'node[degree = 2]', style: { 'opacity': 0.75 } },
       { selector: 'edge', style: {
         width: 1.4, 'curve-style': big ? 'straight' : 'bezier',
         'target-arrow-shape': 'triangle', 'arrow-scale': 0.75,
