@@ -71,7 +71,8 @@ select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short --strict-markers"
+addopts = "-v --tb=short --strict-markers --doctest-modules"
+doctest_optionflags = ["NORMALIZE_WHITESPACE"]
 filterwarnings = [
     "ignore:::oletools.olevba",
 ]
