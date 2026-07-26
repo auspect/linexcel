@@ -30,7 +30,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --extra docs
       - run: uv run mkdocs build --strict
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
@@ -42,5 +42,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/deploy-pages@v6
+      - uses: actions/deploy-pages@v4
         id: deployment
