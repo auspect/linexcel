@@ -1,0 +1,3 @@
+# linexcel.result
+
+::: linexcel.result

@@ -24,7 +24,17 @@ _SHEET_PREFIX_RE = re.compile(
 
 
 def col_to_num(col: str) -> int:
-    """Convert a column letter (A, B, ..., XFD) to a 1-indexed number."""
+    """Convert a column letter (A, B, ..., XFD) to a 1-indexed number.
+
+    >>> col_to_num("A")
+    1
+    >>> col_to_num("Z")
+    26
+    >>> col_to_num("AA")
+    27
+    >>> col_to_num("XFD")
+    16384
+    """
     n = 0
     for ch in col.upper():
         n = n * 26 + (ord(ch) - 64)
@@ -32,7 +42,17 @@ def col_to_num(col: str) -> int:
 
 
 def num_to_col(n: int) -> str:
-    """Convert a 1-indexed column number to letters."""
+    """Convert a 1-indexed column number to letters.
+
+    >>> num_to_col(1)
+    'A'
+    >>> num_to_col(26)
+    'Z'
+    >>> num_to_col(27)
+    'AA'
+    >>> num_to_col(16384)
+    'XFD'
+    """
     out = ""
     while n > 0:
         n, rem = divmod(n - 1, 26)
@@ -52,6 +72,11 @@ class Rect:
 
     @property
     def ncells(self) -> int:
+        """Number of cells in the rectangle.
+
+        >>> Rect(None, 1, 1, 3, 2).ncells
+        6
+        """
         return (self.r2 - self.r1 + 1) * (self.c2 - self.c1 + 1)
 
     def clipped(self, max_row: int, max_col: int) -> Rect | None:
@@ -63,6 +88,13 @@ class Rect:
         return Rect(self.sheet, self.r1, self.c1, r2, c2)
 
     def intersects(self, other: Rect) -> bool:
+        """Check if two rectangles overlap.
+
+        >>> Rect(None, 1, 1, 3, 3).intersects(Rect(None, 2, 2, 5, 5))
+        True
+        >>> Rect(None, 1, 1, 2, 2).intersects(Rect(None, 4, 4, 5, 5))
+        False
+        """
         return not (
             self.r2 < other.r1
             or other.r2 < self.r1
@@ -71,6 +103,15 @@ class Rect:
         )
 
     def to_a1(self) -> str:
+        """Convert to A1 notation string.
+
+        >>> Rect(None, 1, 1, 1, 1).to_a1()
+        'A1'
+        >>> Rect(None, 1, 1, 3, 3).to_a1()
+        'A1:C3'
+        >>> Rect("Sheet1", 1, 1, 1, 1).to_a1()
+        'Sheet1!A1'
+        """
         start = f"{num_to_col(self.c1)}{self.r1}"
         end = f"{num_to_col(self.c2)}{self.r2}"
         addr = start if start == end else f"{start}:{end}"
@@ -78,14 +119,30 @@ class Rect:
 
 
 def quote_sheet(sheet: str) -> str:
-    """Quote a sheet name if necessary for inclusion in a formula."""
+    """Quote a sheet name if necessary for inclusion in a formula.
+
+    >>> quote_sheet("Sheet1")
+    'Sheet1'
+    >>> quote_sheet("Sheet 1")
+    "'Sheet 1'"
+    >>> quote_sheet("L'été")
+    "'L''été'"
+    """
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", sheet):
         return sheet
     return "'" + sheet.replace("'", "''") + "'"
 
 
 def split_sheet_prefix(ref: str) -> tuple[str | None, str]:
-    """Split the sheet prefix from a reference ('Sheet 1'!A1 → (Sheet 1, A1))."""
+    """Split the sheet prefix from a reference ('Sheet 1'!A1 → (Sheet 1, A1)).
+
+    >>> split_sheet_prefix("Sheet1!A1")
+    ('Sheet1', 'A1')
+    >>> split_sheet_prefix("'My Sheet'!B2:C3")
+    ('My Sheet', 'B2:C3')
+    >>> split_sheet_prefix("A1")
+    (None, 'A1')
+    """
     m = _SHEET_PREFIX_RE.match(ref)
     if not m:
         return None, ref
@@ -101,6 +158,17 @@ def parse_ref(ref: str, default_sheet: str | None = None) -> Rect | None:
 
     Returns ``None`` if the string is not a valid A1 reference
     (defined name, structured table reference, ...).
+
+    >>> parse_ref("A1")
+    Rect(sheet=None, r1=1, c1=1, r2=1, c2=1)
+    >>> parse_ref("B3:D5")
+    Rect(sheet=None, r1=3, c1=2, r2=5, c2=4)
+    >>> parse_ref("Sheet1!$C$2")
+    Rect(sheet='Sheet1', r1=2, c1=3, r2=2, c2=3)
+    >>> parse_ref("A:A") is None
+    False
+    >>> parse_ref("not_a_ref") is None
+    True
     """
     sheet, body = split_sheet_prefix(ref)
     if sheet is None:

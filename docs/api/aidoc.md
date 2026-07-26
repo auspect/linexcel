@@ -1,0 +1,3 @@
+# linexcel.aidoc
+
+::: linexcel.aidoc
