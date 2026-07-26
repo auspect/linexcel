@@ -2,4 +2,30 @@ site/
 __pycache__/
 *.pyc
 .venv/
+<<<<<<< HEAD
 *.egg-info/
+=======
+.pytest_cache/
+.ruff_cache/
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+
+# Local data and secrets
+.env
+.env.*
+!.env.example
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+out.html
+
+# OS
+.DS_Store
+
+# Docs build output
+site/
+>>>>>>> origin/main
