@@ -163,9 +163,7 @@ class LineageResult:
         return self.graph
 
     def to_json(self, *, indent: int | None = None) -> str:
-        return json.dumps(
-            self.graph, ensure_ascii=False, indent=indent, default=str
-        )
+        return json.dumps(self.graph, ensure_ascii=False, indent=indent, default=str)
 
     def save_json(self, path: str | Path) -> Path:
         path = Path(path)
@@ -223,9 +221,7 @@ class LineageResult:
 
         if node_ids is None:
             node_ids = [
-                n["id"]
-                for n in self.nodes
-                if n.get("kind") in ("cell", "group", "vba")
+                n["id"] for n in self.nodes if n.get("kind") in ("cell", "group", "vba")
             ]
         return document_nodes(
             self.graph,
@@ -293,6 +289,7 @@ class LineageResult:
 
         if screenshots:
             import base64
+
             if isinstance(screenshots, dict):
                 embeds_dict = {}
                 for sheet_name, s_list in screenshots.items():

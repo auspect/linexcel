@@ -97,8 +97,7 @@ class LLMProvider(Protocol):
 
     def generate(
         self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 def _resolve_provider(
@@ -150,9 +149,7 @@ class _GeminiProvider:
             ) from exc
         self._genai = genai
         self._api_key = (
-            api_key
-            or os.getenv("GOOGLE_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
+            api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         )
         if not self._api_key:
             raise AiDocError(
@@ -185,9 +182,7 @@ class _OpenAICompatProvider:
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
-            raise AiDocError(
-                "openai is not installed (pip install openai)"
-            ) from exc
+            raise AiDocError("openai is not installed (pip install openai)") from exc
         self._client = OpenAI(
             api_key=api_key or os.getenv("OPENAI_API_KEY") or "ollama",  # no key needed
             base_url=base_url,
@@ -274,9 +269,7 @@ def _compact_steps(step: dict | None) -> dict | None:
     out = {
         "expression": step.get("expr"),
         "operation": step.get("label"),
-        "value": step.get("value")
-        if step.get("evaluated")
-        else "not evaluated",
+        "value": step.get("value") if step.get("evaluated") else "not evaluated",
     }
     if step.get("inputs"):
         out["inputs"] = step["inputs"]
@@ -381,9 +374,7 @@ def document_workbook(
     3. Google Gemini (default, backward-compatible)
     """
     if language not in _LANGUAGES:
-        raise ValueError(
-            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
-        )
+        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
     dossier = build_workbook_dossier(graph)
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
@@ -394,9 +385,7 @@ def document_workbook(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _WORKBOOK_SYSTEM[language]
-    user = (
-        "Workbook dossier (deterministic, extracted from workbook):\n" + blob
-    )
+    user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
         return llm.generate(system, user, temperature=0.2)
     except AiDocError:
@@ -420,9 +409,7 @@ def document_nodes(
     Provider resolution is the same as :func:`document_workbook`.
     """
     if language not in _LANGUAGES:
-        raise ValueError(
-            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
-        )
+        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
     llm, resolved_model = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
