@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_DOSSIER_CHARS = 6_000
@@ -95,8 +95,9 @@ class AiDocError(RuntimeError):
 class LLMProvider(Protocol):
     """Minimal protocol: system + user prompt → text response."""
 
-    def generate(self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
-        ...
+    def generate(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> str: ...
 
 
 def _resolve_provider(
@@ -119,8 +120,16 @@ def _resolve_provider(
     # OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.)
     base = base_url or os.getenv("LINEXCEL_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if base:
-        resolved_model = model or os.getenv("LINEXCEL_AI_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-        return _OpenAICompatProvider(base_url=base, api_key=api_key, model=resolved_model), resolved_model
+        resolved_model = (
+            model
+            or os.getenv("LINEXCEL_AI_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "gpt-4o-mini"
+        )
+        return (
+            _OpenAICompatProvider(base_url=base, api_key=api_key, model=resolved_model),
+            resolved_model,
+        )
 
     # Google Gemini (default, backward-compatible)
     resolved_model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
@@ -140,9 +149,7 @@ class _GeminiProvider:
             ) from exc
         self._genai = genai
         self._api_key = (
-            api_key
-            or os.getenv("GOOGLE_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
+            api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         )
         if not self._api_key:
             raise AiDocError(
@@ -152,7 +159,9 @@ class _GeminiProvider:
         self._client = genai.Client(api_key=self._api_key)
         self._model = model
 
-    def generate(self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
+    def generate(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> str:
         try:
             response = self._client.models.generate_content(
                 model=self._model,
@@ -167,20 +176,22 @@ class _GeminiProvider:
 class _OpenAICompatProvider:
     """OpenAI-compatible API client (works with Ollama, vLLM, LM Studio, etc.)."""
 
-    def __init__(self, *, base_url: str, api_key: str | None = None, model: str = "gpt-4o-mini"):
+    def __init__(
+        self, *, base_url: str, api_key: str | None = None, model: str = "gpt-4o-mini"
+    ):
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
-            raise AiDocError(
-                "openai is not installed (pip install openai)"
-            ) from exc
+            raise AiDocError("openai is not installed (pip install openai)") from exc
         self._client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY") or "ollama",  # ollama doesn't need a real key
+            api_key=api_key or os.getenv("OPENAI_API_KEY") or "ollama",  # no key needed
             base_url=base_url,
         )
         self._model = model
 
-    def generate(self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
+    def generate(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> str:
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -258,9 +269,7 @@ def _compact_steps(step: dict | None) -> dict | None:
     out = {
         "expression": step.get("expr"),
         "operation": step.get("label"),
-        "value": step.get("value")
-        if step.get("evaluated")
-        else "not evaluated",
+        "value": step.get("value") if step.get("evaluated") else "not evaluated",
     }
     if step.get("inputs"):
         out["inputs"] = step["inputs"]
@@ -365,9 +374,7 @@ def document_workbook(
     3. Google Gemini (default, backward-compatible)
     """
     if language not in _LANGUAGES:
-        raise ValueError(
-            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
-        )
+        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
     dossier = build_workbook_dossier(graph)
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
@@ -378,9 +385,7 @@ def document_workbook(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _WORKBOOK_SYSTEM[language]
-    user = (
-        "Workbook dossier (deterministic, extracted from workbook):\n" + blob
-    )
+    user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
         return llm.generate(system, user, temperature=0.2)
     except AiDocError:
@@ -404,9 +409,7 @@ def document_nodes(
     Provider resolution is the same as :func:`document_workbook`.
     """
     if language not in _LANGUAGES:
-        raise ValueError(
-            f"Unsupported language: {language!r}. Use one of {_LANGUAGES}"
-        )
+        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
     llm, resolved_model = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )

@@ -87,14 +87,17 @@ def wrap_iframe(document_html: str, height: int = 640) -> str:
 
 
 def render_html(
-    graph: dict[str, Any], title: str = "Lineage Excel", full_document: bool = True, language: str = "en"
+    graph: dict[str, Any],
+    title: str = "Lineage Excel",
+    full_document: bool = True,
+    language: str = "en",
 ) -> str:
     """Build the viewer HTML for a given graph."""
     data = _safe_json(graph)
-    body = _TEMPLATE.replace("__GRAPH_JSON__", data).replace(
-        "__TITLE__", _escape_text(title)
-    ).replace(
-        "__LANG__", language
+    body = (
+        _TEMPLATE.replace("__GRAPH_JSON__", data)
+        .replace("__TITLE__", _escape_text(title))
+        .replace("__LANG__", language)
     )
     if not full_document:
         return body
@@ -111,7 +114,9 @@ def render_html(
 
 def _escape_text(text: str) -> str:
     return (
-        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
 

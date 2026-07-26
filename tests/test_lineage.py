@@ -95,9 +95,7 @@ class TestAnalyze:
 
     def test_group_inputs_are_aggregated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        input_labels = {
-            n["label"] for n in graph["nodes"] if n["kind"] == "input"
-        }
+        input_labels = {n["label"] for n in graph["nodes"] if n["kind"] == "input"}
         assert "Ventes!B2:B101" in input_labels
         assert "Ventes!C2:C101" in input_labels
 
@@ -108,20 +106,16 @@ class TestAnalyze:
         # name is fed by Params!A1 and feeds Synthese!B3
         edges = graph["edges"]
         assert any(
-            e["target"] == names[0]["id"] and "Params" in e["source"]
-            for e in edges
+            e["target"] == names[0]["id"] and "Params" in e["source"] for e in edges
         )
         assert any(
-            e["source"] == names[0]["id"]
-            and e["target"].endswith("Synthese!B3")
+            e["source"] == names[0]["id"] and e["target"].endswith("Synthese!B3")
             for e in edges
         )
 
     def test_composed_formula_steps_evaluated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        node = next(
-            n for n in graph["nodes"] if n["id"].endswith("Synthese!B3")
-        )
+        node = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B3"))
         steps = node["steps"]
         assert steps["label"] == "IF"
         assert steps["evaluated"] and steps["value"] == node["value"]
@@ -180,14 +174,10 @@ class TestPackageApi:
         data = json.loads(result.to_json())
         assert data["meta"]["stats"]["totalFormulas"] == 103
 
-    def test_workbook_context_preserves_preview_and_comments(
-        self, lineage_excel
-    ):
+    def test_workbook_context_preserves_preview_and_comments(self, lineage_excel):
         result = analyze(lineage_excel, filename="context.xlsx")
         context = result.workbook_context
-        ventes = next(
-            sheet for sheet in context["sheets"] if sheet["name"] == "Ventes"
-        )
+        ventes = next(sheet for sheet in context["sheets"] if sheet["name"] == "Ventes")
         assert ventes["preview"][0]["values"][:4] == [
             "Produit",
             "Qté",
@@ -211,9 +201,7 @@ class TestPackageApi:
         from linexcel import WorkbookRenderError
 
         monkeypatch.setattr("linexcel.insights.shutil.which", lambda _: None)
-        with pytest.raises(
-            WorkbookRenderError, match="LibreOffice and pdftoppm"
-        ):
+        with pytest.raises(WorkbookRenderError, match="LibreOffice and pdftoppm"):
             analyze(lineage_excel).save_screenshots(tmp_path)
 
     def test_screenshots_run_headless_conversion_pipeline(
@@ -276,9 +264,7 @@ class TestPackageApi:
         out = result.save_html(tmp_path / "graph.html")
         assert out.exists() and out.stat().st_size > 100_000
 
-    def test_document_without_key_raises_aidocerror(
-        self, lineage_excel, monkeypatch
-    ):
+    def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
         from linexcel.aidoc import AiDocError
 
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)

@@ -1,0 +1,35 @@
+# prek.toml — pre-commit hooks for linexcel
+# https://prek.j178.dev
+
+[[hooks]]
+id = "ruff-check"
+name = "ruff check"
+entry = "uvx ruff check --fix"
+language = "system"
+files = '\.(py)$'
+args = ["src/", "tests/"]
+
+[[hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "uvx ruff format"
+language = "system"
+files = '\.(py)$'
+args = ["src/", "tests/"]
+
+[[hooks]]
+id = "ty"
+name = "ty (type check)"
+entry = "uv run ty check --ignore unresolved-import"
+language = "system"
+files = '\.(py)$'
+args = ["src/"]
+pass_filenames = false
+
+[[hooks]]
+id = "pytest"
+name = "pytest (fast)"
+entry = "uv run pytest tests/ -x -q -m 'not slow'"
+language = "system"
+pass_filenames = false
+always_run = true
