@@ -1,0 +1,3 @@
+# linexcel.insights
+
+::: linexcel.insights
