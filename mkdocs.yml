@@ -1,0 +1,62 @@
+site_name: linexcel
+site_description: Data lineage analysis for Excel workbooks
+site_url: https://auspect.github.io/linexcel
+repo_url: https://github.com/auspect/linexcel
+repo_name: auspect/linexcel
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+plugins:
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
+            show_root_heading: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Quick start: guide/quickstart.md
+      - AI documentation: guide/ai.md
+      - HTML export: guide/html.md
+      - Workbook context & screenshots: guide/context.md
+  - API:
+      - linexcel.result: api/result.md
+      - linexcel.analyzer: api/analyzer.md
+      - linexcel.aidoc: api/aidoc.md
+      - linexcel.refs: api/refs.md
+      - linexcel.vba: api/vba.md
+      - linexcel.insights: api/insights.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details

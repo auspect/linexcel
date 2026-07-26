@@ -25,3 +25,6 @@ out.html
 
 # OS
 .DS_Store
+
+# Docs build output
+site/
