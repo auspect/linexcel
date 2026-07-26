@@ -11,6 +11,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "src/linexcel/**/*.py"
 
 permissions:
   contents: read
@@ -27,11 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
-<<<<<<< HEAD
-      - run: uv sync --all-extras --group docs
-=======
-      - run: uv sync --all-extras
->>>>>>> origin/main
+      - run: uv sync --extra docs
       - run: uv run mkdocs build --strict
       - uses: actions/upload-pages-artifact@v5
         with:
