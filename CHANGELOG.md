@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Seven more languages for `language=`, covering both the AI prompts and the
+  viewer interface: `es`, `de`, `it`, `pt`, `nl`, `ja`, `zh` (with `en` and
+  `fr`, nine in total). The set stays a closed allowlist — `language` selects a
+  stored system prompt and reaches the generated JavaScript, so free-form input
+  would be a prompt-injection and interpolation vector
+- `linexcel.i18n`, single source of truth for the language list and the viewer
+  interface strings, which used to be hand-maintained inside the JS template.
+  The suite asserts `i18n.UI_STRINGS` and the two `aidoc` prompt registries
+  cover the same languages and the same keys
+
 - Multi-provider AI support: Google Gemini (default), OpenAI-compatible endpoints (Ollama, vLLM, LM Studio), and custom callables
 - `base_url` and `provider` parameters on `document()` and `document_workbook()`
 - Environment variables: `LINEXCEL_AI_BASE_URL`, `LINEXCEL_AI_MODEL`
@@ -41,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already-injected graph, so a cell, sheet name, or comment containing either
   literal was silently replaced by the title — and a title ending in a
   backslash truncated the embedded JSON, blanking the viewer
+- The `cells` interface string was used twice by the viewer but defined in no
+  locale, so reports fell through to the raw key ("1 000 cells" in French).
+  The unused `sheets_summary_title` key was dropped
 
 ### Changed
 - **Breaking:** `render_html()`, `to_html()` and `save_html()` reject a

@@ -59,6 +59,7 @@ nav:
       - result: api/result.md
       - analyzer: api/analyzer.md
       - aidoc: api/aidoc.md
+      - i18n: api/i18n.md
       - refs: api/refs.md
       - vba: api/vba.md
       - insights: api/insights.md

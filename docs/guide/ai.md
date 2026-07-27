@@ -56,6 +56,25 @@ not discard the ones that succeeded. The successful cards are returned and a
 `UserWarning` reports how many nodes were dropped; `AiDocError` is raised only
 when every node failed.
 
+## Languages
+
+`language=` drives both the system prompt sent to the model and the viewer
+interface. Nine are available: `en` (default), `fr`, `es`, `de`, `it`, `pt`,
+`nl`, `ja`, `zh`.
+
+```python
+docs = result.document(language="ja")
+result.save_html("out.html", docs=docs, language="ja")
+```
+
+It is a closed allowlist rather than free-form text — the value selects a stored
+prompt and reaches the generated JavaScript, so an arbitrary string would be a
+prompt-injection and interpolation vector. Any other value raises `ValueError`.
+
+Adding one means extending `linexcel.i18n.UI_STRINGS` and both prompt registries
+in `linexcel.aidoc`; the test suite asserts the three stay in sync, so a partial
+addition fails rather than surfacing as raw interface keys.
+
 ## Data handling
 
 The dossier sent for each node can include formulas, computed values,

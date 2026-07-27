@@ -42,7 +42,7 @@ result.stats              # {totalFormulas, totalNodes, ...}
 result.warnings           # list[str]
 
 # AI documentation (optional, requires google-genai):
-# Supports "en" (default) or "fr" language for both documentation and UI
+# language drives both the AI prompt and the viewer UI (see Languages below)
 docs = result.document(api_key="...", language="en")
 result.save_html("out.html", docs=docs, language="en")
 
@@ -129,6 +129,27 @@ fails is skipped with a warning rather than discarding the whole run.
 workbook_doc = result.document_workbook(language="en")
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
+
+## Languages
+
+`language=` sets both the AI prompt and the viewer interface:
+
+| Code | Language | Code | Language | Code | Language |
+| --- | --- | --- | --- | --- | --- |
+| `en` | English (default) | `it` | Italiano | `nl` | Nederlands |
+| `fr` | Français | `pt` | Português | `ja` | 日本語 |
+| `es` | Español | `de` | Deutsch | `zh` | 简体中文 |
+
+```python
+docs = result.document(language="de")
+result.save_html("out.html", docs=docs, language="de")
+```
+
+The set is a closed allowlist, not free-form text: `language` selects a stored
+system prompt and is interpolated into the generated viewer, so an arbitrary
+string would let a caller steer the model's instructions. Anything else raises
+`ValueError`. Reports embed only the requested language plus the English
+fallback, so adding languages does not grow the exported file.
 
 ## AI data handling
 

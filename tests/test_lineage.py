@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from linexcel import LineageResult, analyze
+from linexcel import viewer as viewer_module
 from linexcel.analyzer import analyze_workbook
 from linexcel.refs import (
     Rect,
@@ -318,6 +319,80 @@ class TestPackageApi:
             pass
         else:  # pragma: no cover
             raise AssertionError("AiDocError expected when no key is provided")
+
+
+class TestLanguages:
+    """The language set is a closed allowlist, and every registry must cover it.
+
+    A language present in one registry but not another would surface as raw
+    interface keys in the report or as a KeyError when prompting.
+    """
+
+    def test_registries_cover_every_language(self):
+        from linexcel.aidoc import _SYSTEM, _WORKBOOK_SYSTEM
+        from linexcel.i18n import LANGUAGES, UI_STRINGS
+
+        assert set(UI_STRINGS) == set(LANGUAGES)
+        assert set(_SYSTEM) == set(LANGUAGES)
+        assert set(_WORKBOOK_SYSTEM) == set(LANGUAGES)
+
+    def test_every_language_defines_every_ui_key(self):
+        from linexcel.i18n import DEFAULT_LANGUAGE, UI_STRINGS
+
+        expected = set(UI_STRINGS[DEFAULT_LANGUAGE])
+        for language, strings in UI_STRINGS.items():
+            assert set(strings) == expected, f"{language} key set differs"
+
+    def test_ui_keys_match_what_the_viewer_asks_for(self):
+        """Guards against a key used by the template but defined nowhere."""
+        import re as _re
+        from pathlib import Path as _Path
+
+        from linexcel.i18n import DEFAULT_LANGUAGE, UI_STRINGS
+
+        source = _Path(viewer_module.__file__).read_text(encoding="utf-8")
+        used = set(_re.findall(r"_t\('([a-z_]+)'", source))
+        used |= set(_re.findall(r"labelKey: '([a-z_]+)'", source))
+        assert used, "no i18n key found in the viewer template"
+        assert used <= set(UI_STRINGS[DEFAULT_LANGUAGE]), (
+            f"keys used but not defined: {used - set(UI_STRINGS[DEFAULT_LANGUAGE])}"
+        )
+
+    def test_placeholders_are_preserved_in_every_translation(self):
+        import re as _re
+
+        from linexcel.i18n import DEFAULT_LANGUAGE, UI_STRINGS
+
+        reference = UI_STRINGS[DEFAULT_LANGUAGE]
+        for language, strings in UI_STRINGS.items():
+            for key, text in strings.items():
+                assert set(_re.findall(r"\{(\w+)\}", text)) == set(
+                    _re.findall(r"\{(\w+)\}", reference[key])
+                ), f"{language}/{key} lost or invented a placeholder"
+
+    @pytest.mark.parametrize("language", ["es", "de", "it", "pt", "nl", "ja", "zh"])
+    def test_each_language_renders(self, lineage_excel, language):
+        html = analyze(lineage_excel).to_html(language=language)
+        assert f"<html lang='{language}'>" in html
+        assert f'"{language}"' in html
+
+    def test_only_the_requested_locale_and_english_are_embedded(self, lineage_excel):
+        """Shipping all nine locales in every report would be dead weight."""
+        from linexcel.i18n import UI_STRINGS
+
+        html = analyze(lineage_excel).to_html(language="ja")
+        assert UI_STRINGS["ja"]["sheets_tab"] in html
+        assert UI_STRINGS["en"]["sheets_tab"] in html
+        assert UI_STRINGS["zh"]["placeholder_title"] not in html
+
+    def test_unsupported_language_is_rejected_by_both_entry_points(self, lineage_excel):
+        result = analyze(lineage_excel)
+        with pytest.raises(ValueError, match="Unsupported language"):
+            result.to_html(language="klingon")
+        with pytest.raises(ValueError, match="Unsupported language"):
+            result.document_workbook(
+                provider=lambda s, u, *, temperature=0.2: "x", language="klingon"
+            )
 
 
 class TestAiProviders:

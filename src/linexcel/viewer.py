@@ -20,15 +20,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from linexcel.i18n import LANGUAGES, ui_payload, validate_language
+
 _ASSETS = Path(__file__).parent / "assets"
 
-#: UI languages the embedded viewer ships translations for (see I18N below).
-SUPPORTED_LANGUAGES = ("en", "fr")
+#: UI languages the viewer can render. Alias of :data:`linexcel.i18n.LANGUAGES`,
+#: which is the single source of truth.
+SUPPORTED_LANGUAGES = LANGUAGES
 
 # Template placeholders, substituted in a single pass so that a value can never
 # be rescanned: chained str.replace calls let the graph JSON — i.e. arbitrary
 # workbook content — be rewritten by a later placeholder.
-_PLACEHOLDER_RE = re.compile("__GRAPH_JSON__|__TITLE__|__LANG__")
+_PLACEHOLDER_RE = re.compile("__GRAPH_JSON__|__I18N_JSON__|__TITLE__|__LANG__")
 
 # Load order (UMD chain): cytoscape, then the layout stack.
 _ASSET_FILES = (
@@ -105,14 +108,12 @@ def render_html(
 
     ``language`` must be one of :data:`SUPPORTED_LANGUAGES`; it is interpolated
     into a JavaScript string literal and an HTML attribute, so it is validated
-    rather than escaped.
+    against that closed set rather than escaped.
     """
-    if language not in SUPPORTED_LANGUAGES:
-        raise ValueError(
-            f"Unsupported language: {language!r}. Use one of {SUPPORTED_LANGUAGES}"
-        )
+    validate_language(language)
     substitutions = {
         "__GRAPH_JSON__": _safe_json(graph),
+        "__I18N_JSON__": _safe_json(ui_payload(language)),
         "__TITLE__": _escape_text(title),
         "__LANG__": language,
     }
@@ -318,80 +319,7 @@ _TEMPLATE = r"""
 (function () {
   var GRAPH = __GRAPH_JSON__;
   var LANG = "__LANG__";
-  var I18N = {
-    en: {
-      graph: "Graph",
-      overview: "Workbook overview",
-      visual: "Visual preview",
-      search: "Search… ⏎",
-      fit_all: "Fit",
-      fit_sel: "Fit Selection",
-      zoom_in: "Zoom In",
-      zoom_out: "Zoom Out",
-      formula: "Formula",
-      stretched_pattern: "Stretched pattern over {count} cells ({bbox}).",
-      computed_value: "Computed value",
-      value_samples: "Value samples",
-      target: "Target",
-      step_decomp: "Step-by-step decomposition",
-      step_hint: "Each function/operator is evaluated individually.",
-      not_evaluated: "not evaluated",
-      precedents: "Precedents",
-      dependents: "Dependents",
-      ai_doc: "🤖 AI Documentation (Generated)",
-      ai_overview: "🤖 AI Generated Overview",
-      ai_overview_desc: "This overview was written by an AI model (Gemini) based on deterministic lineage. The facts presented are derived from the workbook's formulas and data.",
-      fallback: "Cytoscape could not be loaded (CDN access required). The JSON graph remains available via result.to_dict().",
-      stats: "{formulas} formulas · {nodes} nodes · {edges} edges{vba}",
-      kind_cell: "Formula",
-      kind_group: "Stretched formulas",
-      kind_input: "Source data",
-      kind_name: "Named cell/range",
-      kind_vba: "VBA",
-      kind_misc: "Other (aggregated)",
-      kind_opaque: "External reference",
-      sheets_summary_title: "Sheets Summary (Deterministic)",
-      placeholder_title: "Select a node",
-      placeholder_desc: "Select a node in the graph to inspect its formula, computed value, step-by-step evaluation, and AI-generated documentation.",
-      sheets_tab: "Sheets"
-    },
-    fr: {
-      graph: "Graphe",
-      overview: "Synthèse générale",
-      visual: "Aperçu visuel",
-      search: "Rechercher… ⏎",
-      fit_all: "Ajuster",
-      fit_sel: "Ajuster la sélection",
-      zoom_in: "Zoom avant",
-      zoom_out: "Zoom arrière",
-      formula: "Formule",
-      stretched_pattern: "Formule étirée sur {count} cellules ({bbox}).",
-      computed_value: "Valeur calculée",
-      value_samples: "Échantillons de valeurs",
-      target: "Cible",
-      step_decomp: "Décomposition pas-à-pas",
-      step_hint: "Chaque fonction et opérateur est évalué individuellement.",
-      not_evaluated: "non évalué",
-      precedents: "Précédents",
-      dependents: "Dépendants",
-      ai_doc: "🤖 Documentation IA (Générée)",
-      ai_overview: "🤖 Synthèse Générée par IA",
-      ai_overview_desc: "Cette synthèse a été rédigée par un modèle d'IA (Gemini) à partir du lignage de calculs déterministe. Les faits présentés proviennent des formules et des données du classeur.",
-      fallback: "Cytoscape n'a pas pu être chargé (accès CDN requis). Le graphe JSON reste disponible via result.to_dict().",
-      stats: "{formulas} formules · {nodes} nœuds · {edges} liens{vba}",
-      kind_cell: "Formule",
-      kind_group: "Formules étirées",
-      kind_input: "Source de données",
-      kind_name: "Cellule/plage nommée",
-      kind_vba: "VBA",
-      kind_misc: "Autre (agrégé)",
-      kind_opaque: "Référence externe",
-      sheets_summary_title: "Synthèse par feuille (Déterministe)",
-      placeholder_title: "Sélectionner un nœud",
-      placeholder_desc: "Sélectionnez un nœud dans le graphe pour afficher sa formule, sa valeur calculée, sa décomposition pas à pas et sa documentation IA.",
-      sheets_tab: "Feuilles"
-    }
-  };
+  var I18N = __I18N_JSON__;
 
   function _t(key, replacements) {
     var langDict = I18N[LANG] || I18N.en;
