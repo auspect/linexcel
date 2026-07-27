@@ -151,6 +151,11 @@ string would let a caller steer the model's instructions. Anything else raises
 `ValueError`. Reports embed only the requested language plus the English
 fallback, so adding languages does not grow the exported file.
 
+> **Note:** English and French were written by hand. The other seven languages —
+> both the interface strings and the AI system prompts — were produced with AI
+> assistance and have not been reviewed by native speakers. Corrections are
+> welcome: interface strings live in `linexcel.i18n`, prompts in `linexcel.aidoc`.
+
 ## AI data handling
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic

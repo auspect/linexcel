@@ -75,6 +75,16 @@ Adding one means extending `linexcel.i18n.UI_STRINGS` and both prompt registries
 in `linexcel.aidoc`; the test suite asserts the three stay in sync, so a partial
 addition fails rather than surfacing as raw interface keys.
 
+!!! note "Translation provenance"
+
+    English and French were written by hand. The other seven languages — the
+    interface strings *and* the AI system prompts — were produced with AI
+    assistance and have not been reviewed by native speakers.
+
+    This matters more for the prompts than for the interface: their wording
+    steers how the model writes each card, so an awkward phrasing degrades
+    output quality rather than just looking odd. Corrections are welcome.
+
 ## Data handling
 
 The dossier sent for each node can include formulas, computed values,

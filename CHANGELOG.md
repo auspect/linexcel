@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interface strings, which used to be hand-maintained inside the JS template.
   The suite asserts `i18n.UI_STRINGS` and the two `aidoc` prompt registries
   cover the same languages and the same keys
+- Translation provenance is stated in the README, the AI guide and the
+  `linexcel.i18n` docstring: `en` and `fr` are hand-written, the other seven
+  were produced with AI assistance and are not natively reviewed
 
 - Multi-provider AI support: Google Gemini (default), OpenAI-compatible endpoints (Ollama, vLLM, LM Studio), and custom callables
 - `base_url` and `provider` parameters on `document()` and `document_workbook()`

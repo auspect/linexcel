@@ -9,6 +9,10 @@ Adding a language means adding an entry here *and* in :mod:`linexcel.aidoc`'s
 two prompt registries. ``tests/test_lineage.py`` asserts the three stay in sync,
 so a partial addition fails the suite instead of surfacing as raw keys in the
 report or a ``KeyError`` at generation time.
+
+Provenance: ``en`` and ``fr`` were written by hand. The other seven languages,
+here and in the prompt registries, were produced with AI assistance and have not
+been reviewed by native speakers — corrections welcome.
 """
 
 from __future__ import annotations
