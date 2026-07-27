@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Protocol, runtime_checkable
 
@@ -100,14 +102,43 @@ class LLMProvider(Protocol):
     ) -> str: ...
 
 
+#: Anything accepted as ``provider=``: an :class:`LLMProvider` (any object with
+#: a ``generate`` method) or a plain callable with the same signature.
+ProviderLike = LLMProvider | Callable[..., str]
+
+
+class _CallableProvider:
+    """Adapt a plain callable to the :class:`LLMProvider` protocol."""
+
+    def __init__(self, fn: Callable[..., str]):
+        self._fn = fn
+
+    def generate(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> str:
+        return self._fn(system_prompt, user_prompt, temperature=temperature)
+
+
+def _as_provider(provider: ProviderLike) -> LLMProvider:
+    """Normalize a user-supplied provider into an :class:`LLMProvider`."""
+    if isinstance(provider, LLMProvider):
+        return provider
+    if callable(provider):
+        return _CallableProvider(provider)
+    raise AiDocError(
+        "provider must expose a generate(system_prompt, user_prompt, *, "
+        f"temperature) method or be callable, got {type(provider).__name__}"
+    )
+
+
 def _resolve_provider(
     *,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-) -> tuple[LLMProvider, str]:
-    """Resolve which provider to use and the model name.
+) -> LLMProvider:
+    """Resolve which provider to use.
 
     Priority:
     1. Explicit `provider` (custom callable or LLMProvider instance)
@@ -115,7 +146,7 @@ def _resolve_provider(
     3. Google API key available → Gemini client (backward-compatible default)
     """
     if provider is not None:
-        return provider, model or DEFAULT_MODEL
+        return _as_provider(provider)
 
     # OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.)
     base = base_url or os.getenv("LINEXCEL_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
@@ -126,14 +157,14 @@ def _resolve_provider(
             or os.getenv("OPENAI_MODEL")
             or "gpt-4o-mini"
         )
-        return (
-            _OpenAICompatProvider(base_url=base, api_key=api_key, model=resolved_model),
-            resolved_model,
+        return _OpenAICompatProvider(
+            base_url=base, api_key=api_key, model=resolved_model
         )
 
     # Google Gemini (default, backward-compatible)
-    resolved_model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    return _GeminiProvider(api_key=api_key, model=resolved_model), resolved_model
+    return _GeminiProvider(
+        api_key=api_key, model=model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    )
 
 
 class _GeminiProvider:
@@ -363,7 +394,7 @@ def document_workbook(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     language: str = "en",
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
@@ -381,7 +412,7 @@ def document_workbook(
         dossier["formula_patterns"] = dossier["formula_patterns"][:5]
         dossier["vba_procedures"] = dossier["vba_procedures"][:10]
         blob = json.dumps(dossier, ensure_ascii=False, default=str)
-    llm, resolved_model = _resolve_provider(
+    llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _WORKBOOK_SYSTEM[language]
@@ -401,16 +432,26 @@ def document_nodes(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     language: str = "en",
+    max_workers: int = 4,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
     Provider resolution is the same as :func:`document_workbook`.
+
+    Nodes are documented concurrently (``max_workers`` in-flight requests;
+    raise it if the provider's rate limits allow). Documenting a large
+    workbook is a long, often billed operation, so a node that fails does not
+    discard the ones that succeeded: the successful cards are returned and a
+    :class:`UserWarning` reports how many nodes were dropped.
+    :class:`AiDocError` is raised only when *every* node failed.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
-    llm, resolved_model = _resolve_provider(
+    if max_workers < 1:
+        raise ValueError("max_workers must be >= 1")
+    llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _SYSTEM[language]
@@ -424,6 +465,8 @@ def document_nodes(
                 d["decomposition"] = "truncated (very long formula)"
                 blob = json.dumps(d, ensure_ascii=False, default=str)
             dossiers.append((nid, blob))
+    if not dossiers:
+        return docs
 
     def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str]:
         nid, blob = nid_blob
@@ -431,16 +474,31 @@ def document_nodes(
         text = llm.generate(system, user, temperature=0.2)
         return nid, text or "(AI returned empty response)"
 
-    # ponytail: 4 workers, bump if API rate limits allow
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    failures: list[tuple[str, Exception]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
         for fut in as_completed(futures):
             node_id = futures[fut]
             try:
                 nid, text = fut.result()
             except Exception as exc:
-                raise AiDocError(
-                    f"AI documentation failed for node {node_id}: {exc}"
-                ) from exc
+                failures.append((node_id, exc))
+                continue
             docs[nid] = text
+
+    if failures and not docs:
+        node_id, exc = failures[0]
+        raise AiDocError(
+            f"AI documentation failed for all {len(failures)} nodes "
+            f"(first error, node {node_id}): {exc}"
+        ) from exc
+    if failures:
+        node_id, exc = failures[0]
+        warnings.warn(
+            f"AI documentation failed for {len(failures)} of {len(dossiers)} "
+            f"nodes; {len(docs)} cards returned. First error (node {node_id}): "
+            f"{exc}",
+            UserWarning,
+            stacklevel=2,
+        )
     return docs

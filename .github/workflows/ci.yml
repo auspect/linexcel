@@ -5,21 +5,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Permet à publish.yml de rejouer toute la CI avant de publier sur PyPI.
+  # Lets publish.yml replay the whole CI before releasing to PyPI.
   workflow_call:
 
-# Principe du moindre privilège : aucun job ci-dessous n'écrit dans le repo.
+# Least privilege: no job below writes to the repository.
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # On annule les runs redondants sur les PR, jamais sur main (historique de coverage).
+  # Redundant runs are cancelled on PRs, never on main (coverage history).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # setup-uv v9 a désactivé le pruning par défaut : on le réactive pour ne pas
-  # laisser le cache Actions gonfler indéfiniment.
+  # setup-uv v9 disabled pruning by default; re-enable it so the Actions
+  # cache does not grow without bound.
   UV_FROZEN: "1"
 
 jobs:
@@ -64,8 +64,9 @@ jobs:
           prune-cache: true
           python-version: ${{ matrix.python-version }}
       - run: uv sync --locked --extra dev
+      # No path argument: testpaths (tests/ + src/ doctests) applies.
       - run: >
-          uv run pytest tests/ -v
+          uv run pytest -v
           --cov=src/linexcel
           --cov-report=term-missing
           --cov-report=xml
@@ -73,7 +74,7 @@ jobs:
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
         with:
-          files: ./coverage.xml # "file" est déprécié depuis la v5
+          files: ./coverage.xml # "file" is deprecated since v5
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -105,12 +106,12 @@ jobs:
     needs: [lint, typecheck, test, build]
     runs-on: ubuntu-latest
     steps:
-      - name: Vérifier les jobs requis
+      - name: Check required jobs
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS"
           if echo "$NEEDS" | grep -q '"result": *"\(failure\|cancelled\)"'; then
-            echo "::error::Au moins un job requis a échoué."
+            echo "::error::At least one required job failed."
             exit 1
           fi

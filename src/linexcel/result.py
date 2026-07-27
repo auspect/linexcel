@@ -18,10 +18,13 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from linexcel.analyzer import analyze_workbook
 from linexcel.viewer import render_html, wrap_iframe
+
+if TYPE_CHECKING:  # aidoc stays lazily imported at runtime
+    from linexcel.aidoc import ProviderLike
 
 Source = str | Path | bytes | bytearray | BinaryIO
 
@@ -201,8 +204,9 @@ class LineageResult:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        provider: Any = None,
+        provider: ProviderLike | None = None,
         language: str = "en",
+        max_workers: int = 4,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
@@ -216,6 +220,9 @@ class LineageResult:
         3. Google Gemini (default — requires ``google-genai`` and a key)
 
         ``language`` selects the system prompt (\"en\" or \"fr\").
+        ``max_workers`` caps the number of concurrent requests. Nodes that fail
+        are skipped with a :class:`UserWarning`; the cards that succeeded are
+        still returned.
         """
         from linexcel.aidoc import document_nodes
 
@@ -231,6 +238,7 @@ class LineageResult:
             base_url=base_url,
             provider=provider,
             language=language,
+            max_workers=max_workers,
         )
 
     def document_workbook(
@@ -239,7 +247,7 @@ class LineageResult:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        provider: Any = None,
+        provider: ProviderLike | None = None,
         language: str = "en",
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
@@ -282,7 +290,13 @@ class LineageResult:
         """
         graph = self.graph
         meta = dict(graph.get("meta", {}))
-        meta["workbookContext"] = self.workbook_context
+        # Result built without the source bytes: drop the sheet-preview tab
+        # rather than failing the whole export. Tested on the attribute rather
+        # than by catching RuntimeError, which would also swallow a genuine
+        # extraction failure (WorkbookRenderError subclasses it).
+        meta["workbookContext"] = (
+            self.workbook_context if self._source_data is not None else None
+        )
 
         if workbook_doc:
             meta["workbookDoc"] = workbook_doc

@@ -399,11 +399,17 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     # --- 6. VBA --------------------------------------------------------------
     vba_modules = extract_vba_modules(data, filename)
     vba_procs: list[VbaProc] = analyze_vba(vba_modules) if vba_modules else []
+    # Node ids keep the declared spelling, but both lookups are keyed on the
+    # lowercased name: VBA is case-insensitive, so Module1.Taux and
+    # module1.TAUX designate the same procedure. proc_ids resolves a qualified
+    # name, procs_by_name the unqualified ones _find_calls reports.
     proc_ids: dict[str, str] = {}
+    procs_by_name: dict[str, list[str]] = defaultdict(list)
     for proc in vba_procs:
-        pid = f"vp:{proc.module}.{proc.name}"
-        # ponytail: keyed on module.name to avoid collision
-        proc_ids[f"{proc.module}.{proc.name}"] = pid
+        qualified = f"{proc.module}.{proc.name}"
+        pid = f"vp:{qualified}"
+        proc_ids[qualified.lower()] = pid
+        procs_by_name[proc.name.lower()].append(qualified.lower())
         nodes[pid] = {
             "id": pid,
             "kind": "vba",
@@ -416,10 +422,11 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             "code": proc.code[:MAX_VBA_CODE_CHARS],
         }
     for proc in vba_procs:
-        pid = proc_ids[f"{proc.module}.{proc.name}"]
+        pid = proc_ids[f"{proc.module}.{proc.name}".lower()]
         for callee in proc.calls:
-            if callee in proc_ids:
-                add_edge(pid, proc_ids[callee], "call")
+            target = _resolve_call(callee, proc.module, proc_ids, procs_by_name)
+            if target is not None:
+                add_edge(pid, target, "call")
         for ref in proc.refs:
             detail = parse_ref_detailed(ref.ref, default_sheet=ref.sheet)
             if detail is None or detail.rect.sheet is None:
@@ -738,6 +745,31 @@ def _ref_preview(
     if rect.ncells == 1:
         return _cell_value(engine, rect.sheet or sheet, rect.r1, rect.c1, engine_sheets)
     return {"range": rect.to_a1(), "n": rect.ncells}
+
+
+def _resolve_call(
+    callee: str,
+    caller_module: str,
+    proc_ids: dict[str, str],
+    procs_by_name: dict[str, list[str]],
+) -> str | None:
+    """Resolve a VBA call to a procedure node id.
+
+    A callee already qualified with its module (``Module1.Taux``) resolves
+    directly. VBA looks an unqualified name up in the calling module first,
+    then in the other modules; a name declared by several other modules stays
+    unresolved rather than pointing at an arbitrary one. All lookups are
+    case-insensitive, as the language is.
+    """
+    if "." in callee:
+        return proc_ids.get(callee.lower())
+    same_module = f"{caller_module}.{callee}".lower()
+    if same_module in proc_ids:
+        return proc_ids[same_module]
+    candidates = procs_by_name.get(callee.lower(), [])
+    if len(candidates) == 1:
+        return proc_ids[candidates[0]]
+    return None
 
 
 def _resolve_vba_write(

@@ -15,11 +15,20 @@ this file. If assets are missing, a CDN fallback is used (requires network).
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 _ASSETS = Path(__file__).parent / "assets"
+
+#: UI languages the embedded viewer ships translations for (see I18N below).
+SUPPORTED_LANGUAGES = ("en", "fr")
+
+# Template placeholders, substituted in a single pass so that a value can never
+# be rescanned: chained str.replace calls let the graph JSON — i.e. arbitrary
+# workbook content — be rewritten by a later placeholder.
+_PLACEHOLDER_RE = re.compile("__GRAPH_JSON__|__TITLE__|__LANG__")
 
 # Load order (UMD chain): cytoscape, then the layout stack.
 _ASSET_FILES = (
@@ -92,13 +101,24 @@ def render_html(
     full_document: bool = True,
     language: str = "en",
 ) -> str:
-    """Build the viewer HTML for a given graph."""
-    data = _safe_json(graph)
-    body = (
-        _TEMPLATE.replace("__GRAPH_JSON__", data)
-        .replace("__TITLE__", _escape_text(title))
-        .replace("__LANG__", language)
-    )
+    """Build the viewer HTML for a given graph.
+
+    ``language`` must be one of :data:`SUPPORTED_LANGUAGES`; it is interpolated
+    into a JavaScript string literal and an HTML attribute, so it is validated
+    rather than escaped.
+    """
+    if language not in SUPPORTED_LANGUAGES:
+        raise ValueError(
+            f"Unsupported language: {language!r}. Use one of {SUPPORTED_LANGUAGES}"
+        )
+    substitutions = {
+        "__GRAPH_JSON__": _safe_json(graph),
+        "__TITLE__": _escape_text(title),
+        "__LANG__": language,
+    }
+    # A callable replacement keeps the substituted text literal: no backslash
+    # or \g<n> expansion, and no placeholder inside workbook data is rescanned.
+    body = _PLACEHOLDER_RE.sub(lambda m: substitutions[m.group(0)], _TEMPLATE)
     if not full_document:
         return body
     scripts = _inline_scripts()
@@ -938,8 +958,9 @@ _TEMPLATE = r"""
   }
   function section(title) { var s = el('div'); s.appendChild(el('h3', null, title)); return s; }
 
-  // ponytail: mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###.
-  // Enough for Gemini cards, no external dep.
+  // Mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###.
+  // Enough for the AI cards, no external dep. Escapes & < > first, so model
+  // output can never inject markup.
   function _md(src) {
     var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     var lines = esc.split('\n'), out = [], inList = false;
@@ -1017,7 +1038,6 @@ _TEMPLATE = r"""
       var sc = section(n.procKind + ' — module ' + n.module);
       sc.appendChild(el('pre', 'lin-code', n.code || '')); p.appendChild(sc);
     }
-    // ponytail: mini-markdown renderer for AI docs (no external dep)
     if (n.doc) {
       var sd = el('div', 'lin-ai-box');
       var badge = el('span', 'lin-ai-badge', _t('ai_doc'));

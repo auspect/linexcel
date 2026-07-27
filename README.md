@@ -119,6 +119,10 @@ def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) ->
 docs = result.document(provider=my_llm)
 ```
 
+Any object exposing a `generate` method with that same signature works too.
+Nodes are documented concurrently (`max_workers=4` by default); a node that
+fails is skipped with a warning rather than discarding the whole run.
+
 ### Workbook-level overview
 
 ```python
@@ -130,12 +134,20 @@ result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en"
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic
 dossier for each requested node, while `result.document_workbook()` sends a
-workbook-level dossier, to the configured Gemini model. The dossiers can include
-formulas, computed values, precedent/dependent labels, formula decomposition,
-sheet structure, defined names, and extracted VBA code. Do not enable this
-feature for a workbook whose contents must remain local, unless its data-sharing
-requirements permit processing by Google. See the
-[Google Generative AI Terms of Service](https://ai.google.dev/terms).
+workbook-level dossier, to **whichever provider you configure**. The dossiers can
+include formulas, computed values, precedent/dependent labels, formula
+decomposition, sheet structure, defined names, and extracted VBA code.
+
+Where that data goes depends on the provider you select:
+
+| Configuration | Destination |
+| --- | --- |
+| Default (no `provider`, no `base_url`) | Google Gemini — see the [Google Generative AI Terms of Service](https://ai.google.dev/terms) |
+| `base_url=...` / `LINEXCEL_AI_BASE_URL` | The endpoint you point at — a local runtime such as Ollama or vLLM keeps the dossiers on your machine; a hosted OpenAI-compatible API does not |
+| `provider=...` | Wherever your own callable sends them |
+
+Do not enable this feature for a workbook whose contents must remain local
+unless the configured provider satisfies its data-sharing requirements.
 
 ## Features
 

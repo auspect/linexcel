@@ -264,6 +264,48 @@ class TestPackageApi:
         out = result.save_html(tmp_path / "graph.html")
         assert out.exists() and out.stat().st_size > 100_000
 
+    def test_version_is_exposed(self):
+        import linexcel
+
+        assert isinstance(linexcel.__version__, str) and linexcel.__version__
+
+    def test_unsupported_language_is_rejected(self, lineage_excel):
+        result = analyze(lineage_excel)
+        with pytest.raises(ValueError, match="Unsupported language"):
+            result.to_html(language='"; alert(1); var x="')
+
+    def test_to_html_without_source_bytes_drops_the_sheet_tab(self, lineage_excel):
+        """A result built without the workbook bytes still renders."""
+        payload = analyze_workbook(lineage_excel, "test.xlsx")
+        result = LineageResult(graph=payload["graph"], engine=payload["engine"])
+        html = result.to_html()
+        assert html.startswith("<!doctype html>")
+        assert '"workbookContext": null' in html or '"workbookContext":null' in html
+
+    def test_title_does_not_overwrite_workbook_data(self, lineage_excel):
+        """Placeholders must not be substituted inside the injected graph."""
+        from linexcel.viewer import render_html
+
+        graph = {
+            "nodes": [{"id": "n1", "kind": "cell", "label": "__TITLE__"}],
+            "edges": [],
+            "sheets": [],
+            "meta": {"stats": {}, "warnings": []},
+        }
+        html = render_html(graph, title="Report", language="fr")
+        assert '"label": "__TITLE__"' in html
+        assert "<h1>Report</h1>" in html
+
+    def test_title_cannot_break_the_embedded_json(self, lineage_excel):
+        """A backslash-terminated title used to truncate the GRAPH literal."""
+        import json
+        import re
+
+        result = analyze(lineage_excel)
+        html = result.to_html(title="report\\")
+        blob = re.search(r"var GRAPH = (.*?);\n", html, re.S).group(1)
+        assert json.loads(blob)["meta"]["stats"]["totalFormulas"] == 103
+
     def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
         from linexcel.aidoc import AiDocError
 
@@ -276,6 +318,80 @@ class TestPackageApi:
             pass
         else:  # pragma: no cover
             raise AssertionError("AiDocError expected when no key is provided")
+
+
+class TestAiProviders:
+    """Provider resolution and failure handling — no network call involved."""
+
+    @staticmethod
+    def _calc_ids(result: LineageResult) -> list[str]:
+        return [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+
+    def test_plain_callable_is_accepted(self, lineage_excel):
+        seen = []
+
+        def my_llm(system_prompt, user_prompt, *, temperature=0.2):
+            seen.append((system_prompt, user_prompt, temperature))
+            return "# card"
+
+        result = analyze(lineage_excel)
+        node_id = self._calc_ids(result)[0]
+        assert result.document([node_id], provider=my_llm) == {node_id: "# card"}
+        assert seen[0][2] == 0.2
+        assert node_id in seen[0][1]
+
+    def test_object_exposing_generate_is_accepted(self, lineage_excel):
+        class Provider:
+            def generate(self, system_prompt, user_prompt, *, temperature=0.2):
+                return "# from object"
+
+        result = analyze(lineage_excel)
+        node_id = self._calc_ids(result)[0]
+        assert result.document([node_id], provider=Provider()) == {
+            node_id: "# from object"
+        }
+
+    def test_workbook_overview_accepts_a_callable(self, lineage_excel):
+        result = analyze(lineage_excel)
+        assert (
+            result.document_workbook(
+                provider=lambda system, user, *, temperature=0.2: "# overview"
+            )
+            == "# overview"
+        )
+
+    def test_provider_without_generate_is_rejected(self, lineage_excel):
+        from linexcel.aidoc import AiDocError
+
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="must expose a generate"):
+            result.document_workbook(provider=object())
+
+    def test_partial_failure_keeps_the_successful_cards(self, lineage_excel):
+        result = analyze(lineage_excel)
+        ids = self._calc_ids(result)
+        failing = ids[0]
+
+        def flaky(system_prompt, user_prompt, *, temperature=0.2):
+            if f'"node_id": "{failing}"' in user_prompt:
+                raise RuntimeError("rate limited")
+            return "# card"
+
+        with pytest.warns(UserWarning, match=f"failed for 1 of {len(ids)} nodes"):
+            docs = result.document(ids, provider=flaky, max_workers=1)
+        assert set(docs) == set(ids) - {failing}
+
+    def test_total_failure_raises(self, lineage_excel):
+        from linexcel.aidoc import AiDocError
+
+        result = analyze(lineage_excel)
+        ids = self._calc_ids(result)[:2]
+
+        def broken(system_prompt, user_prompt, *, temperature=0.2):
+            raise RuntimeError("no backend")
+
+        with pytest.raises(AiDocError, match="failed for all 2 nodes"):
+            result.document(ids, provider=broken, max_workers=1)
 
 
 class TestVba:
@@ -314,3 +430,170 @@ class TestVba:
             {"M": 'Sub S()\n    \' Range("Z9") = 1 in comment\nEnd Sub\n'}
         )
         assert procs[0].refs == []
+
+    def test_calls_are_case_insensitive(self):
+        """VBA is case-insensitive: `helper` must reach `Helper`."""
+        procs = analyze_vba(
+            {
+                "M": (
+                    "Sub A()\n    Call helper\nEnd Sub\n"
+                    "Sub Helper()\n    x = 1\nEnd Sub\n"
+                )
+            }
+        )
+        assert next(p for p in procs if p.name == "A").calls == ["Helper"]
+
+
+class TestVbaGraph:
+    """VBA branch of the analyzer.
+
+    openpyxl cannot author a ``vbaProject.bin``, so extraction is stubbed and
+    the graph-building code below it runs for real.
+    """
+
+    @staticmethod
+    def _graph(workbook: bytes, monkeypatch, modules: dict[str, str]) -> dict:
+        monkeypatch.setattr(
+            "linexcel.analyzer.extract_vba_modules",
+            lambda data, filename: dict(modules),
+        )
+        return analyze_workbook(workbook, "macro.xlsm")["graph"]
+
+    def test_call_edge_links_the_two_procedures(self, lineage_excel, monkeypatch):
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "Module1": (
+                    "Public Sub Refresh()\n"
+                    '    Worksheets("Synthese").Range("B10").Value = Rate()\n'
+                    "End Sub\n"
+                    "Private Function Rate() As Double\n"
+                    '    Rate = Sheets("Params").Range("A1").Value\n'
+                    "End Function\n"
+                )
+            },
+        )
+        assert {n["id"] for n in graph["nodes"] if n["kind"] == "vba"} == {
+            "vp:Module1.Refresh",
+            "vp:Module1.Rate",
+        }
+        calls = [
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        ]
+        assert calls == [("vp:Module1.Refresh", "vp:Module1.Rate")]
+
+    def test_read_and_write_edges_reach_the_sheets(self, lineage_excel, monkeypatch):
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "Module1": (
+                    "Sub Refresh()\n"
+                    '    Worksheets("Synthese").Range("B10").Value = 1\n'
+                    '    x = Sheets("Params").Range("A1").Value\n'
+                    "End Sub\n"
+                )
+            },
+        )
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        writes = [e for e in graph["edges"] if e["kind"] == "vba-write"]
+        reads = [e for e in graph["edges"] if e["kind"] == "vba-read"]
+        assert [by_id[e["target"]]["label"] for e in writes] == ["Synthese!B10"]
+        assert [by_id[e["source"]]["label"] for e in reads] == ["Params!A1"]
+
+    def test_call_resolves_in_the_calling_module_first(
+        self, lineage_excel, monkeypatch
+    ):
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "ModA": (
+                    "Sub Run()\n    Helper\nEnd Sub\nSub Helper()\n    x = 1\nEnd Sub\n"
+                ),
+                "ModB": "Sub Helper()\n    y = 2\nEnd Sub\n",
+            },
+        )
+        calls = {
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        }
+        assert ("vp:ModA.Run", "vp:ModA.Helper") in calls
+        assert ("vp:ModA.Run", "vp:ModB.Helper") not in calls
+
+    def test_ambiguous_call_stays_unresolved(self, lineage_excel, monkeypatch):
+        """A name owned by two other modules must not pick one arbitrarily.
+
+        ``Solo`` is the positive control: without it an empty edge list would
+        also pass if call edges stopped being emitted altogether.
+        """
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "ModA": "Sub Helper()\n    x = 1\nEnd Sub\n",
+                "ModB": "Sub Helper()\n    y = 2\nEnd Sub\n",
+                "ModC": (
+                    "Sub Run()\n    Helper\n    Solo\nEnd Sub\n"
+                    "Sub Solo()\n    z = 3\nEnd Sub\n"
+                ),
+            },
+        )
+        calls = {
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        }
+        assert calls == {("vp:ModC.Run", "vp:ModC.Solo")}
+
+    def test_call_resolution_ignores_casing(self, lineage_excel, monkeypatch):
+        """VBA is case-insensitive, so ModA.Taux owns the local `Taux` call.
+
+        The lowercase twin in ModB must not capture it, and the function's own
+        `Taux = 1` return assignment is not a call to anything.
+        """
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "ModA": (
+                    "Sub Run()\n    Taux\nEnd Sub\n"
+                    "Function Taux()\n    Taux = 1\nEnd Function\n"
+                ),
+                "ModB": "Function taux()\n    taux = 2\nEnd Function\n",
+            },
+        )
+        calls = sorted(
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        )
+        assert calls == [("vp:ModA.Run", "vp:ModA.Taux")]
+
+    def test_member_access_is_not_a_call(self, lineage_excel, monkeypatch):
+        """`.Value` is member access even when a procedure is named Value."""
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "Helpers": (
+                    "Public Function Value() As Double\n    Value = 0\nEnd Function\n"
+                ),
+                "Main": (
+                    "Sub Refresh()\n"
+                    '    total = Worksheets("S").Range("A1").Value\n'
+                    "End Sub\n"
+                ),
+            },
+        )
+        assert [e for e in graph["edges"] if e["kind"] == "call"] == []
+
+    def test_module_qualified_call_resolves_exactly(self, lineage_excel, monkeypatch):
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "ModA": "Sub Run()\n    ModB.Helper\nEnd Sub\n",
+                "ModB": "Sub Helper()\n    x = 1\nEnd Sub\n",
+            },
+        )
+        calls = [
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        ]
+        assert calls == [("vp:ModA.Run", "vp:ModB.Helper")]
