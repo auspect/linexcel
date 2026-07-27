@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from linexcel.i18n import LANGUAGES as _LANGUAGES
@@ -282,6 +284,76 @@ class AiDocError(RuntimeError):
 
 
 # ──────────────────────────────────────────────
+# Token accounting
+# ──────────────────────────────────────────────
+
+# Runs of CJK ideographs, kana and hangul, which tokenizers split at roughly one
+# token per character while ``\w+`` would swallow a whole sentence as one word.
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]")
+_WORD_RE = re.compile(r"\w+")
+
+
+def estimate_tokens(text: str) -> int:
+    """Approximate the token count of ``text``.
+
+    Only a fallback: :class:`TokenUsage` prefers the counts the provider
+    reports. Latin script is counted as words × 4/3 (the usual 1 token ≈ 0.75
+    words ratio); CJK characters are counted individually, because a Japanese
+    or Chinese sentence carries no spaces and would otherwise register as a
+    single word.
+
+    >>> estimate_tokens("the quick brown fox jumps")
+    6
+    >>> estimate_tokens("")
+    0
+    """
+    if not text:
+        return 0
+    cjk = len(_CJK_RE.findall(text))
+    latin_words = len(_WORD_RE.findall(_CJK_RE.sub(" ", text)))
+    return cjk + latin_words * 4 // 3
+
+
+@dataclass
+class TokenUsage:
+    """Tokens consumed by one or more documentation requests.
+
+    ``estimated`` is ``True`` as soon as any request in the tally had to be
+    approximated by :func:`estimate_tokens` instead of being reported by the
+    provider — treat such a total as an order of magnitude, not a bill.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    requests: int = 0
+    estimated: bool = False
+    model: str = ""
+    provider: str = ""
+
+    @property
+    def total(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def add(self, other: TokenUsage) -> None:
+        """Accumulate ``other`` in place, keeping the model/provider labels."""
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.requests += other.requests
+        self.estimated = self.estimated or other.estimated
+        self.model = self.model or other.model
+        self.provider = self.provider or other.provider
+
+    def __str__(self) -> str:
+        about = "~" if self.estimated else ""
+        where = f" [{self.provider}/{self.model}]" if self.provider else ""
+        return (
+            f"{about}{self.total:,} tokens "
+            f"({about}{self.input_tokens:,} in + {about}{self.output_tokens:,} out) "
+            f"over {self.requests} request(s){where}"
+        )
+
+
+# ──────────────────────────────────────────────
 # Provider abstraction
 # ──────────────────────────────────────────────
 
@@ -293,6 +365,38 @@ class LLMProvider(Protocol):
     def generate(
         self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
     ) -> str: ...
+
+
+@runtime_checkable
+class UsageReportingProvider(Protocol):
+    """A provider that also reports what the call consumed.
+
+    Optional: the built-in Gemini and OpenAI-compatible clients implement it so
+    that token counts come from the API rather than from an approximation.
+    Custom providers only need :class:`LLMProvider`.
+    """
+
+    def generate_with_usage(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> tuple[str, TokenUsage]: ...
+
+
+def _generate(
+    llm: LLMProvider, system_prompt: str, user_prompt: str
+) -> tuple[str, TokenUsage]:
+    """Call ``llm``, returning its text and what the call cost.
+
+    Providers reporting real usage are preferred; anything else is estimated.
+    """
+    if isinstance(llm, UsageReportingProvider):
+        return llm.generate_with_usage(system_prompt, user_prompt, temperature=0.2)
+    text = llm.generate(system_prompt, user_prompt, temperature=0.2)
+    return text, TokenUsage(
+        input_tokens=estimate_tokens(system_prompt) + estimate_tokens(user_prompt),
+        output_tokens=estimate_tokens(text or ""),
+        requests=1,
+        estimated=True,
+    )
 
 
 #: Anything accepted as ``provider=``: an :class:`LLMProvider` (any object with
@@ -386,15 +490,31 @@ class _GeminiProvider:
     def generate(
         self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
     ) -> str:
+        return self.generate_with_usage(
+            system_prompt, user_prompt, temperature=temperature
+        )[0]
+
+    def generate_with_usage(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> tuple[str, TokenUsage]:
+        prompt = system_prompt + "\n\n" + user_prompt
         try:
             response = self._client.models.generate_content(
                 model=self._model,
-                contents=system_prompt + "\n\n" + user_prompt,
+                contents=prompt,
                 config={"temperature": temperature},
             )
-            return (response.text or "").strip()
+            text = (response.text or "").strip()
         except Exception as exc:
             raise AiDocError(f"Gemini API call failed: {exc}") from exc
+        return text, _usage_from(
+            getattr(response, "usage_metadata", None),
+            ("prompt_token_count", "candidates_token_count"),
+            prompt,
+            text,
+            model=self._model,
+            provider="gemini",
+        )
 
 
 class _OpenAICompatProvider:
@@ -416,6 +536,13 @@ class _OpenAICompatProvider:
     def generate(
         self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
     ) -> str:
+        return self.generate_with_usage(
+            system_prompt, user_prompt, temperature=temperature
+        )[0]
+
+    def generate_with_usage(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> tuple[str, TokenUsage]:
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -425,9 +552,45 @@ class _OpenAICompatProvider:
                 ],
                 temperature=temperature,
             )
-            return (response.choices[0].message.content or "").strip()
+            text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
             raise AiDocError(f"OpenAI-compatible API call failed: {exc}") from exc
+        return text, _usage_from(
+            getattr(response, "usage", None),
+            ("prompt_tokens", "completion_tokens"),
+            system_prompt + "\n\n" + user_prompt,
+            text,
+            model=self._model,
+            provider="openai-compatible",
+        )
+
+
+def _usage_from(
+    reported: Any,
+    fields: tuple[str, str],
+    prompt: str,
+    text: str,
+    *,
+    model: str,
+    provider: str,
+) -> TokenUsage:
+    """Build a :class:`TokenUsage` from what the API reported, else estimate.
+
+    Local runtimes behind an OpenAI-compatible endpoint do not always populate
+    the usage block, so each field falls back independently.
+    """
+    prompt_field, completion_field = fields
+    reported_in = getattr(reported, prompt_field, None) if reported else None
+    reported_out = getattr(reported, completion_field, None) if reported else None
+    estimated = reported_in is None or reported_out is None
+    return TokenUsage(
+        input_tokens=estimate_tokens(prompt) if reported_in is None else reported_in,
+        output_tokens=estimate_tokens(text) if reported_out is None else reported_out,
+        requests=1,
+        estimated=estimated,
+        model=model,
+        provider=provider,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -589,6 +752,7 @@ def document_workbook(
     base_url: str | None = None,
     provider: ProviderLike | None = None,
     language: str = "en",
+    usage: TokenUsage | None = None,
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
@@ -596,6 +760,9 @@ def document_workbook(
     1. `provider` — custom LLMProvider instance or callable
     2. `base_url` or `LINEXCEL_AI_BASE_URL` — OpenAI-compatible endpoint
     3. Google Gemini (default, backward-compatible)
+
+    If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
+    accumulated into it.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
@@ -611,11 +778,14 @@ def document_workbook(
     system = _WORKBOOK_SYSTEM[language]
     user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
-        return llm.generate(system, user, temperature=0.2)
+        text, call_usage = _generate(llm, system, user)
     except AiDocError:
         raise
     except Exception as exc:
         raise AiDocError(f"AI documentation failed: {exc}") from exc
+    if usage is not None:
+        usage.add(call_usage)
+    return text
 
 
 def document_nodes(
@@ -628,6 +798,7 @@ def document_nodes(
     provider: ProviderLike | None = None,
     language: str = "en",
     max_workers: int = 4,
+    usage: TokenUsage | None = None,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
@@ -639,6 +810,10 @@ def document_nodes(
     discard the ones that succeeded: the successful cards are returned and a
     :class:`UserWarning` reports how many nodes were dropped.
     :class:`AiDocError` is raised only when *every* node failed.
+
+    If a :class:`TokenUsage` is passed as ``usage``, every successful call is
+    accumulated into it — including those of a run that later fails, since
+    tokens already spent are still billed.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
@@ -661,23 +836,27 @@ def document_nodes(
     if not dossiers:
         return docs
 
-    def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str]:
+    def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str, TokenUsage]:
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
-        text = llm.generate(system, user, temperature=0.2)
-        return nid, text or "(AI returned empty response)"
+        text, call_usage = _generate(llm, system, user)
+        return nid, text or "(AI returned empty response)", call_usage
 
     failures: list[tuple[str, Exception]] = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
+        # Accumulating here rather than inside the workers keeps `usage` free of
+        # races: this loop is the single consumer of the pool's results.
         for fut in as_completed(futures):
             node_id = futures[fut]
             try:
-                nid, text = fut.result()
+                nid, text, call_usage = fut.result()
             except Exception as exc:
                 failures.append((node_id, exc))
                 continue
             docs[nid] = text
+            if usage is not None:
+                usage.add(call_usage)
 
     if failures and not docs:
         node_id, exc = failures[0]
