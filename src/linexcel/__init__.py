@@ -17,9 +17,17 @@ a FastAPI server or AI key:
     result.document(api_key="...")       # AI documentation (optional)
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _installed_version
+
 from linexcel.analyzer import analyze_workbook
 from linexcel.insights import WorkbookRenderError
 from linexcel.result import LineageResult, analyze
+
+try:
+    __version__ = _installed_version("linexcel")
+except PackageNotFoundError:  # pragma: no cover - source tree without install
+    __version__ = "0.0.0.dev0"
 
 __all__ = [
     "analyze",

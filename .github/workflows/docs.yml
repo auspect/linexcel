@@ -21,7 +21,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
 
-# Par défaut : lecture seule. Le job "deploy" élève ses propres droits.
+# Read-only by default. The "deploy" job raises its own permissions.
 permissions:
   contents: read
 
@@ -35,8 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # mkdocs-material a besoin de l'historique pour les dates
-          # "dernière mise à jour" (plugin git-revision-date-localized).
+          # mkdocs-material needs the history for "last updated" dates
+          # (git-revision-date-localized plugin).
           fetch-depth: 0
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:

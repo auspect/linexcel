@@ -70,7 +70,8 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # unresolved-import ignored via CLI flag in CI / prek
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# src/ is collected so the doctests in refs.py actually run.
+testpaths = ["tests", "src"]
 addopts = "-v --tb=short --strict-markers --doctest-modules"
 doctest_optionflags = ["NORMALIZE_WHITESPACE"]
 filterwarnings = [

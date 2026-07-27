@@ -7,6 +7,7 @@ build/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.coverage
 coverage.xml
 
 # IDE
@@ -22,6 +23,10 @@ coverage.xml
 *.xlsm
 *.xlsb
 out.html
+
+# validate_manual.py output (generated, may embed workbook data and AI answers)
+validate_out_*.html
+validation_screenshots/
 
 # OS
 .DS_Store

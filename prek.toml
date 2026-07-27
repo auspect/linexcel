@@ -29,7 +29,7 @@ pass_filenames = false
 [[hooks]]
 id = "pytest"
 name = "pytest (fast)"
-entry = "uv run pytest tests/ -x -q -m 'not slow'"
+entry = "uv run pytest -x -q -m 'not slow'"
 language = "system"
 pass_filenames = false
 always_run = true

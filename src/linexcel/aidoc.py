@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Protocol, runtime_checkable
+
+from linexcel.i18n import LANGUAGES as _LANGUAGES
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_DOSSIER_CHARS = 6_000
 MAX_WORKBOOK_DOSSIER_CHARS = 12_000
-
-_LANGUAGES = ("en", "fr")
 
 _SYSTEM = {
     "en": """
@@ -49,6 +51,90 @@ Pour le nœud fourni, rédige une fiche courte en Markdown :
 Règles absolues : n'invente aucune donnée ; n'affirme rien qui ne soit pas dans
 le dossier ; si une information manque, écris « non déterminé par le lignage ».
 Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.
+""".strip(),
+    "es": """
+Documentas cálculos de Excel para un lector de negocio.
+Para el nodo proporcionado, redacta una ficha breve en Markdown:
+1. **Función** — una frase sobre lo que calcula la fórmula;
+2. **Cómo** — la lógica, paso a paso, apoyándote ESTRICTAMENTE en la
+ descomposición proporcionada (cita las subexpresiones y sus valores evaluados);
+3. **Fuentes** — de dónde proceden los datos (precedentes, rangos, nombres, VBA);
+4. **Prueba** — la fórmula exacta y, si está disponible, el valor calculado.
+Reglas absolutas: no inventes ningún dato; no afirmes nada que no esté en el
+expediente; si falta información, escribe «no determinado por el linaje».
+Responde ÚNICAMENTE con la ficha Markdown, sin JSON ni delimitadores.
+""".strip(),
+    "de": """
+Du dokumentierst Excel-Berechnungen für einen Fachanwender.
+Verfasse für den angegebenen Knoten eine kurze Markdown-Karte:
+1. **Zweck** — ein Satz dazu, was die Formel berechnet;
+2. **Vorgehen** — die Logik Schritt für Schritt, STRIKT auf Basis der
+ gelieferten Zerlegung (nenne Teilausdrücke und ihre ausgewerteten Werte);
+3. **Quellen** — woher die Daten stammen (Vorgänger, Bereiche, Namen, VBA);
+4. **Nachweis** — die exakte Formel und, falls vorhanden, der berechnete Wert.
+Absolute Regeln: erfinde keine Daten; behaupte nichts, was nicht im Dossier
+steht; fehlt eine Information, schreibe „nicht durch die Herkunft bestimmt“.
+Antworte AUSSCHLIESSLICH mit der Markdown-Karte, ohne JSON, ohne Trennzeichen.
+""".strip(),
+    "it": """
+Documenti calcoli Excel per un lettore aziendale.
+Per il nodo fornito, scrivi una scheda breve in Markdown:
+1. **Ruolo** — una frase su ciò che calcola la formula;
+2. **Come** — la logica, passo passo, basandoti RIGOROSAMENTE sulla
+ scomposizione fornita (cita le sottoespressioni e i loro valori valutati);
+3. **Fonti** — da dove provengono i dati (precedenti, intervalli, nomi, VBA);
+4. **Prova** — la formula esatta e, se disponibile, il valore calcolato.
+Regole assolute: non inventare dati; non affermare nulla che non sia nel
+dossier; se manca un'informazione, scrivi «non determinato dalla derivazione».
+Rispondi SOLO con la scheda Markdown, senza JSON né delimitatori.
+""".strip(),
+    "pt": """
+Documente cálculos do Excel para um leitor de negócio.
+Para o nó fornecido, redija uma ficha curta em Markdown:
+1. **Função** — uma frase sobre o que a fórmula calcula;
+2. **Como** — a lógica, passo a passo, apoiando-se ESTRITAMENTE na
+ decomposição fornecida (cite as subexpressões e os seus valores avaliados);
+3. **Fontes** — de onde vêm os dados (precedentes, intervalos, nomes, VBA);
+4. **Prova** — a fórmula exata e, se disponível, o valor calculado.
+Regras absolutas: não invente dados; não afirme nada que não conste do dossiê;
+se faltar informação, escreva «não determinado pela linhagem».
+Responda APENAS com a ficha Markdown, sem JSON nem delimitadores.
+""".strip(),
+    "nl": """
+Je documenteert Excel-berekeningen voor een zakelijke lezer.
+Schrijf voor het opgegeven knooppunt een korte Markdown-kaart:
+1. **Rol** — één zin over wat de formule berekent;
+2. **Hoe** — de logica, stap voor stap, STRIKT op basis van de geleverde
+ ontleding (noem deelexpressies en hun geëvalueerde waarden);
+3. **Bronnen** — waar de gegevens vandaan komen (voorgangers, bereiken, namen,
+ VBA);
+4. **Bewijs** — de exacte formule en, indien beschikbaar, de berekende waarde.
+Absolute regels: verzin geen gegevens; beweer niets dat niet in het dossier
+staat; ontbreekt informatie, schrijf dan "niet bepaald door de herkomst".
+Antwoord UITSLUITEND met de Markdown-kaart, zonder JSON of scheidingstekens.
+""".strip(),
+    "ja": """
+あなたはビジネス読者向けに Excel の計算を文書化します。
+指定されたノードについて、短い Markdown のカードを作成してください。
+1. **役割** — その数式が何を計算するのかを一文で。
+2. **仕組み** — 提供された分解のみに厳密に基づき、論理を段階的に説明する
+ （部分式とその評価値を引用すること）。
+3. **出典** — データの出どころ（参照元、範囲、名前、VBA）。
+4. **根拠** — 正確な数式と、利用可能であれば計算結果。
+絶対的な規則: データを創作しないこと。ドシエにない事柄を主張しないこと。
+情報が不足している場合は「系統からは特定できません」と書くこと。
+Markdown のカードのみで回答し、JSON や区切り記号は使わないこと。
+""".strip(),
+    "zh": """
+你为业务读者记录 Excel 计算过程。
+针对给定的节点，撰写一份简短的 Markdown 卡片：
+1. **作用** — 用一句话说明该公式计算什么；
+2. **原理** — 严格依据所提供的分解逐步说明逻辑（引用子表达式及其求值结果）；
+3. **来源** — 数据从何而来（引用单元格、区域、名称、VBA）；
+4. **依据** — 准确的公式，以及可用时的计算结果。
+绝对规则：不得编造数据；不得断言档案中没有的内容；若信息缺失，
+请写“无法由血缘确定”。
+仅以 Markdown 卡片作答，不要使用 JSON 或分隔符。
 """.strip(),
 }
 
@@ -79,6 +165,115 @@ un rôle métier à partir des seuls noms de feuilles. Écris « non déterminé
 lignage » lorsqu'une information manque. Réponds UNIQUEMENT avec la synthèse
 Markdown, sans JSON ni délimiteur.
 """.strip(),
+    "es": """
+Documentas un libro de Excel para un lector de negocio.
+Redacta un resumen conciso en Markdown con estas secciones:
+1. **Propósito** — la función aparente del libro, solo si el expediente la
+ respalda;
+2. **Estructura** — sus hojas y cómo se reparten los cálculos;
+3. **Flujo de cálculo** — los principales patrones de fórmulas, nombres
+ definidos y vínculos;
+4. **Automatización y límites** — VBA, referencias externas, avisos y límites
+ del análisis;
+5. **Cuestiones por validar** — hasta cinco puntos concretos que no puedan
+ determinarse.
+Utiliza únicamente los hechos del expediente determinista. No deduzcas una
+finalidad de negocio solo a partir de los nombres de las hojas. Escribe «no
+determinado por el linaje» cuando falte información.
+Responde ÚNICAMENTE con el resumen Markdown, sin JSON ni delimitadores.
+""".strip(),
+    "de": """
+Du dokumentierst eine Excel-Arbeitsmappe für einen Fachanwender.
+Verfasse einen knappen Markdown-Überblick mit diesen Abschnitten:
+1. **Zweck** — die erkennbare Rolle der Arbeitsmappe, nur wenn das Dossier sie
+ belegt;
+2. **Struktur** — ihre Blätter und die Verteilung der Berechnungen;
+3. **Berechnungsfluss** — wichtige Formelmuster, definierte Namen und
+ Verknüpfungen;
+4. **Automatisierung und Grenzen** — VBA, externe Bezüge, Warnungen und
+ Analysegrenzen;
+5. **Zu klärende Fragen** — bis zu fünf konkrete, nicht bestimmbare Punkte.
+Nutze ausschließlich die Fakten des deterministischen Dossiers. Leite keinen
+fachlichen Zweck allein aus Blattnamen ab. Schreibe „nicht durch die Herkunft
+bestimmt“, wenn eine Information fehlt.
+Antworte AUSSCHLIESSLICH mit dem Markdown-Überblick, ohne JSON oder
+Trennzeichen.
+""".strip(),
+    "it": """
+Documenti una cartella di lavoro Excel per un lettore aziendale.
+Scrivi una sintesi concisa in Markdown con queste sezioni:
+1. **Scopo** — il ruolo apparente della cartella, solo se il dossier lo
+ conferma;
+2. **Struttura** — i suoi fogli e la distribuzione dei calcoli;
+3. **Flusso di calcolo** — i principali motivi di formule, nomi definiti e
+ collegamenti;
+4. **Automazione e limiti** — VBA, riferimenti esterni, avvisi e limiti
+ dell'analisi;
+5. **Questioni da validare** — al massimo cinque punti concreti non
+ determinabili.
+Usa solo i fatti presenti nel dossier deterministico. Non dedurre uno scopo
+aziendale dai soli nomi dei fogli. Scrivi «non determinato dalla derivazione»
+quando manca un'informazione.
+Rispondi SOLO con la sintesi Markdown, senza JSON né delimitatori.
+""".strip(),
+    "pt": """
+Documente uma pasta de trabalho do Excel para um leitor de negócio.
+Redija uma síntese concisa em Markdown com estas secções:
+1. **Finalidade** — o papel aparente da pasta, apenas se o dossiê o confirmar;
+2. **Estrutura** — as suas folhas e a distribuição dos cálculos;
+3. **Fluxo de cálculo** — os principais padrões de fórmulas, nomes definidos e
+ ligações;
+4. **Automação e limites** — VBA, referências externas, avisos e limites da
+ análise;
+5. **Questões a validar** — no máximo cinco pontos concretos indetermináveis.
+Use apenas as informações do dossiê determinista. Não deduza uma finalidade de
+negócio apenas a partir dos nomes das folhas. Escreva «não determinado pela
+linhagem» quando faltar informação.
+Responda APENAS com a síntese Markdown, sem JSON nem delimitadores.
+""".strip(),
+    "nl": """
+Je documenteert een Excel-werkmap voor een zakelijke lezer.
+Schrijf een beknopt Markdown-overzicht met deze secties:
+1. **Doel** — de kennelijke rol van de werkmap, alleen als het dossier dit
+ staaft;
+2. **Structuur** — de bladen en de verdeling van de berekeningen;
+3. **Berekeningsstroom** — belangrijke formulepatronen, gedefinieerde namen en
+ koppelingen;
+4. **Automatisering en beperkingen** — VBA, externe verwijzingen,
+ waarschuwingen en analysegrenzen;
+5. **Te valideren vragen** — maximaal vijf concrete, niet vast te stellen
+ punten.
+Gebruik uitsluitend de gegevens uit het deterministische dossier. Leid geen
+zakelijk doel af uit alleen de bladnamen. Schrijf "niet bepaald door de
+herkomst" wanneer informatie ontbreekt.
+Antwoord UITSLUITEND met het Markdown-overzicht, zonder JSON of
+scheidingstekens.
+""".strip(),
+    "ja": """
+あなたはビジネス読者向けに Excel ブックを文書化します。
+次のセクションからなる簡潔な Markdown の概要を作成してください。
+1. **目的** — ドシエが裏付ける場合に限り、ブックの明らかな役割。
+2. **構成** — シートと計算の配分。
+3. **計算の流れ** — 主要な数式パターン、定義された名前、リンク。
+4. **自動化と留意点** — VBA、外部参照、警告、分析の限界。
+5. **確認すべき点** — 特定できない具体的な項目を最大 5 件。
+決定論的なドシエにある事実のみを使用すること。シート名だけから業務上の
+目的を推測しないこと。情報が不足している場合は「系統からは特定できません」
+と書くこと。
+Markdown の概要のみで回答し、JSON や区切り記号は使わないこと。
+""".strip(),
+    "zh": """
+你为业务读者记录一个 Excel 工作簿。
+撰写一份简明的 Markdown 概览，包含以下部分：
+1. **目的** — 仅在档案支持时，说明该工作簿的明显作用；
+2. **结构** — 其工作表以及计算的分布；
+3. **计算流程** — 主要的公式模式、定义的名称和链接；
+4. **自动化与局限** — VBA、外部引用、警告以及分析的限制；
+5. **待确认的问题** — 最多五个无法确定的具体事项。
+仅使用确定性档案中的事实。不要仅凭工作表名称推断业务目的。
+信息缺失时请写“无法由血缘确定”。
+仅以 Markdown 概览作答，不要使用 JSON 或分隔符。
+""".strip(),
 }
 
 
@@ -100,14 +295,43 @@ class LLMProvider(Protocol):
     ) -> str: ...
 
 
+#: Anything accepted as ``provider=``: an :class:`LLMProvider` (any object with
+#: a ``generate`` method) or a plain callable with the same signature.
+ProviderLike = LLMProvider | Callable[..., str]
+
+
+class _CallableProvider:
+    """Adapt a plain callable to the :class:`LLMProvider` protocol."""
+
+    def __init__(self, fn: Callable[..., str]):
+        self._fn = fn
+
+    def generate(
+        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+    ) -> str:
+        return self._fn(system_prompt, user_prompt, temperature=temperature)
+
+
+def _as_provider(provider: ProviderLike) -> LLMProvider:
+    """Normalize a user-supplied provider into an :class:`LLMProvider`."""
+    if isinstance(provider, LLMProvider):
+        return provider
+    if callable(provider):
+        return _CallableProvider(provider)
+    raise AiDocError(
+        "provider must expose a generate(system_prompt, user_prompt, *, "
+        f"temperature) method or be callable, got {type(provider).__name__}"
+    )
+
+
 def _resolve_provider(
     *,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-) -> tuple[LLMProvider, str]:
-    """Resolve which provider to use and the model name.
+) -> LLMProvider:
+    """Resolve which provider to use.
 
     Priority:
     1. Explicit `provider` (custom callable or LLMProvider instance)
@@ -115,7 +339,7 @@ def _resolve_provider(
     3. Google API key available → Gemini client (backward-compatible default)
     """
     if provider is not None:
-        return provider, model or DEFAULT_MODEL
+        return _as_provider(provider)
 
     # OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.)
     base = base_url or os.getenv("LINEXCEL_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
@@ -126,14 +350,14 @@ def _resolve_provider(
             or os.getenv("OPENAI_MODEL")
             or "gpt-4o-mini"
         )
-        return (
-            _OpenAICompatProvider(base_url=base, api_key=api_key, model=resolved_model),
-            resolved_model,
+        return _OpenAICompatProvider(
+            base_url=base, api_key=api_key, model=resolved_model
         )
 
     # Google Gemini (default, backward-compatible)
-    resolved_model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
-    return _GeminiProvider(api_key=api_key, model=resolved_model), resolved_model
+    return _GeminiProvider(
+        api_key=api_key, model=model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    )
 
 
 class _GeminiProvider:
@@ -363,7 +587,7 @@ def document_workbook(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     language: str = "en",
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
@@ -381,7 +605,7 @@ def document_workbook(
         dossier["formula_patterns"] = dossier["formula_patterns"][:5]
         dossier["vba_procedures"] = dossier["vba_procedures"][:10]
         blob = json.dumps(dossier, ensure_ascii=False, default=str)
-    llm, resolved_model = _resolve_provider(
+    llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _WORKBOOK_SYSTEM[language]
@@ -401,16 +625,26 @@ def document_nodes(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    provider: LLMProvider | None = None,
+    provider: ProviderLike | None = None,
     language: str = "en",
+    max_workers: int = 4,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
     Provider resolution is the same as :func:`document_workbook`.
+
+    Nodes are documented concurrently (``max_workers`` in-flight requests;
+    raise it if the provider's rate limits allow). Documenting a large
+    workbook is a long, often billed operation, so a node that fails does not
+    discard the ones that succeeded: the successful cards are returned and a
+    :class:`UserWarning` reports how many nodes were dropped.
+    :class:`AiDocError` is raised only when *every* node failed.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
-    llm, resolved_model = _resolve_provider(
+    if max_workers < 1:
+        raise ValueError("max_workers must be >= 1")
+    llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
     system = _SYSTEM[language]
@@ -424,6 +658,8 @@ def document_nodes(
                 d["decomposition"] = "truncated (very long formula)"
                 blob = json.dumps(d, ensure_ascii=False, default=str)
             dossiers.append((nid, blob))
+    if not dossiers:
+        return docs
 
     def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str]:
         nid, blob = nid_blob
@@ -431,16 +667,31 @@ def document_nodes(
         text = llm.generate(system, user, temperature=0.2)
         return nid, text or "(AI returned empty response)"
 
-    # ponytail: 4 workers, bump if API rate limits allow
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    failures: list[tuple[str, Exception]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
         for fut in as_completed(futures):
             node_id = futures[fut]
             try:
                 nid, text = fut.result()
             except Exception as exc:
-                raise AiDocError(
-                    f"AI documentation failed for node {node_id}: {exc}"
-                ) from exc
+                failures.append((node_id, exc))
+                continue
             docs[nid] = text
+
+    if failures and not docs:
+        node_id, exc = failures[0]
+        raise AiDocError(
+            f"AI documentation failed for all {len(failures)} nodes "
+            f"(first error, node {node_id}): {exc}"
+        ) from exc
+    if failures:
+        node_id, exc = failures[0]
+        warnings.warn(
+            f"AI documentation failed for {len(failures)} of {len(dossiers)} "
+            f"nodes; {len(docs)} cards returned. First error (node {node_id}): "
+            f"{exc}",
+            UserWarning,
+            stacklevel=2,
+        )
     return docs

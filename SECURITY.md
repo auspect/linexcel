@@ -17,5 +17,7 @@ Security fixes are applied to the latest released version of `linexcel`.
 ## Scope
 
 `linexcel` analyses workbooks supplied by its caller. The optional AI
-documentation feature transmits the documented node dossier to Gemini; see the
+documentation feature transmits the documented node dossier to the provider you
+configure — Google Gemini by default, otherwise any OpenAI-compatible endpoint
+or custom callable you supply. See the
 [AI data handling section](README.md#ai-data-handling) before enabling it.

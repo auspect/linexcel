@@ -3,7 +3,7 @@ name: publish
 on:
   push:
     tags: ["v*"]
-  # Utile pour rejouer une publication ratée sans re-tagger.
+  # Useful to replay a failed release without re-tagging.
   workflow_dispatch:
 
 permissions:
@@ -11,10 +11,10 @@ permissions:
 
 concurrency:
   group: publish-${{ github.ref }}
-  cancel-in-progress: false # on n'annule JAMAIS une publication en cours
+  cancel-in-progress: false # NEVER cancel a release in flight
 
 jobs:
-  # Rejoue lint + typecheck + tests + build avant toute publication.
+  # Replays lint + typecheck + tests + build before any release.
   ci:
     uses: ./.github/workflows/ci.yml
     permissions:
@@ -31,20 +31,20 @@ jobs:
           enable-cache: true
           prune-cache: true
 
-      - name: Version depuis le tag
+      - name: Version from tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
           echo "$tag" > VERSION
-          echo "Publication de la version $tag"
+          echo "Releasing version $tag"
 
       - run: uv build
 
-      - name: Cohérence tag / métadonnées du wheel
+      - name: Tag / wheel metadata consistency
         run: |
           expected="${GITHUB_REF_NAME#v}"
           found=$(ls dist/*.whl | head -1 | sed -E 's/.*-([^-]+)-py3.*/\1/')
           if [ "$found" != "$expected" ]; then
-            echo "::error::Le wheel annonce $found alors que le tag dit $expected"
+            echo "::error::Wheel reports $found but the tag says $expected"
             exit 1
           fi
 
@@ -75,5 +75,5 @@ jobs:
           path: dist/
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-      - name: Publier sur PyPI
+      - name: Publish to PyPI
         run: uv publish --trusted-publishing always

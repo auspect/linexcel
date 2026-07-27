@@ -42,8 +42,15 @@ _BRACKET_RE = re.compile(
     r"\[(?P<ref>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)\]"
 )
 
-_COMMENT_RE = re.compile(r"(?<!\*)'.*$", re.MULTILINE)
-_STRINGS_KEEP = re.compile(r'"(?:""|[^"])*"')  # ponytail: handles VBA "" escape
+# String literal, including the doubled-quote ("") escape used by VBA.
+_STRING_LITERAL_RE = re.compile(r'"(?:""|[^"])*"')
+
+# An identifier, plus the qualifier it is reached through, if any. The
+# lookbehind keeps the qualifier out of a longer dotted chain, so
+# Range("A1").Value yields ("Range", "Value") and never a bare "Value".
+_CALL_TOKEN_RE = re.compile(
+    r"(?<![.\w])(?:(?P<qualifier>[A-Za-z_]\w*)\s*\.\s*)?(?P<name>[A-Za-z_]\w*)"
+)
 
 
 @dataclass
@@ -175,14 +182,35 @@ def _num_col(n: int) -> str:
     return out
 
 
-def _find_calls(proc: VbaProc, known: set[str]) -> list[str]:
+def _find_calls(
+    proc: VbaProc, known: dict[str, str], modules: dict[str, str]
+) -> list[str]:
+    """Known procedures referenced in the body.
+
+    ``known`` maps a lowercased procedure name to its declared spelling, and
+    ``modules`` does the same for module names: VBA is case-insensitive, so
+    ``Call taux`` reaches the ``Taux`` function.
+
+    A name reached through a dot counts as a call only when the qualifier is a
+    module (``Module1.Taux``, returned qualified); otherwise it is member
+    access on an object (``.Value``, ``.Range``) and is ignored — which matters
+    because helper procedures are routinely named ``Value``, ``Add`` or
+    ``Count``.
+    """
     calls: set[str] = set()
     body = "\n".join(_strip_comments(line) for line in proc.code.splitlines()[1:])
-    body = _STRINGS_KEEP.sub('""', body)
-    for m in re.finditer(r"\b([A-Za-z_]\w*)\b", body):
-        name = m.group(1)
-        if name != proc.name and name in known:
-            calls.add(name)
+    body = _STRING_LITERAL_RE.sub('""', body)
+    for m in _CALL_TOKEN_RE.finditer(body):
+        qualifier, name = m.group("qualifier"), m.group("name")
+        declared = known.get(name.lower())
+        if declared is None:
+            continue
+        if qualifier is not None:
+            module = modules.get(qualifier.lower())
+            if module is not None:
+                calls.add(f"{module}.{name}")
+        elif declared.lower() != proc.name.lower():
+            calls.add(declared)
     return sorted(calls)
 
 
@@ -191,8 +219,9 @@ def analyze_vba(modules: dict[str, str]) -> list[VbaProc]:
     procs: list[VbaProc] = []
     for module, code in modules.items():
         procs.extend(_split_procedures(module, code))
-    known = {p.name for p in procs}
+    known = {p.name.lower(): p.name for p in procs}
+    modules_by_name = {module.lower(): module for module in modules}
     for proc in procs:
         proc.refs = _find_refs(proc)
-        proc.calls = _find_calls(proc, known)
+        proc.calls = _find_calls(proc, known, modules_by_name)
     return procs

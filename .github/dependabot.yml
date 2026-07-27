@@ -1,8 +1,8 @@
 version: 2
 
 updates:
-  # Met à jour les SHA des actions + le commentaire "# vX.Y.Z" automatiquement.
-  # C'est ce qui rend le pinning par SHA soutenable dans le temps.
+  # Updates action SHAs and their "# vX.Y.Z" comment automatically.
+  # This is what keeps SHA pinning maintainable over time.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -42,7 +42,7 @@ result.stats              # {totalFormulas, totalNodes, ...}
 result.warnings           # list[str]
 
 # AI documentation (optional, requires google-genai):
-# Supports "en" (default) or "fr" language for both documentation and UI
+# language drives both the AI prompt and the viewer UI (see Languages below)
 docs = result.document(api_key="...", language="en")
 result.save_html("out.html", docs=docs, language="en")
 
@@ -119,6 +119,10 @@ def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) ->
 docs = result.document(provider=my_llm)
 ```
 
+Any object exposing a `generate` method with that same signature works too.
+Nodes are documented concurrently (`max_workers=4` by default); a node that
+fails is skipped with a warning rather than discarding the whole run.
+
 ### Workbook-level overview
 
 ```python
@@ -126,16 +130,50 @@ workbook_doc = result.document_workbook(language="en")
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
+## Languages
+
+`language=` sets both the AI prompt and the viewer interface:
+
+| Code | Language | Code | Language | Code | Language |
+| --- | --- | --- | --- | --- | --- |
+| `en` | English (default) | `it` | Italiano | `nl` | Nederlands |
+| `fr` | Français | `pt` | Português | `ja` | 日本語 |
+| `es` | Español | `de` | Deutsch | `zh` | 简体中文 |
+
+```python
+docs = result.document(language="de")
+result.save_html("out.html", docs=docs, language="de")
+```
+
+The set is a closed allowlist, not free-form text: `language` selects a stored
+system prompt and is interpolated into the generated viewer, so an arbitrary
+string would let a caller steer the model's instructions. Anything else raises
+`ValueError`. Reports embed only the requested language plus the English
+fallback, so adding languages does not grow the exported file.
+
+> **Note:** English and French were written by hand. The other seven languages —
+> both the interface strings and the AI system prompts — were produced with AI
+> assistance and have not been reviewed by native speakers. Corrections are
+> welcome: interface strings live in `linexcel.i18n`, prompts in `linexcel.aidoc`.
+
 ## AI data handling
 
 AI documentation is opt-in. Calling `result.document()` sends a deterministic
 dossier for each requested node, while `result.document_workbook()` sends a
-workbook-level dossier, to the configured Gemini model. The dossiers can include
-formulas, computed values, precedent/dependent labels, formula decomposition,
-sheet structure, defined names, and extracted VBA code. Do not enable this
-feature for a workbook whose contents must remain local, unless its data-sharing
-requirements permit processing by Google. See the
-[Google Generative AI Terms of Service](https://ai.google.dev/terms).
+workbook-level dossier, to **whichever provider you configure**. The dossiers can
+include formulas, computed values, precedent/dependent labels, formula
+decomposition, sheet structure, defined names, and extracted VBA code.
+
+Where that data goes depends on the provider you select:
+
+| Configuration | Destination |
+| --- | --- |
+| Default (no `provider`, no `base_url`) | Google Gemini — see the [Google Generative AI Terms of Service](https://ai.google.dev/terms) |
+| `base_url=...` / `LINEXCEL_AI_BASE_URL` | The endpoint you point at — a local runtime such as Ollama or vLLM keeps the dossiers on your machine; a hosted OpenAI-compatible API does not |
+| `provider=...` | Wherever your own callable sends them |
+
+Do not enable this feature for a workbook whose contents must remain local
+unless the configured provider satisfies its data-sharing requirements.
 
 ## Features
 
