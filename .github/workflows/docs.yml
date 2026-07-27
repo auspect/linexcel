@@ -7,12 +7,16 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "src/linexcel/**/*.py"
+      - ".github/workflows/docs.yml"
+      - "pyproject.toml"
     tags: ["v*"]
   pull_request:
     paths:
       - "docs/**"
       - "mkdocs.yml"
       - "src/linexcel/**/*.py"
+      - ".github/workflows/docs.yml"
+      - "pyproject.toml"
 
 permissions:
   contents: read
