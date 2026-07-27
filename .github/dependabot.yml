@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Met à jour les SHA des actions + le commentaire "# vX.Y.Z" automatiquement.
+  # C'est ce qui rend le pinning par SHA soutenable dans le temps.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dev:
+        dependency-type: "development"
+      python-prod:
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
