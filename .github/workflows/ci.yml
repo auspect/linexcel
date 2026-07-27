@@ -17,11 +17,6 @@ concurrency:
   # Redundant runs are cancelled on PRs, never on main (coverage history).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # setup-uv v9 disabled pruning by default; re-enable it so the Actions
-  # cache does not grow without bound.
-  UV_FROZEN: "1"
-
 jobs:
   lint:
     runs-on: ubuntu-latest
