@@ -2,50 +2,78 @@ name: publish
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
+  # Utile pour rejouer une publication ratée sans re-tagger.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false # on n'annule JAMAIS une publication en cours
 
 jobs:
+  # Rejoue lint + typecheck + tests + build avant toute publication.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    secrets: inherit
+
   build:
+    needs: [ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
+          prune-cache: true
 
-      - name: Snapshot version (dev)
-        if: startsWith(github.ref, 'refs/heads/')
-        run: |
-          v=$(cat VERSION)
-          sha=${GITHUB_SHA::7}
-          echo "${v}.dev${sha}" > VERSION
-
-      - name: Set release version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Version depuis le tag
         run: |
           tag="${GITHUB_REF_NAME#v}"
           echo "$tag" > VERSION
+          echo "Publication de la version $tag"
 
       - run: uv build
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - name: Cohérence tag / métadonnées du wheel
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          found=$(ls dist/*.whl | head -1 | sed -E 's/.*-([^-]+)-py3.*/\1/')
+          if [ "$found" != "$expected" ]; then
+            echo "::error::Le wheel annonce $found alors que le tag dit $expected"
+            exit 1
+          fi
+
+      - name: Smoke test (wheel)
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import linexcel; print(linexcel.__version__)"
+      - name: Smoke test (sdist)
+        run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import linexcel; print(linexcel.__version__)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
 
-  publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+  publish-pypi:
+    needs: [build]
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/linexcel
     permissions:
       id-token: write
+      contents: read
     steps:
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
           path: dist/
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-        with:
-          enable-cache: true
-      - run: uv publish
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Publier sur PyPI
+        run: uv publish --trusted-publishing always
