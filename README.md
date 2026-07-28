@@ -36,10 +36,10 @@ pip install "linexcel[ai]"
 from linexcel import analyze
 
 result = analyze("workbook.xlsx")
-result                    # interactive graph in marimo / Jupyter
-result.save_html("out.html")     # standalone offline HTML viewer
-result.stats              # {totalFormulas, totalNodes, ...}
-result.warnings           # list[str]
+result  # interactive graph in marimo / Jupyter
+result.save_html("out.html")  # standalone offline HTML viewer
+result.stats  # {totalFormulas, totalNodes, ...}
+result.warnings  # list[str]
 
 # AI documentation (optional, requires google-genai):
 # language drives both the AI prompt and the viewer UI (see Languages below)
@@ -71,14 +71,26 @@ screenshots = result.save_screenshots("screenshots/")
 sheets_screenshots = {
     "Ventes": screenshots[0:3],
     "Synthese": [screenshots[3]],
-    "Params": [screenshots[4]]
+    "Params": [screenshots[4]],
 }
 
 # 3. Embed them directly inside the offline HTML report
 result.save_html("out.html", screenshots=sheets_screenshots)
 ```
 
-Screenshots require LibreOffice and Poppler's `pdftoppm` installed on the system (e.g. on Debian/Ubuntu: `sudo apt install libreoffice-calc poppler-utils`). Rendering runs via LibreOffice headless, without opening a desktop Excel application.
+Screenshots require LibreOffice and Poppler's `pdftoppm` on the system:
+
+| Platform | Install |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt install libreoffice-calc poppler-utils` |
+| Windows | `winget install TheDocumentFoundation.LibreOffice` then `winget install oschwartz10612.Poppler` |
+| macOS | `brew install --cask libreoffice && brew install poppler` |
+
+Both tools are located on `PATH` or in their standard install directory, so the
+Windows and macOS installers — which do not extend `PATH` — need no extra setup.
+Rendering runs via LibreOffice headless, without opening a desktop Excel
+application, and uses a throwaway LibreOffice profile: it works while
+LibreOffice is open on the desktop and leaves your own settings untouched.
 
 ## AI documentation (optional, multi-provider)
 
@@ -115,6 +127,7 @@ Requires `openai` (`pip install linexcel[openai]`).
 def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
     # call your model here
     return response_text
+
 
 docs = result.document(provider=my_llm)
 ```

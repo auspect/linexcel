@@ -72,6 +72,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "value, step-by-step evaluation, and AI-generated documentation."
         ),
         "sheets_tab": "Sheets",
+        "page": "Page {n}",
     },
     "fr": {
         "graph": "Graphe",
@@ -118,6 +119,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "valeur calculée, sa décomposition pas à pas et sa documentation IA."
         ),
         "sheets_tab": "Feuilles",
+        "page": "Page {n}",
     },
     "es": {
         "graph": "Grafo",
@@ -165,6 +167,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "por IA."
         ),
         "sheets_tab": "Hojas",
+        "page": "Página {n}",
     },
     "de": {
         "graph": "Graph",
@@ -212,6 +215,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "KI-generierte Dokumentation anzuzeigen."
         ),
         "sheets_tab": "Blätter",
+        "page": "Seite {n}",
     },
     "it": {
         "graph": "Grafo",
@@ -259,6 +263,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "generata dall'IA."
         ),
         "sheets_tab": "Fogli",
+        "page": "Pagina {n}",
     },
     "pt": {
         "graph": "Grafo",
@@ -306,6 +311,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "IA."
         ),
         "sheets_tab": "Folhas",
+        "page": "Página {n}",
     },
     "nl": {
         "graph": "Graaf",
@@ -353,6 +359,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "documentatie te bekijken."
         ),
         "sheets_tab": "Bladen",
+        "page": "Pagina {n}",
     },
     "ja": {
         "graph": "グラフ",
@@ -398,6 +405,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "評価、AI が生成したドキュメントを確認できます。"
         ),
         "sheets_tab": "シート",
+        "page": "ページ {n}",
     },
     "zh": {
         "graph": "图谱",
@@ -443,6 +451,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "以及 AI 生成的文档。"
         ),
         "sheets_tab": "工作表",
+        "page": "第 {n} 页",
     },
 }
 

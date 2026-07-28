@@ -1,14 +1,17 @@
-"""Workbook context extraction and optional Linux screenshot rendering."""
+"""Workbook context extraction and optional screenshot rendering."""
 
 from __future__ import annotations
 
 import datetime
 import io
 import math
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +25,25 @@ MAX_COMMENTS_PER_SHEET = 20
 MAX_COMMENT_SCAN_CELLS = 100_000
 MAX_COMMENT_CHARS = 1_000
 MAX_MERGED_RANGES = 30
+
+# ``soffice.com`` first on Windows: it is the console front-end and waits for
+# the conversion, while ``soffice.exe`` detaches and returns to the caller
+# before the PDF exists.
+_LAUNCHER_NAMES = (
+    ("soffice.com", "soffice.exe", "soffice", "libreoffice")
+    if sys.platform == "win32"
+    else ("libreoffice", "soffice")
+)
+
+_INSTALL_HINTS = {
+    "win32": (
+        "winget install TheDocumentFoundation.LibreOffice"
+        " and winget install oschwartz10612.Poppler"
+        " (open a new terminal afterwards so PATH is refreshed)"
+    ),
+    "darwin": "brew install --cask libreoffice and brew install poppler",
+}
+_DEFAULT_INSTALL_HINT = "sudo apt install libreoffice-calc poppler-utils"
 
 
 class WorkbookRenderError(RuntimeError):
@@ -106,26 +128,52 @@ def extract_workbook_context(
     }
 
 
+def find_libreoffice() -> str | None:
+    """Locate the LibreOffice launcher, on ``PATH`` or in a standard install.
+
+    Windows and macOS installers do not put LibreOffice on ``PATH``, so a
+    ``PATH``-only lookup reports the renderer as missing on machines where it is
+    installed. Well-known install directories are therefore searched as well.
+    """
+    for name in _LAUNCHER_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+    for candidate in _launcher_install_paths():
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def find_pdftoppm() -> str | None:
+    """Locate Poppler's ``pdftoppm``, on ``PATH`` or in a standard install."""
+    found = shutil.which("pdftoppm")
+    if found:
+        return found
+    for candidate in _pdftoppm_install_paths():
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def render_workbook_screenshots(
     data: bytes,
     filename: str,
     output_dir: str | Path,
     *,
     dpi: int = 144,
-    timeout: int = 60,
+    timeout: int = 180,
 ) -> list[Path]:
-    """Render workbook pages to PNG with LibreOffice and Poppler on Linux.
+    """Render workbook pages to PNG with LibreOffice and Poppler.
 
-    LibreOffice runs headlessly; no desktop Excel process is needed. It exports
-    the workbook to PDF, then ``pdftoppm`` creates one PNG per rendered page.
+    Works on Linux, macOS and Windows. LibreOffice runs headlessly; no desktop
+    Excel process is needed. It exports the workbook to PDF, then ``pdftoppm``
+    creates one PNG per rendered page.
     """
-    office = shutil.which("libreoffice") or shutil.which("soffice")
-    converter = shutil.which("pdftoppm")
+    office = find_libreoffice()
+    converter = find_pdftoppm()
     if not office or not converter:
-        raise WorkbookRenderError(
-            "Workbook screenshots require LibreOffice and pdftoppm. "
-            "Install LibreOffice and poppler-utils, then try again."
-        )
+        raise WorkbookRenderError(_missing_renderer_message(office, converter))
     if dpi <= 0:
         raise ValueError("dpi must be positive")
     if timeout <= 0:
@@ -143,13 +191,19 @@ def render_workbook_screenshots(
         temp = Path(temp_dir)
         input_path = temp / f"workbook{suffix}"
         pdf_dir = temp / "pdf"
+        profile_dir = temp / "profile"
         input_path.write_bytes(data)
         pdf_dir.mkdir()
         try:
             subprocess.run(
                 [
                     office,
+                    # A throwaway profile: a LibreOffice already open on the
+                    # desktop otherwise owns the default one, and the headless
+                    # process exits 0 without converting anything.
+                    f"-env:UserInstallation={profile_dir.as_uri()}",
                     "--headless",
+                    "--norestore",
                     "--convert-to",
                     "pdf",
                     "--outdir",
@@ -196,6 +250,59 @@ def render_workbook_screenshots(
     if not screenshots:
         raise WorkbookRenderError("pdftoppm did not produce PNG screenshots")
     return screenshots
+
+
+def _program_roots() -> Iterator[Path]:
+    """Windows directories that hold per-machine and per-user installs."""
+    seen: set[str] = set()
+    for variable in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(variable)
+        if root and root not in seen:
+            seen.add(root)
+            yield Path(root)
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        yield Path(local) / "Programs"
+
+
+def _launcher_install_paths() -> Iterator[Path]:
+    if sys.platform == "win32":
+        for root in _program_roots():
+            program = root / "LibreOffice" / "program"
+            yield program / "soffice.com"
+            yield program / "soffice.exe"
+    elif sys.platform == "darwin":
+        yield Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+
+
+def _pdftoppm_install_paths() -> Iterator[Path]:
+    if sys.platform != "win32":
+        return
+    # Poppler ships as a zip rather than an installer, so it lands wherever the
+    # package manager unpacked it. winget appends that directory to the user
+    # PATH in the registry, which existing shells do not see until they are
+    # restarted -- hence looking inside its package store directly.
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        winget = Path(local) / "Microsoft" / "WinGet"
+        yield winget / "Links" / "pdftoppm.exe"
+        yield from winget.glob("Packages/*Poppler*/*/Library/bin/pdftoppm.exe")
+    for root in _program_roots():
+        yield from root.glob("poppler*/Library/bin/pdftoppm.exe")
+        yield from root.glob("poppler*/bin/pdftoppm.exe")
+
+
+def _missing_renderer_message(office: str | None, converter: str | None) -> str:
+    missing = ", ".join(
+        name
+        for name, found in (("LibreOffice", office), ("pdftoppm", converter))
+        if not found
+    )
+    hint = _INSTALL_HINTS.get(sys.platform, _DEFAULT_INSTALL_HINT)
+    return (
+        f"Workbook screenshots require LibreOffice and pdftoppm; {missing} "
+        f"could not be found. Install with: {hint}"
+    )
 
 
 def _safe_value(value: Any) -> Any:

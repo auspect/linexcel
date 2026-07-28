@@ -14,8 +14,8 @@ result
 result.save_html("lineage.html")
 
 # Stats
-print(result.stats)       # {totalFormulas, totalNodes, ...}
-print(result.warnings)    # list[str]
+print(result.stats)  # {totalFormulas, totalNodes, ...}
+print(result.warnings)  # list[str]
 
 # Find nodes
 result.find("Summary")
@@ -31,7 +31,11 @@ result.save_json("lineage.json")
 json_str = result.to_json(indent=2)
 ```
 
-## Screenshots (optional, requires LibreOffice)
+## Screenshots (optional, requires LibreOffice and Poppler)
+
+Available on Linux, macOS and Windows — see
+[Workbook context & screenshots](context.md#screenshots) for the install
+command on your platform.
 
 ```python
 screenshots = result.save_screenshots("screenshots/")

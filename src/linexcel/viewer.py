@@ -283,7 +283,7 @@ _TEMPLATE = r"""
     <button id="lin-tab-graph" class="lin-tab active">Graph</button>
     <button id="lin-tab-overview" class="lin-tab" hidden>Workbook overview</button>
     <button id="lin-tab-sheets" class="lin-tab" hidden>Sheets</button>
-    <button id="lin-tab-screenshots" class="lin-tab" hidden>Aperçu visuel</button>
+    <button id="lin-tab-screenshots" class="lin-tab" hidden>Visual preview</button>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
     <button id="lin-lay-dagre">Flow</button>
@@ -506,7 +506,7 @@ _TEMPLATE = r"""
     btn.hidden = false;
 
     var container = document.getElementById('lin-screenshots');
-    container.appendChild(el('h2', null, 'Aperçu visuel du classeur'));
+    container.appendChild(el('h2', null, _t('visual')));
 
     var activeIdx = 0;
 
@@ -543,7 +543,7 @@ _TEMPLATE = r"""
 
     images.forEach(function(src, idx) {
       var pBtn = document.createElement('button');
-      pBtn.textContent = 'Page ' + (idx + 1);
+      pBtn.textContent = _t('page', { n: idx + 1 });
       pBtn.style.padding = '.35rem .7rem';
       pBtn.style.border = '1px solid var(--line)';
       pBtn.style.borderRadius = '6px';

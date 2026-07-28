@@ -2,6 +2,7 @@
 
 import io
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -28,15 +29,18 @@ class TestRefs:
 
     def test_parse_cell(self):
         rect = parse_ref("B2", "S")
+        assert rect is not None
         assert rect == Rect("S", 2, 2, 2, 2)
 
     def test_parse_range_with_sheet(self):
         rect = parse_ref("'Ma Feuille'!A1:C10")
+        assert rect is not None
         assert rect.sheet == "Ma Feuille"
         assert (rect.r1, rect.c1, rect.r2, rect.c2) == (1, 1, 10, 3)
 
     def test_parse_whole_column(self):
         rect = parse_ref("A:B")
+        assert rect is not None
         assert rect.c1 == 1 and rect.c2 == 2
         assert rect.r1 == 1 and rect.r2 == 1_048_576
 
@@ -50,13 +54,17 @@ class TestRefs:
 
     def test_stretch_relative_follows_group(self):
         detail = parse_ref_detailed("A2", "S")
+        assert detail is not None
         rect = stretch_ref(detail, 2, 4, (2, 101), (4, 4))
+        assert rect is not None
         assert (rect.r1, rect.r2) == (2, 101)
         assert rect.c1 == rect.c2 == 1
 
     def test_stretch_anchored_stays_fixed(self):
         detail = parse_ref_detailed("$A$2", "S")
+        assert detail is not None
         rect = stretch_ref(detail, 2, 4, (2, 101), (4, 4))
+        assert rect is not None
         assert (rect.r1, rect.r2) == (2, 2)
 
 
@@ -166,7 +174,8 @@ class TestPackageApi:
         node_id = b3[0]["id"]
         prec_labels = {n["label"] for n in result.precedents(node_id)}
         assert "TauxCible" in prec_labels
-        assert result.node(node_id)["formula"].startswith("=IF")
+        node = result.node(node_id)
+        assert node and node["formula"].startswith("=IF")
 
     def test_to_json_roundtrip(self, lineage_excel):
         import json
@@ -196,14 +205,39 @@ class TestPackageApi:
         assert ventes["hidden_columns"] == ["C"]
         assert "F1:G1" in ventes["merged_ranges"]
 
-    def test_screenshots_report_missing_linux_renderer(
+    def test_screenshots_report_a_missing_renderer(
         self, lineage_excel, monkeypatch, tmp_path
     ):
         from linexcel import WorkbookRenderError
 
         monkeypatch.setattr("linexcel.insights.shutil.which", lambda _: None)
-        with pytest.raises(WorkbookRenderError, match="LibreOffice and pdftoppm"):
+        monkeypatch.setattr("linexcel.insights._launcher_install_paths", lambda: ())
+        monkeypatch.setattr("linexcel.insights._pdftoppm_install_paths", lambda: ())
+        with pytest.raises(WorkbookRenderError, match="LibreOffice, pdftoppm"):
             analyze(lineage_excel).save_screenshots(tmp_path)
+
+    def test_renderer_is_found_in_a_standard_install_outside_path(
+        self, monkeypatch, tmp_path
+    ):
+        """Windows and macOS installers do not extend PATH."""
+        from linexcel.insights import find_libreoffice, find_pdftoppm
+
+        installed_office = tmp_path / "soffice.com"
+        installed_office.write_text("", encoding="utf-8")
+        installed_converter = tmp_path / "pdftoppm.exe"
+        installed_converter.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr("linexcel.insights.shutil.which", lambda _: None)
+        monkeypatch.setattr(
+            "linexcel.insights._launcher_install_paths",
+            lambda: (tmp_path / "absent.com", installed_office),
+        )
+        monkeypatch.setattr(
+            "linexcel.insights._pdftoppm_install_paths",
+            lambda: (installed_converter,),
+        )
+        assert find_libreoffice() == str(installed_office)
+        assert find_pdftoppm() == str(installed_converter)
 
     def test_screenshots_run_headless_conversion_pipeline(
         self, lineage_excel, monkeypatch, tmp_path
@@ -223,8 +257,31 @@ class TestPackageApi:
         monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
         screenshots = analyze(lineage_excel).save_screenshots(tmp_path)
         assert [path.name for path in screenshots] == ["workbook-1.png"]
-        assert calls[0][1:4] == ["--headless", "--convert-to", "pdf"]
+        assert calls[0][2:5] == ["--headless", "--norestore", "--convert-to"]
         assert calls[1][1:3] == ["-png", "-r"]
+
+    def test_screenshots_use_a_throwaway_libreoffice_profile(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        """A desktop LibreOffice owns the default profile; sharing it makes the
+        headless run exit 0 having converted nothing."""
+        calls = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            if command[0] == "libreoffice":
+                pdf_dir = Path(command[command.index("--outdir") + 1])
+                (pdf_dir / "workbook.pdf").write_bytes(b"%PDF-1.4")
+            else:
+                Path(f"{command[-1]}-1.png").write_bytes(b"png")
+
+        commands = {"libreoffice": "libreoffice", "pdftoppm": "pdftoppm"}
+        monkeypatch.setattr("linexcel.insights.shutil.which", commands.get)
+        monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
+        analyze(lineage_excel).save_screenshots(tmp_path)
+        profile = calls[0][1]
+        assert profile.startswith("-env:UserInstallation=file://")
+        assert "linexcel-render-" in profile
 
     def test_to_html_is_offline_and_self_contained(self, lineage_excel):
         result = analyze(lineage_excel)
@@ -254,6 +311,23 @@ class TestPackageApi:
             {"name": "TauxCible", "targets": ["Params!A1"]}
         ]
         assert dossier["formula_patterns"][0]["cells"] == 100
+
+    def test_screenshot_tab_is_translated_like_the_rest_of_the_viewer(
+        self, lineage_excel
+    ):
+        """The screenshot pane used to hard-code its French heading and the
+        'Page N' labels, so an English report was partly French."""
+        png = "data:image/png;base64,aGVsbG8="
+        html = analyze(lineage_excel).to_html(language="en", screenshots=[png])
+        assert "Aperçu" not in html
+        assert '"page": "Page {n}"' in html
+        assert "_t('page'" in html
+
+    def test_every_language_defines_the_screenshot_page_label(self):
+        from linexcel.i18n import LANGUAGES, UI_STRINGS
+
+        for language in LANGUAGES:
+            assert "{n}" in UI_STRINGS[language]["page"]
 
     def test_repr_html_wraps_in_data_iframe(self, lineage_excel):
         result = analyze(lineage_excel)
@@ -304,8 +378,9 @@ class TestPackageApi:
 
         result = analyze(lineage_excel)
         html = result.to_html(title="report\\")
-        blob = re.search(r"var GRAPH = (.*?);\n", html, re.S).group(1)
-        assert json.loads(blob)["meta"]["stats"]["totalFormulas"] == 103
+        embedded = re.search(r"var GRAPH = (.*?);\n", html, re.S)
+        assert embedded
+        assert json.loads(embedded.group(1))["meta"]["stats"]["totalFormulas"] == 103
 
     def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
         from linexcel.aidoc import AiDocError
@@ -440,7 +515,8 @@ class TestAiProviders:
 
         result = analyze(lineage_excel)
         with pytest.raises(AiDocError, match="must expose a generate"):
-            result.document_workbook(provider=object())
+            # cast: the point of the test is the runtime rejection
+            result.document_workbook(provider=cast(Any, object()))
 
     def test_partial_failure_keeps_the_successful_cards(self, lineage_excel):
         result = analyze(lineage_excel)

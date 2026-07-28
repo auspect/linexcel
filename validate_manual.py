@@ -122,8 +122,10 @@ def build_sample_workbook() -> bytes:
     chart.type = "col"
     chart.style = 10
     chart.title = "Chiffre d'Affaires par Produit (Top 10)"
-    chart.y_axis.title = "CA ($)"
-    chart.x_axis.title = "Produit"
+    # openpyxl's axis descriptor coerces a str into a Title; ty only sees the
+    # declared Title type.
+    chart.y_axis.title = "CA ($)"  # ty: ignore[invalid-assignment]
+    chart.x_axis.title = "Produit"  # ty: ignore[invalid-assignment]
 
     # References for chart (CA is col 5, Product is col 2)
     data = Reference(ws, min_col=5, min_row=3, max_row=13)

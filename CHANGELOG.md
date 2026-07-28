@@ -30,6 +30,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `max_workers` on `document()` to tune AI request concurrency
 
 ### Fixed
+- Workbook screenshots now work on Windows and macOS, not only Linux.
+  `save_screenshots()` looked for LibreOffice and `pdftoppm` on `PATH` alone,
+  which neither the Windows nor the macOS installer extends, so the renderer
+  reported itself as missing on machines where it was installed. Both binaries
+  are now also looked up in their standard install directory, including
+  winget's package store for Poppler
+- On Windows the renderer invokes `soffice.com` rather than `soffice.exe`:
+  `soffice.exe` detaches and returns immediately, so the conversion was reported
+  as finished before the PDF existed and the run failed with "LibreOffice did
+  not produce a PDF"
+- Screenshot rendering uses a throwaway LibreOffice user profile
+  (`-env:UserInstallation`). A LibreOffice already open on the desktop owns the
+  default profile, and the headless process would exit successfully having
+  converted nothing
+- `save_screenshots()` reports which of the two binaries is missing and gives
+  the install command for the running platform, instead of naming both and
+  assuming Debian
+- The screenshot pane hard-coded its heading and its `Page N` buttons in French,
+  so every report in the eight other languages was partly French. Both now go
+  through `linexcel.i18n`, which gains a `page` string
+- The workbook-context example in the documentation iterated
+  `result.workbook_context` as if it were keyed by sheet name; per-sheet context
+  lives under its `sheets` key
+- `linexcel.PackageNotFoundError` was never meant to be public; the
+  `importlib.metadata` import is now private
 - `provider=` now accepts a plain callable, as the documentation always claimed;
   previously only objects exposing a `generate` method worked
 - VBA call edges were never emitted: the procedure lookup was keyed on
@@ -66,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pytest` now collects the `src/` doctests, which `testpaths` used to exclude
 - Generated validation artifacts are no longer tracked in the repository
 - AI data-handling notes describe every provider, not just Gemini
+- `save_screenshots(timeout=)` defaults to 180 seconds instead of 60. A first
+  headless run builds the LibreOffice profile from scratch, which alone can
+  exceed the old budget on Windows
+- `linexcel.insights` exposes `find_libreoffice()` and `find_pdftoppm()`, so a
+  caller can check the renderer is available before analyzing a workbook
+- `linexcel.i18n` gains a `page` string, used by the screenshot page switcher
 
 ## [0.3.0] - 2026-07-14
 

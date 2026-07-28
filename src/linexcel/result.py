@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from linexcel.analyzer import analyze_workbook
 from linexcel.viewer import render_html, wrap_iframe
@@ -27,6 +28,8 @@ if TYPE_CHECKING:  # aidoc stays lazily imported at runtime
     from linexcel.aidoc import ProviderLike
 
 Source = str | Path | bytes | bytearray | BinaryIO
+# Covariant containers: callers commonly hold a list[Path] / dict[str, list[Path]].
+Screenshots = Sequence[str | Path] | Mapping[str, Sequence[str | Path]]
 
 
 def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
@@ -178,13 +181,15 @@ class LineageResult:
         output_dir: str | Path,
         *,
         dpi: int = 144,
-        timeout: int = 60,
+        timeout: int = 180,
     ) -> list[Path]:
-        """Render workbook pages to PNG using LibreOffice headless on Linux.
+        """Render workbook pages to PNG using LibreOffice headless.
 
-        The optional renderer requires ``libreoffice`` (or ``soffice``) and
-        ``pdftoppm`` from Poppler. Use :attr:`workbook_context` when only the
-        non-rendered context is needed.
+        Works on Linux, macOS and Windows. The optional renderer requires
+        LibreOffice and ``pdftoppm`` from Poppler; both are found on ``PATH`` or
+        in their standard install directory, since the Windows and macOS
+        installers do not extend ``PATH``. Use :attr:`workbook_context` when
+        only the non-rendered context is needed.
         """
         from linexcel.insights import render_workbook_screenshots
 
@@ -277,7 +282,7 @@ class LineageResult:
         full_document: bool = True,
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
-        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        screenshots: Screenshots | None = None,
         language: str = "en",
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
@@ -304,9 +309,12 @@ class LineageResult:
         if screenshots:
             import base64
 
-            if isinstance(screenshots, dict):
+            if isinstance(screenshots, Mapping):
+                # cast: isinstance() alone leaves the Sequence arm of the union
+                # in play, which erases the value type.
+                by_sheet = cast("Mapping[str, Sequence[str | Path]]", screenshots)
                 embeds_dict = {}
-                for sheet_name, s_list in screenshots.items():
+                for sheet_name, s_list in by_sheet.items():
                     embeds = []
                     for s in s_list:
                         p = Path(s) if isinstance(s, (str, Path)) else None
@@ -356,10 +364,10 @@ class LineageResult:
         title: str | None = None,
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
-        screenshots: list[str | Path] | dict[str, list[str | Path]] | None = None,
+        screenshots: Screenshots | None = None,
         language: str = "en",
     ) -> Path:
-        path = Path(path)
+        path = path if isinstance(path, Path) else Path(path)
         path.write_text(
             self.to_html(
                 title=title,

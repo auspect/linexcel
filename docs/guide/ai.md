@@ -33,6 +33,7 @@ def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) ->
     # call your model here
     return response_text
 
+
 docs = result.document(provider=my_llm)
 ```
 
