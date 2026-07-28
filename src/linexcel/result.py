@@ -25,7 +25,7 @@ from linexcel.analyzer import analyze_workbook
 from linexcel.viewer import render_html, wrap_iframe
 
 if TYPE_CHECKING:  # aidoc stays lazily imported at runtime
-    from linexcel.aidoc import ProviderLike
+    from linexcel.aidoc import ProviderLike, TokenUsage
 
 Source = str | Path | bytes | bytearray | BinaryIO
 # Covariant containers: callers commonly hold a list[Path] / dict[str, list[Path]].
@@ -94,6 +94,7 @@ class LineageResult:
             "filename", "workbook.xlsx"
         )
         self._workbook_context: dict[str, Any] | None = None
+        self._token_usage: TokenUsage | None = None
 
     # -- convenience accessors --------------------------------------------
     @property
@@ -131,6 +132,25 @@ class LineageResult:
                 self._source_bytes(), self._source_filename
             )
         return self._workbook_context
+
+    @property
+    def token_usage(self) -> TokenUsage:
+        """Tokens consumed by every :meth:`document` / :meth:`document_workbook`
+        call made on this result.
+
+        Counts come from the provider when it reports them (Gemini and
+        OpenAI-compatible endpoints do); otherwise they are approximated and
+        :attr:`TokenUsage.estimated` is set. Zero until an AI call is made.
+
+            >>> result.document(provider=my_llm)          # doctest: +SKIP
+            >>> print(result.token_usage)                 # doctest: +SKIP
+            ~12,480 tokens (~11,120 in + ~1,360 out) over 4 request(s)
+        """
+        if self._token_usage is None:
+            from linexcel.aidoc import TokenUsage as _TokenUsage
+
+            self._token_usage = _TokenUsage()
+        return self._token_usage
 
     def node(self, node_id: str) -> dict[str, Any] | None:
         """Return the node with the given id (or ``None``)"""
@@ -224,10 +244,12 @@ class LineageResult:
            (Ollama, vLLM, LM Studio, OpenAI, …)
         3. Google Gemini (default — requires ``google-genai`` and a key)
 
-        ``language`` selects the system prompt (\"en\" or \"fr\").
+        ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
         ``max_workers`` caps the number of concurrent requests. Nodes that fail
         are skipped with a :class:`UserWarning`; the cards that succeeded are
         still returned.
+
+        Tokens consumed are added to :attr:`token_usage`.
         """
         from linexcel.aidoc import document_nodes
 
@@ -244,6 +266,7 @@ class LineageResult:
             provider=provider,
             language=language,
             max_workers=max_workers,
+            usage=self.token_usage,
         )
 
     def document_workbook(
@@ -261,7 +284,8 @@ class LineageResult:
         Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
         display it in the viewer's separate overview tab.
 
-        Provider resolution is the same as :meth:`document`.
+        Provider resolution is the same as :meth:`document`, and tokens
+        consumed are added to :attr:`token_usage`.
         """
         from linexcel.aidoc import document_workbook
 
@@ -272,6 +296,7 @@ class LineageResult:
             base_url=base_url,
             provider=provider,
             language=language,
+            usage=self.token_usage,
         )
 
     # -- visualization -----------------------------------------------------

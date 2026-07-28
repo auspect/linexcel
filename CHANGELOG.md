@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Token accounting: `result.token_usage` tallies every `document()` and
+  `document_workbook()` call, exposing `input_tokens`, `output_tokens`,
+  `total`, `requests` and a readable `str()`. Recovered from the abandoned
+  `feat/agnostic-ai` branch, whose provider abstraction was superseded
+- Counts are read from the provider when it reports them — Gemini's
+  `usage_metadata` and the OpenAI-compatible `usage` block — so the figure
+  matches what is billed. They are approximated only as a fallback, and
+  `TokenUsage.estimated` then flags the tally
+- `aidoc.estimate_tokens()`, the fallback estimator, counts CJK characters
+  individually instead of letting `\w+` swallow a spaceless Japanese or Chinese
+  sentence as a single word
+- Optional `usage=` accumulator on `aidoc.document_nodes()` and
+  `aidoc.document_workbook()`, and a `UsageReportingProvider` protocol that
+  custom providers may implement to report real counts. Return types are
+  unchanged, so existing callers are unaffected
+
 - Seven more languages for `language=`, covering both the AI prompts and the
   viewer interface: `es`, `de`, `it`, `pt`, `nl`, `ja`, `zh` (with `en` and
   `fr`, nine in total). The set stays a closed allowlist — `language` selects a

@@ -545,6 +545,142 @@ class TestAiProviders:
             result.document(ids, provider=broken, max_workers=1)
 
 
+class TestTokenUsage:
+    """Token accounting: real counts when the provider reports them, else
+    an estimate that is flagged as such."""
+
+    @staticmethod
+    def _calc_ids(result: LineageResult) -> list[str]:
+        return [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+
+    def test_estimate_counts_latin_words(self):
+        from linexcel.aidoc import estimate_tokens
+
+        assert estimate_tokens("") == 0
+        assert estimate_tokens("the quick brown fox jumps") == 6  # 5 words * 4/3
+
+    def test_estimate_counts_cjk_per_character(self):
+        """A spaceless Japanese sentence is one `\\w+` match, not one token."""
+        import re
+
+        from linexcel.aidoc import estimate_tokens
+
+        text = "日本語のテキストです"
+        assert len(re.findall(r"\w+", text)) == 1  # what a naive counter sees
+        assert estimate_tokens(text) == len(text) == 10
+
+    def test_mixed_script_counts_both_parts(self):
+        from linexcel.aidoc import estimate_tokens
+
+        assert estimate_tokens("SUM 合計 total") == 2 + (2 * 4 // 3)
+
+    def test_callable_provider_usage_is_estimated_and_flagged(self, lineage_excel):
+        result = analyze(lineage_excel)
+        node_id = self._calc_ids(result)[0]
+        result.document([node_id], provider=lambda s, u, *, temperature=0.2: "# card")
+
+        usage = result.token_usage
+        assert usage.requests == 1
+        assert usage.estimated is True
+        assert usage.input_tokens > 0 and usage.output_tokens > 0
+        assert usage.total == usage.input_tokens + usage.output_tokens
+
+    def test_provider_reported_counts_are_used_verbatim(self, lineage_excel):
+        from linexcel.aidoc import TokenUsage
+
+        class Reporting:
+            def generate(self, system_prompt, user_prompt, *, temperature=0.2):
+                return "# card"
+
+            def generate_with_usage(
+                self, system_prompt, user_prompt, *, temperature=0.2
+            ):
+                return "# card", TokenUsage(
+                    input_tokens=1234,
+                    output_tokens=56,
+                    requests=1,
+                    model="m",
+                    provider="p",
+                )
+
+        result = analyze(lineage_excel)
+        result.document([self._calc_ids(result)[0]], provider=Reporting())
+
+        usage = result.token_usage
+        assert (usage.input_tokens, usage.output_tokens) == (1234, 56)
+        assert usage.estimated is False
+        assert usage.model == "m" and usage.provider == "p"
+
+    def test_usage_accumulates_across_calls(self, lineage_excel):
+        result = analyze(lineage_excel)
+        ids = self._calc_ids(result)
+        provider = lambda s, u, *, temperature=0.2: "# card"  # noqa: E731
+
+        result.document(ids, provider=provider, max_workers=1)
+        after_nodes = result.token_usage.requests
+        result.document_workbook(provider=provider)
+
+        assert after_nodes == len(ids)
+        assert result.token_usage.requests == len(ids) + 1
+
+    def test_tokens_spent_before_a_failure_are_still_counted(self, lineage_excel):
+        """Tokens already spent are billed even if a later node fails."""
+        result = analyze(lineage_excel)
+        ids = self._calc_ids(result)
+        failing = ids[0]
+
+        def flaky(system_prompt, user_prompt, *, temperature=0.2):
+            if f'"node_id": "{failing}"' in user_prompt:
+                raise RuntimeError("rate limited")
+            return "# card"
+
+        with pytest.warns(UserWarning):
+            result.document(ids, provider=flaky, max_workers=1)
+        assert result.token_usage.requests == len(ids) - 1
+
+    def test_usage_starts_empty_and_reads_cleanly(self, lineage_excel):
+        usage = analyze(lineage_excel).token_usage
+        assert (usage.total, usage.requests) == (0, 0)
+        assert "0 tokens" in str(usage)
+
+    def test_gemini_usage_metadata_is_read(self):
+        from linexcel.aidoc import _usage_from
+
+        class Meta:
+            prompt_token_count = 900
+            candidates_token_count = 100
+
+        usage = _usage_from(
+            Meta(),
+            ("prompt_token_count", "candidates_token_count"),
+            "prompt",
+            "text",
+            model="gemini",
+            provider="gemini",
+        )
+        assert (usage.input_tokens, usage.output_tokens, usage.total) == (
+            900,
+            100,
+            1000,
+        )
+        assert usage.estimated is False
+
+    def test_missing_usage_block_falls_back_to_estimation(self):
+        """Local OpenAI-compatible runtimes do not always report usage."""
+        from linexcel.aidoc import _usage_from
+
+        usage = _usage_from(
+            None,
+            ("prompt_tokens", "completion_tokens"),
+            "one two three four",
+            "five six",
+            model="local",
+            provider="openai-compatible",
+        )
+        assert usage.estimated is True
+        assert usage.input_tokens > 0 and usage.output_tokens > 0
+
+
 class TestVba:
     MODULES = {
         "Module1": (

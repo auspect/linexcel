@@ -57,6 +57,43 @@ not discard the ones that succeeded. The successful cards are returned and a
 `UserWarning` reports how many nodes were dropped; `AiDocError` is raised only
 when every node failed.
 
+## Token usage
+
+Every AI call is tallied on the result:
+
+```python
+docs = result.document()
+overview = result.document_workbook()
+
+print(result.token_usage)
+# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [gemini/gemini-3.1-flash-lite]
+
+usage = result.token_usage
+usage.input_tokens, usage.output_tokens, usage.total, usage.requests
+```
+
+Counts come from the provider when it reports them — Gemini's `usage_metadata`
+and the OpenAI-compatible `usage` block are read directly, so the figure is the
+one you are billed on. When a provider reports nothing (a custom callable, or a
+local runtime that omits the block), the tokens are approximated instead and
+`usage.estimated` is `True`; `str(usage)` then prefixes the numbers with `~`.
+
+```python
+if result.token_usage.estimated:
+    print("approximate — provider did not report usage")
+```
+
+Tokens already spent are counted even when a later node fails, since they are
+billed regardless. The tally accumulates across every call made on the result;
+build a fresh `TokenUsage` and pass it as `usage=` to
+`aidoc.document_nodes()` if you need to scope it more finely.
+
+!!! warning "Tokens, not currency"
+
+    `TokenUsage` deliberately carries no price. Rates differ per provider,
+    model and region, and a table baked into the package would silently go
+    stale. Multiply by your own current rate.
+
 ## Languages
 
 `language=` drives both the system prompt sent to the model and the viewer

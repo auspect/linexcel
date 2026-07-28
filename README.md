@@ -143,6 +143,22 @@ workbook_doc = result.document_workbook(language="en")
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
+### Token usage
+
+Every AI call is tallied on the result:
+
+```python
+docs = result.document()
+print(result.token_usage)
+# 48,210 tokens (44,900 in + 3,310 out) over 4 request(s) [gemini/gemini-3.1-flash-lite]
+```
+
+Counts come from the provider when it reports them (Gemini and
+OpenAI-compatible endpoints do), so the figure matches what you are billed on.
+Otherwise they are approximated and `result.token_usage.estimated` is `True`.
+No price is attached — rates differ per provider, model and region, so multiply
+by your own.
+
 ## Languages
 
 `language=` sets both the AI prompt and the viewer interface:
