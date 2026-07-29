@@ -232,6 +232,7 @@ class LineageResult:
         provider: ProviderLike | None = None,
         language: str = "en",
         max_workers: int = 4,
+        max_tokens: int | None = None,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
@@ -248,6 +249,8 @@ class LineageResult:
         ``max_workers`` caps the number of concurrent requests. Nodes that fail
         are skipped with a :class:`UserWarning`; the cards that succeeded are
         still returned.
+
+        ``max_tokens`` caps output per node (approximate; provider-dependent).
 
         Tokens consumed are added to :attr:`token_usage`.
         """
@@ -267,6 +270,7 @@ class LineageResult:
             language=language,
             max_workers=max_workers,
             usage=self.token_usage,
+            max_tokens=max_tokens,
         )
 
     def document_workbook(
@@ -277,6 +281,7 @@ class LineageResult:
         base_url: str | None = None,
         provider: ProviderLike | None = None,
         language: str = "en",
+        max_tokens: int | None = None,
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
 
@@ -286,6 +291,8 @@ class LineageResult:
 
         Provider resolution is the same as :meth:`document`, and tokens
         consumed are added to :attr:`token_usage`.
+
+        ``max_tokens`` caps the output length (approximate; provider-dependent).
         """
         from linexcel.aidoc import document_workbook
 
@@ -297,6 +304,7 @@ class LineageResult:
             provider=provider,
             language=language,
             usage=self.token_usage,
+            max_tokens=max_tokens,
         )
 
     # -- visualization -----------------------------------------------------

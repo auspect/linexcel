@@ -363,7 +363,12 @@ class LLMProvider(Protocol):
     """Minimal protocol: system + user prompt → text response."""
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str: ...
 
 
@@ -377,20 +382,32 @@ class UsageReportingProvider(Protocol):
     """
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]: ...
 
 
 def _generate(
-    llm: LLMProvider, system_prompt: str, user_prompt: str
+    llm: LLMProvider,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int | None = None,
 ) -> tuple[str, TokenUsage]:
     """Call ``llm``, returning its text and what the call cost.
 
     Providers reporting real usage are preferred; anything else is estimated.
     """
     if isinstance(llm, UsageReportingProvider):
-        return llm.generate_with_usage(system_prompt, user_prompt, temperature=0.2)
-    text = llm.generate(system_prompt, user_prompt, temperature=0.2)
+        return llm.generate_with_usage(
+            system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens
+        )
+    text = llm.generate(
+        system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens
+    )
     return text, TokenUsage(
         input_tokens=estimate_tokens(system_prompt) + estimate_tokens(user_prompt),
         output_tokens=estimate_tokens(text or ""),
@@ -411,7 +428,12 @@ class _CallableProvider:
         self._fn = fn
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         return self._fn(system_prompt, user_prompt, temperature=temperature)
 
@@ -488,21 +510,34 @@ class _GeminiProvider:
         self._model = model
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         return self.generate_with_usage(
-            system_prompt, user_prompt, temperature=temperature
+            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
         )[0]
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]:
         prompt = system_prompt + "\n\n" + user_prompt
+        config: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            config["max_output_tokens"] = max_tokens
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=prompt,
-                config={"temperature": temperature},
+                config=config,
             )
             text = (response.text or "").strip()
         except Exception as exc:
@@ -534,15 +569,28 @@ class _OpenAICompatProvider:
         self._model = model
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         return self.generate_with_usage(
-            system_prompt, user_prompt, temperature=temperature
+            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
         )[0]
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]:
+        kwargs: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
@@ -550,7 +598,7 @@ class _OpenAICompatProvider:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=temperature,
+                **kwargs,
             )
             text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
@@ -753,6 +801,7 @@ def document_workbook(
     provider: ProviderLike | None = None,
     language: str = "en",
     usage: TokenUsage | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
@@ -778,7 +827,7 @@ def document_workbook(
     system = _WORKBOOK_SYSTEM[language]
     user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
-        text, call_usage = _generate(llm, system, user)
+        text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
     except AiDocError:
         raise
     except Exception as exc:
@@ -799,6 +848,7 @@ def document_nodes(
     language: str = "en",
     max_workers: int = 4,
     usage: TokenUsage | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
@@ -839,7 +889,7 @@ def document_nodes(
     def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str, TokenUsage]:
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
-        text, call_usage = _generate(llm, system, user)
+        text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
         return nid, text or "(AI returned empty response)", call_usage
 
     failures: list[tuple[str, Exception]] = []
