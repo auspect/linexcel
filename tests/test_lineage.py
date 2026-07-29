@@ -492,7 +492,7 @@ class TestAiProviders:
 
     def test_object_exposing_generate_is_accepted(self, lineage_excel):
         class Provider:
-            def generate(self, system_prompt, user_prompt, *, temperature=0.2):
+            def generate(self, system_prompt, user_prompt, *, temperature=0.2, **kw):
                 return "# from object"
 
         result = analyze(lineage_excel)
@@ -505,7 +505,7 @@ class TestAiProviders:
         result = analyze(lineage_excel)
         assert (
             result.document_workbook(
-                provider=lambda system, user, *, temperature=0.2: "# overview"
+                provider=lambda system, user, *, temperature=0.2, **kw: "# overview"
             )
             == "# overview"
         )
@@ -589,11 +589,11 @@ class TestTokenUsage:
         from linexcel.aidoc import TokenUsage
 
         class Reporting:
-            def generate(self, system_prompt, user_prompt, *, temperature=0.2):
+            def generate(self, system_prompt, user_prompt, *, temperature=0.2, **kw):
                 return "# card"
 
             def generate_with_usage(
-                self, system_prompt, user_prompt, *, temperature=0.2
+                self, system_prompt, user_prompt, *, temperature=0.2, **kw
             ):
                 return "# card", TokenUsage(
                     input_tokens=1234,

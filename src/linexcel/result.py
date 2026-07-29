@@ -250,7 +250,7 @@ class LineageResult:
         are skipped with a :class:`UserWarning`; the cards that succeeded are
         still returned.
 
-        ``max_tokens`` caps the output length per node (approximate; provider-dependent).
+        ``max_tokens`` caps output per node (approximate; provider-dependent).
 
         Tokens consumed are added to :attr:`token_usage`.
         """

@@ -363,7 +363,11 @@ class LLMProvider(Protocol):
     """Minimal protocol: system + user prompt → text response."""
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> str: ...
 
@@ -378,13 +382,19 @@ class UsageReportingProvider(Protocol):
     """
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]: ...
 
 
 def _generate(
-    llm: LLMProvider, system_prompt: str, user_prompt: str,
+    llm: LLMProvider,
+    system_prompt: str,
+    user_prompt: str,
     max_tokens: int | None = None,
 ) -> tuple[str, TokenUsage]:
     """Call ``llm``, returning its text and what the call cost.
@@ -392,8 +402,12 @@ def _generate(
     Providers reporting real usage are preferred; anything else is estimated.
     """
     if isinstance(llm, UsageReportingProvider):
-        return llm.generate_with_usage(system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens)
-    text = llm.generate(system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens)
+        return llm.generate_with_usage(
+            system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens
+        )
+    text = llm.generate(
+        system_prompt, user_prompt, temperature=0.2, max_tokens=max_tokens
+    )
     return text, TokenUsage(
         input_tokens=estimate_tokens(system_prompt) + estimate_tokens(user_prompt),
         output_tokens=estimate_tokens(text or ""),
@@ -414,7 +428,11 @@ class _CallableProvider:
         self._fn = fn
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> str:
         return self._fn(system_prompt, user_prompt, temperature=temperature)
@@ -492,7 +510,11 @@ class _GeminiProvider:
         self._model = model
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> str:
         return self.generate_with_usage(
@@ -500,7 +522,11 @@ class _GeminiProvider:
         )[0]
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]:
         prompt = system_prompt + "\n\n" + user_prompt
@@ -543,7 +569,11 @@ class _OpenAICompatProvider:
         self._model = model
 
     def generate(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> str:
         return self.generate_with_usage(
@@ -551,7 +581,11 @@ class _OpenAICompatProvider:
         )[0]
 
     def generate_with_usage(
-        self, system_prompt: str, user_prompt: str, *, temperature: float = 0.2,
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]:
         kwargs: dict[str, Any] = {"temperature": temperature}
