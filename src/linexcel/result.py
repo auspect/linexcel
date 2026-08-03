@@ -59,7 +59,17 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
         Logical name (used for labels and VBA detection).
     """
     data, name = _read_source(source, filename)
-    payload = analyze_workbook(data, filename=name)
+    try:
+        payload = analyze_workbook(data, filename=name)
+    except Exception as exc:
+        # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)
+        # en message clair sur le vrai problème.
+        if not data[:4] == b"PK\x03\x04":
+            raise ValueError(
+                f"{name!r} is not an Excel file (xlsx/xlsm). "
+                "Legacy .xls is not supported — re-save it as .xlsx first."
+            ) from exc
+        raise ValueError(f"Could not analyze {name!r}: {exc}") from exc
     return LineageResult(
         graph=payload["graph"],
         engine=payload["engine"],
