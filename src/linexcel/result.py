@@ -59,7 +59,17 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
         Logical name (used for labels and VBA detection).
     """
     data, name = _read_source(source, filename)
-    payload = analyze_workbook(data, filename=name)
+    try:
+        payload = analyze_workbook(data, filename=name)
+    except Exception as exc:
+        # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)
+        # en message clair sur le vrai problème.
+        if not data[:4] == b"PK\x03\x04":
+            raise ValueError(
+                f"{name!r} is not an Excel file (xlsx/xlsm). "
+                "Legacy .xls is not supported — re-save it as .xlsx first."
+            ) from exc
+        raise ValueError(f"Could not analyze {name!r}: {exc}") from exc
     return LineageResult(
         graph=payload["graph"],
         engine=payload["engine"],
@@ -342,38 +352,23 @@ class LineageResult:
         if screenshots:
             import base64
 
+            def _embed(s: str | Path) -> str:
+                p = Path(s) if isinstance(s, (str, Path)) else None
+                if p and p.exists() and p.suffix.lower() == ".png":
+                    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                    return f"data:image/png;base64,{b64}"
+                return str(s)
+
             if isinstance(screenshots, Mapping):
                 # cast: isinstance() alone leaves the Sequence arm of the union
                 # in play, which erases the value type.
                 by_sheet = cast("Mapping[str, Sequence[str | Path]]", screenshots)
-                embeds_dict = {}
-                for sheet_name, s_list in by_sheet.items():
-                    embeds = []
-                    for s in s_list:
-                        p = Path(s) if isinstance(s, (str, Path)) else None
-                        if p and p.exists():
-                            if p.suffix.lower() == ".png":
-                                b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-                                embeds.append(f"data:image/png;base64,{b64}")
-                            else:
-                                embeds.append(str(s))
-                        else:
-                            embeds.append(str(s))
-                    embeds_dict[sheet_name] = embeds
-                meta["screenshots"] = embeds_dict
+                meta["screenshots"] = {
+                    name: [_embed(s) for s in s_list]
+                    for name, s_list in by_sheet.items()
+                }
             else:
-                embeds = []
-                for s in screenshots:
-                    p = Path(s) if isinstance(s, (str, Path)) else None
-                    if p and p.exists():
-                        if p.suffix.lower() == ".png":
-                            b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-                            embeds.append(f"data:image/png;base64,{b64}")
-                        else:
-                            embeds.append(str(s))
-                    else:
-                        embeds.append(str(s))
-                meta["screenshots"] = embeds
+                meta["screenshots"] = [_embed(s) for s in screenshots]
 
         graph = {
             **graph,

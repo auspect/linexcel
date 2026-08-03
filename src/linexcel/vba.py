@@ -89,6 +89,11 @@ def extract_vba_modules(data: bytes, filename: str) -> dict[str, str]:
     try:
         if parser.detect_vba_macros():
             for _f, _path, vba_filename, code in parser.extract_macros():
+                # oletools may yield bytes (undecodable module streams)
+                if isinstance(vba_filename, bytes):
+                    vba_filename = vba_filename.decode("utf-8", "replace")
+                if isinstance(code, bytes):
+                    code = code.decode("utf-8", "replace")
                 name = (vba_filename or "Module").rsplit("/", 1)[-1]
                 name = re.sub(r"\.(bas|cls|frm)$", "", name, flags=re.IGNORECASE)
                 if code and code.strip():

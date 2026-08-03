@@ -735,11 +735,17 @@ def _ref_preview(
             for name, rects in defined_names.items():
                 if name.upper() == ref.upper() and rects:
                     rect = rects[0]
-                    if rect.ncells == 1:
-                        return _cell_value(
-                            engine, rect.sheet or sheet, rect.r1, rect.c1, engine_sheets
+                    return (
+                        _cell_value(
+                            engine,
+                            rect.sheet or sheet,
+                            rect.r1,
+                            rect.c1,
+                            engine_sheets,
                         )
-                    return {"range": rect.to_a1(), "n": rect.ncells}
+                        if rect.ncells == 1
+                        else {"range": rect.to_a1(), "n": rect.ncells}
+                    )
         return None
     rect = detail.rect
     if rect.ncells == 1:
