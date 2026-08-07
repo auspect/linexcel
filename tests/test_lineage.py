@@ -502,18 +502,27 @@ class TestPackageApi:
         assert embedded
         assert json.loads(embedded.group(1))["meta"]["stats"]["totalFormulas"] == 103
 
-    def test_document_without_key_raises_aidocerror(self, lineage_excel, monkeypatch):
+    def test_document_without_provider_raises_aidocerror(
+        self, lineage_excel, monkeypatch
+    ):
+        """Bare calls no longer fall back to any vendor: no implicit default."""
         from linexcel.aidoc import AiDocError
 
-        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        for var in (
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "GEMINI_MODEL",
+            "LINEXCEL_AI_BASE_URL",
+            "OPENAI_BASE_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
         result = analyze(lineage_excel)
         try:
             result.document()
-        except AiDocError:
-            pass
+        except AiDocError as exc:
+            assert "No AI provider selected" in str(exc)
         else:  # pragma: no cover
-            raise AssertionError("AiDocError expected when no key is provided")
+            raise AssertionError("AiDocError expected when no provider is configured")
 
 
 class TestLanguages:
@@ -596,6 +605,101 @@ class TestAiProviders:
     @staticmethod
     def _calc_ids(result: LineageResult) -> list[str]:
         return [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+
+    def test_no_provider_selected_raises_with_guidance(
+        self, lineage_excel, monkeypatch
+    ):
+        """No implicit vendor: a bare call is an explicit error, not Google."""
+        from linexcel.aidoc import AiDocError
+
+        for var in (
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "GEMINI_MODEL",
+            "LINEXCEL_AI_BASE_URL",
+            "OPENAI_BASE_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="No AI provider selected"):
+            result.document_workbook()
+
+    def test_gemini_requires_an_explicit_model(self, lineage_excel, monkeypatch):
+        """A Google key alone no longer selects Gemini — a model must be named."""
+        from linexcel.aidoc import AiDocError
+
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("LINEXCEL_AI_BASE_URL", raising=False)
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError) as exc:
+            result.document(model="gemini-3.1-flash-lite")
+        # model= routes to Gemini, which fails on the missing key or package
+        # (dev env) — but never on the neutral "no provider" gate.
+        assert "No AI provider selected" not in str(exc.value)
+
+    def test_api_key_alone_does_not_select_gemini(self, lineage_excel, monkeypatch):
+        """api_key= alone must not implicitly select Gemini."""
+        from linexcel.aidoc import AiDocError
+
+        for var in (
+            "GEMINI_MODEL",
+            "LINEXCEL_AI_BASE_URL",
+            "OPENAI_BASE_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="No AI provider selected"):
+            result.document_workbook(api_key="some-key")
+
+    def test_model_routes_to_gemini_only_when_requested(
+        self, lineage_excel, monkeypatch
+    ):
+        """model= is the explicit opt-in for Gemini; it reaches the client."""
+        from linexcel import aidoc
+
+        captured = {}
+
+        class StubGemini:
+            def __init__(self, *, api_key, model):
+                captured["api_key"] = api_key
+                captured["model"] = model
+
+            def generate(
+                self, system_prompt, user_prompt, *, temperature=0.2, max_tokens=None
+            ):
+                return "# gemini"
+
+        monkeypatch.setattr(aidoc, "_GeminiProvider", StubGemini)
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+        result = analyze(lineage_excel)
+        assert result.document_workbook(model="gemini-3.1-flash-lite") == "# gemini"
+        assert captured["model"] == "gemini-3.1-flash-lite"
+        assert captured["api_key"] is None  # key read from env by the client
+
+    def test_gemini_model_env_also_opts_in(self, lineage_excel, monkeypatch):
+        """GEMINI_MODEL is the env equivalent of model= for Gemini."""
+        from linexcel import aidoc
+
+        captured = {}
+
+        class StubGemini:
+            def __init__(self, *, api_key, model):
+                captured["model"] = model
+
+            def generate(
+                self, system_prompt, user_prompt, *, temperature=0.2, max_tokens=None
+            ):
+                return "# gemini"
+
+        monkeypatch.setattr(aidoc, "_GeminiProvider", StubGemini)
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+        monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+        result = analyze(lineage_excel)
+        assert result.document([self._calc_ids(result)[0]]) == {
+            self._calc_ids(result)[0]: "# gemini"
+        }
+        assert captured["model"] == "gemini-2.5-flash"
 
     def test_plain_callable_is_accepted(self, lineage_excel):
         seen = []

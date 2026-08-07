@@ -8,9 +8,9 @@ Minimal example, without backend or AI key:
     result.save_html("out.html")
     print(result.stats)
 
-AI documentation is optional:
+AI documentation is optional — pick a provider explicitly (no default):
 
-    result.document(api_key="...")   # or via GOOGLE_API_KEY env var
+    result.document(model="gemini-3.1-flash-lite")  # + GOOGLE_API_KEY env var
 """
 
 from __future__ import annotations
@@ -249,11 +249,12 @@ class LineageResult:
         Without ``node_ids``, documents all calculation nodes
         (cells, groups, VBA).
 
-        Provider resolution (first match wins):
+        Provider resolution (first match wins, no implicit default):
         1. ``provider`` — custom LLMProvider instance or callable
         2. ``base_url`` or ``LINEXCEL_AI_BASE_URL`` — OpenAI-compatible endpoint
            (Ollama, vLLM, LM Studio, OpenAI, …)
-        3. Google Gemini (default — requires ``google-genai`` and a key)
+        3. ``model`` (or ``GEMINI_MODEL``) with a Google API key
+           (``api_key``, ``GOOGLE_API_KEY``, or ``GEMINI_API_KEY``) — Gemini, opt-in
 
         ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
         ``max_workers`` caps the number of concurrent requests. Nodes that fail

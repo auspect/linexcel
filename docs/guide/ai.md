@@ -2,11 +2,24 @@
 
 AI documentation is opt-in and supports any LLM provider.
 
-## Google Gemini (default)
+**There is no default provider.** A call without `provider=`, `base_url=` or
+`model=` raises `AiDocError` and lists the options; nothing is sent anywhere
+until you pick one. Three ways to choose:
+
+| Way | Provider |
+| --- | --- |
+| `model=` (or `GEMINI_MODEL`) + Google key | Google Gemini |
+| `base_url=` (or `LINEXCEL_AI_BASE_URL`) | Any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI…) |
+| `provider=` | Your own callable / `LLMProvider` instance |
+
+## Google Gemini (explicit opt-in)
+
+Gemini requires naming a model — passing only `api_key=` no longer selects it:
 
 ```python
-docs = result.document(api_key="...", language="en")
+docs = result.document(model="gemini-3.1-flash-lite", api_key="...", language="en")
 result.save_html("out.html", docs=docs, language="en")
+# or: export GOOGLE_API_KEY=... and pass only model=
 ```
 
 Requires `google-genai` (`uv add linexcel[ai]`).
@@ -40,7 +53,7 @@ docs = result.document(provider=my_llm)
 ## Workbook overview
 
 ```python
-workbook_doc = result.document_workbook(language="en")
+workbook_doc = result.document_workbook(model="gemini-3.1-flash-lite", language="en")
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
@@ -49,7 +62,7 @@ result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en"
 `document()` issues `max_workers` requests in parallel (4 by default):
 
 ```python
-docs = result.document(max_workers=8)
+docs = result.document(model="gemini-3.1-flash-lite", max_workers=8)
 ```
 
 Documenting a large workbook is long and often billed, so a node that fails does
@@ -62,8 +75,8 @@ when every node failed.
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document()
-overview = result.document_workbook()
+docs = result.document(model="gemini-3.1-flash-lite")  # Gemini opt-in; use base_url= or provider= for other providers
+overview = result.document_workbook(model="gemini-3.1-flash-lite")
 
 print(result.token_usage)
 # 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [gemini/gemini-3.1-flash-lite]
@@ -101,7 +114,7 @@ interface. Nine are available: `en` (default), `fr`, `es`, `de`, `it`, `pt`,
 `nl`, `ja`, `zh`.
 
 ```python
-docs = result.document(language="ja")
+docs = result.document(model="gemini-3.1-flash-lite", language="ja")
 result.save_html("out.html", docs=docs, language="ja")
 ```
 
@@ -128,6 +141,7 @@ addition fails rather than surfacing as raw interface keys.
 The dossier sent for each node can include formulas, computed values,
 precedent/dependent labels, formula decomposition, sheet structure, defined
 names, and extracted VBA code. It goes to whichever provider you configure —
-Google Gemini by default, the endpoint behind `base_url` otherwise (a local
-Ollama or vLLM runtime keeps it on your machine), or wherever your own callable
-sends it.
+and nothing is sent until one is chosen explicitly (no default): Google Gemini
+when you pass `model=` with a key, the endpoint behind `base_url` otherwise (a
+local Ollama or vLLM runtime keeps it on your machine), or wherever your own
+callable sends it.
