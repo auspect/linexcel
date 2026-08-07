@@ -27,9 +27,9 @@ from typing import Any, Protocol, runtime_checkable
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
-# ^ Model used when Gemini is selected explicitly (via model= or GEMINI_MODEL)
-#   without naming a model. Not a global default: no provider is chosen for
-#   the user, see _resolve_provider().
+# ^ Fallback model name used *inside* _GeminiProvider when neither model= nor
+#   GEMINI_MODEL supplies a name.  This constant plays no role in provider
+#   selection: _resolve_provider() raises if no provider is configured.
 MAX_DOSSIER_CHARS = 6_000
 MAX_WORKBOOK_DOSSIER_CHARS = 12_000
 
