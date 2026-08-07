@@ -94,9 +94,8 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           v="${VERSION#v}"
-          awk -v v="$v" '
-            BEGIN { want = "^## \\[" v "\\]" }
-            $0 ~ /^## / { if (sec) exit; if ($0 ~ want) sec = 1 }
+          awk -v prefix="## [$v]" '
+            $0 ~ /^## / { if (sec) exit; if (index($0, prefix) == 1) sec = 1 }
             sec { print }
           ' CHANGELOG.md > notes.md
           [ -s notes.md ] && echo "found=true" >> "$GITHUB_OUTPUT" || echo "found=false" >> "$GITHUB_OUTPUT"
@@ -111,5 +110,5 @@ jobs:
           if [ "${{ steps.notes.outputs.found }}" = "true" ]; then
             gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" --generate-notes
+            gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --generate-notes
           fi
