@@ -77,3 +77,38 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always
+
+  github-release:
+    # Only tag pushes are releases: a workflow_dispatch replay must not mint a
+    # release from a branch name.
+    if: github.ref_type == 'tag'
+    needs: [publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Extract changelog section for this version
+        id: notes
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          v="${VERSION#v}"
+          awk -v prefix="## [$v]" '
+            $0 ~ /^## / { if (sec) exit; if (index($0, prefix) == 1) sec = 1 }
+            sec { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] && echo "found=true" >> "$GITHUB_OUTPUT" || echo "found=false" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice::Release $GITHUB_REF_NAME already exists, skipping"
+            exit 0
+          fi
+          if [ "${{ steps.notes.outputs.found }}" = "true" ]; then
+            gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
