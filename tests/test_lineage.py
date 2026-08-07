@@ -148,6 +148,126 @@ def _flatten(step):
     return out
 
 
+class TestStretchRobustness:
+    """A copied run must collapse into one group wherever it sits on the sheet.
+
+    Each case builds a minimal workbook and asserts on the *number of group
+    nodes*: a run that fails to group does not disappear, it explodes into one
+    ``cell`` node per member, which is the symptom these tests guard against.
+    """
+
+    @staticmethod
+    def _graph(cells: dict[str, Any], sheet: str = "S") -> dict:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet
+        for addr, value in cells.items():
+            ws[addr] = value
+        buf = io.BytesIO()
+        wb.save(buf)
+        return analyze_workbook(buf.getvalue(), "stretch.xlsx")["graph"]
+
+    @staticmethod
+    def _only_group(graph: dict) -> dict:
+        groups = [n for n in graph["nodes"] if n["kind"] == "group"]
+        assert len(groups) == 1, f"expected one group, got {graph['nodes']}"
+        assert not [n for n in graph["nodes"] if n["kind"] == "cell"]
+        return groups[0]
+
+    def test_a_run_starting_at_b2_is_one_group(self):
+        """Header row above, first column empty: the run still groups."""
+        graph = self._graph(
+            {
+                "A1": "Qté",
+                **{f"A{r}": r for r in range(2, 7)},
+                **{f"B{r}": f"=A{r}*2" for r in range(2, 7)},
+            }
+        )
+        group = self._only_group(graph)
+        assert group["id"] == "g:S!B2#5"
+        assert group["count"] == 5
+        assert group["bbox"] == "B2:B6"
+
+    def test_a_run_starting_at_a5_is_one_group(self):
+        """The run starts below the used range's first rows."""
+        graph = self._graph(
+            {
+                **{f"B{r}": r for r in range(5, 10)},
+                **{f"A{r}": f"=B{r}*2" for r in range(5, 10)},
+            }
+        )
+        group = self._only_group(graph)
+        assert group["id"] == "g:S!A5#5"
+        assert group["bbox"] == "A5:A9"
+
+    def test_a_run_with_absolute_refs_is_one_group(self):
+        """$A$1 is identical in every member, so the key must stay identical."""
+        graph = self._graph(
+            {
+                "A1": 3,
+                **{f"B{r}": r for r in range(2, 7)},
+                **{f"C{r}": f"=B{r}*$A$1" for r in range(2, 7)},
+            }
+        )
+        assert self._only_group(graph)["bbox"] == "C2:C6"
+
+    def test_a_horizontal_run_is_one_group(self):
+        """A run copied across columns, not down rows."""
+        graph = self._graph(
+            {
+                **{f"{c}2": 1 for c in "CDEFG"},
+                **{f"{c}3": f"={c}2*2" for c in "CDEFG"},
+            }
+        )
+        group = self._only_group(graph)
+        assert group["id"] == "g:S!C3#5"
+        assert group["bbox"] == "C3:G3"
+
+    def test_a_horizontal_run_survives_a_let_parameter(self):
+        """Regression: the tokenizer reports the LET variable ``x`` as a Range
+        operand. Converted to R1C1 it became a column offset that moved with
+        the host cell (C[21], C[20], ...), splitting the run into five nodes."""
+        graph = self._graph(
+            {
+                **{f"{c}2": 1 for c in "CDEFG"},
+                **{f"{c}3": f"=LET(x,{c}2,x*2)" for c in "CDEFG"},
+            }
+        )
+        assert self._only_group(graph)["bbox"] == "C3:G3"
+
+    def test_a_short_defined_name_is_not_read_as_a_column(self):
+        """Same defect, seen from the canonical form: a defined name of three
+        letters or fewer looks like a column to :func:`ref_to_r1c1`."""
+        keys = [canonical_r1c1(f"TVA*{c}2", 3, 3 + i) for i, c in enumerate("CDE")]
+        assert len(set(keys)) == 1
+        assert "TVA" in keys[0]
+
+    def test_the_r1c1_conversion_still_applies_to_real_refs(self):
+        """The guard must not disarm the happy path it protects."""
+        assert canonical_r1c1("A2*2", 2, 4) == "RC[-3]*2"
+        assert canonical_r1c1("SUM(A:A)", 2, 4) == "SUM(C[-3]:C[-3])"
+        assert canonical_r1c1("SUM(S1:S3!A2)", 2, 4) == "SUM('S1:S3'!RC[-3])"
+
+    def test_an_untokenizable_formula_groups_on_its_structure(self):
+        """Fallback contract: no formula found in a real workbook makes the
+        tokenizer throw (only malformed input does, which Excel would not
+        store), so this exercises :func:`canonical_r1c1` directly rather than
+        through a workbook. Two members of one run must share a key."""
+        assert canonical_r1c1("SUM(B2:C2", 2, 4) == canonical_r1c1("SUM(B3:C3", 3, 4)
+
+    def test_the_fallback_still_separates_different_logic(self):
+        assert canonical_r1c1("SUM(B2:C2", 2, 4) != canonical_r1c1(
+            "AVERAGE(B2:C2", 2, 4
+        )
+
+    def test_the_fallback_leaves_function_names_alone(self):
+        """The ref regex must not bite into LOG10 or _xlfn.FOO2."""
+        key = canonical_r1c1('IF(LOG10(A2)>0,"x",Sheet1!$B$4', 2, 4)
+        assert key == 'if(log10(@)>0,"x",@'
+
+
 class TestPackageApi:
     """The tool must be usable as a library, without FastAPI or AI."""
 
