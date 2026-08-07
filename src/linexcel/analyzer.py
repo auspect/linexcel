@@ -23,6 +23,7 @@ from typing import Any
 
 import formualizer as fz
 from openpyxl import load_workbook
+from openpyxl.styles.numbers import is_date_format
 
 from linexcel.refs import (
     Rect,
@@ -42,7 +43,22 @@ MAX_STEPS_PER_FORMULA = 48
 MAX_SCRATCH_EVALS = 4_000
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
+MAX_VALUE_WARNINGS = 25
+# Chained recovery: how deep the precedent walk goes, and how wide a referenced
+# range may be before its cells are left to the engine. Both only bound the
+# work; a cell that is skipped simply keeps the value the engine reports.
+MAX_CHAIN_DEPTH = 24
+MAX_CHAIN_RANGE_CELLS = 4_096
 SCRATCH_SHEET = "__lineage_scratch__"
+# Written into the scratch cell before each guarded evaluation: when the engine
+# fails to compute an expression it silently keeps the previous cell value
+# instead of raising, so an unchanged marker is how we detect that failure.
+SCRATCH_SENTINEL = "__linexcel_no_value__"
+EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
+EXCEL_EPOCH_1904 = datetime.datetime(1904, 1, 1)
+# Serials below 61 sit before Excel's phantom 1900-02-29; no real date matches.
+MIN_DATE_SERIAL_1900 = 61
+GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
 
 
 @dataclass
@@ -76,6 +92,337 @@ class _Budget:
         return True
 
 
+class CachedValues:
+    """Values the spreadsheet application cached in the file.
+
+    They are what the user last saw on screen. Workbooks written by openpyxl
+    carry no cache for formula cells, workbooks saved by Excel or LibreOffice
+    do; either way constants and their number formats are always readable.
+    """
+
+    def __init__(
+        self,
+        values: dict[tuple[str, int, int], Any],
+        date_cells: set[tuple[str, int, int]],
+        epoch_1904: bool,
+    ):
+        self._values = values
+        self._date_cells = date_cells
+        self.epoch_1904 = epoch_1904
+
+    def get(self, sheet: str, row: int, col: int) -> Any:
+        return self._values.get((sheet, row, col))
+
+    def is_date(self, sheet: str, row: int, col: int) -> bool:
+        return (sheet, row, col) in self._date_cells
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+
+def load_cached_values(data: bytes) -> CachedValues:
+    """Read the file's cached values once, keyed by (sheet, row, col)."""
+    values: dict[tuple[str, int, int], Any] = {}
+    date_cells: set[tuple[str, int, int]] = set()
+    epoch_1904 = False
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception:
+        return CachedValues(values, date_cells, epoch_1904)
+    try:
+        epoch_1904 = getattr(wb.epoch, "year", 1899) == 1904
+        for ws in wb.worksheets:
+            scanned = 0
+            for row in ws.iter_rows():
+                scanned += len(row)
+                if scanned > MAX_CELLS_PER_SHEET:
+                    break
+                for cell in row:
+                    # read-only sheets pad gaps with EmptyCell (no coordinates)
+                    r = getattr(cell, "row", None)
+                    c = getattr(cell, "column", None)
+                    if r is None or c is None:
+                        continue
+                    key = (ws.title, r, c)
+                    if _is_date_format(getattr(cell, "number_format", None)):
+                        date_cells.add(key)
+                    if cell.value is not None:
+                        values[key] = cell.value
+    except Exception:
+        pass
+    finally:
+        wb.close()
+    return CachedValues(values, date_cells, epoch_1904)
+
+
+class _ValueResolver:
+    """Single entry point for reading the value of a cell.
+
+    The engine is all-or-nothing: one cell pointing at a missing sheet makes
+    ``evaluate_all`` raise, and from then on every formula cell reads back as
+    ``None`` — the whole workbook loses its values because of one bad
+    reference. So each read is resolved in order: engine value, per-cell
+    recalculation, isolated re-evaluation of the formula in the scratch sheet
+    (with the IFERROR/IFNA fallback branch when the guarded expression itself
+    cannot be computed), and finally the value cached in the file.
+
+    A scratch evaluation only sees constants: a reference to another *formula*
+    cell reads back as blank, so ``=A3+A4`` silently yielded 0 and
+    ``=SUM(A1:A7)`` counted the constants only. Recovery therefore resolves the
+    precedents of a formula first, deepest one first, and feeds each recovered
+    value back into the engine as a constant so the next evaluation — direct
+    reference or range — reads a number instead of a formula it cannot compute.
+    """
+
+    def __init__(
+        self,
+        engine,
+        engine_sheets: set[str],
+        cached: CachedValues,
+        warnings: list[str],
+        budget: _Budget,
+        scratch_ready: bool,
+        engine_alive: bool = True,
+        sheet_dims: dict[str, tuple[int, int]] | None = None,
+    ):
+        self.engine = engine
+        self.engine_sheets = engine_sheets
+        self.cached = cached
+        self.warnings = warnings
+        self.budget = budget
+        self.scratch_ready = scratch_ready
+        self.sheet_dims = sheet_dims or {}
+        self._engine_alive = engine_alive
+        self._compared: set[tuple[str, int, int]] = set()
+        self._n_mismatches = 0
+        self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
+        self._resolving: set[tuple[str, int, int]] = set()
+        self.n_recovered = 0
+        self.n_unrecovered = 0
+
+    # -- public API --------------------------------------------------------
+    def value(
+        self, sheet: str | None, row: int, col: int, formula: str | None = None
+    ) -> tuple[Any, str | None, str | None]:
+        """Return ``(value, source, date_text)`` for one cell."""
+        if sheet is None:
+            return None, None, None
+        if sheet not in self.engine_sheets:
+            return self._from_cache(sheet, row, col)
+        raw, source = self._engine_read(sheet, row, col, formula)
+        if raw is None:
+            return self._from_cache(sheet, row, col)
+        date_text = self._date_text(sheet, row, col, raw)
+        self._check_mismatch(sheet, row, col, raw, date_text)
+        return _jsonable(raw), source, date_text
+
+    def describe(
+        self, sheet: str | None, row: int, col: int, formula: str | None = None
+    ) -> dict[str, Any]:
+        """Graph fields for a cell: value, provenance, cache and date."""
+        value, source, date_text = self.value(sheet, row, col, formula)
+        fields: dict[str, Any] = {"value": value}
+        if source is not None:
+            fields["valueSource"] = source
+        cached = self.cached_value(sheet, row, col)
+        if cached is not None:
+            fields["cachedValue"] = cached
+        if date_text is not None:
+            fields["valueDate"] = date_text
+        return fields
+
+    def cached_value(self, sheet: str | None, row: int, col: int) -> Any:
+        if sheet is None:
+            return None
+        raw = self.cached.get(sheet, row, col)
+        # dates stay dates: every serializer of the graph uses ``default=str``
+        if isinstance(raw, (datetime.datetime, datetime.date)):
+            return raw
+        return _jsonable(raw)
+
+    def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
+        """Evaluate an expression in the scratch sheet, if budget allows."""
+        raw, ok = self._eval_raw(expr, sheet)
+        return _jsonable(raw), ok
+
+    # -- internals ---------------------------------------------------------
+    def _eval_raw(self, expr: str, sheet: str) -> tuple[Any, bool]:
+        """Scratch evaluation keeping the engine value as-is.
+
+        Errors come back as ``{"type": "Error", ...}``; they only become the
+        string the graph carries at the very end, because an error fed back
+        into the engine is what lets a guard downstream still fire.
+        """
+        if not self.scratch_ready or not self.budget.take():
+            return None, False
+        return _scratch_eval(self.engine, expr, sheet)
+
+    def _engine_read(
+        self, sheet: str, row: int, col: int, formula: str | None
+    ) -> tuple[Any, str | None]:
+        memo = self._resolved.get((sheet, row, col))
+        if memo is not None:
+            return memo
+        try:
+            raw = self.engine.get_value(sheet, row, col)
+        except Exception:
+            raw = None
+        if raw is not None:
+            return raw, "engine"
+        if formula is None:
+            formula = self._formula_at(sheet, row, col)
+        if not formula:
+            return None, None
+        return self._recover(sheet, row, col, formula)
+
+    def _recover(
+        self, sheet: str, row: int, col: int, formula: str
+    ) -> tuple[Any, str | None]:
+        if self._engine_alive:
+            try:
+                raw = self.engine.evaluate_cell(sheet, row, col)
+                if raw is not None:
+                    return raw, "engine"
+            except Exception:
+                # The first failure poisons the engine for good: every later
+                # whole-graph evaluation would raise the same way.
+                self._engine_alive = False
+        expr = formula if formula.startswith("=") else "=" + formula
+        return self._remember(sheet, row, col, self._eval_formula(sheet, expr, 0))
+
+    def _eval_formula(
+        self, sheet: str, expr: str, depth: int
+    ) -> tuple[Any, str | None]:
+        """Evaluate one formula on its own, precedents resolved first."""
+        if not self._engine_alive:
+            self._resolve_precedents(sheet, expr, depth)
+        raw, ok = self._eval_raw(expr, sheet)
+        if ok and raw is not None:
+            return raw, "engine"
+        fallback = _guard_fallback_expr(expr)
+        if fallback is not None:
+            raw, ok = self._eval_raw(fallback, sheet)
+            if ok and raw is not None:
+                return raw, "fallback"
+        return None, None
+
+    def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
+        """Recover every formula cell the expression reads, deepest first."""
+        if depth >= MAX_CHAIN_DEPTH:
+            return
+        try:
+            ast_dict = fz.parse(expr).to_dict()
+        except Exception:
+            return
+        for ref in _collect_ref_strings(ast_dict):
+            detail = parse_ref_detailed(ref, default_sheet=sheet)
+            if detail is None or detail.rect.sheet not in self.engine_sheets:
+                continue
+            rect = detail.rect
+            dims = self.sheet_dims.get(rect.sheet or "")
+            if dims is not None:
+                clipped = rect.clipped(*dims)
+                if clipped is None:
+                    continue
+                rect = clipped
+            if rect.ncells > MAX_CHAIN_RANGE_CELLS or rect.sheet is None:
+                continue
+            for r in range(rect.r1, rect.r2 + 1):
+                for c in range(rect.c1, rect.c2 + 1):
+                    self._resolve_chain(rect.sheet, r, c, depth + 1)
+
+    def _resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> None:
+        key = (sheet, row, col)
+        # ``_resolving`` breaks the self-referencing formula (=B1+B2 in B2):
+        # the cell stays unresolved and reads as blank, as it did before.
+        if key in self._resolved or key in self._resolving:
+            return
+        if depth >= MAX_CHAIN_DEPTH or self.budget.left <= 0:
+            return
+        try:
+            if self.engine.get_value(sheet, row, col) is not None:
+                return  # constant: the engine already resolves it on its own
+        except Exception:
+            pass
+        formula = self._formula_at(sheet, row, col)
+        if not formula:
+            return
+        expr = formula if formula.startswith("=") else "=" + formula
+        self._resolving.add(key)
+        try:
+            result = self._eval_formula(sheet, expr, depth)
+        finally:
+            self._resolving.discard(key)
+        self._remember(sheet, row, col, result)
+
+    def _remember(
+        self, sheet: str, row: int, col: int, result: tuple[Any, str | None]
+    ) -> tuple[Any, str | None]:
+        """Memoize a recovered value and feed it back into the engine."""
+        self._resolved[(sheet, row, col)] = result
+        raw, _source = result
+        if raw is None:
+            self.n_unrecovered += 1
+            return result
+        self.n_recovered += 1
+        if not self._engine_alive:
+            # Only ever done on the engine rebuilt after a failed global
+            # evaluation, which holds no computed value anyway. It drops the
+            # formula of the cell, hence the memo read first in ``_engine_read``.
+            try:
+                self.engine.set_value(sheet, row, col, raw)
+            except Exception:
+                pass
+        return result
+
+    def _formula_at(self, sheet: str, row: int, col: int) -> str | None:
+        try:
+            return self.engine.get_formula(sheet, row, col)
+        except Exception:
+            return None
+
+    def _from_cache(
+        self, sheet: str, row: int, col: int
+    ) -> tuple[Any, str | None, str | None]:
+        raw = self.cached.get(sheet, row, col)
+        if raw is None:
+            return None, None, None
+        date_text = _date_text_of(raw)
+        return _jsonable(raw), "file", date_text
+
+    def _date_text(self, sheet: str, row: int, col: int, raw: Any) -> str | None:
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return _date_text_of(raw)
+        cached = self.cached.get(sheet, row, col)
+        is_date = isinstance(cached, (datetime.datetime, datetime.date))
+        if not is_date and not self.cached.is_date(sheet, row, col):
+            return None
+        return serial_to_date_text(raw, self.cached.epoch_1904)
+
+    def _check_mismatch(
+        self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
+    ) -> None:
+        key = (sheet, row, col)
+        if key in self._compared:
+            return
+        self._compared.add(key)
+        cached = self.cached.get(sheet, row, col)
+        if cached is None or not _values_differ(raw, cached, date_text):
+            return
+        self._n_mismatches += 1
+        if self._n_mismatches > MAX_VALUE_WARNINGS:
+            if self._n_mismatches == MAX_VALUE_WARNINGS + 1:
+                self.warnings.append(
+                    "More recalculated values differ from the file "
+                    f"(only the first {MAX_VALUE_WARNINGS} are listed)"
+                )
+            return
+        self.warnings.append(
+            f"{sheet}!{a1(row, col)}: recalculated {_fmt_value(raw)} "
+            f"differs from file value {_fmt_value(cached)}"
+        )
+
+
 def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
@@ -97,13 +444,37 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     finally:
         owb.close()
 
+    # values the file itself carries: last resort, and the only source of
+    # dates and of what the user actually saw on screen
+    cached = load_cached_values(data)
+
     # --- 2. computation engine -------------------------------------------
     engine = fz.Workbook.from_bytes(data)
     engine_sheets = set(engine.sheet_names)
+    engine_alive = True
     try:
         engine.evaluate_all()
     except Exception as exc:  # graph remains useful without values
         warnings.append(f"Global evaluation incomplete: {exc}")
+        # A failed global evaluation does not just drop the values: the engine
+        # then reports no formula at all, which would leave the graph empty.
+        # Rebuilding from the bytes gives the formulas back; values are
+        # recovered cell by cell further down.
+        engine_alive = False
+        engine = fz.Workbook.from_bytes(data)
+
+    scratch_ready = _ensure_scratch(engine)
+    budget = _Budget(MAX_SCRATCH_EVALS)
+    resolver = _ValueResolver(
+        engine,
+        engine_sheets,
+        cached,
+        warnings,
+        budget,
+        scratch_ready,
+        engine_alive=engine_alive,
+        sheet_dims=sheet_dims,
+    )
 
     # --- 3. extraction + grouping ----------------------------------------
     groups: dict[tuple[str, str], FormulaGroup] = {}
@@ -216,15 +587,18 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             }
         else:
             node_id = f"i:{label}"
-            nodes[node_id] = {
+            node: dict[str, Any] = {
                 "id": node_id,
                 "kind": "input",
                 "label": label,
                 "sheet": rect.sheet,
                 "addr": label.split("!")[-1],
                 "count": rect.ncells,
-                "values": _sample_range_values(engine, rect, engine_sheets),
+                "values": _sample_range_values(resolver, rect),
             }
+            if rect.ncells == 1 and rect.sheet is not None:
+                node.update(resolver.describe(rect.sheet, rect.r1, rect.c1))
+            nodes[node_id] = node
         input_nodes[label] = node_id
         return node_id
 
@@ -283,7 +657,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     for name, targets in defined_names.items():
         node_id = f"n:{name}"
         name_nodes[name.upper()] = node_id
-        val = None
+        value_fields: dict[str, Any] = {"value": None}
         if targets:
             first = targets[0]
             if (
@@ -291,28 +665,23 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
                 and first.r1 == first.r2
                 and first.c1 == first.c2
             ):
-                val = _cell_value(
-                    engine, first.sheet, first.r1, first.c1, engine_sheets
-                )
+                value_fields = resolver.describe(first.sheet, first.r1, first.c1)
             else:
-                val_samples = _sample_range_values(engine, first, engine_sheets)
+                val_samples = _sample_range_values(resolver, first)
                 if val_samples:
-                    val = val_samples[0]["value"]
+                    value_fields = {"value": val_samples[0]["value"]}
         nodes[node_id] = {
             "id": node_id,
             "kind": "name",
             "label": name,
             "sheet": targets[0].sheet if targets else None,
             "targets": [t.to_a1() for t in targets],
-            "value": val,
+            **value_fields,
         }
         for rect in targets:
             resolve_rect_edges(rect, node_id, kind="name")
 
     # formula nodes + edges -------------------------------------------------
-    scratch_ready = _ensure_scratch(engine)
-    budget = _Budget(MAX_SCRATCH_EVALS)
-
     for node_id, grp in kept_groups:
         rep_r, rep_c = grp.rep
         formula = grp.formulas.get((rep_r, rep_c)) or next(iter(grp.formulas.values()))
@@ -353,7 +722,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         for rect in _merge_rects(agg_rects):
             resolve_rect_edges(rect, node_id)
 
-        value = _cell_value(engine, sheet, rep_r, rep_c, engine_sheets)
+        value_fields = resolver.describe(sheet, rep_r, rep_c, formula)
         samples = None
         if is_group:
             samples = []
@@ -361,21 +730,13 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
                 samples.append(
                     {
                         "addr": a1(r, c),
-                        "value": _cell_value(engine, sheet, r, c, engine_sheets),
+                        **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
                     }
                 )
 
         steps = None
         if ast_dict is not None:
-            steps = _decompose(
-                ast_dict,
-                sheet,
-                engine,
-                scratch_ready,
-                budget,
-                engine_sheets,
-                defined_names,
-            )
+            steps = _decompose(ast_dict, sheet, resolver, defined_names)
 
         node: dict[str, Any] = {
             "id": node_id,
@@ -390,7 +751,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             "r1c1": grp.r1c1,
             "count": len(grp.cells),
             "bbox": _bbox_a1(grp),
-            "value": value,
+            **value_fields,
             "samples": samples,
             "steps": steps,
         }
@@ -451,6 +812,12 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             else:
                 resolve_rect_edges(detail.rect, pid, kind="vba-read")
 
+    if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
+        warnings.append(
+            f"Values recovered cell by cell: {resolver.n_recovered} recomputed, "
+            f"{resolver.n_unrecovered} left to the value stored in the file"
+        )
+
     graph = {
         "meta": {
             "filename": filename,
@@ -485,10 +852,7 @@ _STEP_KINDS = {"Function", "BinaryOp", "UnaryOp"}
 def _decompose(
     ast_dict: dict,
     sheet: str,
-    engine,
-    scratch_ready: bool,
-    budget: _Budget,
-    engine_sheets: set[str],
+    resolver: _ValueResolver,
     defined_names: dict[str, list[Rect]] | None = None,
 ) -> dict | None:
     """Step tree: each function / operator becomes an evaluated step."""
@@ -525,20 +889,17 @@ def _decompose(
                 ctype = child.get("node_type")
                 if ctype == "Reference":
                     ref = child.get("reference", "?")
-                    inputs.append(
-                        {
-                            "ref": ref,
-                            "value": _ref_preview(
-                                engine, ref, sheet, engine_sheets, defined_names
-                            ),
-                        }
+                    preview, date_text = _ref_preview(
+                        resolver, ref, sheet, defined_names
                     )
+                    entry: dict[str, Any] = {"ref": ref, "value": preview}
+                    if date_text is not None:
+                        entry["date"] = date_text
+                    inputs.append(entry)
                 elif ctype == "Literal":
                     inputs.append({"literal": child.get("value")})
 
-        value, evaluated = None, False
-        if scratch_ready and budget.take():
-            value, evaluated = _scratch_eval(engine, expr, sheet)
+        value, evaluated = resolver.eval_expr(expr, sheet)
         return {
             "kind": ntype,
             "label": label,
@@ -586,13 +947,53 @@ def _render_expr(node: dict) -> str:
 
 
 def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
+    """Evaluate an expression on its own in the scratch sheet.
+
+    The cell is primed with a sentinel first: when the engine cannot compute
+    an expression it leaves the previous value in place instead of reporting
+    an error, and an unchanged sentinel is the only way to tell. The very
+    first evaluation on a workbook holding a broken reference raises — the
+    engine walks the whole dirty graph — while later ones stay isolated,
+    hence the single retry.
+    """
     try:
         qualified = qualify_sheet(expr, sheet)
-        engine.set_formula(SCRATCH_SHEET, 1, 1, qualified)
-        value = engine.evaluate_cell(SCRATCH_SHEET, 1, 1)
-        return _jsonable(value), True
     except Exception:
         return None, False
+    for _ in range(2):
+        try:
+            engine.set_formula(SCRATCH_SHEET, 1, 1, f'="{SCRATCH_SENTINEL}"')
+            if engine.evaluate_cell(SCRATCH_SHEET, 1, 1) != SCRATCH_SENTINEL:
+                continue
+            engine.set_formula(SCRATCH_SHEET, 1, 1, qualified)
+            value = engine.evaluate_cell(SCRATCH_SHEET, 1, 1)
+        except Exception:
+            continue
+        if value == SCRATCH_SENTINEL:
+            return None, False
+        return value, True
+    return None, False
+
+
+def _guard_fallback_expr(expr: str) -> str | None:
+    """Fallback branch of a top-level IFERROR/IFNA, as Excel would show it."""
+    # ponytail: only a top-level guard is recovered. With a nested one —
+    # =IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1) — the whole expression fails to
+    # evaluate, so the outer fallback branch is taken (1) where Excel lets the
+    # inner guard absorb the broken reference and returns 0. That gap is the
+    # accepted ceiling of this recovery.
+    try:
+        ast_dict = fz.parse(expr).to_dict()
+    except Exception:
+        return None
+    if not isinstance(ast_dict, dict) or ast_dict.get("node_type") != "Function":
+        return None
+    if str(ast_dict.get("name", "")).upper() not in GUARD_FUNCTIONS:
+        return None
+    args = ast_dict.get("args") or []
+    if len(args) < 2:
+        return None
+    return "=" + _render_expr(args[1])
 
 
 def _ensure_scratch(engine) -> bool:
@@ -689,45 +1090,33 @@ def _bbox_a1(grp: FormulaGroup) -> str:
     return f"{a1(r1, c1)}:{a1(r2, c2)}"
 
 
-def _cell_value(engine, sheet: str, row: int, col: int, engine_sheets: set[str]):
-    if sheet not in engine_sheets:
-        return None
-    try:
-        return _jsonable(engine.get_value(sheet, row, col))
-    except Exception:
-        try:
-            return _jsonable(engine.evaluate_cell(sheet, row, col))
-        except Exception:
-            return None
-
-
-def _sample_range_values(engine, rect: Rect, engine_sheets: set[str]) -> list:
-    if rect.sheet is None or rect.sheet not in engine_sheets:
+def _sample_range_values(resolver: _ValueResolver, rect: Rect) -> list:
+    if rect.sheet is None:
         return []
     out = []
-    try:
-        for r in range(rect.r1, min(rect.r2, rect.r1 + MAX_VALUE_SAMPLE - 1) + 1):
-            for c in range(rect.c1, min(rect.c2, rect.c1 + MAX_VALUE_SAMPLE - 1) + 1):
-                if len(out) >= MAX_VALUE_SAMPLE:
-                    return out
-                out.append(
-                    {
-                        "addr": a1(r, c),
-                        "value": _jsonable(engine.get_value(rect.sheet, r, c)),
-                    }
-                )
-    except Exception:
-        pass
+    for r in range(rect.r1, min(rect.r2, rect.r1 + MAX_VALUE_SAMPLE - 1) + 1):
+        for c in range(rect.c1, min(rect.c2, rect.c1 + MAX_VALUE_SAMPLE - 1) + 1):
+            if len(out) >= MAX_VALUE_SAMPLE:
+                return out
+            value, source, date_text = resolver.value(rect.sheet, r, c)
+            out.append(
+                {
+                    "addr": a1(r, c),
+                    "value": value,
+                    "source": source,
+                    "date": date_text,
+                }
+            )
     return out
 
 
 def _ref_preview(
-    engine,
+    resolver: _ValueResolver,
     ref: str,
     sheet: str,
-    engine_sheets: set[str],
     defined_names: dict[str, list[Rect]] | None = None,
-):
+) -> tuple[Any, str | None]:
+    """Preview of a referenced cell or range: ``(value, date_text)``."""
     detail = parse_ref_detailed(ref, default_sheet=sheet)
     if detail is None:
         # may be a defined name: show the value of its target
@@ -735,22 +1124,18 @@ def _ref_preview(
             for name, rects in defined_names.items():
                 if name.upper() == ref.upper() and rects:
                     rect = rects[0]
-                    return (
-                        _cell_value(
-                            engine,
-                            rect.sheet or sheet,
-                            rect.r1,
-                            rect.c1,
-                            engine_sheets,
+                    if rect.ncells == 1:
+                        value, _, date_text = resolver.value(
+                            rect.sheet or sheet, rect.r1, rect.c1
                         )
-                        if rect.ncells == 1
-                        else {"range": rect.to_a1(), "n": rect.ncells}
-                    )
-        return None
+                        return value, date_text
+                    return {"range": rect.to_a1(), "n": rect.ncells}, None
+        return None, None
     rect = detail.rect
     if rect.ncells == 1:
-        return _cell_value(engine, rect.sheet or sheet, rect.r1, rect.c1, engine_sheets)
-    return {"range": rect.to_a1(), "n": rect.ncells}
+        value, _, date_text = resolver.value(rect.sheet or sheet, rect.r1, rect.c1)
+        return value, date_text
+    return {"range": rect.to_a1(), "n": rect.ncells}, None
 
 
 def _resolve_call(
@@ -804,6 +1189,60 @@ def _resolve_vba_write(
         has_plain = True
     if has_plain:
         add_edge(pid, ensure_input_node(clipped), "vba-write")
+
+
+def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
+    """Excel serial number → ``YYYY-MM-DD``, or None if it is not a date."""
+    if isinstance(serial, bool) or not isinstance(serial, (int, float)):
+        return None
+    days = float(serial)
+    if days != days or days in (float("inf"), float("-inf")):
+        return None
+    if epoch_1904:
+        if days < 0:
+            return None
+        base = EXCEL_EPOCH_1904
+    else:
+        if days < MIN_DATE_SERIAL_1900:
+            return None
+        base = EXCEL_EPOCH_1900
+    try:
+        return (base + datetime.timedelta(days=days)).date().isoformat()
+    except (OverflowError, ValueError):
+        return None
+
+
+def _is_date_format(number_format: Any) -> bool:
+    if not number_format:
+        return False
+    try:
+        return bool(is_date_format(number_format))
+    except Exception:
+        return False
+
+
+def _date_text_of(value: Any) -> str | None:
+    if isinstance(value, datetime.datetime):
+        return value.date().isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return None
+
+
+def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
+    """True when a recalculated value contradicts the one stored in the file."""
+    cached_date = _date_text_of(cached)
+    if cached_date is not None:
+        return date_text is not None and date_text != cached_date
+    if isinstance(raw, bool) or isinstance(cached, bool):
+        return False
+    if isinstance(raw, (int, float)) and isinstance(cached, (int, float)):
+        return abs(float(raw) - float(cached)) > 1e-9
+    return False
+
+
+def _fmt_value(value: Any) -> str:
+    return _date_text_of(value) or str(value)
 
 
 def _jsonable(value):

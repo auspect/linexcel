@@ -31,7 +31,9 @@ SUPPORTED_LANGUAGES = LANGUAGES
 # Template placeholders, substituted in a single pass so that a value can never
 # be rescanned: chained str.replace calls let the graph JSON — i.e. arbitrary
 # workbook content — be rewritten by a later placeholder.
-_PLACEHOLDER_RE = re.compile("__GRAPH_JSON__|__I18N_JSON__|__TITLE__|__LANG__")
+_PLACEHOLDER_RE = re.compile(
+    "__GRAPH_JSON__|__I18N_JSON__|__TITLE__|__LANG__|__SHEET_OPTIONS__"
+)
 
 # Load order (UMD chain): cytoscape, then the layout stack.
 _ASSET_FILES = (
@@ -116,6 +118,7 @@ def render_html(
         "__I18N_JSON__": _safe_json(ui_payload(language)),
         "__TITLE__": _escape_text(title),
         "__LANG__": language,
+        "__SHEET_OPTIONS__": _sheet_options(graph, language),
     }
     # A callable replacement keeps the substituted text literal: no backslash
     # or \g<n> expansion, and no placeholder inside workbook data is rescanned.
@@ -131,6 +134,29 @@ def render_html(
         f"<title>{_escape_text(title)}</title>{scripts}</head>"
         f"<body>{body}</body></html>"
     )
+
+
+def _sheet_options(graph: dict[str, Any], language: str) -> str:
+    """``<option>`` markup for the sheet filter.
+
+    The sheet list is derived from the nodes themselves — the graph carries no
+    sheet index — keeping first-seen order so the dropdown follows the workbook
+    rather than an alphabet. Nodes without a sheet (opaque references, names,
+    VBA) contribute no entry: they are reachable through the cross-sheet
+    neighbourhood, not as a filter target of their own.
+    """
+    seen: list[str] = []
+    for node in graph.get("nodes", []):
+        sheet = node.get("sheet")
+        if isinstance(sheet, str) and sheet and sheet not in seen:
+            seen.append(sheet)
+    strings = ui_payload(language)
+    all_label = strings.get(language, strings["en"])["all_sheets"]
+    options = [f'<option value="__all__">{_escape_text(all_label)}</option>']
+    options += [
+        f'<option value="{_escape_text(s)}">{_escape_text(s)}</option>' for s in seen
+    ]
+    return "".join(options)
 
 
 def _escape_text(text: str) -> str:
@@ -169,6 +195,11 @@ _TEMPLATE = r"""
     padding: .3rem .6rem; border: 1px solid var(--line); border-radius: 6px;
     background: #fff; cursor: pointer; font: inherit;
   }
+  .lin-bar select {
+    padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; cursor: pointer; font: inherit; max-width: 200px;
+  }
+  .lin-bar select:disabled { cursor: default; opacity: .5; }
   .lin-bar button.active { background: var(--ink); color: #fff; }
   .lin-tab[hidden] { display: none; }
   .lin-main { flex: 1; display: flex; min-height: 0; }
@@ -200,10 +231,19 @@ _TEMPLATE = r"""
     word-break: break-all;
   }
   .lin-val { font-size: 1.1rem; font-weight: 600; }
+  .lin-src {
+    display: inline-block; vertical-align: middle; margin-left: .4rem;
+    font-size: .62rem; font-weight: 700; color: #fff; background: var(--blue);
+    border-radius: 99px; padding: .08rem .45rem; letter-spacing: .01em;
+  }
+  .lin-cmp { font-size: .74rem; color: var(--muted); margin-top: .15rem; }
   .lin-step {
     border-left: 3px solid var(--blue); background: #fff; border-radius: 0 6px 6px 0;
     padding: .3rem .5rem; margin: .35rem 0; box-shadow: 0 1px 2px rgba(11,11,11,.05);
   }
+  .lin-step.lin-final { border-left-color: #1baf7a; }
+  .lin-step.lin-final .lin-op { background: #1baf7a; }
+  .lin-step.lin-final .lin-val { margin-bottom: .2rem; }
   .lin-op {
     font-size: .68rem; font-weight: 700; color: #fff; background: var(--blue);
     border-radius: 4px; padding: .04rem .35rem; margin-right: .35rem;
@@ -286,6 +326,7 @@ _TEMPLATE = r"""
     <button id="lin-tab-screenshots" class="lin-tab" hidden>Visual preview</button>
     <span style="flex:1"></span>
     <input id="lin-search" placeholder="Search… ⏎" />
+    <select id="lin-sheet-filter" title="Sheet filter">__SHEET_OPTIONS__</select>
     <button id="lin-lay-dagre">Flow</button>
     <button id="lin-lay-fcose" class="active">Organic</button>
     <button id="lin-zoom-in" title="Zoom In">+</button>
@@ -341,8 +382,24 @@ _TEMPLATE = r"""
     misc:  { color: '#898781', shape: 'octagon', labelKey: 'kind_misc' },
     opaque:{ color: '#898781', shape: 'ellipse', labelKey: 'kind_opaque' }
   };
+  // Value provenance: where a displayed value comes from. Colors reuse the
+  // node palette — blue = linexcel engine, green = the file, orange = fallback.
+  var SRC = {
+    engine:   { labelKey: 'value_recalc',    color: 'var(--blue)' },
+    file:     { labelKey: 'value_from_file', color: '#1baf7a' },
+    fallback: { labelKey: 'value_fallback',  color: '#eda100' }
+  };
+  // Engine error objects → the text Excel itself would show.
+  var ERRTEXT = {
+    Div: '#DIV/0!', Ref: '#REF!', Value: '#VALUE!', NA: '#N/A',
+    Name: '#NAME?', Num: '#NUM!', Null: '#NULL!'
+  };
   var byId = {};
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
+  // Sheet filter state: ALL_SHEETS mirrors the sentinel option value rendered
+  // server-side, CUR_SHEET is what the graph is currently narrowed to.
+  var ALL_SHEETS = '__all__';
+  var CUR_SHEET = ALL_SHEETS;
 
   function boot() {
     setupTabs();
@@ -359,6 +416,9 @@ _TEMPLATE = r"""
     document.getElementById('lin-fit').textContent = _t('fit_all');
     document.getElementById('lin-fit-sel').title = _t('fit_sel');
     document.getElementById('lin-fit-sel').textContent = _t('fit_sel');
+    var sheetSel = document.getElementById('lin-sheet-filter');
+    sheetSel.title = _t('sheet_filter');
+    sheetSel.setAttribute('aria-label', _t('sheet_filter'));
 
     var cyContainer = document.getElementById('lin-cy');
     if (typeof cytoscape === 'undefined') {
@@ -366,6 +426,7 @@ _TEMPLATE = r"""
       f.className = 'lin-fallback';
       f.textContent = _t('fallback');
       cyContainer.appendChild(f);
+      sheetSel.disabled = true;  // nothing to filter without a rendered graph
       return;
     }
     // Register layout extensions if present.
@@ -394,7 +455,7 @@ _TEMPLATE = r"""
     GRAPH.nodes.forEach(function (n) {
       elements.push({ data: {
         id: n.id, label: shortLabel(n), size: nodeSize(n),
-        degree: degreeMap[n.id] || 0
+        degree: degreeMap[n.id] || 0, sheet: n.sheet || ''
       }, classes: n.kind });
     });
     GRAPH.edges.forEach(function (e) {
@@ -404,6 +465,7 @@ _TEMPLATE = r"""
 
     var hasDagre = typeof dagre !== 'undefined' || window.cytoscapeDagre;
     var initial = hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose');
+    var curLayout = initial;
     var cy = cytoscape({
       container: cyContainer, elements: elements,
       minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.75,
@@ -453,24 +515,41 @@ _TEMPLATE = r"""
     var bd = document.getElementById('lin-lay-dagre');
     var bf = document.getElementById('lin-lay-fcose');
     bd.onclick = function () {
-      setActive(bd, bf); cy.layout(layoutOpts('dagre', hasFcose)).run();
+      setActive(bd, bf); curLayout = 'dagre';
+      cy.elements(':visible').layout(layoutOpts('dagre', hasFcose)).run();
     };
     bf.onclick = function () {
-      setActive(bf, bd); cy.layout(layoutOpts('fcose', hasFcose)).run();
+      setActive(bf, bd); curLayout = 'fcose';
+      cy.elements(':visible').layout(layoutOpts('fcose', hasFcose)).run();
     };
     if (initial === 'dagre') setActive(bd, bf);
+    sheetSel.onchange = function () {
+      applySheetFilter(cy, sheetSel.value, curLayout, hasFcose);
+    };
     var search = document.getElementById('lin-search');
     search.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter') return;
       var q = search.value.trim().toLowerCase();
       if (!q) return;
-      var hit = GRAPH.nodes.find(function (n) {
+      var matched = GRAPH.nodes.filter(function (n) {
         return (n.label || '').toLowerCase().indexOf(q) >= 0
           || (n.formula || '').toLowerCase().indexOf(q) >= 0;
       });
-      if (hit) { select(cy, hit.id);
-        cy.animate({ center: { eles: cy.getElementById(hit.id) },
-          zoom: Math.max(cy.zoom(), 1), duration: 300 }); }
+      search.title = _t('search_matches', { count: matched.length });
+      if (!matched.length) return;
+      // The first hit drives the panel and the neighbourhood highlight; every
+      // other match joins the selection and is undimmed, then the view frames
+      // the whole set.
+      select(cy, matched[0].id);
+      var eles = cy.collection();
+      cy.batch(function () {
+        for (var i = 0; i < matched.length; i++) {
+          var ele = cy.getElementById(matched[i].id);
+          ele.select(); ele.removeClass('dimmed');
+          eles = eles.union(ele);
+        }
+      });
+      cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });
     });
     buildLegend();
     setupScreenshots();
@@ -833,9 +912,45 @@ _TEMPLATE = r"""
     if (typeof v === 'number') return Number.isInteger(v) ? String(v)
       : v.toLocaleString(LANG, { maximumFractionDigits: 4 });
     if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-    if (typeof v === 'object') return v.range ? (v.range + ' (' + v.n + ' ' + _t('cells') + ')')
-      : JSON.stringify(v);
+    if (typeof v === 'object') {
+      if (v.range) return v.range + ' (' + v.n + ' ' + _t('cells') + ')';
+      if (v.type === 'Error' && ERRTEXT[v.kind]) return ERRTEXT[v.kind];
+      return JSON.stringify(v);
+    }
     return String(v);
+  }
+
+  // Narrow the graph to one sheet. Nodes of another sheet are kept — dimmed —
+  // when an edge ties them to the selected one, because a formula that reads
+  // from elsewhere is only readable if that "elsewhere" is on screen.
+  function applySheetFilter(cy, sheet, layoutName, hasFcose) {
+    var before = cy.nodes(':visible').length;
+    CUR_SHEET = sheet || ALL_SHEETS;
+    cy.batch(function () {
+      cy.elements().removeClass('dimmed hl');
+      if (CUR_SHEET === ALL_SHEETS) { cy.elements().show(); return; }
+      var inSheet = cy.nodes().filter(function (n) {
+        return n.data('sheet') === CUR_SHEET;
+      });
+      var keep = inSheet.union(inSheet.neighborhood().nodes());
+      var keepEdges = cy.edges().filter(function (e) {
+        return keep.contains(e.source()) && keep.contains(e.target());
+      });
+      cy.elements().hide();
+      keep.show(); keepEdges.show();
+    });
+    clearSel(cy);  // the previously selected node may now be hidden
+    var visible = cy.elements(':visible');
+    visible.layout(layoutOpts(layoutName, hasFcose)).run();
+    if (cy.nodes(':visible').length !== before) cy.fit(visible, 40);
+  }
+  // Cross-sheet neighbours read as "external": dimmed, but present. Reapplied
+  // after every selection change, which clears the class wholesale.
+  function dimExternal(cy) {
+    if (CUR_SHEET === ALL_SHEETS) return;
+    cy.nodes(':visible').filter(function (n) {
+      return n.data('sheet') !== CUR_SHEET;
+    }).addClass('dimmed');
   }
 
   function select(cy, id) {
@@ -845,11 +960,13 @@ _TEMPLATE = r"""
     var hood = ele.closedNeighborhood();
     cy.elements().not(hood).addClass('dimmed');
     hood.edges().addClass('hl');
+    dimExternal(cy);
     cy.nodes(':selected').unselect(); ele.select();
     renderPanel(cy, n);
   }
   function clearSel(cy) {
     cy.elements().removeClass('dimmed hl'); cy.nodes(':selected').unselect();
+    dimExternal(cy);
     renderPlaceholder();
   }
 
@@ -931,10 +1048,13 @@ _TEMPLATE = r"""
         sf.appendChild(el('code', 'lin-formula', n.r1c1));
       }
       p.appendChild(sf);
-      var sv = section(_t('computed_value')); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
+      var sv = valueSection(n);
       if (n.samples && n.samples.length) {
         n.samples.forEach(function (s) {
-          sv.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
+          var line = s.addr + ' = ' + fmt(s.value);
+          if (s.date) line += ' (' + s.date + ')';
+          if (SRC[s.source] && s.source !== 'engine') line += ' [' + _t(SRC[s.source].labelKey) + ']';
+          sv.appendChild(el('div', 'lin-hint', line));
         });
       }
       p.appendChild(sv);
@@ -951,10 +1071,7 @@ _TEMPLATE = r"""
     if (n.kind === 'name' && n.targets) {
       var sn = section(_t('target')); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
-      if (n.value !== undefined && n.value !== null) {
-        var sv = section(_t('computed_value')); sv.appendChild(el('div', 'lin-val', fmt(n.value)));
-        p.appendChild(sv);
-      }
+      if (n.value !== undefined && n.value !== null) p.appendChild(valueSection(n));
     }
     if (n.steps && (n.steps.children && n.steps.children.length || (n.steps.inputs && n.steps.inputs.length))) {
       var ss = section(_t('step_decomp'));
@@ -980,9 +1097,33 @@ _TEMPLATE = r"""
       .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
   }
 
+  // "Computed value" section: the value (or its date), a provenance badge, and
+  // — when the engine disagrees with what the file stored — both figures.
+  function valueSection(n) {
+    var sv = section(_t('computed_value'));
+    var shown = n.valueDate || fmt(n.value);
+    var line = el('div', 'lin-val', shown);
+    var src = SRC[n.valueSource];
+    if (src) {
+      var badge = el('span', 'lin-src', _t(src.labelKey));
+      badge.style.background = src.color;
+      line.appendChild(badge);
+    }
+    sv.appendChild(line);
+    if (n.cachedValue !== undefined && n.cachedValue !== null) {
+      var cached = fmt(n.cachedValue);
+      if (cached !== shown) {
+        sv.appendChild(el('div', 'lin-cmp', _t('value_cached') + ': ' + cached));
+        sv.appendChild(el('div', 'lin-cmp', _t('differs_from_file', { recalc: shown })));
+      }
+    }
+    return sv;
+  }
+
   function renderStep(parent, s, depth) {
-    var d = el('div', 'lin-step');
+    var d = el('div', 'lin-step' + (depth === 0 ? ' lin-final' : ''));
     d.style.marginLeft = Math.min(depth, 6) * 12 + 'px';
+    if (depth === 0) d.appendChild(el('div', 'lin-val', _t('final_result')));
     var head = el('div');
     head.appendChild(el('span', 'lin-op', s.label));
     var expr = el('span', 'lin-expr', s.expr); head.appendChild(expr);
