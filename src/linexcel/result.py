@@ -254,7 +254,7 @@ class LineageResult:
         2. ``base_url`` or ``LINEXCEL_AI_BASE_URL`` — OpenAI-compatible endpoint
            (Ollama, vLLM, LM Studio, OpenAI, …)
         3. ``model`` (or ``GEMINI_MODEL``) with a Google API key
-           (``api_key`` or ``GOOGLE_API_KEY``) — Google Gemini, opt-in only
+           (``api_key``, ``GOOGLE_API_KEY``, or ``GEMINI_API_KEY``) — Google Gemini, opt-in only
 
         ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
         ``max_workers`` caps the number of concurrent requests. Nodes that fail

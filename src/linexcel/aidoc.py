@@ -498,8 +498,8 @@ def _resolve_provider(
     raise AiDocError(
         "No AI provider selected: pass provider= (custom LLMProvider or "
         "callable), base_url= (OpenAI-compatible endpoint, e.g. Ollama/vLLM), "
-        "or model= with a Google API key (api_key= or GOOGLE_API_KEY) for "
-        "Gemini. No provider is chosen implicitly."
+        "or model= with a Google API key (api_key=, GOOGLE_API_KEY, or "
+        "GEMINI_API_KEY) for Gemini. No provider is chosen implicitly."
     )
 
 
