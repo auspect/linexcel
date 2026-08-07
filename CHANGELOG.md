@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (breaking)
+
+- AI documentation no longer has a default provider. `document()` and
+  `document_workbook()` used to fall back to Google Gemini when nothing was
+  passed; they now raise `AiDocError` listing the options. Gemini is still
+  supported but must be requested explicitly: pass `model=` (or set
+  `GEMINI_MODEL`) together with a Google API key (`api_key=` or
+  `GOOGLE_API_KEY`). `provider=`, `base_url=` and the OpenAI-compatible env
+  vars are unchanged. Migration: add `model="gemini-..."` to existing bare
+  Gemini calls.
+
 ## [0.7.0] — 2026-08-02
 
 ### Added

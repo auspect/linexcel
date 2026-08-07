@@ -1,8 +1,9 @@
 """AI-generated documentation for Excel calculations.
 
-Multi-provider support via a thin abstraction:
-- Google Gemini (google-genai) — default, backward-compatible
+Multi-provider support via a thin abstraction — the provider is chosen
+explicitly, there is no built-in default:
 - OpenAI-compatible API (any endpoint: OpenAI, Ollama, vLLM, LM Studio, etc.)
+- Google Gemini (google-genai) — only when requested via ``model=``
 - Callable protocol for custom/local models
 
 The model doesn't guess: each node is presented with its deterministic dossier
@@ -26,6 +27,9 @@ from typing import Any, Protocol, runtime_checkable
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite"
+# ^ Model used when Gemini is selected explicitly (via model= or GEMINI_MODEL)
+#   without naming a model. Not a global default: no provider is chosen for
+#   the user, see _resolve_provider().
 MAX_DOSSIER_CHARS = 6_000
 MAX_WORKBOOK_DOSSIER_CHARS = 12_000
 
@@ -459,10 +463,16 @@ def _resolve_provider(
 ) -> LLMProvider:
     """Resolve which provider to use.
 
-    Priority:
-    1. Explicit `provider` (custom callable or LLMProvider instance)
-    2. `base_url` set → OpenAI-compatible client
-    3. Google API key available → Gemini client (backward-compatible default)
+    Providers are chosen explicitly; there is no built-in default:
+
+    1. `provider` — custom callable or LLMProvider instance
+    2. `base_url` set (param or ``LINEXCEL_AI_BASE_URL`` / ``OPENAI_BASE_URL``)
+       → OpenAI-compatible client
+    3. `model` set (param or ``GEMINI_MODEL``) with a Google API key
+       (param or ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY``) → Gemini client
+
+    Anything else raises :class:`AiDocError` instead of silently picking a
+    vendor.
     """
     if provider is not None:
         return _as_provider(provider)
@@ -480,9 +490,16 @@ def _resolve_provider(
             base_url=base, api_key=api_key, model=resolved_model
         )
 
-    # Google Gemini (default, backward-compatible)
-    return _GeminiProvider(
-        api_key=api_key, model=model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+    # Google Gemini — only when a model is requested explicitly
+    resolved_model = model or os.getenv("GEMINI_MODEL")
+    if resolved_model:
+        return _GeminiProvider(api_key=api_key, model=resolved_model)
+
+    raise AiDocError(
+        "No AI provider selected: pass provider= (custom LLMProvider or "
+        "callable), base_url= (OpenAI-compatible endpoint, e.g. Ollama/vLLM), "
+        "or model= with a Google API key (api_key= or GOOGLE_API_KEY) for "
+        "Gemini. No provider is chosen implicitly."
     )
 
 
@@ -805,10 +822,10 @@ def document_workbook(
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
-    Provider resolution (first match wins):
+    Provider resolution (first match wins; no implicit default):
     1. `provider` — custom LLMProvider instance or callable
     2. `base_url` or `LINEXCEL_AI_BASE_URL` — OpenAI-compatible endpoint
-    3. Google Gemini (default, backward-compatible)
+    3. `model` (or `GEMINI_MODEL`) with a Google API key — Gemini, opt-in
 
     If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
     accumulated into it.
@@ -852,7 +869,8 @@ def document_nodes(
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
-    Provider resolution is the same as :func:`document_workbook`.
+    Provider resolution is the same as :func:`document_workbook` (no implicit
+    default; see :func:`_resolve_provider`).
 
     Nodes are documented concurrently (``max_workers`` in-flight requests;
     raise it if the provider's rate limits allow). Documenting a large

@@ -41,13 +41,13 @@ result.save_html("out.html")  # standalone offline HTML viewer
 result.stats  # {totalFormulas, totalNodes, ...}
 result.warnings  # list[str]
 
-# AI documentation (optional, requires google-genai):
-# language drives both the AI prompt and the viewer UI (see Languages below)
-docs = result.document(api_key="...", language="en")
+# AI documentation (optional, multi-provider — pick a provider, no default):
+# Gemini needs model= + GOOGLE_API_KEY; see the AI documentation section
+docs = result.document(model="gemini-3.1-flash-lite", language="en")
 result.save_html("out.html", docs=docs, language="en")
 
 # Workbook-level overview, shown in the separate overview tab:
-workbook_doc = result.document_workbook(api_key="...", language="en")
+workbook_doc = result.document_workbook(model="gemini-3.1-flash-lite", language="en")
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
@@ -96,10 +96,15 @@ LibreOffice is open on the desktop and leaves your own settings untouched.
 
 AI documentation is opt-in and supports any LLM provider.
 
-### Google Gemini (default)
+### Google Gemini (explicit opt-in)
+
+The provider is chosen explicitly — there is no built-in default, so a bare
+`result.document()` raises `AiDocError` and tells you what to pass. For Gemini,
+name a model (`model=` or the `GEMINI_MODEL` env var) plus a key:
 
 ```python
-docs = result.document(api_key="...", language="en")
+docs = result.document(model="gemini-3.1-flash-lite", api_key="...", language="en")
+# or: export GOOGLE_API_KEY=... and pass only model=
 ```
 
 Requires `google-genai` (`pip install linexcel[ai]`).
@@ -148,7 +153,7 @@ result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en"
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document()
+docs = result.document(model="gemini-3.1-flash-lite")  # any provider works
 print(result.token_usage)
 # 48,210 tokens (44,900 in + 3,310 out) over 4 request(s) [gemini/gemini-3.1-flash-lite]
 ```
@@ -197,7 +202,8 @@ Where that data goes depends on the provider you select:
 
 | Configuration | Destination |
 | --- | --- |
-| Default (no `provider`, no `base_url`) | Google Gemini — see the [Google Generative AI Terms of Service](https://ai.google.dev/terms) |
+| No provider selected | Nothing is sent — `AiDocError` is raised and the message lists the options |
+| `model=...` / `GEMINI_MODEL` + Google key | Google Gemini — see the [Google Generative AI Terms of Service](https://ai.google.dev/terms) |
 | `base_url=...` / `LINEXCEL_AI_BASE_URL` | The endpoint you point at — a local runtime such as Ollama or vLLM keeps the dossiers on your machine; a hosted OpenAI-compatible API does not |
 | `provider=...` | Wherever your own callable sends them |
 
@@ -211,7 +217,7 @@ unless the configured provider satisfies its data-sharing requirements.
 - **Dependency graph** — cells, ranges, defined names, VBA procedures
 - **Step-by-step evaluation** — each operator/function evaluated individually
 - **Standalone HTML viewer** — Cytoscape.js embedded, fully offline
-- **AI documentation** — Gemini generates provable docs from deterministic lineage
+- **AI documentation** — your chosen provider (Gemini, OpenAI-compatible, custom) generates provable docs from deterministic lineage
 
 ## Sample output
 
