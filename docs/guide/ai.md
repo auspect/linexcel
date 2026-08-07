@@ -75,7 +75,7 @@ when every node failed.
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite")  # any provider works
+docs = result.document(model="gemini-3.1-flash-lite")  # Gemini opt-in; use base_url= or provider= for other providers
 overview = result.document_workbook(model="gemini-3.1-flash-lite")
 
 print(result.token_usage)

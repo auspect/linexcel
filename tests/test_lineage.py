@@ -518,6 +518,20 @@ class TestAiProviders:
         # (dev env) — but never on the neutral "no provider" gate.
         assert "No AI provider selected" not in str(exc.value)
 
+    def test_api_key_alone_does_not_select_gemini(self, lineage_excel, monkeypatch):
+        """api_key= alone must not implicitly select Gemini."""
+        from linexcel.aidoc import AiDocError
+
+        for var in (
+            "GEMINI_MODEL",
+            "LINEXCEL_AI_BASE_URL",
+            "OPENAI_BASE_URL",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="No AI provider selected"):
+            result.document_workbook(api_key="some-key")
+
     def test_model_routes_to_gemini_only_when_requested(
         self, lineage_excel, monkeypatch
     ):

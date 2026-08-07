@@ -153,7 +153,7 @@ result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en"
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite")  # any provider works
+docs = result.document(model="gemini-3.1-flash-lite")  # Gemini opt-in; use base_url= or provider= for other providers
 print(result.token_usage)
 # 48,210 tokens (44,900 in + 3,310 out) over 4 request(s) [gemini/gemini-3.1-flash-lite]
 ```
