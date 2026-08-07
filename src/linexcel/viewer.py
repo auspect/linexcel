@@ -1112,7 +1112,11 @@ _TEMPLATE = r"""
     sv.appendChild(line);
     if (n.cachedValue !== undefined && n.cachedValue !== null) {
       var cached = fmt(n.cachedValue);
-      if (cached !== shown) {
+      // a date node compares on the date part only: a file-cached datetime
+      // string ("2026-08-07 00:00:00") is the same day as valueDate
+      var sameDate = n.valueDate && typeof n.cachedValue === 'string' &&
+        n.cachedValue.slice(0, 10) === n.valueDate;
+      if (!sameDate && cached !== shown) {
         sv.appendChild(el('div', 'lin-cmp', _t('value_cached') + ': ' + cached));
         sv.appendChild(el('div', 'lin-cmp', _t('differs_from_file', { recalc: shown })));
       }

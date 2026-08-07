@@ -56,8 +56,11 @@ SCRATCH_SHEET = "__lineage_scratch__"
 SCRATCH_SENTINEL = "__linexcel_no_value__"
 EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
 EXCEL_EPOCH_1904 = datetime.datetime(1904, 1, 1)
-# Serials below 61 sit before Excel's phantom 1900-02-29; no real date matches.
-MIN_DATE_SERIAL_1900 = 61
+# Serials 1..59 (Jan/Feb 1900) sit before Excel's phantom 1900-02-29, so their
+# real epoch is 1899-12-31: serial 1 → 1900-01-01. Serial 60 is the phantom
+# day itself and matches no real date. From 61 on, the 1899-12-30 epoch
+# already absorbs the phantom day.
+EPOCH_EARLY_1900 = datetime.datetime(1899, 12, 31)
 GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
 
 
@@ -235,9 +238,14 @@ class _ValueResolver:
         if sheet is None:
             return None
         raw = self.cached.get(sheet, row, col)
-        # dates stay dates: every serializer of the graph uses ``default=str``
-        if isinstance(raw, (datetime.datetime, datetime.date)):
-            return raw
+        # dates stay dates in the graph: a midnight datetime serializes as the
+        # bare ``YYYY-MM-DD`` so it compares cleanly against ``valueDate``
+        if isinstance(raw, datetime.datetime):
+            if raw.time() == datetime.time.min:
+                return raw.date().isoformat()
+            return raw.isoformat(sep=" ")
+        if isinstance(raw, datetime.date):
+            return raw.isoformat()
         return _jsonable(raw)
 
     def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
@@ -1203,9 +1211,9 @@ def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
             return None
         base = EXCEL_EPOCH_1904
     else:
-        if days < MIN_DATE_SERIAL_1900:
+        if days < 1 or days == 60:
             return None
-        base = EXCEL_EPOCH_1900
+        base = EPOCH_EARLY_1900 if days < 60 else EXCEL_EPOCH_1900
     try:
         return (base + datetime.timedelta(days=days)).date().isoformat()
     except (OverflowError, ValueError):

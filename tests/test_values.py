@@ -313,9 +313,8 @@ class TestDates:
         graph = graph_of({"A1": datetime.date(2026, 8, 7), "B1": "=A1+1"})
         node = node_of(graph, "i:S!A1")
         assert node["valueDate"] == "2026-08-07"
-        cached = node["cachedValue"]
-        assert isinstance(cached, datetime.datetime)
-        assert cached.date() == datetime.date(2026, 8, 7)
+        # a midnight datetime serializes as the bare date, never with a time
+        assert node["cachedValue"] == "2026-08-07"
         # the engine hands back the raw serial, which maps to the same date
         assert serial_to_date_text(node["value"]) == "2026-08-07"
 
@@ -335,11 +334,25 @@ class TestDates:
     def test_serial_conversion(self):
         assert serial_to_date_text(46241.0) == "2026-08-07"
         assert serial_to_date_text(61.0) == "1900-03-01"
+        # Jan/Feb 1900 are real dates: serial 1 is 1900-01-01
+        assert serial_to_date_text(1.0) == "1900-01-01"
+        assert serial_to_date_text(59.0) == "1900-02-28"
         # 1900's phantom leap day: no real date, so nothing is claimed
         assert serial_to_date_text(60.0) is None
+        assert serial_to_date_text(0.0) is None
         assert serial_to_date_text(0.0, epoch_1904=True) == "1904-01-01"
         assert serial_to_date_text("2026-08-07") is None
         assert serial_to_date_text(True) is None
+
+    def test_timestamp_keeps_its_time_of_day(self):
+        warnings: list[str] = []
+        cached = CachedValues(
+            {(SHEET, 1, 1): datetime.datetime(2026, 8, 7, 15, 30)},
+            {(SHEET, 1, 1)},
+            False,
+        )
+        resolver = resolver_for({}, cached, warnings)
+        assert resolver.describe(SHEET, 1, 1)["cachedValue"] == "2026-08-07 15:30:00"
 
     def test_cached_values_are_loaded_from_the_file(self):
         cached = load_cached_values(
@@ -364,7 +377,7 @@ class TestProvenance:
     def test_static_cell_carries_the_file_value(self):
         graph = graph_of({"A1": datetime.date(2026, 8, 7), "B1": "=A1+1"})
         node = node_of(graph, "i:S!A1")
-        assert node["cachedValue"] == datetime.datetime(2026, 8, 7)
+        assert node["cachedValue"] == "2026-08-07"
         assert node["values"][0]["source"] == "engine"
         assert node["values"][0]["date"] == "2026-08-07"
 

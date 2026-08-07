@@ -82,7 +82,23 @@ class TestCachedValueDiscrepancy:
 
     def test_the_second_line_is_emitted_only_on_a_mismatch(self):
         html = render_html(graph(value=42, cachedValue=42))
-        assert "if (cached !== shown) {" in html
+        assert "if (!sameDate && cached !== shown) {" in html
+
+    def test_a_date_node_compares_the_cached_date_part_only(self):
+        # a file-cached "2026-08-07 00:00:00" is the same day as valueDate:
+        # the comparison must not fire on the time suffix
+        html = render_html(
+            graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-07")
+        )
+        assert "n.cachedValue.slice(0, 10) === n.valueDate;" in html
+        assert '"cachedValue": "2026-08-07"' in html
+
+    def test_a_genuinely_different_cached_date_still_flags(self):
+        html = render_html(
+            graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-06")
+        )
+        assert '"cachedValue": "2026-08-06"' in html
+        assert EN["differs_from_file"] in html
 
     def test_the_discrepancy_message_keeps_its_placeholder(self):
         assert "{recalc}" in EN["differs_from_file"]
