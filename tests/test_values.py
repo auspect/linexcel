@@ -91,12 +91,18 @@ class TestGuardedErrors:
         assert node_of(graph, "c:S!A1")["value"] == 99
 
     def test_unguarded_missing_sheet_does_not_break_the_analysis(self):
+        """The cell claims no value, and the rest of the pass still completes.
+
+        An unguarded broken reference is now isolated before evaluation rather
+        than aborting it, so the warning names an evaluation that finished. The
+        cell itself is unchanged: it has no value to report either way.
+        """
         graph = graph_of({"A1": "=NOSHEET!A1"})
         node = node_of(graph, "c:S!A1")
         assert node["value"] is None
         assert "valueSource" not in node
         warnings = graph["meta"]["warnings"]
-        assert any("Global evaluation incomplete" in w for w in warnings)
+        assert any("completed after isolating 1 cell" in w for w in warnings)
 
 
 class TestResilience:

@@ -25,5 +25,14 @@ hooks = [
     language = "system",
     pass_filenames = false,
     always_run = true,
-    }
+    },
+  # Only fires when the viewer itself changes, and only *checks* — capturing
+  # needs Playwright and a generated report, which no ordinary commit should
+  # have to install. It fails with the two commands that fix it.
+  { id = "readme-shots",
+    name = "README screenshots match the viewer",
+    entry = "uv run python scripts/capture_viewer.py --check",
+    language = "system",
+    pass_filenames = false,
+    files = '^src/linexcel/(viewer|i18n)\.py$' }
 ]

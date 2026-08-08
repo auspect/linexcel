@@ -1,10 +1,13 @@
 """Tests for the lineage module: references, grouping, graph, VBA, API."""
 
 import io
+import json
+import re
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from openpyxl.comments import Comment
 
 from linexcel import LineageResult, analyze
 from linexcel import viewer as viewer_module
@@ -135,10 +138,134 @@ class TestAnalyze:
         assert isinstance(by_label["SUM"]["value"], float)
         assert by_label["ROUND"]["evaluated"]
 
+    def test_defined_name_on_an_apostrophe_sheet_resolves(self):
+        """openpyxl hands back the *escaped* sheet name of a defined name.
+
+        `destinations` strips the surrounding quotes but leaves the doubled
+        apostrophes, so a sheet called ``O'Brien`` arrives as ``O''Brien``.
+        Storing that verbatim made ``to_a1()`` quote it a second time, and the
+        name resolved to a sheet nobody has: it became an opaque node instead of
+        an edge to the real cell.
+        """
+        from openpyxl import Workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "O'Brien's Café"
+        ws["B4"] = 7
+        other = wb.create_sheet("Report")
+        other["A1"] = "=Threshold*2"
+        wb.defined_names.add(
+            DefinedName("Threshold", attr_text="'O''Brien''s Café'!$B$4")
+        )
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "quoted.xlsx")["graph"]
+        name = next(n for n in graph["nodes"] if n["kind"] == "name")
+        assert name["targets"] == ["'O''Brien''s Café'!B4"]
+        assert name["sheet"] == "O'Brien's Café"
+        assert not [n for n in graph["nodes"] if n["kind"] == "opaque"]
+
+    def test_sheet_scoped_defined_names_are_collected(self):
+        """A name declared on one sheet is invisible to `owb.defined_names`.
+
+        Per-sheet names are ordinary in real files — a `Total` or `Limit` local
+        to a tab — and skipping them turned every formula using one into an
+        unresolved reference.
+        """
+        from openpyxl import Workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        wb = Workbook()
+        config = wb.active
+        config.title = "Config"
+        config["B3"] = 250_000
+        report = wb.create_sheet("Report")
+        report["A1"] = "=LocalLimit*2"
+        report.defined_names.add(DefinedName("LocalLimit", attr_text="Config!$B$3"))
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "scoped.xlsx")["graph"]
+        names = {n["label"]: n for n in graph["nodes"] if n["kind"] == "name"}
+        assert "LocalLimit" in names
+        assert names["LocalLimit"]["targets"] == ["Config!B3"]
+        assert not [n for n in graph["nodes"] if n["kind"] == "opaque"]
+
+    def test_workbook_scope_wins_over_sheet_scope(self):
+        """A shadowed name must not replace the one most formulas mean."""
+        from openpyxl import Workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        wb = Workbook()
+        data = wb.active
+        data.title = "Data"
+        data["A1"] = 1
+        data["A2"] = 2
+        other = wb.create_sheet("Other")
+        other["A1"] = "=Limit"
+        wb.defined_names.add(DefinedName("Limit", attr_text="Data!$A$1"))
+        data.defined_names.add(DefinedName("Limit", attr_text="Data!$A$2"))
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "shadow.xlsx")["graph"]
+        name = next(n for n in graph["nodes"] if n["kind"] == "name")
+        assert name["targets"] == ["Data!A1"]
+
+    def test_let_bindings_are_not_graph_nodes(self):
+        """`LET` names parse as references but point at no cell.
+
+        They used to become one 'external reference' node per intermediate the
+        modeller happened to name.
+        """
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        for row in range(1, 6):
+            ws.cell(row=row, column=1, value=row)
+        ws["C1"] = "=LET(total, SUM(A1:A5), n, COUNT(A1:A5), total/n)"
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "let.xlsx")["graph"]
+        labels = {n["label"] for n in graph["nodes"]}
+        assert "total" not in labels and "n" not in labels
+        assert not [n for n in graph["nodes"] if n["kind"] == "opaque"]
+        # The real range it reads is still an edge, so the cell keeps its lineage.
+        assert any("A1:A5" in label for label in labels)
+
+    def test_a_let_binding_does_not_hide_a_real_reference(self):
+        """Only bare identifiers are bindings; `A1` inside LET stays a reference."""
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = 10
+        ws["B1"] = 3
+        ws["C1"] = "=LET(scale, B1, A1*scale)"
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "let2.xlsx")["graph"]
+        sources = {e["source"] for e in graph["edges"] if e["target"].endswith("S!C1")}
+        assert any(src.endswith("S!A1") for src in sources)
+        assert any(src.endswith("S!B1") for src in sources)
+
     def test_values_computed_by_engine(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
         b1 = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B1"))
         assert isinstance(b1["value"], float) and b1["value"] > 0
+
+
+def node_value(graph: dict, suffix: str):
+    """Computed value of the formula node whose id ends with ``suffix``."""
+    return next(n for n in graph["nodes"] if n["id"].endswith(suffix))["value"]
 
 
 def _flatten(step):
@@ -489,7 +616,10 @@ class TestPackageApi:
         }
         html = render_html(graph, title="Report", language="fr")
         assert '"label": "__TITLE__"' in html
-        assert "<h1>Report</h1>" in html
+        # Matched loosely: this test guards placeholder substitution, not the
+        # heading's markup, and pinning the exact tag makes any top-bar change
+        # look like a data-integrity failure.
+        assert ">Report</h1>" in html
 
     def test_title_cannot_break_the_embedded_json(self, lineage_excel):
         """A backslash-terminated title used to truncate the GRAPH literal."""
@@ -903,6 +1033,357 @@ class TestTokenUsage:
         )
         assert usage.estimated is True
         assert usage.input_tokens > 0 and usage.output_tokens > 0
+
+
+class TestUnresolvableCellsAreIsolated:
+    """One bad reference used to cost every other cell its computed value.
+
+    `evaluate_all` is all-or-nothing and gives up on the *first* reference it
+    cannot resolve, so a single formula pointing at another workbook dropped the
+    whole file back to slow per-cell recovery. Those few cells are now set aside
+    so the global pass completes.
+    """
+
+    @staticmethod
+    def _workbook() -> bytes:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        for row in range(1, 11):
+            ws.cell(row=row, column=1, value=row)
+            ws.cell(row=row, column=2, value=f"=A{row}*3")
+        ws["D1"] = "=SUM(B1:B10)"
+        # The blocker: a link to a workbook that is not there.
+        ws["D2"] = "='[Missing Book.xlsx]Sheet1'!$A$1"
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_every_other_cell_keeps_its_recomputed_value(self):
+        graph = analyze_workbook(self._workbook(), "blocked.xlsx")["graph"]
+        total = next(n for n in graph["nodes"] if n["id"].endswith("Data!D1"))
+        assert total["value"] == 165  # 3 * (1+..+10)
+        assert total["valueSource"] == "engine"
+
+    def test_the_isolated_formula_stays_in_the_graph(self):
+        """Blanking the cell in the engine must not delete it from the report."""
+        graph = analyze_workbook(self._workbook(), "blocked.xlsx")["graph"]
+        blocked = next(n for n in graph["nodes"] if n["id"].endswith("Data!D2"))
+        assert blocked["formula"] == "='[Missing Book.xlsx]Sheet1'!$A$1"
+
+    def test_the_warning_says_the_pass_completed(self):
+        graph = analyze_workbook(self._workbook(), "blocked.xlsx")["graph"]
+        joined = " ".join(graph["meta"]["warnings"])
+        assert "Global evaluation completed after isolating 1 cell" in joined
+
+    def test_a_healthy_workbook_is_untouched(self, lineage_excel):
+        """The isolation path only runs once evaluation has already failed."""
+        graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
+        assert not [w for w in graph["meta"]["warnings"] if "isolating" in w]
+
+    def test_an_error_literal_is_not_mistaken_for_a_sheet(self):
+        """`#REF!` looks like a sheet qualifier but guards evaluate around it."""
+        from linexcel.analyzer import _is_unresolvable
+
+        assert not _is_unresolvable('=IFERROR(#REF!, "handled")', {"Data"})
+        assert not _is_unresolvable("=Data!A1", {"Data"})
+        assert _is_unresolvable("=Gone!A1", {"Data"})
+        assert _is_unresolvable("='[Other.xlsx]S'!A1", {"Data"})
+
+    def test_a_guarded_formula_is_never_isolated(self):
+        """Isolation must not cost a range one of its terms.
+
+        `IFERROR(NOSHEET!A1, 456)` has a correct value despite an unresolvable
+        reference. Blanking it does not merely lose that cell — every SUM
+        spanning it quietly returns a smaller number.
+        """
+        from openpyxl import Workbook
+
+        from linexcel.analyzer import _is_unresolvable
+
+        assert not _is_unresolvable("=IFERROR(NOSHEET!A1, 456)", {"S"})
+        assert not _is_unresolvable("=IFNA(Gone!A1, 0)", {"S"})
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = 10
+        ws["A2"] = "=IFERROR(NOSHEET!A1, 456)"
+        ws["A3"] = "=SUM(A1:A2)"
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        graph = analyze_workbook(buf.getvalue(), "guarded.xlsx")["graph"]
+        assert node_value(graph, "S!A2") == 456
+        assert node_value(graph, "S!A3") == 466
+
+
+class TestHostileCellText:
+    """Workbook text is attacker-controlled: it must reach the page inert.
+
+    Each payload below has broken some report generator — the first two close
+    the script tag the graph is embedded in, the next two collide with the
+    viewer's own template placeholders, `$&` is a regex replacement reference,
+    and U+2028 terminates a JavaScript string literal though not a JSON one.
+    """
+
+    PAYLOADS = (
+        "</script><script>alert(1)</script>",
+        '"><img src=x onerror=alert(1)>',
+        "__TITLE__",
+        "__GRAPH_JSON__",
+        "value is $& and $1",
+        "line\u2028separator",
+    )
+
+    @staticmethod
+    def _workbook(payloads) -> bytes:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Hostile"
+        for row, payload in enumerate(payloads, start=1):
+            ws.cell(row=row, column=1, value=payload)
+            ws.cell(row=row, column=2, value=f'=A{row} & " (copied)"')
+        ws["A1"].comment = Comment("</script><b>bold</b>", "</script>")
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    @pytest.fixture
+    def hostile_html(self) -> str:
+        return analyze(self._workbook(self.PAYLOADS), "hostile.xlsx").to_html()
+
+    def test_no_payload_can_close_the_script_tag(self, hostile_html):
+        """`<` is escaped everywhere, so no cell can end the graph's script."""
+        assert "</script><script>alert" not in hostile_html
+        assert "<img src=x onerror" not in hostile_html
+        assert "\\u003c/script>" in hostile_html
+
+    def test_the_embedded_graph_still_parses(self, hostile_html):
+        embedded = re.search(r"var GRAPH = (.*?);\n", hostile_html, re.S)
+        assert embedded
+        graph = json.loads(embedded.group(1))
+        assert graph["meta"]["stats"]["totalFormulas"] == len(self.PAYLOADS)
+
+    def test_every_payload_survives_verbatim(self, hostile_html):
+        """Escaping must be reversible: the reader has to see the real text."""
+        embedded = re.search(r"var GRAPH = (.*?);\n", hostile_html, re.S)
+        assert embedded
+        graph = json.loads(embedded.group(1))
+        sheet = graph["meta"]["workbookContext"]["sheets"][0]
+        stored = {
+            value
+            for row in sheet["preview"]
+            for value in row["values"]
+            if isinstance(value, str)
+        }
+        for payload in self.PAYLOADS:
+            assert payload in stored, payload
+
+    def test_line_separators_cannot_break_the_literal(self, hostile_html):
+        """U+2028 is a line terminator to JavaScript but legal inside JSON."""
+        embedded = re.search(r"var GRAPH = (.*?);\n", hostile_html, re.S)
+        assert embedded
+        assert "\u2028" not in embedded.group(1)
+        assert "\\u2028" in embedded.group(1)
+
+    def test_a_payload_cannot_impersonate_a_template_placeholder(self):
+        """`__TITLE__` in a cell must not be substituted with the real title."""
+        html = analyze(self._workbook(["__TITLE__"]), "hostile.xlsx").to_html(
+            title="Real Title"
+        )
+        embedded = re.search(r"var GRAPH = (.*?);\n", html, re.S)
+        assert embedded
+        assert "__TITLE__" in embedded.group(1)
+        assert "Real Title" not in embedded.group(1)
+
+    def test_a_hostile_comment_author_is_escaped(self, hostile_html):
+        assert "<b>bold</b>" not in hostile_html
+
+
+class TestTokenBudget:
+    """A ceiling on total spend, so a workbook cannot quietly run up a bill."""
+
+    @staticmethod
+    def _provider(counter: list[int]):
+        def provider(system_prompt, user_prompt, *, temperature=0.2):
+            counter.append(1)
+            return "card"
+
+        return provider
+
+    def test_budget_stops_the_run_and_reports_what_was_skipped(self, lineage_excel):
+        calls: list[int] = []
+        result = analyze(lineage_excel)
+        ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+        assert len(ids) > 2, "fixture must offer several nodes to skip"
+
+        with pytest.warns(UserWarning, match="never sent"):
+            docs = result.document(
+                ids, provider=self._provider(calls), max_workers=1, token_budget=1
+            )
+
+        # One request establishes the cost; the budget then stops the rest.
+        assert len(calls) == 1
+        assert len(docs) == 1 and len(docs) < len(ids)
+        assert result.token_usage.requests == 1
+
+    def test_a_budget_that_covers_the_run_changes_nothing(self, lineage_excel):
+        calls: list[int] = []
+        result = analyze(lineage_excel)
+        ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+
+        docs = result.document(
+            ids, provider=self._provider(calls), token_budget=10_000_000
+        )
+
+        assert len(calls) == len(ids) and len(docs) == len(ids)
+
+    def test_budget_is_cumulative_over_the_result(self, lineage_excel):
+        """One ceiling covers every call: the user pays per workbook, not per call."""
+        from linexcel.aidoc import AiDocError
+
+        result = analyze(lineage_excel)
+        ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")][:1]
+        result.document(ids, provider=self._provider([]))
+        spent = result.token_usage.total
+        assert spent > 0
+
+        with pytest.raises(AiDocError, match="already spent"):
+            result.document(ids, provider=self._provider([]), token_budget=spent)
+
+    def test_the_budget_holds_without_a_usage_accumulator(self, lineage_excel):
+        """aidoc's own entry point takes no accumulator unless asked."""
+        from linexcel.aidoc import document_nodes
+
+        calls: list[int] = []
+        result = analyze(lineage_excel)
+        ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
+
+        with pytest.warns(UserWarning, match="never sent"):
+            docs = document_nodes(
+                result.graph,
+                ids,
+                provider=self._provider(calls),
+                max_workers=1,
+                token_budget=1,
+            )
+
+        assert len(calls) == 1 and len(docs) == 1
+
+    def test_a_non_positive_budget_is_rejected(self, lineage_excel):
+        result = analyze(lineage_excel)
+        with pytest.raises(ValueError, match="token_budget must be > 0"):
+            result.document(provider=self._provider([]), token_budget=0)
+
+    def test_workbook_overview_refuses_to_start_over_budget(self, lineage_excel):
+        from linexcel.aidoc import AiDocError
+
+        result = analyze(lineage_excel)
+        result.document_workbook(provider=self._provider([]))
+        with pytest.raises(AiDocError, match="already spent"):
+            result.document_workbook(
+                provider=self._provider([]), token_budget=result.token_usage.total
+            )
+
+
+class TestWorkbookPresentationContext:
+    """The overview dossier carries what the sheet screenshots show."""
+
+    def test_context_reaches_the_dossier(self, lineage_excel):
+        from linexcel.aidoc import build_workbook_dossier
+
+        result = analyze(lineage_excel)
+        dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
+        ventes = next(s for s in dossier["sheets"] if s["name"] == "Ventes")
+        assert ventes["preview"], "the first rows a reader sees must be included"
+        assert ventes["formula_cells"] == 100, "lineage facts must survive the merge"
+
+    def test_comments_and_layout_reach_the_dossier(self, lineage_excel):
+        import json
+
+        from linexcel.aidoc import build_workbook_dossier
+
+        result = analyze(lineage_excel)
+        dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
+        blob = json.dumps(dossier, ensure_ascii=False, default=str)
+        comments = [c for s in dossier["sheets"] for c in s.get("comments", [])]
+        assert comments, "cell comments are context no formula can express"
+        assert "freeze_panes" in blob or "merged_ranges" in blob
+
+    def test_empty_padding_is_not_sent(self, lineage_excel):
+        """A preview is a fixed rectangle; its blank cells cost tokens for nothing."""
+        from linexcel.aidoc import build_workbook_dossier
+
+        result = analyze(lineage_excel)
+        dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
+        for sheet in dossier["sheets"]:
+            for row in sheet.get("preview", []):
+                assert row["values"][-1] not in (None, "")
+
+    def test_without_context_the_dossier_is_unchanged(self, lineage_excel):
+        from linexcel.aidoc import build_workbook_dossier
+
+        dossier = build_workbook_dossier(analyze(lineage_excel).graph)
+        assert all("preview" not in sheet for sheet in dossier["sheets"])
+
+    def test_document_workbook_sends_the_context_by_default(self, lineage_excel):
+        seen: list[str] = []
+
+        def provider(system_prompt, user_prompt, *, temperature=0.2):
+            seen.append(user_prompt)
+            return "overview"
+
+        analyze(lineage_excel).document_workbook(provider=provider)
+        assert "preview" in seen[0]
+
+    def test_include_context_false_keeps_cell_contents_local(self, lineage_excel):
+        seen: list[str] = []
+
+        def provider(system_prompt, user_prompt, *, temperature=0.2):
+            seen.append(user_prompt)
+            return "overview"
+
+        analyze(lineage_excel).document_workbook(
+            provider=provider, include_context=False
+        )
+        assert "preview" not in seen[0]
+
+    def test_a_result_without_workbook_bytes_still_documents(self, lineage_excel):
+        """Context needs the file; a result rebuilt from a graph has none.
+
+        An overview without the presentation cues beats raising on a result the
+        caller assembled themselves.
+        """
+        payload = analyze_workbook(lineage_excel, "test.xlsx")
+        result = LineageResult(graph=payload["graph"], engine=payload["engine"])
+
+        overview = result.document_workbook(
+            provider=lambda system, user, *, temperature=0.2: "overview"
+        )
+        assert overview == "overview"
+
+    def test_an_oversized_dossier_sheds_the_preview_last(self):
+        """Shrinking must cost the least useful part first, not the newest one."""
+        from linexcel import aidoc
+
+        dossier = {
+            "sheets": [{"name": "S", "preview": [{"row": 1, "values": ["x"]}] * 40}],
+            "formula_patterns": [
+                {"formula": "=SUMIFS(Data!A:A, Data!B:B, $B4, C:C, C$3)", "cells": 1}
+            ]
+            * 400,
+            "vba_procedures": [{"procedure": "Proc", "module": "Module1"}] * 50,
+        }
+        blob = aidoc._fit_workbook_dossier(dossier)
+
+        assert len(blob) <= aidoc.MAX_WORKBOOK_DOSSIER_CHARS
+        assert len(dossier["formula_patterns"]) == 5, "the pattern tail goes first"
+        assert dossier["sheets"][0]["preview"], "preview goes only as a last resort"
 
 
 class TestVba:

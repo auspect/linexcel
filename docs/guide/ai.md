@@ -57,6 +57,33 @@ workbook_doc = result.document_workbook(model="gemini-3.1-flash-lite", language=
 result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
 ```
 
+The dossier behind the overview carries two things. The lineage says how the
+workbook *computes*: sheet statistics, the largest formula patterns, defined
+names, VBA procedures, unresolved references. The
+[workbook context](context.md) says what it *looks like*: the first rows of
+each sheet, cell comments, merged ranges, frozen panes, hidden columns — the
+same cues the [sheet screenshots](context.md#screenshots) show a human reader.
+
+That second half is what lets the model write about the file rather than about
+a graph. A title sitting two rows above a table, a column called `Prix` that
+somebody hid, a comment reading *"exported product category"* — no formula
+records any of it, and an overview written without them describes a structure
+nobody recognises.
+
+The images themselves are never uploaded: `openpyxl` reads the same facts
+deterministically, so the "cite only the dossier" rule still holds and no vision
+model is required.
+
+```python
+# Lineage only — cell contents stay on your machine
+workbook_doc = result.document_workbook(base_url=..., include_context=False)
+```
+
+The dossier is capped at `aidoc.MAX_WORKBOOK_DOSSIER_CHARS`. A workbook that
+exceeds it sheds detail in order — long previews shrink, then the tail of the
+pattern and VBA lists, and only as a last resort are previews and comments
+dropped — so a small workbook loses nothing.
+
 ## Concurrency and partial failures
 
 `document()` issues `max_workers` requests in parallel (4 by default):
@@ -107,6 +134,56 @@ build a fresh `TokenUsage` and pass it as `usage=` to
     model and region, and a table baked into the package would silently go
     stale. Multiply by your own current rate.
 
+## Capping the bill
+
+`token_usage` reports what a run cost *after* it ran. `token_budget=` decides
+what it is allowed to cost before it starts:
+
+```python
+docs = result.document(model="gemini-3.1-flash-lite", token_budget=200_000)
+print(result.token_usage)
+```
+
+The budget is a ceiling on the **total** tokens of the run — input and output
+together, every request combined. It is deliberately not a per-node allowance:
+one node's card is never the question, and a workbook with 900 formula patterns
+is 900 requests whose sum is the only figure that turns up on an invoice. Use
+`max_tokens=` when you want to bound an individual response.
+
+Because a request's cost is only known once it has answered, the budget is
+enforced *between* requests. Nodes still queued when the tally reaches the
+ceiling are never sent, the cards already written are returned, and a
+`UserWarning` names how many nodes were left undocumented:
+
+```text
+UserWarning: Token budget of 200,000 tokens reached after 201,447:
+612 of 900 nodes documented, 288 never sent. Raise token_budget to document the rest.
+```
+
+Requests already in flight are allowed to finish, so the final tally can exceed
+the ceiling by up to `max_workers` responses — set a budget as an order of
+magnitude, not to the token.
+
+The ceiling is counted against `result.token_usage`, which spans the result's
+lifetime. One budget covers `document_workbook()` and `document()` together, so
+the figure to choose is what the whole workbook is worth to you:
+
+```python
+result.document_workbook(model="gemini-3.1-flash-lite", token_budget=200_000)
+result.document(model="gemini-3.1-flash-lite", token_budget=200_000)  # same ceiling
+```
+
+A budget already spent by earlier calls raises `AiDocError` rather than sending
+a request that would breach it. `token_budget=0` — or any non-positive value —
+raises `ValueError`; to send nothing at all, do not call `document()`.
+
+!!! tip "Estimating before you spend"
+
+    A dry run costs nothing: point `provider=` at a callable that records its
+    prompt and returns `""`. `result.token_usage` then holds the estimated input
+    cost of the whole workbook, which is the bulk of the bill for
+    documentation-shaped work.
+
 ## Languages
 
 `language=` drives both the system prompt sent to the model and the viewer
@@ -138,10 +215,20 @@ addition fails rather than surfacing as raw interface keys.
 
 ## Data handling
 
-The dossier sent for each node can include formulas, computed values,
-precedent/dependent labels, formula decomposition, sheet structure, defined
-names, and extracted VBA code. It goes to whichever provider you configure —
-and nothing is sent until one is chosen explicitly (no default): Google Gemini
-when you pass `model=` with a key, the endpoint behind `base_url` otherwise (a
-local Ollama or vLLM runtime keeps it on your machine), or wherever your own
-callable sends it.
+Nothing is sent until a provider is chosen explicitly (there is no default):
+Google Gemini when you pass `model=` with a key, the endpoint behind `base_url`
+otherwise (a local Ollama or vLLM runtime keeps everything on your machine), or
+wherever your own callable sends it.
+
+What each call sends:
+
+| Call | Sent |
+| --- | --- |
+| `document()` | Per node: formula, computed value, precedent/dependent labels, formula decomposition, stretched-group extent, and extracted VBA code |
+| `document_workbook()` | Sheet statistics, the largest formula patterns, defined names, VBA procedures, unresolved references, analysis warnings |
+| `document_workbook()` with `include_context=True` *(default)* | **Also** the first rows and columns of every sheet, cell comments and their authors, merged ranges, frozen panes, hidden columns |
+
+That last row means cell *contents* leave the machine, not only formulas. It is
+on by default because an overview written without them is not worth reading —
+but if a workbook holds data that must stay local and your provider is remote,
+pass `include_context=False`, or keep the whole run local with `base_url=`.

@@ -19,6 +19,12 @@ for sheet in ctx["sheets"]:
 The mapping is keyed `filename`, `sheets`, `stats` and `warnings`; per-sheet
 context lives under `sheets`.
 
+This context has two consumers. The HTML report renders it in the **Sheets**
+tab, and [`document_workbook()`](ai.md#workbook-overview) sends it to the model
+so the AI overview describes the file a reader opens — its titles, labels,
+comments and hidden columns — rather than only the graph its formulas make.
+Pass `include_context=False` to keep cell contents off the wire.
+
 ## Screenshots
 
 Generate and embed high-resolution sheet screenshots using LibreOffice Calc:
@@ -54,3 +60,11 @@ without any `PATH` setup:
 
 LibreOffice runs headless with a throwaway user profile, so rendering works even
 while LibreOffice is open on the desktop, and never touches your own settings.
+
+!!! note "Screenshots are for readers, not for the model"
+
+    The PNGs are embedded in the report for a human to look at. The AI overview
+    never receives an image: it is given the same facts in text form, read
+    deterministically from the file by `openpyxl`. So the overview describes the
+    sheets as they look even when no renderer is installed at all, and no vision
+    model is needed.

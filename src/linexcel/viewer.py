@@ -131,6 +131,11 @@ def render_html(
     return (
         f"<!doctype html><html lang='{language}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        # Light is the shipped default whatever the OS prefers — spreadsheet
+        # work is done in light. The theme toggle rewrites this content
+        # attribute so the UA keeps painting its own surfaces (scrollbars,
+        # overscroll) to match whichever theme is actually on screen.
+        "<meta name='color-scheme' content='light'>"
         f"<title>{_escape_text(title)}</title>{scripts}</head>"
         f"<body>{body}</body></html>"
     )
@@ -172,186 +177,440 @@ def _escape_text(text: str) -> str:
 # dataviz design system. Colors follow node TYPE, never recycled.
 _TEMPLATE = r"""
 <style>
+  /* Every colour is a custom property so the dark theme below can redefine the
+     token instead of the rule — and so the JavaScript can read the handful the
+     Cytoscape canvas needs (it cannot resolve var() itself). The hue tokens
+     mirror the CVD-safe node palette declared as PALETTE in the script. */
   .lin-root {
-    --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
-    --line: #c3c2b7; --hair: #e1e0d9; --blue: #2a78d6;
+    --surface: #fcfcfb; --surface2: #ffffff; --paper: #ffffff;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #6f6d67;
+    --line: #c3c2b7; --hair: #e1e0d9;
+    --blue: #2a78d6; --violet: #4a3aa7; --green: #1baf7a;
+    --amber: #eda100; --orange: #eb6834; --grey: #898781;
+    /* Fixed anchor: the ink laid on a saturated palette fill, both themes. */
+    --on-brand: #0b0b0b;
+    --code-bg: #f0efec; --chip-bg: #e8f6f0; --chip-line: #bfe7d8;
+    --ai-bg: #fbf9ff; --ai-line: #e5dbff; --ai-badge-bg: #efe9ff;
+    --ai-badge-line: #d0bfff; --ai-fg: #5f3dc4;
+    --legend-bg: rgba(252,252,251,.92);
+    --shadow: rgba(11,11,11,.10); --node-border: rgba(11,11,11,.18);
+    /* Agreement / disagreement surfaces. Never the only signal: an icon and a
+       sentence carry the same verdict, so a CVD reader loses nothing. */
+    --ok-bg: #e8f6f0; --ok-line: #9fdcc4; --ok-fg: #0e6b4a;
+    --warn-bg: #fdece4; --warn-line: #f0a67f; --warn-fg: #a83c12;
+    /* Link ink is darker than --blue: the node fill misses 4.5:1 as text. */
+    --link: #1b62b8; --focus: #1f5fbf; --focus-soft: rgba(31,95,191,.22);
+    color-scheme: light;
     font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
     color: var(--ink); position: absolute; inset: 0; display: flex;
     flex-direction: column; background: var(--surface); overflow: hidden;
   }
+  /* Dark is opt-in, never automatic: the audience works in Excel, which is a
+     light application, and a report that opens dark because the reader's OS is
+     dark is the wrong default. prefers-color-scheme is deliberately not
+     consulted — the toggle flips data-theme on this element and nothing else. */
+  .lin-root[data-theme="dark"] {
+    --surface: #16161a; --surface2: #1e1e24;
+    --ink: #f2f1ee; --ink2: #bcbab4; --muted: #928f89;
+    --line: #4c4c55; --hair: #2e2e36;
+    --code-bg: #24242c; --chip-bg: #14342b; --chip-line: #235c4a;
+    --ai-bg: #1f1b2b; --ai-line: #3a2f5c; --ai-badge-bg: #2b2447;
+    --ai-badge-line: #4a3d7a; --ai-fg: #c9b8ff;
+    --legend-bg: rgba(22,22,26,.92);
+    --shadow: rgba(0,0,0,.55); --node-border: rgba(255,255,255,.28);
+    --ok-bg: #10322a; --ok-line: #2a6e57; --ok-fg: #6fe0b6;
+    --warn-bg: #3a1f13; --warn-line: #7a3d22; --warn-fg: #ff9d70;
+    --link: #79b0f5; --focus: #7fb0ff; --focus-soft: rgba(127,176,255,.28);
+    color-scheme: dark;
+  }
   .lin-root * { box-sizing: border-box; }
+  .lin-root :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  /* --- top bar: identity | tabs | graph tools ------------------------- */
   .lin-bar {
-    display: flex; align-items: center; gap: .5rem; padding: .45rem .7rem;
+    display: flex; align-items: center; gap: .45rem 1rem; padding: .45rem .7rem;
     border-bottom: 1px solid var(--hair); background: var(--surface);
     flex-wrap: wrap;
   }
-  .lin-bar h1 { font-size: .95rem; margin: 0 .5rem 0 0; }
-  .lin-bar .stat { color: var(--ink2); font-size: .8rem; }
-  .lin-bar input {
-    padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
-    font: inherit; width: 200px;
+  .lin-id { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
+  .lin-id h1 {
+    font-size: .95rem; margin: 0; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .lin-bar button {
-    padding: .3rem .6rem; border: 1px solid var(--line); border-radius: 6px;
-    background: #fff; cursor: pointer; font: inherit;
+  .lin-id .stat { color: var(--ink2); font-size: .8rem; white-space: nowrap; }
+  .lin-tabs { display: flex; gap: .2rem; flex-wrap: wrap; }
+  .lin-tab {
+    padding: .3rem .7rem; border: 1px solid transparent; border-radius: 6px;
+    background: none; color: var(--ink2); cursor: pointer; font: inherit;
   }
-  .lin-bar select {
-    padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
-    background: #fff; cursor: pointer; font: inherit; max-width: 200px;
+  .lin-tab:hover { background: var(--hair); color: var(--ink); }
+  .lin-tab[aria-selected="true"] {
+    background: var(--ink); color: var(--surface); font-weight: 600;
   }
-  .lin-bar select:disabled { cursor: default; opacity: .5; }
-  .lin-bar button.active { background: var(--ink); color: #fff; }
   .lin-tab[hidden] { display: none; }
-  .lin-main { flex: 1; display: flex; min-height: 0; }
+  /* Everything right of the tabs. The theme toggle lives here rather than in
+     .lin-tools so that hiding the graph-only tools cannot take it away. The
+     row itself never wraps: the tools wrap *inside* it, which keeps the toggle
+     beside them instead of stranding it on a line of its own. */
+  .lin-bar-right {
+    display: flex; align-items: center; gap: .5rem; flex-wrap: nowrap;
+    justify-content: flex-end; margin-left: auto; min-width: 0;
+  }
+  .lin-tools {
+    display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
+    justify-content: flex-end; flex: 1 1 auto; min-width: 0;
+  }
+  .lin-tools[hidden] { display: none; }
+  .lin-group { display: inline-flex; gap: .2rem; }
+  .lin-tools button, .lin-theme {
+    padding: .3rem .6rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
+  }
+  .lin-tools button:hover, .lin-theme:hover { border-color: var(--ink2); }
+  .lin-tools select {
+    padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface2); color: var(--ink); cursor: pointer;
+    font: inherit; max-width: 200px;
+  }
+  .lin-tools select:disabled { cursor: default; opacity: .5; }
+  .lin-tools button[aria-pressed="true"] {
+    background: var(--ink); color: var(--surface); border-color: var(--ink);
+  }
+  .lin-icon { min-width: 2rem; text-align: center; }
+  .lin-theme {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: .32rem .45rem; color: var(--ink2);
+  }
+  .lin-theme svg { width: 16px; height: 16px; display: block; }
+  .lin-theme .lin-ico-sun { display: none; }
+  .lin-root[data-theme="dark"] .lin-theme .lin-ico-moon { display: none; }
+  .lin-root[data-theme="dark"] .lin-theme .lin-ico-sun { display: block; }
+
+  /* --- search: a control, not a bare input ----------------------------- */
+  .lin-search {
+    display: inline-flex; align-items: center; gap: .3rem;
+    border: 1px solid var(--line); border-radius: 6px; padding: 0 .3rem 0 .45rem;
+    background: var(--surface2); color: var(--muted);
+  }
+  /* The wrapper takes the focus ring so the whole control lights up; the input
+     drops its own outline, which would otherwise draw a second box inside. */
+  .lin-search:focus-within {
+    border-color: var(--focus); box-shadow: 0 0 0 3px var(--focus-soft);
+  }
+  .lin-search input:focus-visible { outline: none; }
+  .lin-search svg { width: 14px; height: 14px; display: block; flex-shrink: 0; }
+  .lin-search input {
+    border: none; outline: none; background: none; font: inherit;
+    padding: .3rem 0; width: 190px; color: var(--ink); min-width: 0;
+  }
+  .lin-search input::-webkit-search-cancel-button,
+  .lin-search input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+  .lin-search input:disabled { cursor: default; }
+  .lin-search.is-empty { border-color: var(--warn-line); }
+  .lin-search-clear {
+    border: none; background: none; padding: .2rem; margin: 0; cursor: pointer;
+    color: var(--muted); border-radius: 4px; display: inline-flex;
+  }
+  .lin-search-clear[hidden] { display: none; }
+  .lin-search-clear:hover { background: var(--hair); color: var(--ink); }
+  .lin-search-status {
+    font-size: .74rem; line-height: 1.3; padding: .2rem .55rem; border-radius: 99px;
+    white-space: nowrap; background: var(--chip-bg); border: 1px solid var(--chip-line);
+    color: var(--ink2);
+  }
+  .lin-search-status[hidden] { display: none; }
+  .lin-search-status.is-empty {
+    background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-fg);
+    font-weight: 600;
+  }
+
+  .lin-main { flex: 1; display: flex; min-height: 0; position: relative; }
   .lin-main.hidden { display: none; }
   .lin-cy { flex: 1; position: relative; min-width: 0; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
-    flex-wrap: wrap; background: rgba(252,252,251,.92);
+    flex-wrap: wrap; background: var(--legend-bg);
     border: 1px solid var(--hair); border-radius: 8px; padding: .35rem .6rem;
     font-size: .72rem; color: var(--ink2); max-width: 72%;
   }
   .lin-legend span { display: inline-flex; align-items: center; gap: .3rem; }
   .lin-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
   .lin-panel {
-    width: 340px; flex-shrink: 0; overflow-y: auto; padding: .8rem .9rem 2rem;
+    width: 440px; flex-shrink: 0; overflow-y: auto; padding: .8rem .9rem 2rem;
     border-left: 1px solid var(--hair); background: var(--surface);
     font-size: .85rem;
   }
   .lin-panel.hidden { display: none; }
+  .lin-panel:focus { outline: none; }
   .lin-panel h2 { font-size: .95rem; margin: .3rem 0 .5rem; word-break: break-all; }
   .lin-panel h3 {
     font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
     color: var(--muted); margin: .8rem 0 .3rem;
   }
-  .lin-badge { color: #fff; font-size: .7rem; padding: .12rem .5rem; border-radius: 99px; }
+  .lin-panel-head { display: flex; align-items: center; gap: .4rem; }
+  .lin-badge { font-size: .7rem; padding: .12rem .5rem; border-radius: 99px; }
   .lin-formula {
-    display: block; background: #f0efec; border-radius: 6px; padding: .45rem .55rem;
+    display: block; background: var(--code-bg); border-radius: 6px; padding: .45rem .55rem;
     font-family: ui-monospace, monospace; font-size: .8rem; white-space: pre-wrap;
     word-break: break-all;
   }
   .lin-val { font-size: 1.1rem; font-weight: 600; }
-  .lin-src {
-    display: inline-block; vertical-align: middle; margin-left: .4rem;
-    font-size: .62rem; font-weight: 700; color: #fff; background: var(--blue);
-    border-radius: 99px; padding: .08rem .45rem; letter-spacing: .01em;
+
+  /* --- value card: what Excel stored vs what linexcel recomputed -------- */
+  .lin-vcard {
+    border: 1px solid var(--hair); border-radius: 8px; overflow: hidden;
+    background: var(--surface2);
   }
-  .lin-cmp { font-size: .74rem; color: var(--muted); margin-top: .15rem; }
+  .lin-vcard.is-diff { border-color: var(--warn-line); box-shadow: 0 0 0 1px var(--warn-line); }
+  .lin-vcard.is-guarded { border-color: var(--amber); }
+  .lin-verdict {
+    display: flex; align-items: center; gap: .4rem; padding: .35rem .55rem;
+    font-size: .76rem; font-weight: 700; line-height: 1.3;
+    background: var(--ok-bg); color: var(--ok-fg);
+    border-bottom: 1px solid var(--ok-line);
+  }
+  .lin-vcard.is-diff .lin-verdict {
+    background: var(--warn-bg); color: var(--warn-fg); border-bottom-color: var(--warn-line);
+  }
+  .lin-verdict svg { width: 15px; height: 15px; display: block; flex-shrink: 0; }
+  .lin-vgrid { display: grid; grid-template-columns: 1fr 1fr; }
+  .lin-vgrid.is-single { grid-template-columns: 1fr; }
+  .lin-reading { padding: .45rem .55rem; min-width: 0; }
+  .lin-reading + .lin-reading { border-left: 1px solid var(--hair); }
+  .lin-reading-label {
+    display: flex; align-items: center; gap: .3rem; margin-bottom: .1rem;
+    font-size: .64rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); line-height: 1.3;
+  }
+  .lin-reading-val {
+    font-family: ui-monospace, monospace; font-size: 1rem; font-weight: 600;
+    color: var(--ink); overflow-wrap: anywhere;
+  }
+  .lin-samples {
+    font-family: ui-monospace, monospace; font-size: .72rem; color: var(--ink2);
+    margin-top: .4rem; display: flex; flex-direction: column; gap: .1rem;
+  }
   .lin-step {
-    border-left: 3px solid var(--blue); background: #fff; border-radius: 0 6px 6px 0;
-    padding: .3rem .5rem; margin: .35rem 0; box-shadow: 0 1px 2px rgba(11,11,11,.05);
+    border-left: 3px solid var(--blue); background: var(--surface2);
+    border-radius: 0 6px 6px 0; padding: .3rem .5rem; margin: .35rem 0;
+    box-shadow: 0 1px 2px var(--shadow);
   }
-  .lin-step.lin-final { border-left-color: #1baf7a; }
-  .lin-step.lin-final .lin-op { background: #1baf7a; }
+  .lin-step.lin-final { border-left-color: var(--green); }
+  .lin-step.lin-final .lin-op { background: var(--green); }
   .lin-step.lin-final .lin-val { margin-bottom: .2rem; }
   .lin-op {
-    font-size: .68rem; font-weight: 700; color: #fff; background: var(--blue);
+    font-size: .68rem; font-weight: 700; color: var(--on-brand); background: var(--blue);
     border-radius: 4px; padding: .04rem .35rem; margin-right: .35rem;
   }
   .lin-expr { font-family: ui-monospace, monospace; font-size: .74rem; }
   .lin-in {
-    display: inline-block; font-size: .7rem; background: #e8f6f0;
-    border: 1px solid #bfe7d8; border-radius: 4px; padding: .03rem .3rem;
+    display: inline-block; font-size: .7rem; background: var(--chip-bg);
+    border: 1px solid var(--chip-line); border-radius: 4px; padding: .03rem .3rem;
     margin: .15rem .15rem 0 0; font-family: ui-monospace, monospace;
   }
-  .lin-in.lit { background: #f0efec; border-color: var(--hair); }
+  .lin-in.lit { background: var(--code-bg); border-color: var(--hair); }
   .lin-nav { list-style: none; margin: 0; padding: 0; }
   .lin-nav li { display: flex; justify-content: space-between; gap: .4rem; align-items: center; }
   .lin-nav button {
-    border: none; background: none; color: var(--blue); cursor: pointer;
+    border: none; background: none; color: var(--link); cursor: pointer;
     text-align: left; padding: .1rem 0; display: inline-flex; align-items: center;
     gap: .3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit;
   }
+  .lin-nav button:hover { text-decoration: underline; }
   .lin-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .lin-ek { font-size: .66rem; color: var(--muted); flex-shrink: 0; }
-  .lin-code { background: #f0efec; border-radius: 6px; padding: .5rem; font-size: .72rem;
+  .lin-code { background: var(--code-bg); border-radius: 6px; padding: .5rem; font-size: .72rem;
     overflow-x: auto; max-height: 260px; font-family: ui-monospace, monospace; }
   .lin-doc { font-size: .82rem; line-height: 1.45; }
   .lin-doc h1,.lin-doc h2,.lin-doc h3 { font-size: .9rem; margin: .4rem 0 .2rem; }
   .lin-doc p { margin: .25rem 0; }
   .lin-doc ul,.lin-doc ol { padding-left: 1.2rem; margin: .25rem 0; }
-  .lin-doc code { background: #f0efec; padding: .1rem .3rem; border-radius: 3px;
+  .lin-doc code { background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px;
     font-family: ui-monospace, monospace; font-size: .78rem; }
   .lin-doc strong { font-weight: 600; }
   .lin-hint { color: var(--muted); font-size: .76rem; margin: .2rem 0; }
-  .lin-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 1rem; }
+  .lin-close {
+    margin-left: auto; border: none; background: none; cursor: pointer;
+    font-size: 1rem; color: var(--ink2); line-height: 1; padding: .2rem .3rem;
+    border-radius: 4px;
+  }
+  .lin-close:hover { background: var(--hair); color: var(--ink); }
   .lin-fallback { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; text-align: center; padding: 2rem; color: var(--ink2); }
+  .lin-empty-icon { text-align: center; margin-top: 4rem; color: var(--line); }
+  .lin-empty-icon svg { width: 44px; height: 44px; }
+  .lin-panel h2.lin-empty-title { text-align: center; margin-top: 1rem; word-break: normal; }
+  .lin-empty-desc { text-align: center; line-height: 1.45; padding: 0 .5rem; }
   .lin-overview { flex: 1; overflow-y: auto; padding: 1.4rem clamp(1rem, 4vw, 4rem) 3rem; }
   .lin-overview-inner { max-width: 880px; }
   .lin-overview h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
   .lin-overview .lin-doc { font-size: .92rem; line-height: 1.55; }
   .lin-ai-box {
-    background: #fbf9ff; border: 1px solid #e5dbff; border-radius: 8px;
+    background: var(--ai-bg); border: 1px solid var(--ai-line); border-radius: 8px;
     padding: .75rem; margin: .8rem 0;
   }
   .lin-ai-badge {
     display: inline-block; font-size: .65rem; font-weight: 700;
-    color: #5f3dc4; background: #efe9ff; border: 1px solid #d0bfff;
+    color: var(--ai-fg); background: var(--ai-badge-bg);
+    border: 1px solid var(--ai-badge-line);
     border-radius: 4px; padding: .1rem .35rem; margin-bottom: .4rem;
     text-transform: uppercase; letter-spacing: .03em;
   }
+
+  /* --- sheets tab ------------------------------------------------------ */
+  .lin-sheets-wrap { display: flex; flex: 1; overflow: hidden; height: 100%; }
+  .lin-sheet-body {
+    flex: 1; overflow-y: auto; background: var(--surface2);
+    padding: 1.5rem clamp(1rem, 4vw, 4rem) 3rem;
+  }
+  #lin-sheets-sidebar {
+    width: 220px; flex-shrink: 0; overflow-y: auto; padding: .6rem .5rem;
+    border-right: 1px solid var(--hair); background: var(--surface);
+  }
   #lin-sheets-sidebar button {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: .5rem .8rem;
-    font-size: .85rem;
-    font-weight: 500;
-    color: var(--ink2);
-    cursor: pointer;
-    transition: all .15s ease;
+    display: block; width: 100%; text-align: left; background: none;
+    border: 1px solid transparent; border-radius: 6px; padding: .5rem .8rem;
+    font-size: .85rem; font-weight: 500; color: var(--ink2); cursor: pointer;
   }
-  #lin-sheets-sidebar button:hover {
-    background: var(--hair);
-    color: var(--ink);
+  #lin-sheets-sidebar button:hover { background: var(--hair); color: var(--ink); }
+  #lin-sheets-sidebar button[aria-current="true"] {
+    background: var(--ink); color: var(--surface); font-weight: 600;
   }
-  #lin-sheets-sidebar button.active {
-    background: var(--ink) !important;
-    color: #fff !important;
-    font-weight: 600;
+  .lin-card-head {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: .5rem; border-bottom: 1px solid var(--hair);
+    padding-bottom: .6rem; margin-bottom: .8rem;
+  }
+  .lin-card-head h3 { margin: 0; font-size: 1.25rem; color: var(--ink); }
+  .lin-card-head .lin-hint { font-size: .85rem; margin: 0; }
+  .lin-badges { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .lin-sub { font-size: .9rem; margin: 1.4rem 0 .5rem; color: var(--ink); }
+  .lin-list { display: flex; flex-direction: column; gap: .5rem; }
+  .lin-note {
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 6px;
+    padding: .6rem .8rem; font-size: .85rem;
+  }
+  .lin-note-head { font-weight: 700; margin-bottom: .25rem; color: var(--ink); }
+  .lin-note-body { color: var(--ink2); white-space: pre-wrap; }
+  .lin-gallery {
+    display: flex; flex-direction: column; gap: 1rem; align-items: center;
+    margin-top: .5rem;
+  }
+  .lin-gallery img {
+    max-width: 100%; border: 1px solid var(--line); border-radius: 6px;
+    box-shadow: 0 3px 12px var(--shadow); background: var(--paper);
+  }
+
+  /* --- visual preview tab ---------------------------------------------- */
+  .lin-shots { display: flex; flex-direction: column; gap: 1.2rem; align-items: center; }
+  .lin-shot-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .5rem; }
+  .lin-chip {
+    padding: .35rem .7rem; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
+  }
+  .lin-chip[aria-pressed="true"] {
+    background: var(--ink); color: var(--surface); border-color: var(--ink);
+  }
+  .lin-shot {
+    max-width: 100%; border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 6px 16px var(--shadow); background: var(--paper);
+  }
+
+  /* --- narrow viewports: the detail panel overlays instead of squeezing -- */
+  @media (max-width: 900px) {
+    .lin-panel {
+      position: absolute; top: 0; right: 0; bottom: 0; z-index: 6;
+      width: min(440px, 92vw); box-shadow: -6px 0 20px var(--shadow);
+    }
+    .lin-panel.lin-empty { display: none; }
+    .lin-legend { max-width: 100%; right: .6rem; }
+    .lin-sheets-wrap { flex-direction: column; }
+    #lin-sheets-sidebar {
+      width: auto; max-height: 9rem; border-right: none;
+      border-bottom: 1px solid var(--hair);
+    }
+    .lin-search input { width: 9rem; }
+  }
+  /* The two readings stop being readable side by side once the panel is a
+     narrow overlay: stack them and move the divider between the rows. */
+  @media (max-width: 560px) {
+    .lin-vgrid { grid-template-columns: 1fr; }
+    .lin-reading + .lin-reading { border-left: none; border-top: 1px solid var(--hair); }
   }
 </style>
 
-<div class="lin-root">
-  <div class="lin-bar">
-    <h1>__TITLE__</h1>
-    <span class="stat" id="lin-stats"></span>
-    <button id="lin-tab-graph" class="lin-tab active">Graph</button>
-    <button id="lin-tab-overview" class="lin-tab" hidden>Workbook overview</button>
-    <button id="lin-tab-sheets" class="lin-tab" hidden>Sheets</button>
-    <button id="lin-tab-screenshots" class="lin-tab" hidden>Visual preview</button>
-    <span style="flex:1"></span>
-    <input id="lin-search" placeholder="Search… ⏎" />
-    <select id="lin-sheet-filter" title="Sheet filter">__SHEET_OPTIONS__</select>
-    <button id="lin-lay-dagre">Flow</button>
-    <button id="lin-lay-fcose" class="active">Organic</button>
-    <button id="lin-zoom-in" title="Zoom In">+</button>
-    <button id="lin-zoom-out" title="Zoom Out">−</button>
-    <button id="lin-fit" title="Fit All">Fit</button>
-    <button id="lin-fit-sel" style="display: none;" title="Fit Selection">Fit Selection</button>
-  </div>
-  <div class="lin-main" id="lin-graph-main">
+<div class="lin-root" data-theme="light">
+  <header class="lin-bar">
+    <div class="lin-id">
+      <h1>__TITLE__</h1>
+      <span class="stat" id="lin-stats"></span>
+    </div>
+    <div class="lin-tabs" role="tablist" id="lin-tablist">
+      <button type="button" id="lin-tab-graph" class="lin-tab" role="tab"
+        aria-selected="true" aria-controls="lin-graph-main" tabindex="0">Graph</button>
+      <button type="button" id="lin-tab-overview" class="lin-tab" role="tab"
+        aria-selected="false" aria-controls="lin-overview-main" tabindex="-1" hidden>Workbook overview</button>
+      <button type="button" id="lin-tab-sheets" class="lin-tab" role="tab"
+        aria-selected="false" aria-controls="lin-sheets-main" tabindex="-1" hidden>Sheets</button>
+      <button type="button" id="lin-tab-screenshots" class="lin-tab" role="tab"
+        aria-selected="false" aria-controls="lin-screenshots-main" tabindex="-1" hidden>Visual preview</button>
+    </div>
+    <div class="lin-bar-right">
+      <div class="lin-tools" id="lin-tools">
+        <div class="lin-search" id="lin-searchbox">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+            <path d="M10.6 10.6 L14.2 14.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+          </svg>
+          <input id="lin-search" type="search" autocomplete="off" spellcheck="false" />
+          <button type="button" id="lin-search-clear" class="lin-search-clear" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M4.2 4.2 L11.8 11.8 M11.8 4.2 L4.2 11.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+            </svg>
+          </button>
+        </div>
+        <span class="lin-search-status" id="lin-search-status" role="status" aria-live="polite" hidden></span>
+        <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
+        <div class="lin-group">
+          <button type="button" id="lin-lay-dagre" aria-pressed="false">Flow</button>
+          <button type="button" id="lin-lay-fcose" aria-pressed="true">Organic</button>
+        </div>
+        <div class="lin-group">
+          <button type="button" id="lin-zoom-in" class="lin-icon">+</button>
+          <button type="button" id="lin-zoom-out" class="lin-icon">−</button>
+          <button type="button" id="lin-fit">Fit</button>
+          <button type="button" id="lin-fit-sel" hidden>Fit Selection</button>
+        </div>
+      </div>
+      <button type="button" id="lin-theme" class="lin-theme" aria-pressed="false">
+        <svg class="lin-ico-moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <path d="M13.4 10.1A5.8 5.8 0 0 1 5.9 2.6 6 6 0 1 0 13.4 10.1Z" fill="currentColor"></path>
+        </svg>
+        <svg class="lin-ico-sun" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="3.1" fill="currentColor"></circle>
+          <path d="M8 .9v1.8M8 13.3v1.8M.9 8h1.8M13.3 8h1.8M3 3l1.3 1.3M11.7 11.7L13 13M13 3l-1.3 1.3M4.3 11.7L3 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+  <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
     <div class="lin-cy" id="lin-cy">
       <div class="lin-legend" id="lin-legend"></div>
     </div>
-    <aside class="lin-panel hidden" id="lin-panel"></aside>
+    <aside class="lin-panel lin-empty" id="lin-panel" role="region" tabindex="-1"></aside>
   </div>
-  <div class="lin-main hidden" id="lin-overview-main">
+  <div class="lin-main hidden" id="lin-overview-main" role="tabpanel" aria-labelledby="lin-tab-overview">
     <article class="lin-overview"><div class="lin-overview-inner" id="lin-overview"></div></article>
   </div>
-  <div class="lin-main hidden" id="lin-sheets-main">
-    <div id="lin-sheets-container" style="display: flex; flex: 1; overflow: hidden; height: 100%;">
+  <div class="lin-main hidden" id="lin-sheets-main" role="tabpanel" aria-labelledby="lin-tab-sheets">
+    <div class="lin-sheets-wrap">
       <aside id="lin-sheets-sidebar"></aside>
-      <article style="flex: 1; overflow-y: auto; padding: 1.5rem clamp(1rem, 4vw, 4rem) 3rem; background: #fff;">
+      <article class="lin-sheet-body">
         <div id="lin-sheet-details" class="lin-overview-inner"></div>
       </article>
     </div>
   </div>
-  <div class="lin-main hidden" id="lin-screenshots-main">
+  <div class="lin-main hidden" id="lin-screenshots-main" role="tabpanel" aria-labelledby="lin-tab-screenshots">
     <article class="lin-overview"><div class="lin-overview-inner" id="lin-screenshots"></div></article>
   </div>
 </div>
@@ -367,28 +626,85 @@ _TEMPLATE = r"""
     var str = langDict[key] || I18N.en[key] || key;
     if (replacements) {
       Object.keys(replacements).forEach(function (k) {
-        str = str.replace('{' + k + '}', replacements[k]);
+        // Function replacement, not a string: a value carrying $& or $1 —
+        // a cell whose computed value contains one reaches {recalc} — would
+        // otherwise be read as a capture reference and corrupt the sentence.
+        str = str.replace('{' + k + '}', function () { return replacements[k]; });
       });
     }
     return str;
   }
 
+  // CVD-safe node palette. Duplicated as CSS tokens in the stylesheet: the
+  // Cytoscape canvas cannot resolve var(), so the hex has to live here too.
+  var PALETTE = {
+    blue:   '#2a78d6', violet: '#4a3aa7', green: '#1baf7a',
+    amber:  '#eda100', orange: '#eb6834', grey:  '#898781'
+  };
   var KIND = {
-    cell:  { color: '#2a78d6', shape: 'round-rectangle', labelKey: 'kind_cell' },
-    group: { color: '#4a3aa7', shape: 'round-rectangle', labelKey: 'kind_group' },
-    input: { color: '#1baf7a', shape: 'ellipse', labelKey: 'kind_input' },
-    name:  { color: '#eda100', shape: 'diamond', labelKey: 'kind_name' },
-    vba:   { color: '#eb6834', shape: 'hexagon', labelKey: 'kind_vba' },
-    misc:  { color: '#898781', shape: 'octagon', labelKey: 'kind_misc' },
-    opaque:{ color: '#898781', shape: 'ellipse', labelKey: 'kind_opaque' }
+    cell:  { color: PALETTE.blue, shape: 'round-rectangle', labelKey: 'kind_cell' },
+    group: { color: PALETTE.violet, shape: 'round-rectangle', labelKey: 'kind_group' },
+    input: { color: PALETTE.green, shape: 'ellipse', labelKey: 'kind_input' },
+    name:  { color: PALETTE.amber, shape: 'diamond', labelKey: 'kind_name' },
+    vba:   { color: PALETTE.orange, shape: 'hexagon', labelKey: 'kind_vba' },
+    misc:  { color: PALETTE.grey, shape: 'octagon', labelKey: 'kind_misc' },
+    opaque:{ color: PALETTE.grey, shape: 'ellipse', labelKey: 'kind_opaque' }
   };
   // Value provenance: where a displayed value comes from. Colors reuse the
-  // node palette — blue = linexcel engine, green = the file, orange = fallback.
+  // node palette — blue = linexcel engine, green = the file, amber = fallback.
+  // descKey spells the state out in a sentence, because the reader has to be
+  // able to tell Excel's own number from the one linexcel recomputed.
   var SRC = {
-    engine:   { labelKey: 'value_recalc',    color: 'var(--blue)' },
-    file:     { labelKey: 'value_from_file', color: '#1baf7a' },
-    fallback: { labelKey: 'value_fallback',  color: '#eda100' }
+    engine:   { labelKey: 'value_recalc',    descKey: 'value_recalc_desc',    color: PALETTE.blue },
+    file:     { labelKey: 'value_from_file', descKey: 'value_from_file_desc', color: PALETTE.green },
+    fallback: { labelKey: 'value_fallback',  descKey: 'value_fallback_desc',  color: PALETTE.amber }
   };
+  // Inline SVG paths, so no glyph, webfont or external image is needed. The
+  // markup around them is ours, which is why innerHTML is safe here.
+  var ICONS = {
+    check: 'M2.6 8.4 L6.3 12 L13.4 4.2',
+    warn: 'M8 1.8 L15 14.2 L1 14.2 Z M8 6.1 V9.6 M8 11.5 V11.6',
+    search: 'M10.6 10.6 L14.2 14.2'
+  };
+  function icon(name) {
+    var span = el('span', 'lin-ico');
+    span.setAttribute('aria-hidden', 'true');
+    var extra = name === 'search'
+      ? '<circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"></circle>' : '';
+    span.innerHTML = '<svg viewBox="0 0 16 16" focusable="false">' + extra +
+      '<path d="' + ICONS[name] + '" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+      'stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+    return span;
+  }
+  // Contrast-safe ink for a solid badge: whichever of near-black or white
+  // scores higher against the fill. The palette is used as a background in
+  // both themes, so the pair has to be derived rather than hard-coded.
+  function onColor(hex) {
+    var c = hex.replace('#', ''), lum = 0;
+    var weight = [0.2126, 0.7152, 0.0722];
+    for (var i = 0; i < 3; i++) {
+      var v = parseInt(c.substr(i * 2, 2), 16) / 255;
+      lum += weight[i] * (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    }
+    return (lum + 0.05) / 0.05 >= 1.05 / (lum + 0.05) ? '#0b0b0b' : '#ffffff';
+  }
+  function paintBadge(node, hex) {
+    node.style.background = hex;
+    node.style.color = onColor(hex);
+  }
+  // The few theme colours the graph canvas needs, read back from the
+  // stylesheet so light and dark stay driven by the same custom properties.
+  function themeInk() {
+    var cs = getComputedStyle(document.querySelector('.lin-root'));
+    function v(name, fb) {
+      var raw = cs.getPropertyValue(name);
+      return raw && raw.trim() ? raw.trim() : fb;
+    }
+    return {
+      ink: v('--ink', '#0b0b0b'), ink2: v('--ink2', '#52514e'),
+      line: v('--line', '#c3c2b7'), nodeBorder: v('--node-border', 'rgba(11,11,11,0.18)')
+    };
+  }
   // Engine error objects → the text Excel itself would show.
   var ERRTEXT = {
     Div: '#DIV/0!', Ref: '#REF!', Value: '#VALUE!', NA: '#N/A',
@@ -401,21 +717,66 @@ _TEMPLATE = r"""
   var ALL_SHEETS = '__all__';
   var CUR_SHEET = ALL_SHEETS;
 
+  // --- theme ---------------------------------------------------------------
+  // Light is the default whatever the operating system prefers. Dark is opt-in
+  // through the top-bar toggle, which is why prefers-color-scheme is not read.
+  var THEME_KEY = 'linexcel.theme';
+  // Things that must repaint when the theme flips (the Cytoscape canvas cannot
+  // resolve a CSS variable, so it re-reads the tokens through themeInk()).
+  var themeHooks = [];
+  // localStorage throws outright in the sandboxed data: iframe notebooks embed
+  // the report in, and is unreliable on file://. A failure means "no preference
+  // stored" — it must never surface, and never stop the report from rendering.
+  function readTheme() {
+    try { return window.localStorage.getItem(THEME_KEY); } catch (e) { return null; }
+  }
+  function writeTheme(value) {
+    try { window.localStorage.setItem(THEME_KEY, value); } catch (e) { /* not available */ }
+  }
+  function applyTheme(theme) {
+    document.querySelector('.lin-root').setAttribute('data-theme', theme);
+    var btn = document.getElementById('lin-theme');
+    if (btn) btn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+    // Keep the UA honest so it paints scrollbars and form controls to match.
+    var meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta) meta.setAttribute('content', theme);
+    for (var i = 0; i < themeHooks.length; i++) themeHooks[i]();
+  }
+  function setupTheme() {
+    named('lin-theme', _t('theme_dark'));
+    applyTheme(readTheme() === 'dark' ? 'dark' : 'light');
+    document.getElementById('lin-theme').onclick = function () {
+      var root = document.querySelector('.lin-root');
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      writeTheme(next);
+    };
+  }
+
   function boot() {
+    setupTheme();
     setupTabs();
+    setupTablistKeys();
 
     // Set UI labels in the correct language
     document.getElementById('lin-tab-graph').textContent = _t('graph');
     document.getElementById('lin-tab-overview').textContent = _t('overview');
     document.getElementById('lin-tab-sheets').textContent = _t('sheets_tab');
     document.getElementById('lin-tab-screenshots').textContent = _t('visual');
-    document.getElementById('lin-search').placeholder = _t('search');
-    document.getElementById('lin-zoom-in').title = _t('zoom_in');
-    document.getElementById('lin-zoom-out').title = _t('zoom_out');
-    document.getElementById('lin-fit').title = _t('fit_all');
-    document.getElementById('lin-fit').textContent = _t('fit_all');
-    document.getElementById('lin-fit-sel').title = _t('fit_sel');
-    document.getElementById('lin-fit-sel').textContent = _t('fit_sel');
+    var search = document.getElementById('lin-search');
+    search.placeholder = _t('search');
+    search.setAttribute('aria-label', _t('search_label'));
+    search.title = _t('search_label');
+    named('lin-search-clear', _t('search_clear'));
+    label('lin-lay-dagre', _t('layout_flow'));
+    label('lin-lay-fcose', _t('layout_organic'));
+    // Icon-only controls carry their name in aria-label, not in the glyph.
+    named('lin-zoom-in', _t('zoom_in'));
+    named('lin-zoom-out', _t('zoom_out'));
+    label('lin-fit', _t('fit_all'));
+    label('lin-fit-sel', _t('fit_sel'));
+    var panel = document.getElementById('lin-panel');
+    panel.setAttribute('aria-label', _t('details_panel'));
     var sheetSel = document.getElementById('lin-sheet-filter');
     sheetSel.title = _t('sheet_filter');
     sheetSel.setAttribute('aria-label', _t('sheet_filter'));
@@ -427,6 +788,7 @@ _TEMPLATE = r"""
       f.textContent = _t('fallback');
       cyContainer.appendChild(f);
       sheetSel.disabled = true;  // nothing to filter without a rendered graph
+      search.disabled = true;    // nor to search
       return;
     }
     // Register layout extensions if present.
@@ -504,13 +866,11 @@ _TEMPLATE = r"""
       }
     };
     cy.on('select unselect', function () {
-      var sel = cy.nodes(':selected');
-      if (sel.length > 0) {
-        fitSelBtn.style.display = 'inline-block';
-      } else {
-        fitSelBtn.style.display = 'none';
-      }
+      fitSelBtn.hidden = cy.nodes(':selected').length === 0;
     });
+    // The canvas cannot follow CSS variables on its own: restyle whenever the
+    // toggle flips, so the labels stay legible against the new surface.
+    themeHooks.push(function () { cy.style(buildStyle(big)); });
 
     var bd = document.getElementById('lin-lay-dagre');
     var bf = document.getElementById('lin-lay-fcose');
@@ -526,17 +886,38 @@ _TEMPLATE = r"""
     sheetSel.onchange = function () {
       applySheetFilter(cy, sheetSel.value, curLayout, hasFcose);
     };
-    var search = document.getElementById('lin-search');
-    search.addEventListener('keydown', function (e) {
-      if (e.key !== 'Enter') return;
+    var searchBox = document.getElementById('lin-searchbox');
+    var searchStatus = document.getElementById('lin-search-status');
+    var searchClear = document.getElementById('lin-search-clear');
+    // The result count is feedback, not a tooltip: it goes in a live region
+    // beside the box. `hidden` is lifted before the text is written so the
+    // region is present when the mutation lands and is actually announced.
+    function setStatus(text, none) {
+      searchStatus.hidden = !text;
+      searchStatus.classList.toggle('is-empty', !!none);
+      searchBox.classList.toggle('is-empty', !!none);
+      searchStatus.textContent = text || '';
+    }
+    function resetSearch() {
+      search.value = '';
+      searchClear.hidden = true;
+      setStatus('', false);
+    }
+    // Clearing restores the whole graph: selection, dimming and viewport.
+    function restoreGraph() {
+      resetSearch();
+      clearSel(cy);
+      cy.animate({ fit: { padding: 40 }, duration: 250 });
+    }
+    function runSearch() {
       var q = search.value.trim().toLowerCase();
-      if (!q) return;
+      if (!q) { setStatus('', false); return; }
       var matched = GRAPH.nodes.filter(function (n) {
         return (n.label || '').toLowerCase().indexOf(q) >= 0
           || (n.formula || '').toLowerCase().indexOf(q) >= 0;
       });
-      search.title = _t('search_matches', { count: matched.length });
-      if (!matched.length) return;
+      if (!matched.length) { setStatus(_t('search_none'), true); return; }
+      setStatus(_t('search_matches', { count: matched.length }), false);
       // The first hit drives the panel and the neighbourhood highlight; every
       // other match joins the selection and is undimmed, then the view frames
       // the whole set.
@@ -550,30 +931,56 @@ _TEMPLATE = r"""
         }
       });
       cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });
+    }
+    search.addEventListener('input', function () {
+      searchClear.hidden = !search.value;
+      if (!search.value) setStatus('', false);
     });
+    search.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+      else if (e.key === 'Escape') { e.preventDefault(); restoreGraph(); }
+    });
+    searchClear.onclick = function () { restoreGraph(); search.focus(); };
     buildLegend();
     setupScreenshots();
   }
 
+  // The four tabs, in reading order. Each key names both the button
+  // (lin-tab-<key>) and the pane it controls (lin-<key>-main).
+  var TABS = ['graph', 'overview', 'sheets', 'screenshots'];
+  function tabButtons() {
+    return TABS.map(function (k) { return document.getElementById('lin-tab-' + k); });
+  }
+
   function switchTab(activeBtn, activeMain) {
-    var graphButton = document.getElementById('lin-tab-graph');
-    var overviewButton = document.getElementById('lin-tab-overview');
-    var sheetsButton = document.getElementById('lin-tab-sheets');
-    var screenshotsButton = document.getElementById('lin-tab-screenshots');
+    tabButtons().forEach(function (btn) {
+      var on = btn === activeBtn;
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      btn.tabIndex = on ? 0 : -1;   // roving tabindex: one stop for the group
+    });
+    TABS.forEach(function (k) {
+      var pane = document.getElementById('lin-' + k + '-main');
+      if (pane) pane.classList.toggle('hidden', pane !== activeMain);
+    });
+    // Search, sheet filter, layout, zoom and fit only act on the graph.
+    document.getElementById('lin-tools').hidden = activeMain.id !== 'lin-graph-main';
+  }
 
-    var graphMain = document.getElementById('lin-graph-main');
-    var overviewMain = document.getElementById('lin-overview-main');
-    var sheetsMain = document.getElementById('lin-sheets-main');
-    var screenshotsMain = document.getElementById('lin-screenshots-main');
-
-    var allBtns = [graphButton, overviewButton, sheetsButton, screenshotsButton];
-    var allMains = [graphMain, overviewMain, sheetsMain, screenshotsMain];
-
-    allBtns.forEach(function(btn) { btn.classList.remove('active'); });
-    allMains.forEach(function(m) { m.classList.add('hidden'); });
-
-    activeBtn.classList.add('active');
-    activeMain.classList.remove('hidden');
+  // Arrow/Home/End move between tabs, as the tablist pattern expects; the
+  // buttons themselves keep their native Enter/Space activation.
+  function setupTablistKeys() {
+    document.getElementById('lin-tablist').addEventListener('keydown', function (e) {
+      var open = tabButtons().filter(function (b) { return !b.hidden; });
+      var at = open.indexOf(document.activeElement);
+      if (at < 0) return;
+      var next = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = open[(at + 1) % open.length];
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = open[(at - 1 + open.length) % open.length];
+      else if (e.key === 'Home') next = open[0];
+      else if (e.key === 'End') next = open[open.length - 1];
+      if (!next) return;
+      e.preventDefault(); next.focus(); next.click();
+    });
   }
 
   function setupScreenshots() {
@@ -589,46 +996,23 @@ _TEMPLATE = r"""
 
     var activeIdx = 0;
 
-    var viewerContainer = el('div');
-    viewerContainer.style.display = 'flex';
-    viewerContainer.style.flexDirection = 'column';
-    viewerContainer.style.gap = '1.2rem';
-    viewerContainer.style.alignItems = 'center';
-
-    var switcher = el('div');
-    switcher.style.display = 'flex';
-    switcher.style.gap = '.4rem';
-    switcher.style.flexWrap = 'wrap';
-    switcher.style.marginBottom = '.5rem';
-
-    var imgEl = el('img');
-    imgEl.style.maxWidth = '100%';
-    imgEl.style.border = '1px solid var(--line)';
-    imgEl.style.borderRadius = '8px';
-    imgEl.style.boxShadow = '0 6px 16px rgba(11,11,11,.08)';
-    imgEl.style.background = '#fff';
+    var viewerContainer = el('div', 'lin-shots');
+    var switcher = el('div', 'lin-shot-tabs');
+    var imgEl = el('img', 'lin-shot');
 
     function showPage(idx) {
       activeIdx = idx;
       imgEl.src = images[idx];
-      Array.from(switcher.children).forEach(function(child, cIdx) {
-        if (cIdx === idx) {
-          child.className = 'active';
-        } else {
-          child.className = '';
-        }
+      imgEl.alt = _t('page', { n: idx + 1 });
+      Array.prototype.forEach.call(switcher.children, function (child, cIdx) {
+        child.setAttribute('aria-pressed', cIdx === idx ? 'true' : 'false');
       });
     }
 
     images.forEach(function(src, idx) {
-      var pBtn = document.createElement('button');
-      pBtn.textContent = _t('page', { n: idx + 1 });
-      pBtn.style.padding = '.35rem .7rem';
-      pBtn.style.border = '1px solid var(--line)';
-      pBtn.style.borderRadius = '6px';
-      pBtn.style.background = '#fff';
-      pBtn.style.cursor = 'pointer';
-      pBtn.style.font = 'inherit';
+      var pBtn = el('button', 'lin-chip', _t('page', { n: idx + 1 }));
+      pBtn.type = 'button';
+      pBtn.setAttribute('aria-pressed', 'false');
       pBtn.onclick = function() { showPage(idx); };
       switcher.appendChild(pBtn);
     });
@@ -636,10 +1020,6 @@ _TEMPLATE = r"""
     viewerContainer.appendChild(switcher);
     viewerContainer.appendChild(imgEl);
     container.appendChild(viewerContainer);
-
-    var styleNode = document.createElement('style');
-    styleNode.innerHTML = '#lin-screenshots button.active { background: var(--ink) !important; color: #fff !important; }';
-    document.head.appendChild(styleNode);
 
     var screenshotsButton = document.getElementById('lin-tab-screenshots');
     var screenshotsMain = document.getElementById('lin-screenshots-main');
@@ -690,59 +1070,37 @@ _TEMPLATE = r"""
       sidebar.innerHTML = '';
       detailsContainer.innerHTML = '';
 
+      function metaBadge(row, text, hex) {
+        var badge = el('span', 'lin-badge', text);
+        paintBadge(badge, hex);
+        row.appendChild(badge);
+      }
+
       function showSheetDetails(sheet) {
         detailsContainer.innerHTML = '';
 
         var card = el('div');
-        card.style.background = '#fff';
-
-        var header = el('div');
-        header.style.display = 'flex';
-        header.style.justifyContent = 'space-between';
-        header.style.alignItems = 'center';
-        header.style.flexWrap = 'wrap';
-        header.style.gap = '.5rem';
-        header.style.borderBottom = '1px solid var(--hair)';
-        header.style.paddingBottom = '.6rem';
-        header.style.marginBottom = '.8rem';
-
-        var title = el('h3', null, '📄 ' + sheet.name);
-        title.style.margin = '0';
-        title.style.fontSize = '1.25rem';
-        title.style.color = 'var(--ink)';
-
-        var dims = el('span', 'lin-hint', sheet.dimensions.rows + ' rows × ' + sheet.dimensions.columns + ' cols');
-        dims.style.fontSize = '.85rem';
-
-        header.appendChild(title);
-        header.appendChild(dims);
+        var header = el('div', 'lin-card-head');
+        header.appendChild(el('h3', null, '📄 ' + sheet.name));
+        header.appendChild(el('span', 'lin-hint', _t('sheet_dims', {
+          rows: sheet.dimensions.rows, cols: sheet.dimensions.columns
+        })));
         card.appendChild(header);
 
-        var metaRow = el('div');
-        metaRow.style.display = 'flex';
-        metaRow.style.gap = '.4rem';
-        metaRow.style.flexWrap = 'wrap';
-        metaRow.style.marginBottom = '1rem';
-
+        var metaRow = el('div', 'lin-badges');
         if (sheet.visibility !== 'visible') {
-          var visBadge = el('span', 'lin-badge', '👁 ' + sheet.visibility);
-          visBadge.style.background = '#e5dbff'; visBadge.style.color = '#5f3dc4';
-          metaRow.appendChild(visBadge);
+          metaBadge(metaRow, _t('visibility') + ': ' + sheet.visibility, PALETTE.violet);
         }
         if (sheet.freeze_panes) {
-          var fBadge = el('span', 'lin-badge', '❄ Freeze: ' + sheet.freeze_panes);
-          fBadge.style.background = '#e3faf2'; fBadge.style.color = '#0ca678';
-          metaRow.appendChild(fBadge);
+          metaBadge(metaRow, _t('freeze_panes') + ': ' + sheet.freeze_panes, PALETTE.green);
         }
         if (sheet.hidden_columns && sheet.hidden_columns.length) {
-          var hBadge = el('span', 'lin-badge', '🚫 Hidden cols: ' + sheet.hidden_columns.join(', '));
-          hBadge.style.background = '#fff0f6'; hBadge.style.color = '#d6336c';
-          metaRow.appendChild(hBadge);
+          metaBadge(metaRow, _t('hidden_columns') + ': ' + sheet.hidden_columns.join(', '),
+            PALETTE.orange);
         }
         if (sheet.merged_ranges && sheet.merged_ranges.length) {
-          var mBadge = el('span', 'lin-badge', '🔗 Merged: ' + sheet.merged_ranges.length);
-          mBadge.style.background = '#e8f7ff'; mBadge.style.color = '#0066cc';
-          metaRow.appendChild(mBadge);
+          metaBadge(metaRow, _t('merged_ranges') + ': ' + sheet.merged_ranges.length,
+            PALETTE.blue);
         }
         if (metaRow.children.length > 0) {
           card.appendChild(metaRow);
@@ -750,36 +1108,13 @@ _TEMPLATE = r"""
 
         var comments = sheet.comments || [];
         if (comments.length > 0) {
-          var commTitle = el('h4', null, '💬 Comments (' + comments.length + ')');
-          commTitle.style.fontSize = '.9rem';
-          commTitle.style.margin = '1rem 0 .5rem';
-          commTitle.style.color = 'var(--ink)';
-          card.appendChild(commTitle);
-
-          var commList = el('div');
-          commList.style.display = 'flex';
-          commList.style.flexDirection = 'column';
-          commList.style.gap = '.5rem';
+          card.appendChild(el('h4', 'lin-sub',
+            '💬 ' + _t('comments') + ' (' + comments.length + ')'));
+          var commList = el('div', 'lin-list');
           comments.forEach(function(c) {
-            var cBox = el('div');
-            cBox.style.background = '#fcfcfb';
-            cBox.style.border = '1px solid var(--hair)';
-            cBox.style.borderRadius = '6px';
-            cBox.style.padding = '.6rem .8rem';
-            cBox.style.fontSize = '.85rem';
-
-            var cHead = el('div');
-            cHead.style.fontWeight = 'bold';
-            cHead.style.marginBottom = '.25rem';
-            cHead.style.color = 'var(--ink)';
-            cHead.appendChild(document.createTextNode(c.cell + ' (' + c.author + ')'));
-
-            var cText = el('div');
-            cText.style.color = 'var(--ink2)';
-            cText.appendChild(document.createTextNode(c.text));
-
-            cBox.appendChild(cHead);
-            cBox.appendChild(cText);
+            var cBox = el('div', 'lin-note');
+            cBox.appendChild(el('div', 'lin-note-head', c.cell + ' (' + c.author + ')'));
+            cBox.appendChild(el('div', 'lin-note-body', c.text));
             commList.appendChild(cBox);
           });
           card.appendChild(commList);
@@ -787,28 +1122,12 @@ _TEMPLATE = r"""
 
         var screens = GRAPH.meta.screenshots;
         if (screens && typeof screens === 'object' && !Array.isArray(screens) && screens[sheet.name] && screens[sheet.name].length) {
-          var sheetImgs = screens[sheet.name];
-          var imgTitle = el('h4', null, '📸 ' + _t('visual'));
-          imgTitle.style.fontSize = '.9rem';
-          imgTitle.style.margin = '1.5rem 0 .5rem';
-          imgTitle.style.color = 'var(--ink)';
-          card.appendChild(imgTitle);
-
-          var imgGallery = el('div');
-          imgGallery.style.display = 'flex';
-          imgGallery.style.flexDirection = 'column';
-          imgGallery.style.gap = '1rem';
-          imgGallery.style.alignItems = 'center';
-          imgGallery.style.marginTop = '.5rem';
-
-          sheetImgs.forEach(function(imgSrc) {
+          card.appendChild(el('h4', 'lin-sub', '📸 ' + _t('visual')));
+          var imgGallery = el('div', 'lin-gallery');
+          screens[sheet.name].forEach(function(imgSrc) {
             var img = el('img');
             img.src = imgSrc;
-            img.style.maxWidth = '100%';
-            img.style.border = '1px solid var(--line)';
-            img.style.borderRadius = '6px';
-            img.style.boxShadow = '0 3px 12px rgba(11,11,11,.05)';
-            img.style.background = '#fff';
+            img.alt = sheet.name;
             imgGallery.appendChild(img);
           });
           card.appendChild(imgGallery);
@@ -818,18 +1137,18 @@ _TEMPLATE = r"""
       }
 
       ctx.sheets.forEach(function(sheet, idx) {
-        var sBtn = document.createElement('button');
-        sBtn.textContent = '📄 ' + sheet.name;
+        var sBtn = el('button', null, '📄 ' + sheet.name);
+        sBtn.type = 'button';
+        sBtn.setAttribute('aria-current', idx === 0 ? 'true' : 'false');
         sBtn.onclick = function() {
-          Array.from(sidebar.children).forEach(function(child) { child.className = ''; });
-          sBtn.className = 'active';
+          Array.prototype.forEach.call(sidebar.children, function(child) {
+            child.setAttribute('aria-current', 'false');
+          });
+          sBtn.setAttribute('aria-current', 'true');
           showSheetDetails(sheet);
         };
         sidebar.appendChild(sBtn);
-        if (idx === 0) {
-          sBtn.className = 'active';
-          showSheetDetails(sheet);
-        }
+        if (idx === 0) showSheetDetails(sheet);
       });
     }
 
@@ -839,7 +1158,18 @@ _TEMPLATE = r"""
     screenshotsButton.onclick = function() { switchTab(screenshotsButton, screenshotsMain); };
   }
 
-  function setActive(on, off) { on.classList.add('active'); off.classList.remove('active'); }
+  function setActive(on, off) {
+    on.setAttribute('aria-pressed', 'true');
+    off.setAttribute('aria-pressed', 'false');
+  }
+  function label(id, text) {
+    var node = document.getElementById(id);
+    node.textContent = text; node.title = text;
+  }
+  function named(id, text) {
+    var node = document.getElementById(id);
+    node.title = text; node.setAttribute('aria-label', text);
+  }
 
   function nodeSize(n) {
     if (n.kind === 'group') return Math.min(64, 30 + 6 * Math.log2((n.count || 1)));
@@ -860,29 +1190,30 @@ _TEMPLATE = r"""
     return { name: 'cose', animate: false };
   }
   function buildStyle(big) {
+    var t = themeInk();
     var s = [
       { selector: 'node', style: {
         label: 'data(label)', width: 'data(size)', height: 'data(size)',
         'font-size': 9, 'min-zoomed-font-size': 8, 'text-valign': 'bottom',
         'text-margin-y': 4, 'text-wrap': 'ellipsis', 'text-max-width': 130,
-        color: '#52514e', 'border-width': 1.5, 'border-color': 'rgba(11,11,11,0.18)' } },
+        color: t.ink2, 'border-width': 1.5, 'border-color': t.nodeBorder } },
       { selector: 'node[degree <= 1]', style: { 'opacity': 0.55 } },
       { selector: 'node[degree = 2]', style: { 'opacity': 0.75 } },
       { selector: 'edge', style: {
         width: 1.4, 'curve-style': big ? 'straight' : 'bezier',
         'target-arrow-shape': 'triangle', 'arrow-scale': 0.75,
-        'line-color': '#c3c2b7', 'target-arrow-color': '#c3c2b7' } },
+        'line-color': t.line, 'target-arrow-color': t.line } },
       { selector: 'edge.name', style: { 'line-style': 'dashed', 'line-color': '#d99a19',
         'target-arrow-color': '#d99a19' } },
-      { selector: 'edge.call', style: { 'line-style': 'dotted', 'line-color': '#4a3aa7',
-        'target-arrow-color': '#4a3aa7' } },
-      { selector: 'edge.vba-write', style: { 'line-color': '#eb6834',
-        'target-arrow-color': '#eb6834' } },
-      { selector: 'edge.vba-read', style: { 'line-style': 'dashed', 'line-color': '#eb6834',
-        'target-arrow-color': '#eb6834' } },
+      { selector: 'edge.call', style: { 'line-style': 'dotted', 'line-color': PALETTE.violet,
+        'target-arrow-color': PALETTE.violet } },
+      { selector: 'edge.vba-write', style: { 'line-color': PALETTE.orange,
+        'target-arrow-color': PALETTE.orange } },
+      { selector: 'edge.vba-read', style: { 'line-style': 'dashed', 'line-color': PALETTE.orange,
+        'target-arrow-color': PALETTE.orange } },
       { selector: 'edge.approx', style: { opacity: 0.55 } },
       { selector: 'node:selected', style: { 'border-width': 3.5,
-        'border-color': '#0b0b0b', color: '#0b0b0b', 'font-size': 11 } },
+        'border-color': t.ink, color: t.ink, 'font-size': 11 } },
       { selector: '.dimmed', style: { opacity: 0.12 } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
@@ -970,29 +1301,16 @@ _TEMPLATE = r"""
     renderPlaceholder();
   }
 
+  // Nothing selected. On a narrow viewport the panel overlays the graph, so
+  // the empty state stands down entirely (.lin-empty) rather than covering it.
   function renderPlaceholder() {
     var p = document.getElementById('lin-panel');
-    p.classList.remove('hidden'); p.innerHTML = '';
-
-    var icon = el('div');
-    icon.style.textAlign = 'center';
-    icon.style.fontSize = '2.5rem';
-    icon.style.marginTop = '4rem';
-    icon.style.color = 'var(--muted)';
-    icon.textContent = '🔍';
-    p.appendChild(icon);
-
-    var title = el('h2', null, _t('placeholder_title'));
-    title.style.textAlign = 'center';
-    title.style.marginTop = '1rem';
-    p.appendChild(title);
-
-    var desc = el('p', 'lin-hint');
-    desc.style.textAlign = 'center';
-    desc.style.lineHeight = '1.45';
-    desc.style.padding = '0 .5rem';
-    desc.textContent = _t('placeholder_desc');
-    p.appendChild(desc);
+    p.classList.remove('hidden'); p.classList.add('lin-empty'); p.innerHTML = '';
+    var mark = el('div', 'lin-empty-icon');
+    mark.appendChild(icon('search'));
+    p.appendChild(mark);
+    p.appendChild(el('h2', 'lin-empty-title', _t('placeholder_title')));
+    p.appendChild(el('p', 'lin-hint lin-empty-desc', _t('placeholder_desc')));
   }
 
   function el(tag, cls, txt) {
@@ -1030,13 +1348,17 @@ _TEMPLATE = r"""
 
   function renderPanel(cy, n) {
     var p = document.getElementById('lin-panel');
-    p.classList.remove('hidden'); p.innerHTML = '';
-    var head = el('div'); head.style.display = 'flex'; head.style.alignItems = 'center';
+    p.classList.remove('hidden'); p.classList.remove('lin-empty'); p.innerHTML = '';
+    var head = el('div', 'lin-panel-head');
     var badgeLabel = (KIND[n.kind] || {}).labelKey ? _t(KIND[n.kind].labelKey) : n.kind;
     var badge = el('span', 'lin-badge', badgeLabel);
-    badge.style.background = (KIND[n.kind] || {}).color || '#898781';
+    paintBadge(badge, (KIND[n.kind] || {}).color || PALETTE.grey);
     head.appendChild(badge);
-    var close = el('button', 'lin-close', '✕'); close.onclick = function () { clearSel(cy); };
+    var close = el('button', 'lin-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', _t('close'));
+    close.title = _t('close');
+    close.onclick = function () { clearSel(cy); };
     head.appendChild(close); p.appendChild(head);
     p.appendChild(el('h2', null, n.label));
 
@@ -1050,12 +1372,17 @@ _TEMPLATE = r"""
       p.appendChild(sf);
       var sv = valueSection(n);
       if (n.samples && n.samples.length) {
+        var box = el('div', 'lin-samples');
         n.samples.forEach(function (s) {
+          // The graph names the field valueSource, as it does on a node; older
+          // graphs called it source, so both are read.
+          var ssrc = s.valueSource || s.source;
           var line = s.addr + ' = ' + fmt(s.value);
           if (s.date) line += ' (' + s.date + ')';
-          if (SRC[s.source] && s.source !== 'engine') line += ' [' + _t(SRC[s.source].labelKey) + ']';
-          sv.appendChild(el('div', 'lin-hint', line));
+          if (SRC[ssrc] && ssrc !== 'engine') line += ' [' + _t(SRC[ssrc].labelKey) + ']';
+          box.appendChild(el('div', null, line));
         });
+        sv.appendChild(box);
       }
       p.appendChild(sv);
     }
@@ -1097,31 +1424,64 @@ _TEMPLATE = r"""
       .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
   }
 
-  // "Computed value" section: the value (or its date), a provenance badge, and
-  // — when the engine disagrees with what the file stored — both figures.
+  // The value section. Reading values back out of the workbook is the point of
+  // this tool, so the reader must never have to guess whether the figure on
+  // screen is Excel's or linexcel's. When both readings exist they are shown
+  // side by side and the card states the verdict — agreement included, because
+  // saying nothing reads as "unknown" rather than as "they match".
   function valueSection(n) {
-    var sv = section(_t('computed_value'));
+    var sv = section(_t('value_heading'));
     var shown = n.valueDate || fmt(n.value);
-    var line = el('div', 'lin-val', shown);
+    var hasValue = n.value !== undefined && n.value !== null;
+    var hasCached = n.cachedValue !== undefined && n.cachedValue !== null;
+    var cached = hasCached ? fmt(n.cachedValue) : null;
+    // A date node compares on the date part only: a file-cached datetime string
+    // ("2026-08-07 00:00:00") is the same day as valueDate.
+    var sameDate = n.valueDate && typeof n.cachedValue === 'string' &&
+      n.cachedValue.slice(0, 10) === n.valueDate;
     var src = SRC[n.valueSource];
-    if (src) {
-      var badge = el('span', 'lin-src', _t(src.labelKey));
-      badge.style.background = src.color;
-      line.appendChild(badge);
+    // Two readings only when they are genuinely two: under 'file' or 'fallback'
+    // the displayed value *is* the stored one, and a second identical column
+    // would claim a corroboration that never happened.
+    var paired = hasCached && hasValue && n.valueSource === 'engine';
+    var card = el('div', 'lin-vcard');
+    var grid = el('div', 'lin-vgrid');
+    if (paired) {
+      var agree = !!sameDate || cached === shown;
+      if (!agree) card.className = 'lin-vcard is-diff';
+      var verdict = el('div', 'lin-verdict');
+      verdict.appendChild(icon(agree ? 'check' : 'warn'));
+      verdict.appendChild(document.createTextNode(_t(agree ? 'value_match' : 'value_mismatch')));
+      card.appendChild(verdict);
+      grid.appendChild(reading(_t('value_col_file'), cached, SRC.file.color));
+      grid.appendChild(reading(_t('value_col_calc'), shown, SRC.engine.color));
+    } else {
+      grid.className = 'lin-vgrid is-single';
+      if (n.valueSource === 'fallback') card.className = 'lin-vcard is-guarded';
+      grid.appendChild(reading(src ? _t(src.labelKey) : null, shown,
+        src ? src.color : null));
     }
-    sv.appendChild(line);
-    if (n.cachedValue !== undefined && n.cachedValue !== null) {
-      var cached = fmt(n.cachedValue);
-      // a date node compares on the date part only: a file-cached datetime
-      // string ("2026-08-07 00:00:00") is the same day as valueDate
-      var sameDate = n.valueDate && typeof n.cachedValue === 'string' &&
-        n.cachedValue.slice(0, 10) === n.valueDate;
-      if (!sameDate && cached !== shown) {
-        sv.appendChild(el('div', 'lin-cmp', _t('value_cached') + ': ' + cached));
-        sv.appendChild(el('div', 'lin-cmp', _t('differs_from_file', { recalc: shown })));
-      }
-    }
+    card.appendChild(grid);
+    sv.appendChild(card);
+    if (src) sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
     return sv;
+  }
+  // One labelled figure. The swatch repeats the provenance colour used by the
+  // badges and the legend, so the two columns stay told apart at a glance.
+  function reading(labelText, valueText, color) {
+    var box = el('div', 'lin-reading');
+    if (labelText) {
+      var lab = el('div', 'lin-reading-label');
+      if (color) {
+        var sw = el('span', 'lin-sw');
+        sw.style.background = color;
+        lab.appendChild(sw);
+      }
+      lab.appendChild(document.createTextNode(labelText));
+      box.appendChild(lab);
+    }
+    box.appendChild(el('div', 'lin-reading-val', valueText));
+    return box;
   }
 
   function renderStep(parent, s, depth) {
@@ -1153,10 +1513,15 @@ _TEMPLATE = r"""
     items.forEach(function (it) {
       var li = el('li');
       var btn = el('button');
-      var dot = el('span', 'lin-dot'); dot.style.background = (KIND[it.node.kind] || {}).color || '#898781';
+      btn.type = 'button';
+      var dot = el('span', 'lin-dot');
+      dot.style.background = (KIND[it.node.kind] || {}).color || PALETTE.grey;
       btn.appendChild(dot); btn.appendChild(document.createTextNode(it.node.label));
       btn.onclick = (function (id) { return function () {
         select(cy, id);
+        // The button that carried focus is about to be replaced: hand focus to
+        // the panel so the keyboard path continues and the new content is read.
+        document.getElementById('lin-panel').focus();
         cy.animate({ center: { eles: cy.getElementById(id) }, duration: 250 });
       }; })(it.node.id);
       li.appendChild(btn); li.appendChild(el('span', 'lin-ek', it.kind));

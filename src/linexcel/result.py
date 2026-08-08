@@ -243,6 +243,7 @@ class LineageResult:
         language: str = "en",
         max_workers: int = 4,
         max_tokens: int | None = None,
+        token_budget: int | None = None,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
@@ -263,6 +264,18 @@ class LineageResult:
 
         ``max_tokens`` caps output per node (approximate; provider-dependent).
 
+        ``token_budget`` caps what the whole documentation run may cost, input
+        and output tokens together. It is counted against :attr:`token_usage`,
+        which spans the result's lifetime, so one ceiling covers this call and
+        every earlier one — the figure to set is the total you are willing to
+        pay for this workbook, not a per-node allowance. Nodes still queued when
+        the budget is reached are left undocumented with a :class:`UserWarning`
+        rather than silently billed; requests already in flight are allowed to
+        finish, so treat the ceiling as approximate.
+
+            >>> docs = result.document(base_url=..., token_budget=200_000)
+            ... # doctest: +SKIP
+
         Tokens consumed are added to :attr:`token_usage`.
         """
         from linexcel.aidoc import document_nodes
@@ -282,6 +295,7 @@ class LineageResult:
             max_workers=max_workers,
             usage=self.token_usage,
             max_tokens=max_tokens,
+            token_budget=token_budget,
         )
 
     def document_workbook(
@@ -293,6 +307,8 @@ class LineageResult:
         provider: ProviderLike | None = None,
         language: str = "en",
         max_tokens: int | None = None,
+        token_budget: int | None = None,
+        include_context: bool = True,
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
 
@@ -300,13 +316,28 @@ class LineageResult:
         Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
         display it in the viewer's separate overview tab.
 
-        Provider resolution is the same as :meth:`document`, and tokens
-        consumed are added to :attr:`token_usage`.
+        ``include_context`` adds :attr:`workbook_context` to the dossier: the
+        sheet previews, cell comments, merged ranges, frozen panes and hidden
+        columns — the same cues the sheet screenshots show. Without it the model
+        sees how the workbook computes but not what it looks like, and describes
+        a graph rather than a file. Set it to ``False`` to keep cell contents
+        local; the lineage (formulas and their values) is sent either way.
 
-        ``max_tokens`` caps the output length (approximate; provider-dependent).
+        Provider resolution is the same as :meth:`document`, and tokens
+        consumed are added to :attr:`token_usage`. ``max_tokens`` caps the
+        output length (approximate; provider-dependent), while ``token_budget``
+        caps cumulative spend on this result and raises :class:`AiDocError` if
+        earlier calls already exhausted it.
         """
         from linexcel.aidoc import document_workbook
 
+        # Context needs the workbook bytes; a result rebuilt from a graph alone
+        # has none, and a structural overview is better than an exception.
+        context = (
+            self.workbook_context
+            if include_context and self._source_data is not None
+            else None
+        )
         return document_workbook(
             self.graph,
             model=model,
@@ -316,6 +347,8 @@ class LineageResult:
             language=language,
             usage=self.token_usage,
             max_tokens=max_tokens,
+            token_budget=token_budget,
+            context=context,
         )
 
     # -- visualization -----------------------------------------------------

@@ -1,0 +1,13 @@
+{
+  "captured": "2026-08-08",
+  "sources": {
+    "src/linexcel/viewer.py": "ae7ee8800fe45d9449fe8ac6069f94213e5051058e3e2ec48b20ed5059a6652d",
+    "src/linexcel/i18n.py": "e6413886189b3bf39bc62c3fe103dc91ab320ff65660f14558641c03ac4e07a9"
+  },
+  "images": {
+    "viewer_graph.png": "Dependency graph, workbook-wide",
+    "viewer_node_documented.png": "A node selected: formula, step-by-step evaluation, AI card",
+    "viewer_workbook_overview.png": "AI overview, grounded in the deterministic dossier",
+    "viewer_sheets_context.png": "Sheet context: comments, frozen panes, rendered pages"
+  }
+}
