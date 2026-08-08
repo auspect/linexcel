@@ -56,7 +56,9 @@ class _StubEngine:
         return None
 
 
-def resolver_for(engine_values: dict, cached: CachedValues, warnings: list) -> tuple:
+def resolver_for(
+    engine_values: dict, cached: CachedValues, warnings: list
+) -> _ValueResolver:
     resolver = _ValueResolver(
         _StubEngine(engine_values),
         {SHEET},

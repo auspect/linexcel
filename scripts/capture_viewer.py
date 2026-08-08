@@ -38,7 +38,7 @@ WATCHED_SOURCES = (
     Path("src/linexcel/i18n.py"),
 )
 
-VIEWPORT = {"width": 1440, "height": 900}
+VIEWPORT_WIDTH, VIEWPORT_HEIGHT = 1440, 900
 #: Retina-density PNGs: the README is read on high-DPI displays and GitHub
 #: downscales, so capturing at 1x looks soft.
 SCALE = 2
@@ -167,7 +167,13 @@ def capture(report: Path) -> int:
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport=VIEWPORT, device_scale_factor=SCALE)
+        # Written inline rather than hoisted to a constant: `viewport` wants
+        # Playwright's ViewportSize TypedDict, which a module-level dict widens
+        # away from.
+        page = browser.new_page(
+            viewport={"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
+            device_scale_factor=SCALE,
+        )
         page.goto(report.resolve().as_uri())
         page.wait_for_selector("#lin-cy canvas", timeout=30_000)
         page.wait_for_timeout(LAYOUT_SETTLE_MS)
