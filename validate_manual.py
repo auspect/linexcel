@@ -1,345 +1,501 @@
 #!/usr/bin/env python3
-import io
-import os
+"""Manual end-to-end validation of linexcel, against a local model.
+
+Two workbooks, analysed then documented, rendered to PNG and written out as
+standalone HTML reports to open by hand:
+
+``sales``   a small readable French report — a table that does not start at A1,
+            a hidden column, merged cells, a chart, a comment, a defined name,
+            cross-sheet aggregation. This is what the README screenshots show.
+``stress``  a much larger English workbook built to break things: every Excel
+            error value, unresolvable and external references, sheet names
+            needing quotes, a circular pair, formulas past the truncation
+            limit, and cell text aimed at the report's HTML escaping.
+
+The default provider is a **local** OpenAI-compatible endpoint (Ollama), so a
+full run costs nothing and sends nothing off the machine. Nothing is documented
+unless a provider answers: there is no implicit cloud fallback.
+
+Neither fixture can contain VBA: ``openpyxl`` preserves a ``vbaProject.bin`` but
+cannot author one, so macros need a workbook Excel itself wrote. Point ``--file``
+at a real ``.xlsm`` to exercise that path end to end.
+
+    uv run validate_manual.py                        # sales, local Ollama
+    uv run validate_manual.py --workbook stress      # the hostile one
+    uv run validate_manual.py --workbook both
+    uv run validate_manual.py --file macros.xlsm     # your own workbook (VBA)
+    uv run validate_manual.py --model gemma4:12b     # another local model
+    uv run validate_manual.py --no-ai                # deterministic paths only
+    uv run validate_manual.py --token-budget 50000 --max-nodes 8
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
 import shutil
+import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
-    from openpyxl import Workbook
-    from openpyxl.chart import BarChart, Reference
-    from openpyxl.comments import Comment
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.workbook.defined_name import DefinedName
-except ImportError:
-    print("❌ Error: openpyxl is not installed. Run 'uv run validate_manual.py'")
+    import validation_workbooks
+except ImportError:  # pragma: no cover - openpyxl missing
+    print("❌ openpyxl is not installed. Run 'uv run validate_manual.py'.")
     sys.exit(1)
 
-
-# Add src/ to sys.path so we can import the local linexcel package directly
+# Import the working tree rather than any installed linexcel: this script
+# validates the code being edited.
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-import linexcel
+import linexcel  # noqa: E402
+from linexcel.aidoc import AiDocError  # noqa: E402
+
+#: Local OpenAI-compatible endpoint. Ollama serves one at this address.
+DEFAULT_BASE_URL = "http://localhost:11434/v1"
+#: Small local model, enough to exercise the prompts without a cloud key.
+DEFAULT_MODEL = "laguna-xs-2.1"
+#: Ceiling on the whole run. The sales workbook needs far less; the point is to
+#: show the knob exists before anyone points it at a real workbook and a paid API.
+DEFAULT_TOKEN_BUDGET = 200_000
+
+SCREENSHOTS_ROOT = Path("validation_screenshots")
 
 
-def build_sample_workbook() -> bytes:
-    """Generate a rich Excel workbook with styles, charts, and shifted cells."""
-    wb = Workbook()
+@dataclass(frozen=True)
+class Case:
+    """One workbook and everything the run needs to know about it."""
 
-    # --- STYLES DEFINITION ---
-    font_title = Font(name="Segoe UI", size=14, bold=True, color="1F4E79")
-    font_header = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-    font_data = Font(name="Segoe UI", size=11)
-    font_bold = Font(name="Segoe UI", size=11, bold=True)
+    name: str
+    headline: str
+    build: Callable[[], bytes]
+    workbook: Path
+    languages: tuple[str, ...]
+    #: Report pages per sheet, when the print layout is known. The viewer shows
+    #: a mapping inline under each sheet and a flat list in its own tab, so an
+    #: unpredictable layout is better left flat than guessed at.
+    pages_by_sheet: Callable[[list[Path]], dict | list] | None = None
+    checks: Sequence[str] = field(default_factory=tuple)
+    #: False for a workbook the user supplied: it is read, never rewritten, and
+    #: already carries the results Excel stored.
+    generated: bool = True
 
-    fill_header = PatternFill(
-        start_color="1F4E79", end_color="1F4E79", fill_type="solid"
-    )
-    fill_zebra = PatternFill(
-        start_color="F2F5F8", end_color="F2F5F8", fill_type="solid"
-    )
+    def output(self, language: str) -> Path:
+        stem = "validate_out" if self.name == "sales" else f"validate_out_{self.name}"
+        return Path(f"{stem}_{language}.html")
 
-    border_thin = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9"),
-    )
-    border_header = Border(
-        left=Side(style="thin", color="FFFFFF"),
-        right=Side(style="thin", color="FFFFFF"),
-        top=Side(style="medium", color="1F4E79"),
-        bottom=Side(style="medium", color="1F4E79"),
-    )
+    @property
+    def screenshots_dir(self) -> Path:
+        return SCREENSHOTS_ROOT / self.name
 
-    align_center = Alignment(horizontal="center", vertical="center")
-    align_left = Alignment(horizontal="left", vertical="center")
-    align_right = Alignment(horizontal="right", vertical="center")
 
-    # --- 1. SHEET: Ventes ---
-    ws = wb.active
-    ws.title = "Ventes"
+def _sales_pages(pages: list[Path]) -> dict | list:
+    if len(pages) < 5:
+        return pages
+    return {"Ventes": pages[0:3], "Synthese": [pages[3]], "Params": [pages[4]]}
 
-    # Leaving empty Row 1 & 2, and empty Column A. Table starts at B3.
-    ws["B2"] = "Rapport de Ventes Hebdomadaire"
-    ws["B2"].font = font_title
 
-    headers = ["Produit", "Qté", "Prix", "CA"]
-    for col_idx, text in enumerate(headers, start=2):
-        cell = ws.cell(row=3, column=col_idx, value=text)
-        cell.font = font_header
-        cell.fill = fill_header
-        cell.alignment = align_center
-        cell.border = border_header
-
-    for r in range(4, 104):
-        p_cell = ws.cell(row=r, column=2, value=f"P{r - 3}")
-        q_cell = ws.cell(row=r, column=3, value=r % 7 + 1)
-        pr_cell = ws.cell(row=r, column=4, value=10.5 + (r % 13))
-        ca_cell = ws.cell(
-            row=r, column=5, value=f"=C{r}*D{r}"
-        )  # Formula relative to C and D
-
-        row_fill = fill_zebra if r % 2 == 0 else None
-        for col_idx, cell in enumerate([p_cell, q_cell, pr_cell, ca_cell], start=2):
-            cell.font = font_data
-            cell.border = border_thin
-            if row_fill:
-                cell.fill = row_fill
-
-        p_cell.alignment = align_left
-        q_cell.alignment = align_right
-        pr_cell.alignment = align_right
-        ca_cell.alignment = align_right
-
-        pr_cell.number_format = "$#,##0.00"
-        ca_cell.number_format = "$#,##0.00"
-
-    # Freeze row 3 & column A (so we specify B4)
-    ws.freeze_panes = "B4"
-    ws.column_dimensions["D"].hidden = True  # Hide column D (Prix)
-
-    # Configure print settings: Landscape, paper size A3 (large), fit to width
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
-    ws.page_setup.paperSize = ws.PAPERSIZE_A3
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-
-    ws.merge_cells("G3:H3")
-    ws["G3"] = "Contexte de Présentation"
-    ws["G3"].font = font_bold
-    ws["G3"].alignment = align_center
-    ws["G3"].border = border_thin
-
-    # A1 comment was shifted to B3 (new table start)
-    ws["B3"].comment = Comment("Exported product category", "Data team")
-
-    # B width adjustment for better visibility
-    ws.column_dimensions["B"].width = 30
-
-    # Add Chart to "Ventes"
-    chart = BarChart()
-    chart.type = "col"
-    chart.style = 10
-    chart.title = "Chiffre d'Affaires par Produit (Top 10)"
-    # openpyxl's axis descriptor coerces a str into a Title; ty only sees the
-    # declared Title type.
-    chart.y_axis.title = "CA ($)"  # ty: ignore[invalid-assignment]
-    chart.x_axis.title = "Produit"  # ty: ignore[invalid-assignment]
-
-    # References for chart (CA is col 5, Product is col 2)
-    data = Reference(ws, min_col=5, min_row=3, max_row=13)
-    cats = Reference(ws, min_col=2, min_row=4, max_row=13)
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(cats)
-    chart.width = 16
-    chart.height = 10
-    ws.add_chart(chart, "G5")
-
-    # --- 2. SHEET: Synthese ---
-    syn = wb.create_sheet("Synthese")
-    syn["B2"] = "Synthèse des Performances"
-    syn["B2"].font = font_title
-
-    # Headers
-    syn.cell(row=4, column=2, value="Métrique").font = font_header
-    syn.cell(row=4, column=2).fill = fill_header
-    syn.cell(row=4, column=2).border = border_header
-    syn.cell(row=4, column=2).alignment = align_left
-
-    syn.cell(row=4, column=3, value="Valeur").font = font_header
-    syn.cell(row=4, column=3).fill = fill_header
-    syn.cell(row=4, column=3).border = border_header
-    syn.cell(row=4, column=3).alignment = align_right
-
-    # Formulas reference Ventes!E4:E103 (the CA column E)
-    m_cells = [
-        ("Total CA", "=SUM(Ventes!E4:E103)", "$#,##0.00"),
-        (
-            "CA Moyen par Produit",
-            "=ROUND(AVERAGE(Ventes!E4:E103), 2)",
-            "$#,##0.00",
+CASES = {
+    "sales": Case(
+        name="sales",
+        headline="readable French sales report",
+        build=validation_workbooks.build_sales_workbook,
+        workbook=Path("validation_demo.xlsx"),
+        languages=("fr", "en"),
+        pages_by_sheet=_sales_pages,
+        checks=(
+            "'Workbook overview' — does the AI describe the *file*, not the graph?",
+            "  It should name the title in B2, the hidden Prix column and the",
+            "  comment on B3, none of which any formula reveals.",
+            "'Sheets' — comments, frozen panes, merged ranges, rendered pages.",
+            "'Graph' — select a node, read its card against the decomposition.",
         ),
-        (
-            "Statut Objectif",
-            "=IF(SUM(Ventes!E4:E103)>TauxCible, "
-            'CONCATENATE("OK: ", ROUND(C5/1000,1), "k"), "KO")',
-            None,
+    ),
+    "stress": Case(
+        name="stress",
+        headline="hostile English workbook",
+        build=validation_workbooks.build_stress_workbook,
+        workbook=Path("validation_stress.xlsx"),
+        languages=("en",),
+        checks=(
+            "'Errors' nodes — every Excel error value should render as #DIV/0!,",
+            "  #N/A and so on, never as a raw engine object.",
+            "'Cross Refs' — external links, 3-D and structured references become",
+            "  grey 'external reference' nodes rather than silent wrong edges.",
+            "  The circular pair (B15/B16) must not hang or vanish.",
+            "'Hostile Text' — no dialog may appear, and the payloads must read",
+            "  back verbatim: </script>, __TITLE__, $&, the U+2028 line.",
+            "Sheet tabs — O'Brien's Café must be spelled with ONE apostrophe",
+            "  everywhere, and Hidden Config / Very Hidden Archive must appear.",
         ),
-    ]
-
-    for idx, (label, formula, num_fmt) in enumerate(m_cells, start=5):
-        lbl_cell = syn.cell(row=idx, column=2, value=label)
-        lbl_cell.font = font_bold
-        lbl_cell.border = border_thin
-
-        val_cell = syn.cell(row=idx, column=3, value=formula)
-        val_cell.font = font_data
-        val_cell.border = border_thin
-        val_cell.alignment = align_right
-        if num_fmt:
-            val_cell.number_format = num_fmt
-
-    # Configure print settings: Landscape, paper size A3 (large), fit to width
-    syn.page_setup.orientation = syn.ORIENTATION_LANDSCAPE
-    syn.page_setup.paperSize = syn.PAPERSIZE_A3
-    syn.page_setup.fitToWidth = 1
-    syn.page_setup.fitToHeight = 0
-    syn.sheet_properties.pageSetUpPr.fitToPage = True
-
-    # --- 3. SHEET: Params ---
-    params = wb.create_sheet("Params")
-    params["B2"] = "Paramètres de Simulation"
-    params["B2"].font = font_title
-
-    lbl_cell = params.cell(row=4, column=2, value="Seuil CA Cible")
-    lbl_cell.font = font_bold
-    lbl_cell.border = border_thin
-
-    val_cell = params.cell(row=4, column=3, value=5000)
-    val_cell.font = font_data
-    val_cell.border = border_thin
-    val_cell.number_format = "$#,##0.00"
-    val_cell.alignment = align_right
-
-    wb.defined_names.add(DefinedName("TauxCible", attr_text="Params!$C$4"))
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    ),
+}
 
 
-def main():
-    print("--- 📊 Validation Manuelle de linexcel ---")
-    data = build_sample_workbook()
-    excel_path = Path("validation_demo.xlsx")
-    excel_path.write_bytes(data)
-    print(f"   Classeur de test enregistré sous : {excel_path.resolve()}")
+def _case_for_file(path: Path) -> Case:
+    """A case wrapping a workbook of the user's own.
 
-    print("1. Analyse du classeur avec linexcel...")
-    result = linexcel.analyze(data, filename="validation_demo.xlsx")
+    The generated fixtures cannot carry macros — ``openpyxl`` preserves a
+    ``vbaProject.bin`` but cannot author one — so this is the route for
+    exercising VBA extraction, the call graph and the sheet read/write edges
+    against a real file.
+    """
+    return Case(
+        name=re.sub(r"[^A-Za-z0-9]+", "-", path.stem).strip("-").lower() or "file",
+        headline=f"your workbook: {path.name}",
+        build=path.read_bytes,
+        workbook=path,
+        languages=("en",),
+        generated=False,
+        checks=(
+            "'Graph' — VBA procedures appear as orange hexagons; their call",
+            "  edges are dotted and their sheet reads/writes are orange.",
+            "Select a VBA node — the panel shows the extracted source.",
+            "Anything that looks wrong here is worth a bug report: this is a",
+            "  real workbook, not a fixture written to be analysable.",
+        ),
+    )
 
-    print("   Structure détectée :")
-    print(f"     - Feuilles : {', '.join(result.sheets)}")
-    print(f"     - Stats : {result.stats}")
 
-    # Check for Gemini API key
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    docs_fr, docs_en = None, None
-    wb_doc_fr, wb_doc_en = None, None
+def recalculate(data: bytes, suffix: str = ".xlsx") -> bytes | None:
+    """Round-trip through LibreOffice so the workbook carries stored results.
 
-    if api_key:
-        print(
-            "\n2. 🔑 Clé API Gemini trouvée. "
-            "Génération de la documentation de calculs par l'IA..."
-        )
+    ``openpyxl`` writes formulas but never their results, so a generated fixture
+    has no cached values at all — and the report's "value stored in the file"
+    against "value linexcel recalculated" comparison, the whole point of reading
+    values back, has nothing to compare. Every real Excel file carries the last
+    computed result; this makes the fixture behave like one.
+
+    It also produces honest disagreements: LibreOffice does not implement every
+    function formualizer does, so the file ends up storing ``#NAME?`` where
+    linexcel computes a number. That is exactly the case the comparison exists
+    to surface, and no hand-written fixture would think to include it.
+
+    Returns ``None`` when LibreOffice is unavailable; the caller keeps the
+    original bytes.
+    """
+    from linexcel.insights import find_libreoffice
+
+    office = find_libreoffice()
+    if not office:
+        return None
+    with tempfile.TemporaryDirectory(prefix="linexcel-recalc-") as temp:
+        root = Path(temp)
+        source = root / f"workbook{suffix}"
+        source.write_bytes(data)
+        out_dir = root / "out"
         try:
-            print("   - Génération de la version française...")
-            docs_fr = result.document(api_key=api_key, language="fr")
-            wb_doc_fr = result.document_workbook(api_key=api_key, language="fr")
+            subprocess.run(
+                [
+                    office,
+                    f"-env:UserInstallation={(root / 'profile').as_uri()}",
+                    "--headless",
+                    "--norestore",
+                    "--convert-to",
+                    "xlsx",
+                    "--outdir",
+                    str(out_dir),
+                    str(source),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None
+        produced = sorted(out_dir.glob("*.xlsx"))
+        return produced[0].read_bytes() if produced else None
 
-            print("   - Génération de la version anglaise...")
-            docs_en = result.document(api_key=api_key, language="en")
-            wb_doc_en = result.document_workbook(api_key=api_key, language="en")
-            print("   - Documentations générées avec succès.")
-        except Exception as e:
-            print(f"   ❌ Erreur lors de la génération IA : {e}")
-            print("   Poursuite de la génération sans les données IA.")
-    else:
-        print("\n2. ⚠️ Pas de clé API Gemini trouvée (export sans IA).")
-        print(
-            "   Définissez la variable d'environnement GEMINI_API_KEY pour tester l'IA."
-        )
-        print('   Exemple: export GEMINI_API_KEY="votre_cle_ici"')
 
-    print("\n3. 💬 Extraction des métadonnées et commentaires de l'Excel...")
-    context = result.workbook_context
-    for sheet in context["sheets"]:
-        print(f"   Feuille '{sheet['name']}' :")
-        if sheet.get("freeze_panes"):
-            print(f"     - Volet figé : {sheet['freeze_panes']}")
-        if sheet.get("hidden_columns"):
-            print(f"     - Colonnes masquées : {', '.join(sheet['hidden_columns'])}")
-        if sheet.get("merged_ranges"):
-            print(f"     - Cellules fusionnées : {', '.join(sheet['merged_ranges'])}")
-        comments = sheet.get("comments", [])
-        if comments:
-            print("     - Commentaires :")
-            for c in comments:
-                print(f"       * {c['cell']} ({c['author']}) : {c['text'].strip()}")
-        else:
-            print("     - Aucun commentaire.")
+# ──────────────────────────────────────────────
+# Local provider preflight
+# ──────────────────────────────────────────────
 
-    print("\n4. 📸 Génération des captures d'écran (screenshots)...")
-    screenshots_payload = None
+
+def probe_local_models(base_url: str, timeout: float = 3.0) -> list[str] | None:
+    """Model ids served at ``base_url``, or ``None`` if nothing answers.
+
+    Uses the OpenAI-compatible ``/models`` route, which Ollama, vLLM and LM
+    Studio all expose, so the check does not assume a particular runtime.
+    """
+    url = base_url.rstrip("/") + "/models"
     try:
-        screenshots_dir = Path("validation_screenshots")
-        if screenshots_dir.exists():
-            shutil.rmtree(screenshots_dir)
-        screenshots_dir.mkdir(exist_ok=True)
-        screenshots = result.save_screenshots(screenshots_dir, dpi=200)
-        print(
-            f"   ✅ {len(screenshots)} capture(s) d'écran enregistrée(s) "
-            f"dans {screenshots_dir.name}/ :"
-        )
-        for s in screenshots:
-            print(f"     - {s.name}")
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    return [entry.get("id", "") for entry in payload.get("data", [])]
 
-        if screenshots:
-            sorted_screens = sorted(screenshots, key=lambda x: x.name)
-            if len(sorted_screens) >= 5:
-                screenshots_payload = {
-                    "Ventes": sorted_screens[0:3],
-                    "Synthese": [sorted_screens[3]],
-                    "Params": [sorted_screens[4]],
-                }
-            else:
-                screenshots_payload = sorted_screens
-    except Exception as e:
-        print(f"   ⚠️ Impossible de générer les captures d'écran : {e}")
-        print(
-            "      (Nécessite LibreOffice headless et 'pdftoppm' installés "
-            "sur le système)"
-        )
 
-    print("\n5. Enregistrement des fichiers HTML de visualisation...")
-    output_fr = Path("validate_out_fr.html")
-    output_en = Path("validate_out_en.html")
+def check_local_provider(base_url: str, model: str) -> bool:
+    """Report whether ``model`` can answer at ``base_url``; explain if it cannot."""
+    served = probe_local_models(base_url)
+    if served is None:
+        print(f"   ⚠️  No OpenAI-compatible endpoint answered at {base_url}")
+        print("      Start one, e.g. 'ollama serve', or pass --base-url / --no-ai.")
+        return False
+    # Ollama implies the ':latest' tag when a name carries none, and reports the
+    # tagged id back, so an exact match would reject the very name it accepts.
+    if model in served or f"{model}:latest" in served:
+        print(f"   ✅ {model} is served at {base_url}")
+        return True
+    print(f"   ⚠️  '{model}' is not served at {base_url}")
+    if served:
+        print(f"      Available here: {', '.join(sorted(served))}")
+        print(f"      Pull it with 'ollama pull {model}', or pass --model <name>.")
+    else:
+        print("      That endpoint serves no model at all.")
+    return False
 
-    result.save_html(
-        output_fr,
-        docs=docs_fr,
-        workbook_doc=wb_doc_fr,
-        screenshots=screenshots_payload,
-        language="fr",
-    )
-    result.save_html(
-        output_en,
-        docs=docs_en,
-        workbook_doc=wb_doc_en,
-        screenshots=screenshots_payload,
-        language="en",
-    )
 
-    print("\n🎉 Succès ! Les fichiers de visualisation ont été écrits ici :")
-    print(f"   👉 Version française : {output_fr.resolve()}")
-    print(f"   👉 Version anglaise  : {output_en.resolve()}")
-    print("\nPour inspecter manuellement les résultats :")
-    print("   1. Ouvrez l'un des fichiers HTML dans votre navigateur web.")
-    if api_key:
-        print(
-            "   2. Regardez l'onglet 'Synthèse' / 'Workbook overview' pour "
-            "voir la description globale par l'IA."
-        )
-        print(
-            "   3. Sélectionnez des nœuds de formule pour voir la "
-            "documentation IA correspondante."
-        )
+# ──────────────────────────────────────────────
+# Steps
+# ──────────────────────────────────────────────
+
+
+def report_structure(result: linexcel.LineageResult) -> None:
+    print("\n1. 🧮 Deterministic analysis")
+    print(f"   Sheets : {', '.join(result.sheets)}")
+    stats = result.stats
     print(
-        "   4. Vérifiez les dossiers 'validation_screenshots/' pour "
-        "voir le rendu visuel."
+        f"   Stats  : {stats['totalFormulas']} formulas · {stats['totalNodes']} nodes"
+        f" · {stats['totalEdges']} edges · {stats['vbaProcs']} VBA"
     )
+    kinds: dict[str, int] = {}
+    for node in result.nodes:
+        kinds[node["kind"]] = kinds.get(node["kind"], 0) + 1
+    print(f"   Kinds  : {', '.join(f'{k}={v}' for k, v in sorted(kinds.items()))}")
+
+    # References the analyser could not resolve are the whole point of the
+    # stress workbook, so name them rather than leaving them as a count.
+    opaque = sorted(n["label"] for n in result.nodes if n["kind"] == "opaque")
+    if opaque:
+        print(f"   Unresolved ({len(opaque)}), expected for external/dynamic refs:")
+        for label in opaque:
+            print(f"     · {label}")
+    for warning in result.warnings:
+        print(f"   ⚠️  {warning}")
+
+
+def report_context(result: linexcel.LineageResult) -> None:
+    """Show the context the AI overview is grounded in — not just the graph."""
+    print("\n2. 📋 Workbook context (openpyxl only, Excel is never launched)")
+    for sheet in result.workbook_context["sheets"]:
+        details = []
+        if sheet.get("freeze_panes"):
+            details.append(f"freeze {sheet['freeze_panes']}")
+        if sheet.get("hidden_columns"):
+            details.append(f"hidden {', '.join(sheet['hidden_columns'])}")
+        if sheet.get("merged_ranges"):
+            details.append(f"merged {len(sheet['merged_ranges'])}")
+        suffix = f" — {' · '.join(details)}" if details else ""
+        print(f"   '{sheet['name']}'{suffix}")
+        for comment in sheet.get("comments", []):
+            text = comment["text"].strip().replace("\n", " ")
+            print(f"     💬 {comment['cell']} ({comment['author']}): {text}")
+
+
+def render_screenshots(
+    result: linexcel.LineageResult, case: Case
+) -> dict | list | None:
+    """Render the sheets to PNG and map the pages back to their sheet."""
+    print("\n3. 📸 Sheet screenshots (LibreOffice headless + pdftoppm)")
+    target = case.screenshots_dir
+    try:
+        if target.exists():
+            shutil.rmtree(target)
+        screenshots = sorted(result.save_screenshots(target, dpi=200))
+    except Exception as exc:
+        print(f"   ⚠️  Not rendered: {exc}")
+        return None
+    print(f"   ✅ {len(screenshots)} page(s) in {target.as_posix()}/")
+
+    if case.pages_by_sheet is None:
+        # Page count per sheet is not knowable up front, so the pages go to the
+        # viewer's own tab as a flat list rather than under a guessed sheet.
+        return screenshots
+    return case.pages_by_sheet(screenshots)
+
+
+def document(
+    result: linexcel.LineageResult, args: argparse.Namespace, language: str
+) -> tuple[dict[str, str] | None, str | None]:
+    """Document the workbook and its nodes, within the token budget."""
+    provider = {"base_url": args.base_url, "model": args.model}
+    node_ids = None
+    if args.max_nodes is not None:
+        calculation = [
+            n["id"] for n in result.nodes if n["kind"] in ("cell", "group", "vba")
+        ]
+        node_ids = calculation[: args.max_nodes]
+        print(
+            f"   - {language}: documenting {len(node_ids)} of "
+            f"{len(calculation)} nodes (--max-nodes)"
+        )
+    try:
+        print(f"   - {language}: workbook overview…")
+        workbook_doc = result.document_workbook(
+            language=language, token_budget=args.token_budget, **provider
+        )
+        print(f"   - {language}: node cards…")
+        docs = result.document(
+            node_ids,
+            language=language,
+            max_workers=args.max_workers,
+            token_budget=args.token_budget,
+            **provider,
+        )
+    except AiDocError as exc:
+        print(f"   ❌ {exc}")
+        return None, None
+    print(f"   - {language}: {len(docs)} card(s) written")
+    return docs, workbook_doc
+
+
+def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
+    """Build, analyse, document and export one workbook. Returns whether AI ran."""
+    print(f"\n═══ {case.name}: {case.headline} ═══")
+    data = case.build()
+    if case.generated and not args.no_recalc:
+        stored = recalculate(data)
+        if stored is None:
+            print("   ⚠️  LibreOffice unavailable: the fixture keeps no stored")
+            print("      values, so the file-vs-recalculated comparison is blank.")
+        else:
+            data = stored
+    # A generated fixture is written out so it can be opened in Excel next to the
+    # report; a workbook the user pointed us at is theirs, and is never rewritten.
+    if case.generated:
+        case.workbook.write_bytes(data)
+    print(f"   Test workbook: {case.workbook.resolve()}")
+
+    result = linexcel.analyze(data, filename=case.workbook.name)
+    report_structure(result)
+    report_context(result)
+    screenshots = render_screenshots(result, case)
+
+    print("\n4. 💾 Reports")
+    documented = False
+    for language in case.languages:
+        docs, workbook_doc = (
+            document(result, args, language) if use_ai else (None, None)
+        )
+        documented = documented or docs is not None
+        path = case.output(language)
+        result.save_html(
+            path,
+            docs=docs,
+            workbook_doc=workbook_doc,
+            screenshots=screenshots,
+            language=language,
+        )
+        print(f"   ✅ {path.resolve()}")
+
+    if use_ai:
+        print(f"\n5. 🧾 Token usage: {result.token_usage}")
+        if result.token_usage.estimated:
+            print("   (approximated — this endpoint reported no usage block)")
+
+    print(f"\n   Open {case.output(case.languages[0]).name} and check:")
+    for line in case.checks:
+        print(f"   · {line}" if not line.startswith("  ") else f"   {line}")
+    return documented
+
+
+def main() -> int:
+    # A redirected stdout on Windows defaults to cp1252, which cannot encode the
+    # emoji below — nor the workbook's own accented sheet names.
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help=f"OpenAI-compatible endpoint (default: {DEFAULT_BASE_URL})",
+    )
+    parser.add_argument(
+        "--model", default=DEFAULT_MODEL, help=f"model id (default: {DEFAULT_MODEL})"
+    )
+    parser.add_argument(
+        "--token-budget",
+        type=int,
+        default=DEFAULT_TOKEN_BUDGET,
+        help=f"ceiling on total tokens (default: {DEFAULT_TOKEN_BUDGET:,})",
+    )
+    parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument(
+        "--max-nodes",
+        type=int,
+        default=None,
+        help=(
+            "document only the first N calculation nodes. The stress workbook "
+            "has dozens; a local model takes a while over all of them"
+        ),
+    )
+    parser.add_argument(
+        "--workbook",
+        choices=(*CASES, "both"),
+        default="sales",
+        help="which fixture to run (default: sales)",
+    )
+    parser.add_argument(
+        "--file",
+        type=Path,
+        default=None,
+        help=(
+            "run the whole pipeline against a workbook of your own instead of a "
+            "fixture. The only way to exercise VBA end to end: openpyxl can "
+            "preserve a vbaProject.bin but not author one, so no generated "
+            "fixture can contain macros — point this at a real .xlsm"
+        ),
+    )
+    parser.add_argument(
+        "--no-recalc",
+        action="store_true",
+        help=(
+            "skip the LibreOffice round-trip that gives a generated fixture the "
+            "stored results a real Excel file carries"
+        ),
+    )
+    parser.add_argument(
+        "--no-ai", action="store_true", help="skip AI documentation entirely"
+    )
+    args = parser.parse_args()
+
+    print("--- 📊 linexcel manual validation ---")
+    if args.file is not None:
+        if not args.file.is_file():
+            print(f"❌ No such workbook: {args.file}")
+            return 1
+        cases = [_case_for_file(args.file)]
+    elif args.workbook == "both":
+        cases = list(CASES.values())
+    else:
+        cases = [CASES[args.workbook]]
+
+    use_ai = not args.no_ai
+    if not use_ai:
+        print("   AI skipped (--no-ai): reports keep every deterministic tab.")
+    elif not check_local_provider(args.base_url, args.model):
+        print("   Continuing without AI.")
+        use_ai = False
+    else:
+        print(f"   Budget: {args.token_budget:,} tokens per workbook")
+
+    for case in cases:
+        run_case(case, args, use_ai)
+
+    print("\n🎉 Done.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

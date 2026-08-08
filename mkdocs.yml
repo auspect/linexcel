@@ -52,9 +52,12 @@ nav:
   - Home: index.md
   - Guide:
       - Quick start: guide/quickstart.md
-      - AI documentation: guide/ai.md
       - HTML export: guide/html.md
       - Workbook context & screenshots: guide/context.md
+      - Choosing an AI provider: guide/providers.md
+      - AI documentation: guide/ai.md
+      - Languages: guide/languages.md
+      - Data handling: guide/data-handling.md
   - API Reference:
       - result: api/result.md
       - analyzer: api/analyzer.md

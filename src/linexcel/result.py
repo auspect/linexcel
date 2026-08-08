@@ -10,7 +10,7 @@ Minimal example, without backend or AI key:
 
 AI documentation is optional — pick a provider explicitly (no default):
 
-    result.document(model="gemini-3.1-flash-lite")  # + GOOGLE_API_KEY env var
+    result.document(base_url="http://localhost:11434/v1", model="llama3.1")
 """
 
 from __future__ import annotations
@@ -148,9 +148,10 @@ class LineageResult:
         """Tokens consumed by every :meth:`document` / :meth:`document_workbook`
         call made on this result.
 
-        Counts come from the provider when it reports them (Gemini and
-        OpenAI-compatible endpoints do); otherwise they are approximated and
-        :attr:`TokenUsage.estimated` is set. Zero until an AI call is made.
+        Counts come from the provider when it reports them (an
+        OpenAI-compatible endpoint fills in a ``usage`` block); otherwise they
+        are approximated and :attr:`TokenUsage.estimated` is set. Zero until an
+        AI call is made.
 
             >>> result.document(provider=my_llm)          # doctest: +SKIP
             >>> print(result.token_usage)                 # doctest: +SKIP
@@ -243,18 +244,20 @@ class LineageResult:
         language: str = "en",
         max_workers: int = 4,
         max_tokens: int | None = None,
+        token_budget: int | None = None,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
         Without ``node_ids``, documents all calculation nodes
         (cells, groups, VBA).
 
-        Provider resolution (first match wins, no implicit default):
+        Provider resolution (first match wins, no implicit default and no
+        preferred vendor):
+
         1. ``provider`` — custom LLMProvider instance or callable
-        2. ``base_url`` or ``LINEXCEL_AI_BASE_URL`` — OpenAI-compatible endpoint
-           (Ollama, vLLM, LM Studio, OpenAI, …)
-        3. ``model`` (or ``GEMINI_MODEL``) with a Google API key
-           (``api_key``, ``GOOGLE_API_KEY``, or ``GEMINI_API_KEY``) — Gemini, opt-in
+        2. ``base_url`` + ``model`` (or ``LINEXCEL_AI_BASE_URL`` +
+           ``LINEXCEL_AI_MODEL``) — any OpenAI-compatible endpoint, local or
+           hosted
 
         ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
         ``max_workers`` caps the number of concurrent requests. Nodes that fail
@@ -262,6 +265,18 @@ class LineageResult:
         still returned.
 
         ``max_tokens`` caps output per node (approximate; provider-dependent).
+
+        ``token_budget`` caps what the whole documentation run may cost, input
+        and output tokens together. It is counted against :attr:`token_usage`,
+        which spans the result's lifetime, so one ceiling covers this call and
+        every earlier one — the figure to set is the total you are willing to
+        pay for this workbook, not a per-node allowance. Nodes still queued when
+        the budget is reached are left undocumented with a :class:`UserWarning`
+        rather than silently billed; requests already in flight are allowed to
+        finish, so treat the ceiling as approximate.
+
+            >>> docs = result.document(base_url=..., token_budget=200_000)
+            ... # doctest: +SKIP
 
         Tokens consumed are added to :attr:`token_usage`.
         """
@@ -282,6 +297,7 @@ class LineageResult:
             max_workers=max_workers,
             usage=self.token_usage,
             max_tokens=max_tokens,
+            token_budget=token_budget,
         )
 
     def document_workbook(
@@ -293,6 +309,8 @@ class LineageResult:
         provider: ProviderLike | None = None,
         language: str = "en",
         max_tokens: int | None = None,
+        token_budget: int | None = None,
+        include_context: bool = True,
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
 
@@ -300,13 +318,28 @@ class LineageResult:
         Pass it to :meth:`to_html` or :meth:`save_html` as ``workbook_doc`` to
         display it in the viewer's separate overview tab.
 
-        Provider resolution is the same as :meth:`document`, and tokens
-        consumed are added to :attr:`token_usage`.
+        ``include_context`` adds :attr:`workbook_context` to the dossier: the
+        sheet previews, cell comments, merged ranges, frozen panes and hidden
+        columns — the same cues the sheet screenshots show. Without it the model
+        sees how the workbook computes but not what it looks like, and describes
+        a graph rather than a file. Set it to ``False`` to keep cell contents
+        local; the lineage (formulas and their values) is sent either way.
 
-        ``max_tokens`` caps the output length (approximate; provider-dependent).
+        Provider resolution is the same as :meth:`document`, and tokens
+        consumed are added to :attr:`token_usage`. ``max_tokens`` caps the
+        output length (approximate; provider-dependent), while ``token_budget``
+        caps cumulative spend on this result and raises :class:`AiDocError` if
+        earlier calls already exhausted it.
         """
         from linexcel.aidoc import document_workbook
 
+        # Context needs the workbook bytes; a result rebuilt from a graph alone
+        # has none, and a structural overview is better than an exception.
+        context = (
+            self.workbook_context
+            if include_context and self._source_data is not None
+            else None
+        )
         return document_workbook(
             self.graph,
             model=model,
@@ -316,6 +349,8 @@ class LineageResult:
             language=language,
             usage=self.token_usage,
             max_tokens=max_tokens,
+            token_budget=token_budget,
+            context=context,
         )
 
     # -- visualization -----------------------------------------------------

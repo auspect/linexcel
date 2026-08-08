@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import io
 import itertools
+import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -460,16 +461,39 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     engine = fz.Workbook.from_bytes(data)
     engine_sheets = set(engine.sheet_names)
     engine_alive = True
+    quarantined: dict[tuple[str, int, int], str] = {}
     try:
         engine.evaluate_all()
     except Exception as exc:  # graph remains useful without values
-        warnings.append(f"Global evaluation incomplete: {exc}")
         # A failed global evaluation does not just drop the values: the engine
         # then reports no formula at all, which would leave the graph empty.
-        # Rebuilding from the bytes gives the formulas back; values are
-        # recovered cell by cell further down.
-        engine_alive = False
+        # Rebuilding from the bytes gives the formulas back.
         engine = fz.Workbook.from_bytes(data)
+        # evaluate_all is all-or-nothing, and it gives up on the *first*
+        # reference it cannot resolve — so a single formula pointing at another
+        # workbook costs every other cell in the file its computed value. Set
+        # those few cells aside and the pass usually completes, leaving only
+        # them to the slower per-cell recovery.
+        quarantined = _quarantine_unresolvable(engine, sheet_dims, engine_sheets)
+        retried = False
+        if quarantined:
+            try:
+                engine.evaluate_all()
+                retried = True
+            except Exception:
+                engine = fz.Workbook.from_bytes(data)
+        if retried:
+            warnings.append(
+                f"Global evaluation completed after isolating {len(quarantined)} "
+                f"cell(s) whose references the engine cannot resolve; every other "
+                f"cell was recomputed. Only those keep the value stored in the "
+                f"file, if any. First blocker: {exc}"
+            )
+        else:
+            warnings.append(f"Global evaluation incomplete: {exc}")
+            # Values are recovered cell by cell further down.
+            engine_alive = False
+            quarantined = {}
 
     scratch_ready = _ensure_scratch(engine)
     budget = _Budget(MAX_SCRATCH_EVALS)
@@ -513,6 +537,10 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             for i, row_vals in enumerate(rows):
                 r = r0 + i
                 for j, f in enumerate(row_vals):
+                    if not f:
+                        # A quarantined cell reads back blank: its formula was
+                        # removed so the rest of the workbook could evaluate.
+                        f = quarantined.get((sheet, r, j + 1))
                     if not f:
                         continue
                     c = j + 1
@@ -1004,6 +1032,83 @@ def _guard_fallback_expr(expr: str) -> str | None:
     return "=" + _render_expr(args[1])
 
 
+#: A bracketed group: an external workbook (``[Budget.xlsx]Sheet1!A1``) or a
+#: structured table reference (``SalesTable[Revenue]``). Neither resolves to a
+#: cell the engine holds.
+_BRACKETED_RE = re.compile(r"\[[^\]]*\]")
+#: A 3-D sheet span — ``'First:Last'!A1`` or ``First:Last!A1``. The engine reads
+#: the span as one sheet name and reports it missing.
+_SPAN_RE = re.compile(r"'[^']*:[^']*'!|(?<![\w$)])[A-Za-z_][\w.]*:[A-Za-z_][\w.]*!")
+#: Error guards. A formula using one may well have a defined value despite a
+#: reference that cannot be resolved, so it is never isolated.
+_GUARD_RE = re.compile(r"\b(?:IFERROR|IFNA|ISERROR|ISERR|ISNA)\s*\(", re.IGNORECASE)
+#: A sheet qualifier, quoted or bare. The lookbehind keeps ``#REF!`` out of the
+#: bare form: that is an error literal, not a sheet called REF.
+_SHEET_QUALIFIER_RE = re.compile(r"'((?:[^']|'')+)'!|(?<![#\w.$])([A-Za-z_][\w.]*)!")
+
+
+def _quarantine_unresolvable(
+    engine, sheet_dims: dict[str, tuple[int, int]], engine_sheets: set[str]
+) -> dict[tuple[str, int, int], str]:
+    """Blank the formulas that stop ``evaluate_all``, returning what was removed.
+
+    Only ever called after a global evaluation has already failed, so both ways
+    of being wrong are safe: quarantining a formula that would in fact have
+    evaluated costs it the same per-cell recovery every cell was getting anyway,
+    and missing one simply leaves the retry failing as before.
+
+    The formula text is returned rather than restored — ``set_formula`` does not
+    put it back once the cell holds a value — and the scan re-injects it so the
+    graph still shows what the cell really contains.
+    """
+    suspects: dict[tuple[str, int, int], str] = {}
+    for sheet, (max_row, max_col) in sheet_dims.items():
+        if sheet not in engine_sheets:
+            continue
+        try:
+            fsheet = engine.sheet(sheet)
+        except Exception:
+            continue
+        for r0 in range(1, max_row + 1, SCAN_CHUNK_ROWS):
+            r1 = min(r0 + SCAN_CHUNK_ROWS - 1, max_row)
+            try:
+                rows = fsheet.get_formulas(fz.RangeAddress(sheet, r0, 1, r1, max_col))
+            except Exception:
+                break
+            for i, row_vals in enumerate(rows):
+                for j, formula in enumerate(row_vals):
+                    if formula and _is_unresolvable(formula, engine_sheets):
+                        suspects[(sheet, r0 + i, j + 1)] = formula
+    for (sheet, row, col), _formula in suspects.items():
+        try:
+            engine.set_value(sheet, row, col, None)
+        except Exception:
+            continue
+    return suspects
+
+
+def _is_unresolvable(formula: str, engine_sheets: set[str]) -> bool:
+    """Whether ``formula`` names something the engine cannot resolve.
+
+    A guarded formula is never isolated, however broken its reference looks.
+    ``IFERROR(NOSHEET!A1, 456)`` *has* a correct value — 456 — and blanking it
+    does not merely cost that cell its own value: every range that spans it
+    silently loses a term, so a `SUM` over the column returns a different
+    number. Quarantine is only safe where there was no value to lose.
+    """
+    if _GUARD_RE.search(formula):
+        return False
+    if _BRACKETED_RE.search(formula) or _SPAN_RE.search(formula):
+        return True
+    # A sheet qualifier naming a sheet the engine never loaded.
+    for match in _SHEET_QUALIFIER_RE.finditer(formula):
+        name = match.group(1)
+        name = name.replace("''", "'") if name else match.group(2)
+        if name and name not in engine_sheets:
+            return True
+    return False
+
+
 def _ensure_scratch(engine) -> bool:
     try:
         engine.add_sheet(SCRATCH_SHEET)
@@ -1030,17 +1135,32 @@ def _force_dimensions(ws) -> tuple[int, int]:
 
 
 def _collect_defined_names(owb) -> dict[str, list[Rect]]:
+    """Defined names, workbook-scoped first then sheet-scoped.
+
+    A name can be declared on a single worksheet, in which case it lives on that
+    sheet rather than on the workbook and is invisible to ``owb.defined_names``.
+    Such names are common in real files — a per-sheet ``Total`` or ``Limit`` —
+    and skipping them turned every formula using one into an unresolved
+    reference.
+
+    Scope is not modelled on the node itself: the graph keys names by their text,
+    so a workbook-scoped name wins over a sheet-scoped one of the same name, and
+    the first sheet to declare it wins among sheets. That matches how the rest of
+    the graph resolves names (case-insensitively, by label) and keeps a shadowed
+    name from silently replacing the one most formulas mean.
+    """
     out: dict[str, list[Rect]] = {}
-    try:
-        items = owb.defined_names.items()
-    except Exception:
-        return out
-    for name, dn in items:
-        if name.startswith("_xlnm."):
+    for name, dn in _iter_defined_names(owb):
+        if name.startswith("_xlnm.") or name in out:
             continue
         rects: list[Rect] = []
         try:
             for sheet, coord in dn.destinations:
+                # openpyxl strips the surrounding quotes but leaves the doubled
+                # apostrophes of the escaped form, so a sheet called O'Brien
+                # arrives as O''Brien. Storing that verbatim makes to_a1() quote
+                # it a second time, and the name never resolves to its sheet.
+                sheet = sheet.replace("''", "'") if sheet else sheet
                 detail = parse_ref_detailed(coord, default_sheet=sheet)
                 if detail is not None:
                     rect = detail.rect
@@ -1054,14 +1174,37 @@ def _collect_defined_names(owb) -> dict[str, list[Rect]]:
     return out
 
 
+def _iter_defined_names(owb):
+    """``(name, DefinedName)`` pairs, workbook scope before sheet scope."""
+    try:
+        yield from owb.defined_names.items()
+    except Exception:
+        pass
+    for worksheet in getattr(owb, "worksheets", []):
+        try:
+            yield from worksheet.defined_names.items()
+        except Exception:
+            continue
+
+
 def _collect_ref_strings(ast_dict: dict) -> list[str]:
+    """Every reference a formula makes, excluding names it binds itself.
+
+    The parser reports a ``LET`` binding — and a ``LAMBDA`` parameter — as a
+    ``Reference`` node, because syntactically it looks like one. It is not: the
+    name is local to the formula and points at no cell, so treating it as a
+    reference put a node on the graph for every intermediate a modeller happened
+    to name. A formula's own bindings are its business; the graph shows the
+    cells, and the LET is visible in that cell's step decomposition.
+    """
+    bound = _bound_names(ast_dict)
     refs: list[str] = []
 
     def walk(node) -> None:
         if isinstance(node, dict):
             if node.get("node_type") == "Reference":
                 ref = node.get("reference")
-                if ref:
+                if ref and str(ref).upper() not in bound:
                     refs.append(str(ref))
             for v in node.values():
                 walk(v)
@@ -1078,6 +1221,46 @@ def _collect_ref_strings(ast_dict: dict) -> list[str]:
             seen.add(r)
             out.append(r)
     return out
+
+
+def _bound_names(ast_dict: dict) -> set[str]:
+    """Upper-cased names bound by any ``LET`` or ``LAMBDA`` in the formula.
+
+    ``LET(n1, v1, [n2, v2, ...], calc)`` binds the even-indexed arguments before
+    the trailing calculation; ``LAMBDA(p1, ..., calc)`` binds every argument but
+    the last. Only bare identifiers count — ``LET(A1, ...)`` is not legal Excel,
+    so a name that parses as a real reference is left alone.
+    """
+    bound: set[str] = set()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("node_type") == "Function":
+                name = str(node.get("name") or "").upper()
+                args = node.get("args") or []
+                if name == "LET":
+                    indices = range(0, max(len(args) - 1, 0), 2)
+                elif name == "LAMBDA":
+                    indices = range(max(len(args) - 1, 0))
+                else:
+                    indices = range(0)
+                for index in indices:
+                    arg = args[index]
+                    if not isinstance(arg, dict):
+                        continue
+                    if arg.get("node_type") != "Reference":
+                        continue
+                    text = str(arg.get("reference") or "")
+                    if text and parse_ref_detailed(text, default_sheet="") is None:
+                        bound.add(text.upper())
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(ast_dict)
+    return bound
 
 
 def _merge_rects(rects: list[Rect]) -> list[Rect]:

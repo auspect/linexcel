@@ -1,10 +1,13 @@
 """AI-generated documentation for Excel calculations.
 
-Multi-provider support via a thin abstraction — the provider is chosen
-explicitly, there is no built-in default:
-- OpenAI-compatible API (any endpoint: OpenAI, Ollama, vLLM, LM Studio, etc.)
-- Google Gemini (google-genai) — only when requested via ``model=``
-- Callable protocol for custom/local models
+Vendor-neutral by construction: no provider is named in the code and none is
+chosen for you. There are exactly two ways in:
+
+- ``base_url=`` — any OpenAI-compatible endpoint (a local Ollama, vLLM or
+  LM Studio runtime; a hosted gateway such as OpenRouter; OpenAI itself;
+  anything else that speaks ``/chat/completions``)
+- ``provider=`` — your own callable or :class:`LLMProvider` object, for an API
+  that speaks something else entirely
 
 The model doesn't guess: each node is presented with its deterministic dossier
 from the graph (exact formula, step-by-step evaluation, precedents and their
@@ -20,18 +23,21 @@ import os
 import re
 import warnings
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
-# ^ Fallback model name used *inside* _GeminiProvider when neither model= nor
-#   GEMINI_MODEL supplies a name.  This constant plays no role in provider
-#   selection: _resolve_provider() raises if no provider is configured.
+# No DEFAULT_MODEL: naming one would make a vendor's model the implicit choice,
+# and a name that suits a hosted API is wrong for a local runtime. The model is
+# always supplied by the caller, via model= or an environment variable.
 MAX_DOSSIER_CHARS = 6_000
-MAX_WORKBOOK_DOSSIER_CHARS = 12_000
+# Raised from 12k when the workbook dossier gained the presentation context
+# (sheet previews and comments); _fit_workbook_dossier() sheds that part first
+# if a workbook still exceeds it, so a graph-only dossier is unaffected.
+MAX_WORKBOOK_DOSSIER_CHARS = 16_000
+MAX_DOSSIER_COMMENT_CHARS = 300
 
 _SYSTEM = {
     "en": """
@@ -153,8 +159,10 @@ Write a concise Markdown overview with these sections:
 3. **Calculation flow** — important formula patterns, defined names, and links;
 4. **Automation and caveats** — VBA, external references, warnings, and analysis limits;
 5. **Questions to validate** — up to five concrete items that cannot be determined.
-Use only facts in the deterministic dossier. Do not infer a business purpose from
-sheet names alone. State "not determined by lineage" for missing information.
+Use only facts in the deterministic dossier. Titles, labels and comments quoted
+in a sheet preview are evidence and may be cited; a sheet name on its own is not,
+so never infer a purpose from names alone. State "not determined by lineage" for
+missing information.
 Respond ONLY with the Markdown overview, no JSON or delimiters.
 """.strip(),
     "fr": """
@@ -166,10 +174,12 @@ Rédige une synthèse concise en Markdown avec les sections suivantes :
 4. **Automatisation et limites** — VBA, références externes,
  avertissements et limites d'analyse ;
 5. **Questions à valider** — au plus cinq points concrets indéterminables.
-Utilise uniquement les faits présents dans le dossier déterministe. N'infère pas
-un rôle métier à partir des seuls noms de feuilles. Écris « non déterminé par le
-lignage » lorsqu'une information manque. Réponds UNIQUEMENT avec la synthèse
-Markdown, sans JSON ni délimiteur.
+Utilise uniquement les faits présents dans le dossier déterministe. Les titres,
+libellés et commentaires cités dans l'aperçu d'une feuille sont des preuves et
+peuvent être invoqués ; le seul nom d'une feuille n'en est pas une, n'infère donc
+jamais un rôle à partir des seuls noms. Écris « non déterminé par le lignage »
+lorsqu'une information manque. Réponds UNIQUEMENT avec la synthèse Markdown,
+sans JSON ni délimiteur.
 """.strip(),
     "es": """
 Documentas un libro de Excel para un lector de negocio.
@@ -183,9 +193,11 @@ Redacta un resumen conciso en Markdown con estas secciones:
  del análisis;
 5. **Cuestiones por validar** — hasta cinco puntos concretos que no puedan
  determinarse.
-Utiliza únicamente los hechos del expediente determinista. No deduzcas una
-finalidad de negocio solo a partir de los nombres de las hojas. Escribe «no
-determinado por el linaje» cuando falte información.
+Utiliza únicamente los hechos del expediente determinista. Los títulos, etiquetas
+y comentarios citados en la vista previa de una hoja son pruebas y pueden
+citarse; el nombre de una hoja por sí solo no lo es, así que nunca deduzcas una
+finalidad solo a partir de los nombres. Escribe «no determinado por el linaje»
+cuando falte información.
 Responde ÚNICAMENTE con el resumen Markdown, sin JSON ni delimitadores.
 """.strip(),
     "de": """
@@ -199,9 +211,11 @@ Verfasse einen knappen Markdown-Überblick mit diesen Abschnitten:
 4. **Automatisierung und Grenzen** — VBA, externe Bezüge, Warnungen und
  Analysegrenzen;
 5. **Zu klärende Fragen** — bis zu fünf konkrete, nicht bestimmbare Punkte.
-Nutze ausschließlich die Fakten des deterministischen Dossiers. Leite keinen
-fachlichen Zweck allein aus Blattnamen ab. Schreibe „nicht durch die Herkunft
-bestimmt“, wenn eine Information fehlt.
+Nutze ausschließlich die Fakten des deterministischen Dossiers. Titel,
+Beschriftungen und Kommentare aus der Blattvorschau sind Belege und dürfen
+zitiert werden; ein Blattname allein ist keiner, leite also nie einen Zweck
+allein aus Namen ab. Schreibe „nicht durch die Herkunft bestimmt“, wenn eine
+Information fehlt.
 Antworte AUSSCHLIESSLICH mit dem Markdown-Überblick, ohne JSON oder
 Trennzeichen.
 """.strip(),
@@ -217,9 +231,10 @@ Scrivi una sintesi concisa in Markdown con queste sezioni:
  dell'analisi;
 5. **Questioni da validare** — al massimo cinque punti concreti non
  determinabili.
-Usa solo i fatti presenti nel dossier deterministico. Non dedurre uno scopo
-aziendale dai soli nomi dei fogli. Scrivi «non determinato dalla derivazione»
-quando manca un'informazione.
+Usa solo i fatti presenti nel dossier deterministico. Titoli, etichette e
+commenti citati nell'anteprima di un foglio sono prove e possono essere citati;
+il solo nome di un foglio non lo è, quindi non dedurre mai uno scopo dai soli
+nomi. Scrivi «non determinato dalla derivazione» quando manca un'informazione.
 Rispondi SOLO con la sintesi Markdown, senza JSON né delimitatori.
 """.strip(),
     "pt": """
@@ -232,9 +247,11 @@ Redija uma síntese concisa em Markdown com estas secções:
 4. **Automação e limites** — VBA, referências externas, avisos e limites da
  análise;
 5. **Questões a validar** — no máximo cinco pontos concretos indetermináveis.
-Use apenas as informações do dossiê determinista. Não deduza uma finalidade de
-negócio apenas a partir dos nomes das folhas. Escreva «não determinado pela
-linhagem» quando faltar informação.
+Use apenas as informações do dossiê determinista. Títulos, rótulos e comentários
+citados na pré-visualização de uma folha são provas e podem ser citados; o nome
+de uma folha por si só não é, por isso nunca deduza uma finalidade apenas a
+partir dos nomes. Escreva «não determinado pela linhagem» quando faltar
+informação.
 Responda APENAS com a síntese Markdown, sem JSON nem delimitadores.
 """.strip(),
     "nl": """
@@ -249,9 +266,10 @@ Schrijf een beknopt Markdown-overzicht met deze secties:
  waarschuwingen en analysegrenzen;
 5. **Te valideren vragen** — maximaal vijf concrete, niet vast te stellen
  punten.
-Gebruik uitsluitend de gegevens uit het deterministische dossier. Leid geen
-zakelijk doel af uit alleen de bladnamen. Schrijf "niet bepaald door de
-herkomst" wanneer informatie ontbreekt.
+Gebruik uitsluitend de gegevens uit het deterministische dossier. Titels, labels
+en opmerkingen uit een bladvoorbeeld zijn bewijs en mogen worden aangehaald; een
+bladnaam op zichzelf niet, leid dus nooit een doel af uit alleen de namen.
+Schrijf "niet bepaald door de herkomst" wanneer informatie ontbreekt.
 Antwoord UITSLUITEND met het Markdown-overzicht, zonder JSON of
 scheidingstekens.
 """.strip(),
@@ -263,9 +281,10 @@ scheidingstekens.
 3. **計算の流れ** — 主要な数式パターン、定義された名前、リンク。
 4. **自動化と留意点** — VBA、外部参照、警告、分析の限界。
 5. **確認すべき点** — 特定できない具体的な項目を最大 5 件。
-決定論的なドシエにある事実のみを使用すること。シート名だけから業務上の
-目的を推測しないこと。情報が不足している場合は「系統からは特定できません」
-と書くこと。
+決定論的なドシエにある事実のみを使用すること。シートのプレビューに含まれる
+表題・見出し・コメントは根拠として引用してよいが、シート名だけは根拠に
+ならないため、名前だけから目的を推測しないこと。情報が不足している場合は
+「系統からは特定できません」と書くこと。
 Markdown の概要のみで回答し、JSON や区切り記号は使わないこと。
 """.strip(),
     "zh": """
@@ -276,7 +295,8 @@ Markdown の概要のみで回答し、JSON や区切り記号は使わないこ
 3. **计算流程** — 主要的公式模式、定义的名称和链接；
 4. **自动化与局限** — VBA、外部引用、警告以及分析的限制；
 5. **待确认的问题** — 最多五个无法确定的具体事项。
-仅使用确定性档案中的事实。不要仅凭工作表名称推断业务目的。
+仅使用确定性档案中的事实。工作表预览中出现的标题、标签和批注属于证据，
+可以引用；仅有工作表名称不构成证据，因此不要仅凭名称推断目的。
 信息缺失时请写“无法由血缘确定”。
 仅以 Markdown 概览作答，不要使用 JSON 或分隔符。
 """.strip(),
@@ -357,6 +377,26 @@ class TokenUsage:
         )
 
 
+def _check_budget(token_budget: int | None, usage: TokenUsage | None) -> None:
+    """Validate ``token_budget`` and report what has already been spent.
+
+    A budget is a ceiling on *cumulative* spend, so it is compared against the
+    accumulator the caller passes: documenting a workbook in several calls that
+    share one :class:`TokenUsage` shares one ceiling.
+    """
+    if token_budget is None:
+        return
+    if token_budget <= 0:
+        raise ValueError(f"token_budget must be > 0, got {token_budget}")
+    spent = usage.total if usage is not None else 0
+    if spent >= token_budget:
+        raise AiDocError(
+            f"Token budget of {token_budget:,} tokens is already spent "
+            f"({spent:,} used by earlier calls on this result); no request was "
+            "sent. Raise token_budget to continue."
+        )
+
+
 # ──────────────────────────────────────────────
 # Provider abstraction
 # ──────────────────────────────────────────────
@@ -380,9 +420,9 @@ class LLMProvider(Protocol):
 class UsageReportingProvider(Protocol):
     """A provider that also reports what the call consumed.
 
-    Optional: the built-in Gemini and OpenAI-compatible clients implement it so
-    that token counts come from the API rather than from an approximation.
-    Custom providers only need :class:`LLMProvider`.
+    Optional: the built-in OpenAI-compatible client implements it so that token
+    counts come from the API rather than from an approximation. Custom
+    providers only need :class:`LLMProvider`.
     """
 
     def generate_with_usage(
@@ -463,124 +503,67 @@ def _resolve_provider(
 ) -> LLMProvider:
     """Resolve which provider to use.
 
-    Providers are chosen explicitly; there is no built-in default:
+    Providers are chosen explicitly; no vendor is preferred and none is
+    implicit:
 
     1. `provider` — custom callable or LLMProvider instance
     2. `base_url` set (param or ``LINEXCEL_AI_BASE_URL`` / ``OPENAI_BASE_URL``)
-       → OpenAI-compatible client
-    3. `model` set (param or ``GEMINI_MODEL``) with a Google API key
-       (param or ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY``) → Gemini client
+       → OpenAI-compatible client, whatever sits behind that URL
 
-    Anything else raises :class:`AiDocError` instead of silently picking a
-    vendor.
+    Anything else raises :class:`AiDocError` rather than picking for you.
     """
     if provider is not None:
         return _as_provider(provider)
 
-    # OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.)
     base = base_url or os.getenv("LINEXCEL_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if base:
         resolved_model = (
-            model
-            or os.getenv("LINEXCEL_AI_MODEL")
-            or os.getenv("OPENAI_MODEL")
-            or "gpt-4o-mini"
+            model or os.getenv("LINEXCEL_AI_MODEL") or os.getenv("OPENAI_MODEL")
         )
+        if not resolved_model:
+            raise AiDocError(
+                f"No model named for the endpoint at {base}: pass model= or set "
+                "LINEXCEL_AI_MODEL. Endpoints do not agree on a default and "
+                "linexcel does not invent one."
+            )
         return _OpenAICompatProvider(
             base_url=base, api_key=api_key, model=resolved_model
         )
 
-    # Google Gemini — only when a model is requested explicitly
-    resolved_model = model or os.getenv("GEMINI_MODEL")
-    if resolved_model:
-        return _GeminiProvider(api_key=api_key, model=resolved_model)
-
     raise AiDocError(
-        "No AI provider selected: pass provider= (custom LLMProvider or "
-        "callable), base_url= (OpenAI-compatible endpoint, e.g. Ollama/vLLM), "
-        "or model= with a Google API key (api_key=, GOOGLE_API_KEY, or "
-        "GEMINI_API_KEY) for Gemini. No provider is chosen implicitly."
+        "No AI provider selected: pass base_url= with model= for any "
+        "OpenAI-compatible endpoint (a local Ollama or vLLM runtime, a hosted "
+        "gateway, a vendor API), or provider= for a custom LLMProvider or "
+        "callable. Equivalent env vars: LINEXCEL_AI_BASE_URL and "
+        "LINEXCEL_AI_MODEL. No provider is chosen implicitly."
     )
 
 
-class _GeminiProvider:
-    """Google Gemini via google-genai."""
-
-    def __init__(self, *, api_key: str | None = None, model: str = DEFAULT_MODEL):
-        try:
-            from google import genai
-        except ImportError as exc:  # pragma: no cover
-            raise AiDocError(
-                "google-genai is not installed "
-                "(pip install 'linexcel[ai]' or pip install google-genai)"
-            ) from exc
-        self._genai = genai
-        self._api_key = (
-            api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        )
-        if not self._api_key:
-            raise AiDocError(
-                "No Gemini API key provided: pass api_key=... or set "
-                "GOOGLE_API_KEY in the environment"
-            )
-        self._client = genai.Client(api_key=self._api_key)
-        self._model = model
-
-    def generate(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> str:
-        return self.generate_with_usage(
-            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
-        )[0]
-
-    def generate_with_usage(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> tuple[str, TokenUsage]:
-        prompt = system_prompt + "\n\n" + user_prompt
-        config: dict[str, Any] = {"temperature": temperature}
-        if max_tokens is not None:
-            config["max_output_tokens"] = max_tokens
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=config,
-            )
-            text = (response.text or "").strip()
-        except Exception as exc:
-            raise AiDocError(f"Gemini API call failed: {exc}") from exc
-        return text, _usage_from(
-            getattr(response, "usage_metadata", None),
-            ("prompt_token_count", "candidates_token_count"),
-            prompt,
-            text,
-            model=self._model,
-            provider="gemini",
-        )
-
-
 class _OpenAICompatProvider:
-    """OpenAI-compatible API client (works with Ollama, vLLM, LM Studio, etc.)."""
+    """A client for anything exposing an OpenAI-compatible chat API.
 
-    def __init__(
-        self, *, base_url: str, api_key: str | None = None, model: str = "gpt-4o-mini"
-    ):
+    The wire format is the only thing assumed — which vendor, gateway or local
+    runtime answers at ``base_url`` is the caller's business.
+    """
+
+    def __init__(self, *, base_url: str, api_key: str | None = None, model: str):
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
-            raise AiDocError("openai is not installed (pip install openai)") from exc
+            raise AiDocError(
+                "openai is not installed (pip install 'linexcel[ai]' or "
+                "pip install openai). It is the client for every "
+                "OpenAI-compatible endpoint, not a choice of vendor."
+            ) from exc
+        # Local runtimes ignore the key but the client refuses to start without
+        # one, so a placeholder stands in rather than a hosted key being needed.
         self._client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY") or "ollama",  # no key needed
+            api_key=(
+                api_key
+                or os.getenv("LINEXCEL_AI_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or "not-needed"
+            ),
             base_url=base_url,
         )
         self._model = model
@@ -731,8 +714,22 @@ def _compact_steps(step: dict | None) -> dict | None:
     return out
 
 
-def build_workbook_dossier(graph: dict[str, Any]) -> dict[str, Any]:
-    """Return a compact, deterministic dossier for a whole-workbook overview."""
+def build_workbook_dossier(
+    graph: dict[str, Any], *, context: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Return a compact, deterministic dossier for a whole-workbook overview.
+
+    ``context`` is a :attr:`linexcel.LineageResult.workbook_context` mapping.
+    The graph alone describes how a workbook *computes*; it says nothing about
+    what a reader sees on opening it — titles sitting above a table, the labels
+    in the first column, cell comments, hidden columns, frozen panes. Those cues
+    are exactly what the sheet screenshots show, and merging them into each
+    sheet entry lets a text-only model describe the file as it looks without any
+    image ever leaving the machine.
+
+    Both parts stay deterministic: every value is read from the workbook, so the
+    "cite only the dossier" rule of the system prompt still holds.
+    """
     nodes = graph.get("nodes", [])
     meta = graph.get("meta", {})
     stats = meta.get("stats", {})
@@ -755,6 +752,8 @@ def build_workbook_dossier(graph: dict[str, Any]) -> dict[str, Any]:
         }
         for sheet in sheet_stats
     ]
+    if context:
+        sheets = _merge_presentation(sheets, context)
     formula_patterns = sorted(
         (
             {
@@ -804,6 +803,102 @@ def build_workbook_dossier(graph: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_presentation(
+    sheets: list[dict[str, Any]], context: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Enrich each sheet entry with what a reader sees, keyed by sheet name.
+
+    Sheets the analysis never reached — a data-only tab holds no formula, so it
+    contributes no lineage node — are appended rather than dropped: a workbook
+    overview that omits its input sheets misreads the file.
+    """
+    by_name = {sheet["name"]: sheet for sheet in sheets if sheet.get("name")}
+    merged = list(sheets)
+    for ctx_sheet in context.get("sheets", []):
+        name = ctx_sheet.get("name")
+        if name is None:
+            continue
+        target = by_name.get(name)
+        if target is None:
+            target = {"name": name, "formula_cells": 0, "lineage_nodes": {}}
+            merged.append(target)
+        target.update(_presentation_of(ctx_sheet))
+    return merged
+
+
+def _presentation_of(ctx_sheet: dict[str, Any]) -> dict[str, Any]:
+    """The non-empty presentation cues of one sheet, omitting what is absent."""
+    out: dict[str, Any] = {}
+    if ctx_sheet.get("visibility") and ctx_sheet["visibility"] != "visible":
+        out["visibility"] = ctx_sheet["visibility"]
+    for key in ("freeze_panes", "hidden_columns", "merged_ranges"):
+        if ctx_sheet.get(key):
+            out[key] = ctx_sheet[key]
+    comments = ctx_sheet.get("comments") or []
+    if comments:
+        out["comments"] = [
+            {
+                "cell": comment.get("cell"),
+                "author": comment.get("author"),
+                "text": (comment.get("text") or "").strip()[:MAX_DOSSIER_COMMENT_CHARS],
+            }
+            for comment in comments
+        ]
+    preview = _compact_preview(ctx_sheet.get("preview") or [])
+    if preview:
+        out["preview_range"] = ctx_sheet.get("preview_range")
+        out["preview"] = preview
+    return out
+
+
+def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
+    """Serialize the dossier, shedding detail until it fits the char budget.
+
+    Ordered cheapest-loss first: long previews shrink, then the tail of the
+    pattern and VBA lists, and only then are previews and comments dropped
+    outright. A workbook small enough to fit loses nothing.
+    """
+    blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
+        return blob
+
+    for sheet in dossier["sheets"]:
+        if sheet.get("preview"):
+            sheet["preview"] = sheet["preview"][:4]
+    blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
+        return blob
+
+    dossier["formula_patterns"] = dossier["formula_patterns"][:5]
+    dossier["vba_procedures"] = dossier["vba_procedures"][:10]
+    blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
+        return blob
+
+    for sheet in dossier["sheets"]:
+        sheet.pop("preview", None)
+        sheet.pop("preview_range", None)
+        sheet.pop("comments", None)
+    return json.dumps(dossier, ensure_ascii=False, default=str)
+
+
+def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop empty rows and trailing empty cells from a sheet preview.
+
+    A preview is a fixed rectangle read from the top-left corner, so it is
+    mostly padding on a sheet whose table starts lower or further right. Sending
+    that padding costs tokens and tells the model nothing.
+    """
+    compact = []
+    for row in rows:
+        values = list(row.get("values") or [])
+        while values and values[-1] in (None, ""):
+            values.pop()
+        if values:
+            compact.append({"row": row.get("row"), "values": values})
+    return compact
+
+
 # ──────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────
@@ -819,25 +914,30 @@ def document_workbook(
     language: str = "en",
     usage: TokenUsage | None = None,
     max_tokens: int | None = None,
+    token_budget: int | None = None,
+    context: dict[str, Any] | None = None,
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
     Provider resolution (first match wins; no implicit default):
     1. `provider` — custom LLMProvider instance or callable
-    2. `base_url` or `LINEXCEL_AI_BASE_URL` — OpenAI-compatible endpoint
-    3. `model` (or `GEMINI_MODEL`) with a Google API key — Gemini, opt-in
+    2. `base_url` + `model` (or `LINEXCEL_AI_BASE_URL` + `LINEXCEL_AI_MODEL`) —
+       any OpenAI-compatible endpoint
+
+    ``context`` is the workbook presentation context — the sheet previews,
+    comments, merged cells, frozen panes and hidden columns a reader sees when
+    opening the file. Pass it to describe the workbook as it looks, not only as
+    it computes; see :func:`build_workbook_dossier`.
 
     If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
-    accumulated into it.
+    accumulated into it. ``token_budget`` caps cumulative spend across that
+    accumulator: an already-exhausted budget raises before anything is sent.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
-    dossier = build_workbook_dossier(graph)
-    blob = json.dumps(dossier, ensure_ascii=False, default=str)
-    if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
-        dossier["formula_patterns"] = dossier["formula_patterns"][:5]
-        dossier["vba_procedures"] = dossier["vba_procedures"][:10]
-        blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    _check_budget(token_budget, usage)
+    dossier = build_workbook_dossier(graph, context=context)
+    blob = _fit_workbook_dossier(dossier)
     llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
@@ -866,6 +966,7 @@ def document_nodes(
     max_workers: int = 4,
     usage: TokenUsage | None = None,
     max_tokens: int | None = None,
+    token_budget: int | None = None,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
@@ -882,11 +983,22 @@ def document_nodes(
     If a :class:`TokenUsage` is passed as ``usage``, every successful call is
     accumulated into it — including those of a run that later fails, since
     tokens already spent are still billed.
+
+    ``token_budget`` is a ceiling on the **total** tokens the run may spend,
+    input and output together, counted against ``usage`` so several calls
+    sharing one accumulator share one ceiling. It is enforced between requests,
+    the only point at which a cost is known: nodes still queued when the tally
+    reaches the budget are never sent, and a :class:`UserWarning` reports how
+    many were left undocumented. Requests already in flight are allowed to
+    finish, so the final tally can exceed the budget by up to ``max_workers``
+    responses — set it as an order of magnitude, not to the token. Use
+    ``max_tokens`` to bound each individual response instead.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
     if max_workers < 1:
         raise ValueError("max_workers must be >= 1")
+    _check_budget(token_budget, usage)
     llm = _resolve_provider(
         provider=provider, model=model, api_key=api_key, base_url=base_url
     )
@@ -910,21 +1022,56 @@ def document_nodes(
         text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
         return nid, text or "(AI returned empty response)", call_usage
 
+    # The tally drives the budget, so it must exist even when the caller wants
+    # no accumulator of their own; when they do pass one, it *is* the tally.
+    tally = usage if usage is not None else TokenUsage()
     failures: list[tuple[str, Exception]] = []
+    queue = iter(dossiers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_doc_one, d): d[0] for d in dossiers}
-        # Accumulating here rather than inside the workers keeps `usage` free of
+        futures: dict[Future[tuple[str, str, TokenUsage]], str] = {}
+
+        def _submit_next() -> bool:
+            """Queue one more node unless the budget is spent or none is left."""
+            if token_budget is not None and tally.total >= token_budget:
+                return False
+            item = next(queue, None)
+            if item is None:
+                return False
+            futures[pool.submit(_doc_one, item)] = item[0]
+            return True
+
+        # Nodes are submitted a few at a time rather than all at once: a budget
+        # can only stop work that has not been handed to the pool yet.
+        for _ in range(max_workers):
+            if not _submit_next():
+                break
+        # Accumulating here rather than inside the workers keeps `tally` free of
         # races: this loop is the single consumer of the pool's results.
-        for fut in as_completed(futures):
-            node_id = futures[fut]
-            try:
-                nid, text, call_usage = fut.result()
-            except Exception as exc:
-                failures.append((node_id, exc))
-                continue
-            docs[nid] = text
-            if usage is not None:
-                usage.add(call_usage)
+        while futures:
+            done, _pending = wait(list(futures), return_when=FIRST_COMPLETED)
+            for fut in done:
+                node_id = futures.pop(fut)
+                try:
+                    nid, text, call_usage = fut.result()
+                except Exception as exc:
+                    failures.append((node_id, exc))
+                    continue
+                docs[nid] = text
+                tally.add(call_usage)
+            for _ in range(len(done)):
+                if not _submit_next():
+                    break
+
+    # Only an exhausted budget can leave the queue undrained.
+    unsent = sum(1 for _ in queue) if token_budget is not None else 0
+    if unsent:
+        warnings.warn(
+            f"Token budget of {token_budget:,} tokens reached after "
+            f"{tally.total:,}: {len(docs)} of {len(dossiers)} nodes documented, "
+            f"{unsent} never sent. Raise token_budget to document the rest.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     if failures and not docs:
         node_id, exc = failures[0]

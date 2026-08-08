@@ -3,29 +3,19 @@
 [![PyPI](https://img.shields.io/pypi/v/linexcel)](https://pypi.org/project/linexcel/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![CI](https://github.com/auspect/linexcel/actions/workflows/publish.yml/badge.svg)
+[![Docs](https://img.shields.io/badge/docs-auspect.github.io-blue)](https://auspect.github.io/linexcel/)
 
 Data lineage analysis for Excel workbooks.
 
-Extracts every formula, groups stretched patterns (R1C1 canonicalization), builds a dependency graph (cells, ranges, defined names, VBA), decomposes composite functions with step-by-step evaluation, and optionally documents calculations via AI.
+Extracts every formula, groups stretched patterns (R1C1 canonicalization), builds a dependency graph (cells, ranges, defined names, VBA), decomposes composite functions with step-by-step evaluation, and optionally documents calculations via the AI provider of your choice.
 
-![Global overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_01.png)
+![Dependency graph of a workbook](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_graph.png)
 
 ## Install
 
-### uv
-
 ```Shell
-uv add linexcel
-# AI documentation (optional)
-uv add linexcel[ai]
-```
-
-### pip
-
-```Shell
-pip install linexcel
-# AI documentation (optional):
-pip install "linexcel[ai]"
+uv add linexcel               # pip install linexcel
+uv add linexcel[ai]           # + AI documentation (optional)
 ```
 
 > **Note:** `linexcel` depends on [formualizer](https://pypi.org/project/formualizer/), a Rust-based spreadsheet engine. Prebuilt wheels are available for Linux, macOS, and Windows. If no wheel matches your platform, a Rust toolchain is required to build from source.
@@ -36,179 +26,26 @@ pip install "linexcel[ai]"
 from linexcel import analyze
 
 result = analyze("workbook.xlsx")
-result  # interactive graph in marimo / Jupyter
+result                        # interactive graph in marimo / Jupyter
 result.save_html("out.html")  # standalone offline HTML viewer
-result.stats  # {totalFormulas, totalNodes, ...}
-result.warnings  # list[str]
-
-# AI documentation (optional, multi-provider — pick a provider, no default):
-# Gemini needs model= + GOOGLE_API_KEY; see the AI documentation section
-docs = result.document(model="gemini-3.1-flash-lite", language="en")
-result.save_html("out.html", docs=docs, language="en")
-
-# Workbook-level overview, shown in the separate overview tab:
-workbook_doc = result.document_workbook(model="gemini-3.1-flash-lite", language="en")
-result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
+result.stats                  # {totalFormulas, totalNodes, ...}
+result.warnings               # list[str]
 ```
 
-## Workbook context and screenshots
-
-`result.workbook_context` extracts bounded first rows and columns for every
-sheet, without assuming a header row. It also exposes comments, merged cells,
-frozen panes, hidden columns, and sheet visibility using `openpyxl`; Excel is
-not launched.
-
-These structural details are automatically rendered in a structured summary list
-within the **Workbook overview** tab of the HTML report.
-
-You can also generate and embed high-resolution sheet screenshots using LibreOffice Calc:
+Everything above is local and needs no key. AI documentation is optional, and
+you choose the provider — nothing is sent anywhere until you name one:
 
 ```python
-# 1. Render one PNG per printed workbook page
-screenshots = result.save_screenshots("screenshots/")
-
-# 2. Map pages to sheet names to display them inline under each sheet card
-sheets_screenshots = {
-    "Ventes": screenshots[0:3],
-    "Synthese": [screenshots[3]],
-    "Params": [screenshots[4]],
-}
-
-# 3. Embed them directly inside the offline HTML report
-result.save_html("out.html", screenshots=sheets_screenshots)
+# A local runtime keeps the workbook on your machine and costs nothing
+docs = result.document(base_url="http://localhost:11434/v1", model="llama3.1")
+overview = result.document_workbook(base_url="http://localhost:11434/v1", model="llama3.1")
+result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 
-Screenshots require LibreOffice and Poppler's `pdftoppm` on the system:
-
-| Platform | Install |
-| --- | --- |
-| Debian / Ubuntu | `sudo apt install libreoffice-calc poppler-utils` |
-| Windows | `winget install TheDocumentFoundation.LibreOffice` then `winget install oschwartz10612.Poppler` |
-| macOS | `brew install --cask libreoffice && brew install poppler` |
-
-Both tools are located on `PATH` or in their standard install directory, so the
-Windows and macOS installers — which do not extend `PATH` — need no extra setup.
-Rendering runs via LibreOffice headless, without opening a desktop Excel
-application, and uses a throwaway LibreOffice profile: it works while
-LibreOffice is open on the desktop and leaves your own settings untouched.
-
-## AI documentation (optional, multi-provider)
-
-AI documentation is opt-in and supports any LLM provider.
-
-### Google Gemini (explicit opt-in)
-
-The provider is chosen explicitly — there is no built-in default, so a bare
-`result.document()` raises `AiDocError` and tells you what to pass. For Gemini,
-name a model (`model=` or the `GEMINI_MODEL` env var) plus a key:
-
-```python
-docs = result.document(model="gemini-3.1-flash-lite", api_key="...", language="en")
-# or: export GOOGLE_API_KEY=... and pass only model=
-```
-
-Requires `google-genai` (`pip install linexcel[ai]`).
-
-### OpenAI-compatible (Ollama, vLLM, LM Studio, OpenAI, …)
-
-```python
-# Ollama (local)
-docs = result.document(
-    base_url="http://localhost:11434/v1",
-    model="llama3.1",
-    language="en",
-)
-
-# Or via env vars
-# LINEXCEL_AI_BASE_URL=http://localhost:11434/v1
-# LINEXCEL_AI_MODEL=llama3.1
-```
-
-Requires `openai` (`pip install linexcel[openai]`).
-
-### Custom provider (any callable)
-
-```python
-def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
-    # call your model here
-    return response_text
-
-
-docs = result.document(provider=my_llm)
-```
-
-Any object exposing a `generate` method with that same signature works too.
-Nodes are documented concurrently (`max_workers=4` by default); a node that
-fails is skipped with a warning rather than discarding the whole run.
-
-### Workbook-level overview
-
-```python
-workbook_doc = result.document_workbook(language="en")
-result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
-```
-
-### Token usage
-
-Every AI call is tallied on the result:
-
-```python
-docs = result.document(model="gemini-3.1-flash-lite")  # Gemini opt-in; use base_url= or provider= for other providers
-print(result.token_usage)
-# 48,210 tokens (44,900 in + 3,310 out) over 4 request(s) [gemini/gemini-3.1-flash-lite]
-```
-
-Counts come from the provider when it reports them (Gemini and
-OpenAI-compatible endpoints do), so the figure matches what you are billed on.
-Otherwise they are approximated and `result.token_usage.estimated` is `True`.
-No price is attached — rates differ per provider, model and region, so multiply
-by your own.
-
-## Languages
-
-`language=` sets both the AI prompt and the viewer interface:
-
-| Code | Language | Code | Language | Code | Language |
-| --- | --- | --- | --- | --- | --- |
-| `en` | English (default) | `it` | Italiano | `nl` | Nederlands |
-| `fr` | Français | `pt` | Português | `ja` | 日本語 |
-| `es` | Español | `de` | Deutsch | `zh` | 简体中文 |
-
-```python
-docs = result.document(language="de")
-result.save_html("out.html", docs=docs, language="de")
-```
-
-The set is a closed allowlist, not free-form text: `language` selects a stored
-system prompt and is interpolated into the generated viewer, so an arbitrary
-string would let a caller steer the model's instructions. Anything else raises
-`ValueError`. Reports embed only the requested language plus the English
-fallback, so adding languages does not grow the exported file.
-
-> **Note:** English and French were written by hand. The other seven languages —
-> both the interface strings and the AI system prompts — were produced with AI
-> assistance and have not been reviewed by native speakers. Corrections are
-> welcome: interface strings live in `linexcel.i18n`, prompts in `linexcel.aidoc`.
-
-## AI data handling
-
-AI documentation is opt-in. Calling `result.document()` sends a deterministic
-dossier for each requested node, while `result.document_workbook()` sends a
-workbook-level dossier, to **whichever provider you configure**. The dossiers can
-include formulas, computed values, precedent/dependent labels, formula
-decomposition, sheet structure, defined names, and extracted VBA code.
-
-Where that data goes depends on the provider you select:
-
-| Configuration | Destination |
-| --- | --- |
-| No provider selected | Nothing is sent — `AiDocError` is raised and the message lists the options |
-| `model=...` / `GEMINI_MODEL` + Google key | Google Gemini — see the [Google Generative AI Terms of Service](https://ai.google.dev/terms) |
-| `base_url=...` / `LINEXCEL_AI_BASE_URL` | The endpoint you point at — a local runtime such as Ollama or vLLM keeps the dossiers on your machine; a hosted OpenAI-compatible API does not |
-| `provider=...` | Wherever your own callable sends them |
-
-Do not enable this feature for a workbook whose contents must remain local
-unless the configured provider satisfies its data-sharing requirements.
+Any OpenAI-compatible endpoint works the same way — a local Ollama or vLLM
+runtime, a gateway such as OpenRouter, a vendor's own API — and `provider=`
+takes any callable for anything else. See
+[Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/).
 
 ## Features
 
@@ -216,18 +53,53 @@ unless the configured provider satisfies its data-sharing requirements.
 - **Stretched pattern grouping** — 1000 identical formulas → 1 node
 - **Dependency graph** — cells, ranges, defined names, VBA procedures
 - **Step-by-step evaluation** — each operator/function evaluated individually
-- **Standalone HTML viewer** — Cytoscape.js embedded, fully offline
-- **AI documentation** — your chosen provider (Gemini, OpenAI-compatible, custom) generates provable docs from deterministic lineage
+- **Standalone HTML viewer** — Cytoscape.js embedded, fully offline, keyboard-navigable, light by default with a dark toggle
+- **Values you can check** — each figure states whether it was read from the workbook or recalculated by linexcel, and shows both side by side when the file disagrees
+- **Workbook context** — sheet previews, comments, merged ranges, frozen panes and hidden columns, plus optional LibreOffice-rendered screenshots
+- **AI documentation** — vendor-neutral, grounded in deterministic lineage, with token accounting and a spend ceiling
+- **Nine interface languages** — for both the report and the AI prompts
+
+## Documentation
+
+| Guide | |
+| --- | --- |
+| [Quick start](https://auspect.github.io/linexcel/guide/quickstart/) | Analyse a workbook, explore it, export it |
+| [HTML export](https://auspect.github.io/linexcel/guide/html/) | The standalone offline report |
+| [Workbook context & screenshots](https://auspect.github.io/linexcel/guide/context/) | What a reader sees, not only what the file computes |
+| [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/) | Ollama, OpenRouter, any OpenAI-compatible endpoint, or your own callable |
+| [AI documentation](https://auspect.github.io/linexcel/guide/ai/) | Provable cards, token usage, `token_budget=` |
+| [Languages](https://auspect.github.io/linexcel/guide/languages/) | The nine supported locales |
+| [Data handling](https://auspect.github.io/linexcel/guide/data-handling/) | What leaves the machine, and when |
+| [API reference](https://auspect.github.io/linexcel/api/result/) | `LineageResult`, `analyzer`, `aidoc`, … |
 
 ## Sample output
 
-### Global overview
+Every image below is captured from a real report by
+`scripts/capture_viewer.py`, so they cannot drift from the viewer without the
+`readme-shots` commit hook noticing.
 
-![Global overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_01.png)
+### A node, documented
 
-![Global overview (node selected)](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/overview_example_02.png)
+Formula, step-by-step evaluation, precedents and dependents, and the AI card
+written from that same deterministic dossier.
+
+![A node selected in the viewer](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_node_documented.png)
+
+### Workbook overview
+
+![AI-written workbook overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_workbook_overview.png)
+
+### Sheet context
+
+Comments, frozen panes, merged ranges and the rendered pages of each sheet.
+
+![Sheet context tab](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_sheets_context.png)
 
 ## Security
+
+Analysis is entirely local. AI documentation sends dossiers only to the provider
+you configure — see
+[Data handling](https://auspect.github.io/linexcel/guide/data-handling/).
 
 Please report vulnerabilities privately according to
 [SECURITY.md](SECURITY.md). Do not include sensitive workbooks or credentials in

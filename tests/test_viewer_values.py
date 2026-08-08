@@ -52,13 +52,37 @@ class TestValueProvenance:
         assert EN["value_recalc"] in html
         assert "engine:   { labelKey: 'value_recalc'" in html
 
-    def test_the_badge_is_rendered_with_a_color_per_source(self):
+    def test_the_reading_is_swatched_with_the_color_of_its_source(self):
         html = render_html(graph(valueSource="engine"))
-        assert "lin-src" in html
-        assert "var(--blue)" in html  # engine
-        assert "'#1baf7a'" in html  # file
-        assert "'#eda100'" in html  # fallback
-        assert "badge.style.background = src.color;" in html
+        assert "color: PALETTE.blue" in html  # engine
+        assert "color: PALETTE.green" in html  # file
+        assert "color: PALETTE.amber" in html  # fallback
+        # the palette still ships the literal hex the canvas needs
+        assert "'#1baf7a'" in html
+        assert "'#eda100'" in html
+        assert "sw.style.background = color;" in html
+
+    def test_the_badge_ink_is_derived_from_the_fill(self):
+        """White-on-amber failed contrast; the pair is now computed."""
+        html = render_html(graph(valueSource="fallback"))
+        assert "function onColor(hex)" in html
+        assert "node.style.color = onColor(hex);" in html
+
+    def test_each_state_carries_a_sentence_of_its_own(self):
+        """A badge alone left 'engine' and 'file' looking interchangeable."""
+        html = render_html(graph(valueSource="file"))
+        for key in ("value_recalc_desc", "value_from_file_desc", "value_fallback_desc"):
+            assert f"descKey: '{key}'" in html, key
+        assert EN["value_from_file_desc"] in html
+        assert "if (src) sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));" in html
+
+    def test_a_guarded_fallback_is_marked_on_the_card(self):
+        html = render_html(graph(valueSource="fallback"))
+        mark = (
+            "if (n.valueSource === 'fallback') card.className = 'lin-vcard is-guarded';"
+        )
+        assert mark in html
+        assert ".lin-vcard.is-guarded { border-color: var(--amber); }" in html
 
 
 class TestValueDate:
@@ -72,17 +96,52 @@ class TestValueDate:
         assert "var shown = n.valueDate || fmt(n.value);" in html
 
 
-class TestCachedValueDiscrepancy:
-    def test_both_values_appear_when_they_differ(self):
+class TestReadVersusRecalculated:
+    """Reading the workbook's own values back is the headline feature.
+
+    The panel used to show one headline figure and only mention the file's
+    stored value when it *differed*, so in the common case the reader could not
+    tell whose number they were looking at. Both readings are now shown,
+    labelled, with the verdict stated either way.
+    """
+
+    def test_both_readings_are_shown_side_by_side(self):
         html = render_html(graph(value=42, cachedValue=41, valueSource="engine"))
         assert '"value": 42' in html
         assert '"cachedValue": 41' in html
-        assert EN["value_cached"] in html
-        assert EN["differs_from_file"] in html
+        left = "reading(_t('value_col_file'), cached, SRC.file.color)"
+        right = "reading(_t('value_col_calc'), shown, SRC.engine.color)"
+        assert left in html
+        assert right in html
+        assert EN["value_col_file"] == "Excel file"
+        assert EN["value_col_calc"] in html
 
-    def test_the_second_line_is_emitted_only_on_a_mismatch(self):
-        html = render_html(graph(value=42, cachedValue=42))
-        assert "if (!sameDate && cached !== shown) {" in html
+    def test_agreement_is_stated_rather_than_left_silent(self):
+        html = render_html(graph(value=42, cachedValue=42, valueSource="engine"))
+        assert EN["value_match"] == "The recalculated value matches the file"
+        assert EN["value_match"] in html
+        assert "_t(agree ? 'value_match' : 'value_mismatch')" in html
+
+    def test_a_disagreement_is_loud(self):
+        html = render_html(graph(value=42, cachedValue=41, valueSource="engine"))
+        assert EN["value_mismatch"] in html
+        assert "if (!agree) card.className = 'lin-vcard is-diff';" in html
+        assert ".lin-vcard.is-diff .lin-verdict {" in html
+        assert "background: var(--warn-bg); color: var(--warn-fg);" in html
+
+    def test_the_verdict_is_not_carried_by_colour_alone(self):
+        """Green vs orange is the classic CVD trap: icon and sentence too."""
+        html = render_html(graph(value=42, cachedValue=41, valueSource="engine"))
+        assert "verdict.appendChild(icon(agree ? 'check' : 'warn'));" in html
+        assert "check: 'M2.6 8.4 L6.3 12 L13.4 4.2'" in html
+
+    def test_a_single_reading_is_never_dressed_up_as_a_corroboration(self):
+        """Under 'file' the shown value *is* the stored one, not a second read."""
+        html = render_html(graph(value=42, cachedValue=42, valueSource="file"))
+        assert (
+            "var paired = hasCached && hasValue && n.valueSource === 'engine';" in html
+        )
+        assert "grid.className = 'lin-vgrid is-single';" in html
 
     def test_a_date_node_compares_the_cached_date_part_only(self):
         # a file-cached "2026-08-07 00:00:00" is the same day as valueDate:
@@ -91,6 +150,7 @@ class TestCachedValueDiscrepancy:
             graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-07")
         )
         assert "n.cachedValue.slice(0, 10) === n.valueDate;" in html
+        assert "var agree = !!sameDate || cached === shown;" in html
         assert '"cachedValue": "2026-08-07"' in html
 
     def test_a_genuinely_different_cached_date_still_flags(self):
@@ -98,11 +158,12 @@ class TestCachedValueDiscrepancy:
             graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-06")
         )
         assert '"cachedValue": "2026-08-06"' in html
-        assert EN["differs_from_file"] in html
+        assert EN["value_mismatch"] in html
 
-    def test_the_discrepancy_message_keeps_its_placeholder(self):
-        assert "{recalc}" in EN["differs_from_file"]
-        assert "{recalc}" in FR["differs_from_file"]
+    def test_the_section_is_no_longer_titled_as_if_everything_were_computed(self):
+        html = render_html(graph(valueSource="file"))
+        assert EN["value_heading"] == "Value"
+        assert "var sv = section(_t('value_heading'));" in html
 
 
 class TestSamples:
@@ -111,14 +172,19 @@ class TestSamples:
             graph(
                 samples=[
                     {"addr": "S!A2", "value": 46236, "date": "2026-08-08"},
-                    {"addr": "S!A3", "value": 7, "source": "file"},
+                    {"addr": "S!A3", "value": 7, "valueSource": "file"},
                 ]
             )
         )
         assert '"date": "2026-08-08"' in html
-        assert '"source": "file"' in html
+        assert '"valueSource": "file"' in html
         assert "if (s.date) line += ' (' + s.date + ')';" in html
-        assert "SRC[s.source] && s.source !== 'engine'" in html
+        assert "SRC[ssrc] && ssrc !== 'engine'" in html
+
+    def test_both_spellings_of_the_sample_source_field_are_read(self):
+        """The graph names it valueSource; older graphs said source."""
+        html = render_html(graph(samples=[{"addr": "S!A3", "value": 7}]))
+        assert "var ssrc = s.valueSource || s.source;" in html
 
 
 class TestErrorValues:
@@ -175,7 +241,7 @@ class TestFinalResult:
     def test_only_the_root_step_gets_the_final_styling(self):
         html = render_html(graph())
         assert "'lin-step' + (depth === 0 ? ' lin-final' : '')" in html
-        assert ".lin-step.lin-final { border-left-color: #1baf7a; }" in html
+        assert ".lin-step.lin-final { border-left-color: var(--green); }" in html
 
 
 class TestLocalization:
@@ -186,7 +252,10 @@ class TestLocalization:
             "value_from_file",
             "value_recalc",
             "value_fallback",
-            "value_cached",
+            "value_col_file",
+            "value_col_calc",
+            "value_match",
+            "value_mismatch",
             "final_result",
         ):
             assert FR[key] in html
@@ -198,15 +267,27 @@ class TestLocalization:
 
     def test_every_language_defines_the_new_keys(self):
         new_keys = {
+            "value_heading",
             "value_from_file",
             "value_recalc",
             "value_fallback",
-            "value_cached",
-            "differs_from_file",
+            "value_recalc_desc",
+            "value_from_file_desc",
+            "value_fallback_desc",
+            "value_col_file",
+            "value_col_calc",
+            "value_match",
+            "value_mismatch",
             "final_result",
         }
         for language, strings in UI_STRINGS.items():
             assert new_keys <= set(strings), f"{language} is missing new value keys"
+
+    def test_the_two_column_headers_stay_short_enough_to_sit_side_by_side(self):
+        """They share a 440px panel: a paragraph in a column header wraps ugly."""
+        for language, strings in UI_STRINGS.items():
+            for key in ("value_col_file", "value_col_calc"):
+                assert len(strings[key]) <= 28, f"{language}/{key} is too long"
 
 
 def two_sheet_graph() -> dict:
@@ -406,19 +487,37 @@ class TestSearchAll:
         fit = "cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });"
         assert fit in html
 
-    def test_an_empty_result_changes_nothing(self):
+    def test_an_empty_result_leaves_the_graph_alone_and_says_so(self):
         html = render_html(search_graph())
-        assert "if (!matched.length) return;" in html
+        guard = "if (!matched.length) { setStatus(_t('search_none'), true); return; }"
+        assert guard in html
+        assert EN["search_none"] == "No matches"
+        assert EN["search_none"] in html
 
-    def test_the_box_reports_how_many_nodes_matched(self):
+    def test_the_count_is_visible_feedback_not_a_tooltip(self):
         html = render_html(search_graph())
-        assert "search.title = _t('search_matches', { count: matched.length });" in html
-        assert EN["search_matches"] == "{count} matches"
+        assert "search.title = _t('search_matches'" not in html
+        assert (
+            "setStatus(_t('search_matches', { count: matched.length }), false);" in html
+        )
+        assert EN["search_matches"] == "Matches: {count}"
         assert EN["search_matches"] in html
+
+    def test_the_status_is_a_live_region_that_is_shown_before_it_is_written(self):
+        """A region still `hidden` when its text changes is never announced."""
+        html = render_html(search_graph())
+        assert (
+            '<span class="lin-search-status" id="lin-search-status" '
+            'role="status" aria-live="polite" hidden>' in html
+        )
+        body = html.split("function setStatus(text, none) {", 1)[1]
+        assert body.index("searchStatus.hidden = !text;") < body.index(
+            "searchStatus.textContent = text || '';"
+        )
 
     def test_the_french_render_ships_the_french_match_count(self):
         html = render_html(search_graph(), language="fr")
-        assert FR["search_matches"] == "{count} résultats"
+        assert FR["search_matches"] == "Résultats : {count}"
         assert FR["search_matches"] in html
 
     def test_every_language_defines_the_search_count_key(self):
@@ -427,6 +526,66 @@ class TestSearchAll:
             assert "{count}" in strings["search_matches"], (
                 f"{language} lost the count placeholder"
             )
+
+    def test_no_language_writes_a_bare_count_before_a_plural_noun(self):
+        """The count is on screen now, so "1 matches" would be visible."""
+        for language, strings in UI_STRINGS.items():
+            if language in ("ja", "zh"):
+                continue  # no plural agreement to get wrong
+            assert not strings["search_matches"].startswith("{count} "), language
+
+
+class TestSearchControl:
+    """The box used to be a bare input explaining itself with a `⏎` glyph."""
+
+    def test_the_affordance_is_inline_svg_rather_than_a_glyph(self):
+        html = render_html(search_graph())
+        box = html.split('<div class="lin-search" id="lin-searchbox">', 1)[1]
+        box = box.split("</div>", 1)[0]
+        assert "<svg viewBox=" in box
+        assert "⏎" not in html
+        for language, strings in UI_STRINGS.items():
+            assert "⏎" not in strings["search"], language
+
+    def test_the_clear_button_appears_only_once_there_is_text(self):
+        html = render_html(search_graph())
+        assert 'id="lin-search-clear" class="lin-search-clear" hidden' in html
+        assert "searchClear.hidden = !search.value;" in html
+        assert ".lin-search-clear[hidden] { display: none; }" in html
+        assert "named('lin-search-clear', _t('search_clear'));" in html
+
+    def test_escape_clears_and_restores_the_graph(self):
+        html = render_html(search_graph())
+        esc = "else if (e.key === 'Escape') { e.preventDefault(); restoreGraph(); }"
+        assert esc in html
+        assert "function restoreGraph() {" in html
+        assert "resetSearch();" in html
+        assert "clearSel(cy);" in html
+
+    def test_enter_still_submits(self):
+        html = render_html(search_graph())
+        assert "if (e.key === 'Enter') { e.preventDefault(); runSearch(); }" in html
+
+    def test_the_box_is_named_rather_than_relying_on_the_placeholder(self):
+        html = render_html(search_graph())
+        assert "search.setAttribute('aria-label', _t('search_label'));" in html
+        assert EN["search_label"] == "Search cells and formulas (Enter)"
+        assert EN["search_label"] in html
+
+    def test_the_name_still_says_how_to_submit_now_that_the_glyph_is_gone(self):
+        """The placeholder used to read "Search… ⏎"; the hint moved, not died."""
+        for language, strings in UI_STRINGS.items():
+            # ja/zh close the aside with the full-width parenthesis
+            assert strings["search_label"].rstrip().endswith((")", "）")), language
+
+    def test_a_report_without_cytoscape_disables_the_box(self):
+        html = render_html(search_graph())
+        assert "search.disabled = true;" in html
+
+    def test_every_language_defines_the_new_search_keys(self):
+        for language, strings in UI_STRINGS.items():
+            missing = {"search_label", "search_none", "search_clear"} - set(strings)
+            assert not missing, f"{language} is missing {missing}"
 
 
 class TestIframeWrapping:

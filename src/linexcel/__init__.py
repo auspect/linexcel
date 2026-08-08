@@ -4,7 +4,8 @@ Pipeline: formula extraction (formualizer, Rust engine) →
 stretched pattern grouping (R1C1 canonicalization) →
 dependency graph (cells, ranges, defined names, VBA) →
 composite function decomposition with step-by-step evaluation →
-optional AI documentation (google-genai) grounded in deterministic lineage.
+optional AI documentation, from the provider of your choice, grounded in
+deterministic lineage.
 
 Usable as a standalone library (marimo, Jupyter, scripts), without
 a FastAPI server or AI key:
@@ -14,7 +15,7 @@ a FastAPI server or AI key:
     result                               # interactive graph in marimo
     result.save_html("lineage.html")     # standalone offline viewer
     result.stats, result.warnings        # metadata
-    result.document(api_key="...")       # AI documentation (optional)
+    result.document(base_url=...)        # AI documentation (optional, opt-in)
 """
 
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
