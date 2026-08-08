@@ -26,9 +26,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ai = ["google-genai>=2.10.0"]
+# The `openai` package is the client for every OpenAI-compatible endpoint —
+# a local Ollama or vLLM runtime, a hosted gateway, a vendor API — not a choice
+# of vendor. `openai` is kept as an alias of `ai` for callers already using it.
+ai = ["openai>=1.0"]
 openai = ["openai>=1.0"]
-all = ["google-genai>=2.10.0", "openai>=1.0"]
+all = ["openai>=1.0"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.9", "ty>=0.0.63"]
 # Only for scripts/capture_viewer.py, which recaptures the README images.
 screenshots = ["playwright>=1.40"]
@@ -71,7 +74,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "validation_workbooks.py" = ["E501"]
 
 [tool.ty]
-# google-genai is optional (linexcel[ai]), not installed in dev
+# openai is optional (linexcel[ai]), not installed in dev
 # unresolved-import ignored via CLI flag in CI / prek
 
 [tool.pytest.ini_options]

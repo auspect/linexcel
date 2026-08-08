@@ -24,6 +24,55 @@ from linexcel.refs import (
 from linexcel.rewrite import canonical_r1c1, qualify_sheet
 from linexcel.vba import analyze_vba
 
+#: Everything :func:`linexcel.aidoc._resolve_provider` reads. A developer with
+#: one of these exported would otherwise silently configure a provider for the
+#: tests that assert nothing is configured.
+_AI_ENV_VARS = (
+    "LINEXCEL_AI_BASE_URL",
+    "LINEXCEL_AI_MODEL",
+    "LINEXCEL_AI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
+    "OPENAI_API_KEY",
+)
+
+
+def _clear_ai_env(monkeypatch) -> None:
+    for var in _AI_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def _strip_comments_and_docstrings(source: str) -> str:
+    """Return ``source`` with comments and docstrings removed.
+
+    Prose is free to name endpoints as examples; executable code is not. Other
+    string literals are kept on purpose — a vendor name smuggled in as an
+    environment variable or a default model is exactly what must be caught.
+    """
+    import ast
+    import io
+    import tokenize
+
+    docstrings = set()
+    for node in ast.walk(ast.parse(source)):
+        body = getattr(node, "body", None)
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef):
+            continue
+        if not body or not isinstance(body[0], ast.Expr):
+            continue
+        first = body[0].value
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            docstrings.add((first.lineno, first.col_offset))
+
+    kept = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.COMMENT:
+            continue
+        if token.type == tokenize.STRING and token.start in docstrings:
+            continue
+        kept.append(token.string)
+    return "\n".join(kept)
+
 
 class TestRefs:
     def test_col_roundtrip(self):
@@ -638,14 +687,7 @@ class TestPackageApi:
         """Bare calls no longer fall back to any vendor: no implicit default."""
         from linexcel.aidoc import AiDocError
 
-        for var in (
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
-            "LINEXCEL_AI_BASE_URL",
-            "OPENAI_BASE_URL",
-        ):
-            monkeypatch.delenv(var, raising=False)
+        _clear_ai_env(monkeypatch)
         result = analyze(lineage_excel)
         try:
             result.document()
@@ -739,97 +781,116 @@ class TestAiProviders:
     def test_no_provider_selected_raises_with_guidance(
         self, lineage_excel, monkeypatch
     ):
-        """No implicit vendor: a bare call is an explicit error, not Google."""
+        """A bare call is an explicit error, never a vendor picked for you."""
         from linexcel.aidoc import AiDocError
 
-        for var in (
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-            "GEMINI_MODEL",
-            "LINEXCEL_AI_BASE_URL",
-            "OPENAI_BASE_URL",
-        ):
-            monkeypatch.delenv(var, raising=False)
+        _clear_ai_env(monkeypatch)
         result = analyze(lineage_excel)
         with pytest.raises(AiDocError, match="No AI provider selected"):
             result.document_workbook()
 
-    def test_gemini_requires_an_explicit_model(self, lineage_excel, monkeypatch):
-        """A Google key alone no longer selects Gemini — a model must be named."""
+    def test_model_alone_selects_nothing(self, lineage_excel, monkeypatch):
+        """A model name identifies no endpoint: there is no vendor to infer it."""
         from linexcel.aidoc import AiDocError
 
-        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.delenv("LINEXCEL_AI_BASE_URL", raising=False)
+        _clear_ai_env(monkeypatch)
         result = analyze(lineage_excel)
-        with pytest.raises(AiDocError) as exc:
-            result.document(model="gemini-3.1-flash-lite")
-        # model= routes to Gemini, which fails on the missing key or package
-        # (dev env) — but never on the neutral "no provider" gate.
-        assert "No AI provider selected" not in str(exc.value)
+        with pytest.raises(AiDocError, match="No AI provider selected"):
+            result.document(model="some-model-name")
 
-    def test_api_key_alone_does_not_select_gemini(self, lineage_excel, monkeypatch):
-        """api_key= alone must not implicitly select Gemini."""
+    def test_api_key_alone_selects_nothing(self, lineage_excel, monkeypatch):
+        """api_key= names no endpoint either, so it cannot select a provider."""
         from linexcel.aidoc import AiDocError
 
-        for var in (
-            "GEMINI_MODEL",
-            "LINEXCEL_AI_BASE_URL",
-            "OPENAI_BASE_URL",
-        ):
-            monkeypatch.delenv(var, raising=False)
+        _clear_ai_env(monkeypatch)
         result = analyze(lineage_excel)
         with pytest.raises(AiDocError, match="No AI provider selected"):
             result.document_workbook(api_key="some-key")
 
-    def test_model_routes_to_gemini_only_when_requested(
+    def test_base_url_without_model_says_so(self, lineage_excel, monkeypatch):
+        """Endpoints disagree on a default model, so one must be named."""
+        from linexcel.aidoc import AiDocError
+
+        _clear_ai_env(monkeypatch)
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="No model named for the endpoint"):
+            result.document_workbook(base_url="http://localhost:11434/v1")
+
+    def test_base_url_and_model_reach_the_openai_compatible_client(
         self, lineage_excel, monkeypatch
     ):
-        """model= is the explicit opt-in for Gemini; it reaches the client."""
+        """The only built-in client: whatever answers at base_url."""
         from linexcel import aidoc
 
         captured = {}
 
-        class StubGemini:
-            def __init__(self, *, api_key, model):
-                captured["api_key"] = api_key
-                captured["model"] = model
+        class StubClient:
+            def __init__(self, *, base_url, api_key, model):
+                captured.update(base_url=base_url, api_key=api_key, model=model)
 
             def generate(
                 self, system_prompt, user_prompt, *, temperature=0.2, max_tokens=None
             ):
-                return "# gemini"
+                return "# overview"
 
-        monkeypatch.setattr(aidoc, "_GeminiProvider", StubGemini)
-        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+        _clear_ai_env(monkeypatch)
+        monkeypatch.setattr(aidoc, "_OpenAICompatProvider", StubClient)
         result = analyze(lineage_excel)
-        assert result.document_workbook(model="gemini-3.1-flash-lite") == "# gemini"
-        assert captured["model"] == "gemini-3.1-flash-lite"
-        assert captured["api_key"] is None  # key read from env by the client
+        assert (
+            result.document_workbook(
+                base_url="http://localhost:11434/v1", model="llama3.1"
+            )
+            == "# overview"
+        )
+        assert captured["base_url"] == "http://localhost:11434/v1"
+        assert captured["model"] == "llama3.1"
+        assert captured["api_key"] is None  # left to the client to resolve
 
-    def test_gemini_model_env_also_opts_in(self, lineage_excel, monkeypatch):
-        """GEMINI_MODEL is the env equivalent of model= for Gemini."""
+    def test_env_vars_are_the_equivalent_of_base_url_and_model(
+        self, lineage_excel, monkeypatch
+    ):
+        """LINEXCEL_AI_BASE_URL + LINEXCEL_AI_MODEL configure the same client."""
         from linexcel import aidoc
 
         captured = {}
 
-        class StubGemini:
-            def __init__(self, *, api_key, model):
-                captured["model"] = model
+        class StubClient:
+            def __init__(self, *, base_url, api_key, model):
+                captured.update(base_url=base_url, model=model)
 
             def generate(
                 self, system_prompt, user_prompt, *, temperature=0.2, max_tokens=None
             ):
-                return "# gemini"
+                return "# card"
 
-        monkeypatch.setattr(aidoc, "_GeminiProvider", StubGemini)
-        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-        monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+        _clear_ai_env(monkeypatch)
+        monkeypatch.setattr(aidoc, "_OpenAICompatProvider", StubClient)
+        monkeypatch.setenv("LINEXCEL_AI_BASE_URL", "https://openrouter.ai/api/v1")
+        monkeypatch.setenv("LINEXCEL_AI_MODEL", "some-org/some-model")
         result = analyze(lineage_excel)
-        assert result.document([self._calc_ids(result)[0]]) == {
-            self._calc_ids(result)[0]: "# gemini"
-        }
-        assert captured["model"] == "gemini-2.5-flash"
+        node_id = self._calc_ids(result)[0]
+        assert result.document([node_id]) == {node_id: "# card"}
+        assert captured["base_url"] == "https://openrouter.ai/api/v1"
+        assert captured["model"] == "some-org/some-model"
+
+    def test_no_vendor_is_named_in_the_resolution_path(self):
+        """Regression guard: providers are configuration, never source code.
+
+        A vendor name reintroduced as a constant, an env var or a default model
+        would quietly make that vendor the privileged one again. Prose may name
+        endpoints as examples, so only code lines are scanned.
+        """
+        from pathlib import Path
+
+        from linexcel import aidoc
+
+        source = Path(aidoc.__file__).read_text(encoding="utf-8")
+        code = _strip_comments_and_docstrings(source)
+        for vendor in ("gemini", "google", "genai", "anthropic", "claude", "gpt-"):
+            assert vendor not in code.lower(), (
+                f"{vendor!r} is hard-coded in aidoc.py; providers are chosen by "
+                "the caller, not named in the source"
+            )
 
     def test_plain_callable_is_accepted(self, lineage_excel):
         seen = []
@@ -997,20 +1058,21 @@ class TestTokenUsage:
         assert (usage.total, usage.requests) == (0, 0)
         assert "0 tokens" in str(usage)
 
-    def test_gemini_usage_metadata_is_read(self):
+    def test_reported_usage_is_preferred_over_estimation(self):
+        """``_usage_from`` reads whatever field names a provider uses."""
         from linexcel.aidoc import _usage_from
 
         class Meta:
-            prompt_token_count = 900
-            candidates_token_count = 100
+            prompt_tokens = 900
+            completion_tokens = 100
 
         usage = _usage_from(
             Meta(),
-            ("prompt_token_count", "candidates_token_count"),
+            ("prompt_tokens", "completion_tokens"),
             "prompt",
             "text",
-            model="gemini",
-            provider="gemini",
+            model="some-model",
+            provider="openai-compatible",
         )
         assert (usage.input_tokens, usage.output_tokens, usage.total) == (
             900,

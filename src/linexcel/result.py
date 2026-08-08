@@ -10,7 +10,7 @@ Minimal example, without backend or AI key:
 
 AI documentation is optional — pick a provider explicitly (no default):
 
-    result.document(model="gemini-3.1-flash-lite")  # + GOOGLE_API_KEY env var
+    result.document(base_url="http://localhost:11434/v1", model="llama3.1")
 """
 
 from __future__ import annotations
@@ -148,9 +148,10 @@ class LineageResult:
         """Tokens consumed by every :meth:`document` / :meth:`document_workbook`
         call made on this result.
 
-        Counts come from the provider when it reports them (Gemini and
-        OpenAI-compatible endpoints do); otherwise they are approximated and
-        :attr:`TokenUsage.estimated` is set. Zero until an AI call is made.
+        Counts come from the provider when it reports them (an
+        OpenAI-compatible endpoint fills in a ``usage`` block); otherwise they
+        are approximated and :attr:`TokenUsage.estimated` is set. Zero until an
+        AI call is made.
 
             >>> result.document(provider=my_llm)          # doctest: +SKIP
             >>> print(result.token_usage)                 # doctest: +SKIP
@@ -250,12 +251,13 @@ class LineageResult:
         Without ``node_ids``, documents all calculation nodes
         (cells, groups, VBA).
 
-        Provider resolution (first match wins, no implicit default):
+        Provider resolution (first match wins, no implicit default and no
+        preferred vendor):
+
         1. ``provider`` — custom LLMProvider instance or callable
-        2. ``base_url`` or ``LINEXCEL_AI_BASE_URL`` — OpenAI-compatible endpoint
-           (Ollama, vLLM, LM Studio, OpenAI, …)
-        3. ``model`` (or ``GEMINI_MODEL``) with a Google API key
-           (``api_key``, ``GOOGLE_API_KEY``, or ``GEMINI_API_KEY``) — Gemini, opt-in
+        2. ``base_url`` + ``model`` (or ``LINEXCEL_AI_BASE_URL`` +
+           ``LINEXCEL_AI_MODEL``) — any OpenAI-compatible endpoint, local or
+           hosted
 
         ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
         ``max_workers`` caps the number of concurrent requests. Nodes that fail

@@ -1,10 +1,13 @@
 """AI-generated documentation for Excel calculations.
 
-Multi-provider support via a thin abstraction — the provider is chosen
-explicitly, there is no built-in default:
-- OpenAI-compatible API (any endpoint: OpenAI, Ollama, vLLM, LM Studio, etc.)
-- Google Gemini (google-genai) — only when requested via ``model=``
-- Callable protocol for custom/local models
+Vendor-neutral by construction: no provider is named in the code and none is
+chosen for you. There are exactly two ways in:
+
+- ``base_url=`` — any OpenAI-compatible endpoint (a local Ollama, vLLM or
+  LM Studio runtime; a hosted gateway such as OpenRouter; OpenAI itself;
+  anything else that speaks ``/chat/completions``)
+- ``provider=`` — your own callable or :class:`LLMProvider` object, for an API
+  that speaks something else entirely
 
 The model doesn't guess: each node is presented with its deterministic dossier
 from the graph (exact formula, step-by-step evaluation, precedents and their
@@ -26,10 +29,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
-# ^ Fallback model name used *inside* _GeminiProvider when neither model= nor
-#   GEMINI_MODEL supplies a name.  This constant plays no role in provider
-#   selection: _resolve_provider() raises if no provider is configured.
+# No DEFAULT_MODEL: naming one would make a vendor's model the implicit choice,
+# and a name that suits a hosted API is wrong for a local runtime. The model is
+# always supplied by the caller, via model= or an environment variable.
 MAX_DOSSIER_CHARS = 6_000
 # Raised from 12k when the workbook dossier gained the presentation context
 # (sheet previews and comments); _fit_workbook_dossier() sheds that part first
@@ -418,9 +420,9 @@ class LLMProvider(Protocol):
 class UsageReportingProvider(Protocol):
     """A provider that also reports what the call consumed.
 
-    Optional: the built-in Gemini and OpenAI-compatible clients implement it so
-    that token counts come from the API rather than from an approximation.
-    Custom providers only need :class:`LLMProvider`.
+    Optional: the built-in OpenAI-compatible client implements it so that token
+    counts come from the API rather than from an approximation. Custom
+    providers only need :class:`LLMProvider`.
     """
 
     def generate_with_usage(
@@ -501,124 +503,67 @@ def _resolve_provider(
 ) -> LLMProvider:
     """Resolve which provider to use.
 
-    Providers are chosen explicitly; there is no built-in default:
+    Providers are chosen explicitly; no vendor is preferred and none is
+    implicit:
 
     1. `provider` — custom callable or LLMProvider instance
     2. `base_url` set (param or ``LINEXCEL_AI_BASE_URL`` / ``OPENAI_BASE_URL``)
-       → OpenAI-compatible client
-    3. `model` set (param or ``GEMINI_MODEL``) with a Google API key
-       (param or ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY``) → Gemini client
+       → OpenAI-compatible client, whatever sits behind that URL
 
-    Anything else raises :class:`AiDocError` instead of silently picking a
-    vendor.
+    Anything else raises :class:`AiDocError` rather than picking for you.
     """
     if provider is not None:
         return _as_provider(provider)
 
-    # OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.)
     base = base_url or os.getenv("LINEXCEL_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if base:
         resolved_model = (
-            model
-            or os.getenv("LINEXCEL_AI_MODEL")
-            or os.getenv("OPENAI_MODEL")
-            or "gpt-4o-mini"
+            model or os.getenv("LINEXCEL_AI_MODEL") or os.getenv("OPENAI_MODEL")
         )
+        if not resolved_model:
+            raise AiDocError(
+                f"No model named for the endpoint at {base}: pass model= or set "
+                "LINEXCEL_AI_MODEL. Endpoints do not agree on a default and "
+                "linexcel does not invent one."
+            )
         return _OpenAICompatProvider(
             base_url=base, api_key=api_key, model=resolved_model
         )
 
-    # Google Gemini — only when a model is requested explicitly
-    resolved_model = model or os.getenv("GEMINI_MODEL")
-    if resolved_model:
-        return _GeminiProvider(api_key=api_key, model=resolved_model)
-
     raise AiDocError(
-        "No AI provider selected: pass provider= (custom LLMProvider or "
-        "callable), base_url= (OpenAI-compatible endpoint, e.g. Ollama/vLLM), "
-        "or model= with a Google API key (api_key=, GOOGLE_API_KEY, or "
-        "GEMINI_API_KEY) for Gemini. No provider is chosen implicitly."
+        "No AI provider selected: pass base_url= with model= for any "
+        "OpenAI-compatible endpoint (a local Ollama or vLLM runtime, a hosted "
+        "gateway, a vendor API), or provider= for a custom LLMProvider or "
+        "callable. Equivalent env vars: LINEXCEL_AI_BASE_URL and "
+        "LINEXCEL_AI_MODEL. No provider is chosen implicitly."
     )
 
 
-class _GeminiProvider:
-    """Google Gemini via google-genai."""
-
-    def __init__(self, *, api_key: str | None = None, model: str = DEFAULT_MODEL):
-        try:
-            from google import genai
-        except ImportError as exc:  # pragma: no cover
-            raise AiDocError(
-                "google-genai is not installed "
-                "(pip install 'linexcel[ai]' or pip install google-genai)"
-            ) from exc
-        self._genai = genai
-        self._api_key = (
-            api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        )
-        if not self._api_key:
-            raise AiDocError(
-                "No Gemini API key provided: pass api_key=... or set "
-                "GOOGLE_API_KEY in the environment"
-            )
-        self._client = genai.Client(api_key=self._api_key)
-        self._model = model
-
-    def generate(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> str:
-        return self.generate_with_usage(
-            system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens
-        )[0]
-
-    def generate_with_usage(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> tuple[str, TokenUsage]:
-        prompt = system_prompt + "\n\n" + user_prompt
-        config: dict[str, Any] = {"temperature": temperature}
-        if max_tokens is not None:
-            config["max_output_tokens"] = max_tokens
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=config,
-            )
-            text = (response.text or "").strip()
-        except Exception as exc:
-            raise AiDocError(f"Gemini API call failed: {exc}") from exc
-        return text, _usage_from(
-            getattr(response, "usage_metadata", None),
-            ("prompt_token_count", "candidates_token_count"),
-            prompt,
-            text,
-            model=self._model,
-            provider="gemini",
-        )
-
-
 class _OpenAICompatProvider:
-    """OpenAI-compatible API client (works with Ollama, vLLM, LM Studio, etc.)."""
+    """A client for anything exposing an OpenAI-compatible chat API.
 
-    def __init__(
-        self, *, base_url: str, api_key: str | None = None, model: str = "gpt-4o-mini"
-    ):
+    The wire format is the only thing assumed — which vendor, gateway or local
+    runtime answers at ``base_url`` is the caller's business.
+    """
+
+    def __init__(self, *, base_url: str, api_key: str | None = None, model: str):
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover
-            raise AiDocError("openai is not installed (pip install openai)") from exc
+            raise AiDocError(
+                "openai is not installed (pip install 'linexcel[ai]' or "
+                "pip install openai). It is the client for every "
+                "OpenAI-compatible endpoint, not a choice of vendor."
+            ) from exc
+        # Local runtimes ignore the key but the client refuses to start without
+        # one, so a placeholder stands in rather than a hosted key being needed.
         self._client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY") or "ollama",  # no key needed
+            api_key=(
+                api_key
+                or os.getenv("LINEXCEL_AI_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or "not-needed"
+            ),
             base_url=base_url,
         )
         self._model = model
@@ -976,8 +921,8 @@ def document_workbook(
 
     Provider resolution (first match wins; no implicit default):
     1. `provider` — custom LLMProvider instance or callable
-    2. `base_url` or `LINEXCEL_AI_BASE_URL` — OpenAI-compatible endpoint
-    3. `model` (or `GEMINI_MODEL`) with a Google API key — Gemini, opt-in
+    2. `base_url` + `model` (or `LINEXCEL_AI_BASE_URL` + `LINEXCEL_AI_MODEL`) —
+       any OpenAI-compatible endpoint
 
     ``context`` is the workbook presentation context — the sheet previews,
     comments, merged cells, frozen panes and hidden columns a reader sees when
