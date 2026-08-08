@@ -1,60 +1,59 @@
-# AI documentation (optional, multi-provider)
+# AI documentation
 
-AI documentation is opt-in and supports any LLM provider.
+Optional and opt-in: linexcel is a lineage analyser first, and every figure in
+the report is computed without a model. What AI adds is prose — a card per node
+and an overview per workbook, written from the deterministic dossier the
+analysis already produced.
 
-**There is no default provider.** A call without `provider=`, `base_url=` or
-`model=` raises `AiDocError` and lists the options; nothing is sent anywhere
-until you pick one. Three ways to choose:
-
-| Way | Provider |
-| --- | --- |
-| `model=` (or `GEMINI_MODEL`) + Google key | Google Gemini |
-| `base_url=` (or `LINEXCEL_AI_BASE_URL`) | Any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI…) |
-| `provider=` | Your own callable / `LLMProvider` instance |
-
-## Google Gemini (explicit opt-in)
-
-Gemini requires naming a model — passing only `api_key=` no longer selects it:
+Pick a provider first — see [Choosing an AI provider](providers.md). Every
+example below uses a local Ollama runtime; substitute your own endpoint.
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite", api_key="...", language="en")
-result.save_html("out.html", docs=docs, language="en")
-# or: export GOOGLE_API_KEY=... and pass only model=
+from linexcel import analyze
+
+result = analyze("workbook.xlsx")
+docs = result.document(base_url="http://localhost:11434/v1", model="llama3.1")
+result.save_html("out.html", docs=docs)
 ```
 
-Requires `google-genai` (`uv add linexcel[ai]`).
+## Why the output is checkable
 
-## OpenAI-compatible (Ollama, vLLM, LM Studio, OpenAI)
+The model is never asked what a formula does. It is handed the node's dossier —
+the exact formula, its step-by-step evaluation, its precedents and their values,
+its dependents, the extent of a stretched group, any VBA link — and the system
+prompt forbids asserting anything absent from it. Missing information must be
+written as "not determined by lineage" rather than guessed.
+
+So every claim in a card traces back to a formula or a value read from the
+workbook, and the card sits next to that same evidence in the report. A reader
+who doubts a sentence can check it without leaving the page.
+
+## Node cards
 
 ```python
-docs = result.document(
-    base_url="http://localhost:11434/v1",
-    model="llama3.1",
-    language="en",
-)
+# Every calculation node (cells, groups, VBA procedures)
+docs = result.document(base_url=..., model=...)
+
+# Or a chosen few
+docs = result.document(["c:Synthese!B3"], base_url=..., model=...)
 ```
 
-Requires `openai` (`uv add linexcel[openai]`).
-
-## Custom provider
-
-Any callable with this signature works, and so does any object exposing a
-`generate` method with the same one:
+`document()` issues `max_workers` requests in parallel (4 by default):
 
 ```python
-def my_llm(system_prompt: str, user_prompt: str, *, temperature: float = 0.2) -> str:
-    # call your model here
-    return response_text
-
-
-docs = result.document(provider=my_llm)
+docs = result.document(base_url=..., model=..., max_workers=8)
 ```
+
+Documenting a large workbook is long and often billed, so a node that fails does
+not discard the ones that succeeded. The successful cards are returned and a
+`UserWarning` reports how many nodes were dropped; `AiDocError` is raised only
+when every node failed.
 
 ## Workbook overview
 
 ```python
-workbook_doc = result.document_workbook(model="gemini-3.1-flash-lite", language="en")
-result.save_html("out.html", docs=docs, workbook_doc=workbook_doc, language="en")
+overview = result.document_workbook(base_url=..., model=..., language="en")
+result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 
 The dossier behind the overview carries two things. The lineage says how the
@@ -76,7 +75,7 @@ model is required.
 
 ```python
 # Lineage only — cell contents stay on your machine
-workbook_doc = result.document_workbook(base_url=..., include_context=False)
+overview = result.document_workbook(base_url=..., model=..., include_context=False)
 ```
 
 The dossier is capped at `aidoc.MAX_WORKBOOK_DOSSIER_CHARS`. A workbook that
@@ -84,39 +83,26 @@ exceeds it sheds detail in order — long previews shrink, then the tail of the
 pattern and VBA lists, and only as a last resort are previews and comments
 dropped — so a small workbook loses nothing.
 
-## Concurrency and partial failures
-
-`document()` issues `max_workers` requests in parallel (4 by default):
-
-```python
-docs = result.document(model="gemini-3.1-flash-lite", max_workers=8)
-```
-
-Documenting a large workbook is long and often billed, so a node that fails does
-not discard the ones that succeeded. The successful cards are returned and a
-`UserWarning` reports how many nodes were dropped; `AiDocError` is raised only
-when every node failed.
-
 ## Token usage
 
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite")  # Gemini opt-in; use base_url= or provider= for other providers
-overview = result.document_workbook(model="gemini-3.1-flash-lite")
+docs = result.document(base_url=..., model="llama3.1")
+overview = result.document_workbook(base_url=..., model="llama3.1")
 
 print(result.token_usage)
-# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [gemini/gemini-3.1-flash-lite]
+# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [openai-compatible/llama3.1]
 
 usage = result.token_usage
 usage.input_tokens, usage.output_tokens, usage.total, usage.requests
 ```
 
-Counts come from the provider when it reports them — Gemini's `usage_metadata`
-and the OpenAI-compatible `usage` block are read directly, so the figure is the
-one you are billed on. When a provider reports nothing (a custom callable, or a
-local runtime that omits the block), the tokens are approximated instead and
-`usage.estimated` is `True`; `str(usage)` then prefixes the numbers with `~`.
+Counts come from the provider when it reports them — the OpenAI-compatible
+`usage` block is read directly, so the figure is the one you are billed on. When
+a provider reports nothing (a custom callable, or a local runtime that omits the
+block), the tokens are approximated instead and `usage.estimated` is `True`;
+`str(usage)` then prefixes the numbers with `~`.
 
 ```python
 if result.token_usage.estimated:
@@ -132,7 +118,8 @@ build a fresh `TokenUsage` and pass it as `usage=` to
 
     `TokenUsage` deliberately carries no price. Rates differ per provider,
     model and region, and a table baked into the package would silently go
-    stale. Multiply by your own current rate.
+    stale. Multiply by your own current rate — or run locally, where the rate
+    is zero.
 
 ## Capping the bill
 
@@ -140,7 +127,7 @@ build a fresh `TokenUsage` and pass it as `usage=` to
 what it is allowed to cost before it starts:
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite", token_budget=200_000)
+docs = result.document(base_url=..., model=..., token_budget=200_000)
 print(result.token_usage)
 ```
 
@@ -169,8 +156,8 @@ lifetime. One budget covers `document_workbook()` and `document()` together, so
 the figure to choose is what the whole workbook is worth to you:
 
 ```python
-result.document_workbook(model="gemini-3.1-flash-lite", token_budget=200_000)
-result.document(model="gemini-3.1-flash-lite", token_budget=200_000)  # same ceiling
+result.document_workbook(base_url=..., model=..., token_budget=200_000)
+result.document(base_url=..., model=..., token_budget=200_000)  # same ceiling
 ```
 
 A budget already spent by earlier calls raises `AiDocError` rather than sending
@@ -184,51 +171,24 @@ raises `ValueError`; to send nothing at all, do not call `document()`.
     cost of the whole workbook, which is the bulk of the bill for
     documentation-shaped work.
 
-## Languages
+    ```python
+    result.document(provider=lambda system, user, *, temperature=0.2: "")
+    print(result.token_usage)  # ~ input cost of documenting this workbook
+    ```
 
-`language=` drives both the system prompt sent to the model and the viewer
-interface. Nine are available: `en` (default), `fr`, `es`, `de`, `it`, `pt`,
-`nl`, `ja`, `zh`.
+## Language
+
+`language=` selects the system prompt sent to the model, and the same value
+drives the viewer interface. Nine are available; see
+[Languages](languages.md).
 
 ```python
-docs = result.document(model="gemini-3.1-flash-lite", language="ja")
+docs = result.document(base_url=..., model=..., language="ja")
 result.save_html("out.html", docs=docs, language="ja")
 ```
 
-It is a closed allowlist rather than free-form text — the value selects a stored
-prompt and reaches the generated JavaScript, so an arbitrary string would be a
-prompt-injection and interpolation vector. Any other value raises `ValueError`.
+## What gets sent
 
-Adding one means extending `linexcel.i18n.UI_STRINGS` and both prompt registries
-in `linexcel.aidoc`; the test suite asserts the three stay in sync, so a partial
-addition fails rather than surfacing as raw interface keys.
-
-!!! note "Translation provenance"
-
-    English and French were written by hand. The other seven languages — the
-    interface strings *and* the AI system prompts — were produced with AI
-    assistance and have not been reviewed by native speakers.
-
-    This matters more for the prompts than for the interface: their wording
-    steers how the model writes each card, so an awkward phrasing degrades
-    output quality rather than just looking odd. Corrections are welcome.
-
-## Data handling
-
-Nothing is sent until a provider is chosen explicitly (there is no default):
-Google Gemini when you pass `model=` with a key, the endpoint behind `base_url`
-otherwise (a local Ollama or vLLM runtime keeps everything on your machine), or
-wherever your own callable sends it.
-
-What each call sends:
-
-| Call | Sent |
-| --- | --- |
-| `document()` | Per node: formula, computed value, precedent/dependent labels, formula decomposition, stretched-group extent, and extracted VBA code |
-| `document_workbook()` | Sheet statistics, the largest formula patterns, defined names, VBA procedures, unresolved references, analysis warnings |
-| `document_workbook()` with `include_context=True` *(default)* | **Also** the first rows and columns of every sheet, cell comments and their authors, merged ranges, frozen panes, hidden columns |
-
-That last row means cell *contents* leave the machine, not only formulas. It is
-on by default because an overview written without them is not worth reading —
-but if a workbook holds data that must stay local and your provider is remote,
-pass `include_context=False`, or keep the whole run local with `base_url=`.
+Node dossiers and, for the overview, the workbook context. See
+[Data handling](data-handling.md) for the payload of each call and where it
+goes.

@@ -10,19 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] — 2026-08-08
 
 First stable release. The AI surface changed in two ways that a caller can
-notice, hence the major version: no provider is chosen for you any more, and the
+notice, hence the major version: no vendor is built in any more, and the
 workbook overview now sees the workbook, not only its formula graph.
 
 ### Changed (breaking)
 
-- AI documentation no longer has a default provider. `document()` and
-  `document_workbook()` used to fall back to Google Gemini when nothing was
-  passed; they now raise `AiDocError` listing the options. Gemini is still
-  supported but must be requested explicitly: pass `model=` (or set
-  `GEMINI_MODEL`) together with a Google API key (`api_key=` or
-  `GOOGLE_API_KEY`). `provider=`, `base_url=` and the OpenAI-compatible env
-  vars are unchanged. Migration: add `model="gemini-..."` to existing bare
-  Gemini calls.
+- **AI documentation is vendor-neutral.** No provider is named in the code and
+  none is chosen for you. `document()` and `document_workbook()` used to fall
+  back to Google Gemini when nothing was passed; they now raise `AiDocError`
+  listing the options. Two ways in remain, and they are the whole surface:
+
+  | | |
+  | --- | --- |
+  | `base_url=` + `model=` | any OpenAI-compatible endpoint — a local Ollama, vLLM or LM Studio runtime, a gateway such as OpenRouter, a vendor's own API |
+  | `provider=` | your own callable or `LLMProvider` object |
+
+  Removed with it: the `_GeminiProvider` client, the `google-genai` dependency,
+  the `DEFAULT_MODEL` constant, and the `GEMINI_MODEL` / `GOOGLE_API_KEY` /
+  `GEMINI_API_KEY` environment variables. A model that a vendor happens to
+  privilege is a decision for the caller, not a constant in a lineage library —
+  and the previous "opt-in" still left one vendor reachable by a shorter path
+  than the others.
+
+  The `linexcel[ai]` extra now installs `openai`, which is the client for
+  every OpenAI-compatible endpoint rather than a choice of vendor; `[openai]`
+  stays as an alias. Migration: replace `model="gemini-..."` with the
+  `base_url=` of an endpoint plus its model id — Gemini's own
+  OpenAI-compatible URL works — or wrap the native SDK in a `provider=`
+  callable.
+
+- **A model must always be named.** `base_url=` without `model=` used to fall
+  back to `gpt-4o-mini`, a name that means nothing to a local runtime. It now
+  raises, naming the endpoint it could not pick a model for. `LINEXCEL_AI_MODEL`
+  (or `OPENAI_MODEL`) is the environment equivalent, and `LINEXCEL_AI_API_KEY`
+  joins `OPENAI_API_KEY` for credentials.
 
 - `document_workbook()` now sends the workbook context — the first rows and
   columns of every sheet, cell comments and their authors, merged ranges, frozen
@@ -215,6 +236,24 @@ workbook overview now sees the workbook, not only its formula graph.
   contain macros. The workbook is read, never rewritten. `linexcel.vba`'s
   parsing and graph integration stay covered by the unit suite, which injects
   modules directly
+
+### Documentation
+
+- The README is a landing page again — install, usage, features, screenshots,
+  and a table of links. It had grown to carry the AI provider matrix, the
+  screenshot install commands, the language table and the data-handling rules in
+  full, all of which also existed in the guide; two copies of a provider list is
+  one copy too many the first time they disagree
+
+- Three guide pages added, two of them extracted from the README so the detail
+  lives in exactly one place:
+  [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/)
+  (worked examples for a local runtime, a gateway and a custom callable, with
+  the environment-variable table), plus
+  [Languages](https://auspect.github.io/linexcel/guide/languages/) and
+  [Data handling](https://auspect.github.io/linexcel/guide/data-handling/).
+  The AI guide keeps what is specific to the feature — grounding, the workbook
+  overview, concurrency, token usage and budgets
 
 ## [0.7.0] — 2026-08-02
 
