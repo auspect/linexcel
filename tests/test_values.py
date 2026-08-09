@@ -243,9 +243,9 @@ class TestChainedRefs:
         assert node_of(self.graph(), "i:Inputs!E1")["valueDate"] == "2026-08-07"
 
     def test_the_error_cell_stays_an_error(self):
-        node = node_of(self.graph(), "c:Errors!A1")
-        assert "'type': 'Error'" in node["value"]
-        assert "'kind': 'Div'" in node["value"]
+        # As Excel spells it: the engine reports a {"type": "Error"} object, and
+        # a reader of the report must never see that object rather than #DIV/0!
+        assert node_of(self.graph(), "c:Errors!A1")["value"] == "#DIV/0!"
 
     def test_the_unguarded_broken_reference_claims_no_value(self):
         node = node_of(self.graph(), "c:Errors!A2")
@@ -442,3 +442,106 @@ class TestProvenance:
         resolver = resolver_for({}, cached, warnings)
         assert resolver.value(SHEET, 2, 1) == ("KO", "file", None)
         assert warnings == []
+
+
+def error(kind: str) -> dict:
+    """An engine error value, shaped as formualizer reports it."""
+    return {"type": "Error", "kind": kind}
+
+
+class TestErrorValues:
+    """The engine reports errors as a dict; a report must show Excel's text.
+
+    Left alone it reaches the panel as ``{'type': 'Error', 'kind': 'Na'}`` —
+    Python source, where the reader is looking for ``#N/A`` — and, worse, never
+    equals the ``#N/A`` the file stores, so two identical readings are announced
+    as a disagreement.
+    """
+
+    @pytest.mark.parametrize(
+        ("formula", "text"),
+        [
+            ("=1/0", "#DIV/0!"),
+            ("=NA()", "#N/A"),
+            ("=SQRT(-1)", "#NUM!"),
+            ('="a"+1', "#VALUE!"),
+            ("=NoSuchFunction(1)", "#NAME?"),
+        ],
+    )
+    def test_an_error_reads_as_the_text_excel_shows(self, formula, text):
+        assert node_of(graph_of({"A1": formula}), "c:S!A1")["value"] == text
+
+    def test_the_same_error_on_both_sides_is_not_a_divergence(self):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): "#DIV/0!"}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("Div")}, cached, warnings)
+        assert resolver.value(SHEET, 1, 1) == ("#DIV/0!", "engine", None)
+        assert warnings == []
+
+    def test_a_different_error_is_a_divergence_named_in_excel_terms(self):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): "#VALUE!"}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("Num")}, cached, warnings)
+        assert resolver.value(SHEET, 1, 1)[0] == "#NUM!"
+        assert warnings == ["S!A1: recalculated #NUM! differs from file value #VALUE!"]
+
+    def test_an_error_recalculated_over_a_number_is_a_divergence(self):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): 31}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("Ref")}, cached, warnings)
+        assert resolver.value(SHEET, 1, 1)[0] == "#REF!"
+        assert warnings == ["S!A1: recalculated #REF! differs from file value 31"]
+
+
+class TestUncomputableFormulas:
+    """A limit of the engine is not a value of the cell.
+
+    ``NImpl`` means the engine met a function or operator it does not implement
+    — the range intersection below — and ``Circ`` a reference cycle. Showing
+    either as "the value linexcel recalculated" claims a recalculation that
+    never happened, and puts it against the file's own figure as if the
+    workbook were wrong.
+    """
+
+    def test_an_unimplemented_formula_keeps_the_value_stored_in_the_file(self):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): 31}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("NImpl")}, cached, warnings)
+        assert resolver.value(SHEET, 1, 1) == (31, "file", None)
+        assert warnings == []
+        assert resolver.uncomputed_warning() == (
+            "1 cell(s) use a formula the engine does not implement and keep the "
+            "value stored in the file: S!A1"
+        )
+
+    def test_a_reference_cycle_is_not_reported_as_a_value(self):
+        cached = CachedValues({(SHEET, 1, 1): "#VALUE!"}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("Circ")}, cached, [])
+        assert resolver.value(SHEET, 1, 1) == ("#VALUE!", "file", None)
+
+    def test_an_unknown_error_kind_is_not_invented_into_a_value(self):
+        cached = CachedValues({(SHEET, 1, 1): 7}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("SomethingNew")}, cached, [])
+        assert resolver.value(SHEET, 1, 1) == (7, "file", None)
+
+    def test_the_range_intersection_operator_claims_no_value(self):
+        # A workbook openpyxl wrote caches nothing, so there is no file value to
+        # fall back to either: the cell must simply claim none.
+        graph = graph_of({"A1": 1, "A2": 2, "A3": 3, "B1": "=SUM(A1:A3 A2:A3)"})
+        node = node_of(graph, "c:S!B1")
+        assert node["value"] is None
+        assert "valueSource" not in node
+
+    def test_the_unimplemented_cells_are_named_in_the_warnings(self):
+        graph = graph_of({"A1": 1, "A2": 2, "A3": 3, "B1": "=SUM(A1:A3 A2:A3)"})
+        assert any(
+            "does not implement" in w and "S!B1" in w for w in graph["meta"]["warnings"]
+        )
+
+    def test_an_unimplemented_step_reads_as_not_evaluated(self):
+        steps = node_of(
+            graph_of({"A1": 1, "A2": 2, "A3": 3, "B1": "=SUM(A1:A3 A2:A3)"}),
+            "c:S!B1",
+        )["steps"]
+        assert steps["evaluated"] is False
+        assert steps["value"] is None

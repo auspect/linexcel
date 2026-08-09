@@ -63,6 +63,30 @@ EXCEL_EPOCH_1904 = datetime.datetime(1904, 1, 1)
 # already absorbs the phantom day.
 EPOCH_EARLY_1900 = datetime.datetime(1899, 12, 31)
 GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
+#: Engine error kinds → the text a spreadsheet shows for them. These are values
+#: a cell genuinely holds: openpyxl reads the stored one back as this same text,
+#: so the graph carries the text on both sides and they compare directly.
+ERROR_KIND_TEXT = {
+    "Div": "#DIV/0!",
+    "Na": "#N/A",
+    "Name": "#NAME?",
+    "Num": "#NUM!",
+    "Null": "#NULL!",
+    "Ref": "#REF!",
+    "Value": "#VALUE!",
+    "Spill": "#SPILL!",
+    "Calc": "#CALC!",
+}
+EXCEL_ERRORS = frozenset(ERROR_KIND_TEXT.values())
+#: Error kinds that are *not* a cell value: the engine reporting that it could
+#: not compute, rather than a result. ``NImpl`` is a function or operator it does
+#: not implement — the range intersection in ``=SUM(D2:D10 D5:D20)``, say — and
+#: ``Circ`` a reference cycle, which Excel resolves by convention rather than by
+#: computing. Neither may be shown as "the value linexcel recalculated", because
+#: linexcel recalculated nothing; the cell falls back to what the file stores.
+UNCOMPUTED_ERROR_KINDS = frozenset({"NImpl", "Cancelled", "Circ"})
+#: How many uncomputable cells the warning names before it stops listing them.
+MAX_UNCOMPUTED_LISTED = 10
 
 
 @dataclass
@@ -201,6 +225,7 @@ class _ValueResolver:
         self._n_mismatches = 0
         self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
         self._resolving: set[tuple[str, int, int]] = set()
+        self._uncomputed: list[str] = []
         self.n_recovered = 0
         self.n_unrecovered = 0
 
@@ -214,6 +239,9 @@ class _ValueResolver:
         if sheet not in self.engine_sheets:
             return self._from_cache(sheet, row, col)
         raw, source = self._engine_read(sheet, row, col, formula)
+        if _is_uncomputed(raw):
+            self._note_uncomputed(sheet, row, col)
+            raw = None
         if raw is None:
             return self._from_cache(sheet, row, col)
         date_text = self._date_text(sheet, row, col, raw)
@@ -250,8 +278,15 @@ class _ValueResolver:
         return _jsonable(raw)
 
     def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
-        """Evaluate an expression in the scratch sheet, if budget allows."""
+        """Evaluate an expression in the scratch sheet, if budget allows.
+
+        A step the engine cannot compute reads back as *not evaluated* rather
+        than as an error: "#NULL!" under a step is the spreadsheet's own verdict
+        on the formula, and the engine hitting its own limit is not that.
+        """
         raw, ok = self._eval_raw(expr, sheet)
+        if _is_uncomputed(raw):
+            return None, False
         return _jsonable(raw), ok
 
     # -- internals ---------------------------------------------------------
@@ -290,7 +325,7 @@ class _ValueResolver:
         if self._engine_alive:
             try:
                 raw = self.engine.evaluate_cell(sheet, row, col)
-                if raw is not None:
+                if raw is not None and not _is_uncomputed(raw):
                     return raw, "engine"
             except Exception:
                 # The first failure poisons the engine for good: every later
@@ -302,16 +337,21 @@ class _ValueResolver:
     def _eval_formula(
         self, sheet: str, expr: str, depth: int
     ) -> tuple[Any, str | None]:
-        """Evaluate one formula on its own, precedents resolved first."""
+        """Evaluate one formula on its own, precedents resolved first.
+
+        An expression the engine cannot compute counts as a failure, not as a
+        result: the IFERROR/IFNA fallback branch is then tried, exactly as it is
+        when the evaluation itself does not come back.
+        """
         if not self._engine_alive:
             self._resolve_precedents(sheet, expr, depth)
         raw, ok = self._eval_raw(expr, sheet)
-        if ok and raw is not None:
+        if ok and raw is not None and not _is_uncomputed(raw):
             return raw, "engine"
         fallback = _guard_fallback_expr(expr)
         if fallback is not None:
             raw, ok = self._eval_raw(fallback, sheet)
-            if ok and raw is not None:
+            if ok and raw is not None and not _is_uncomputed(raw):
                 return raw, "fallback"
         return None, None
 
@@ -429,6 +469,30 @@ class _ValueResolver:
         self.warnings.append(
             f"{sheet}!{a1(row, col)}: recalculated {_fmt_value(raw)} "
             f"differs from file value {_fmt_value(cached)}"
+        )
+
+    def _note_uncomputed(self, sheet: str, row: int, col: int) -> None:
+        """Record a cell the engine could not compute, once."""
+        label = f"{sheet}!{a1(row, col)}"
+        if label not in self._uncomputed:
+            self._uncomputed.append(label)
+
+    def uncomputed_warning(self) -> str | None:
+        """One line naming the cells left to the value stored in the file.
+
+        Silence would be the wrong report here: those cells show a figure the
+        panel attributes to the file, and nothing else would say that linexcel
+        met a formula it cannot evaluate.
+        """
+        if not self._uncomputed:
+            return None
+        listed = ", ".join(self._uncomputed[:MAX_UNCOMPUTED_LISTED])
+        rest = len(self._uncomputed) - MAX_UNCOMPUTED_LISTED
+        if rest > 0:
+            listed += f", and {rest} more"
+        return (
+            f"{len(self._uncomputed)} cell(s) use a formula the engine does not "
+            f"implement and keep the value stored in the file: {listed}"
         )
 
 
@@ -853,6 +917,9 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             f"Values recovered cell by cell: {resolver.n_recovered} recomputed, "
             f"{resolver.n_unrecovered} left to the value stored in the file"
         )
+    uncomputed = resolver.uncomputed_warning()
+    if uncomputed:
+        warnings.append(uncomputed)
 
     graph = {
         "meta": {
@@ -1420,11 +1487,51 @@ def _date_text_of(value: Any) -> str | None:
     return None
 
 
+def _error_kind(value: Any) -> str | None:
+    """Kind of an engine error value, or ``None`` when it is not one.
+
+    The engine reports errors as a plain ``{"type": "Error", "kind": ...}``
+    dict, which stringifies to Python source rather than to anything a reader
+    of a spreadsheet recognises — hence every path out of the engine going
+    through here first.
+    """
+    if isinstance(value, dict) and value.get("type") == "Error":
+        kind = value.get("kind")
+        return kind if isinstance(kind, str) else ""
+    return None
+
+
+def _excel_error_text(value: Any) -> str | None:
+    """Spreadsheet text of an engine error value that a cell can hold."""
+    kind = _error_kind(value)
+    return None if kind is None else ERROR_KIND_TEXT.get(kind)
+
+
+def _is_uncomputed(value: Any) -> bool:
+    """True when the engine reported a limitation instead of a result.
+
+    An unknown kind counts too: a kind this table does not know is one whose
+    spreadsheet meaning we cannot vouch for, and inventing a value for it is
+    worse than admitting the cell was not recalculated.
+    """
+    kind = _error_kind(value)
+    if kind is None:
+        return False
+    return kind in UNCOMPUTED_ERROR_KINDS or kind not in ERROR_KIND_TEXT
+
+
 def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     """True when a recalculated value contradicts the one stored in the file."""
     cached_date = _date_text_of(cached)
     if cached_date is not None:
         return date_text is not None and date_text != cached_date
+    # An error is a value a cell genuinely holds, and openpyxl reads the stored
+    # one back as the same text Excel shows — so the two are directly
+    # comparable, and a recalculated #DIV/0! over a stored #DIV/0! is agreement,
+    # not a disagreement nobody can explain.
+    error_text = _excel_error_text(raw)
+    if error_text is not None or isinstance(cached, str) and cached in EXCEL_ERRORS:
+        return error_text != cached
     if isinstance(raw, bool) or isinstance(cached, bool):
         return False
     if isinstance(raw, (int, float)) and isinstance(cached, (int, float)):
@@ -1433,7 +1540,7 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
 
 
 def _fmt_value(value: Any) -> str:
-    return _date_text_of(value) or str(value)
+    return _date_text_of(value) or _excel_error_text(value) or str(value)
 
 
 def _jsonable(value):
@@ -1442,4 +1549,7 @@ def _jsonable(value):
         if isinstance(value, float) and is_nan_or_inf:
             return str(value)
         return value
+    error_text = _excel_error_text(value)
+    if error_text is not None:
+        return error_text
     return str(value)
