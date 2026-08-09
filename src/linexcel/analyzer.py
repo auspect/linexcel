@@ -491,8 +491,8 @@ class _ValueResolver:
         if rest > 0:
             listed += f", and {rest} more"
         return (
-            f"{len(self._uncomputed)} cell(s) use a formula the engine does not "
-            f"implement and keep the value stored in the file: {listed}"
+            f"{len(self._uncomputed)} cell(s) could not be computed by the engine "
+            f"and keep the value stored in the file: {listed}"
         )
 
 
