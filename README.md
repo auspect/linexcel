@@ -64,6 +64,7 @@ takes any callable for anything else. See
 | Guide | |
 | --- | --- |
 | [Quick start](https://auspect.github.io/linexcel/guide/quickstart/) | Analyse a workbook, explore it, export it |
+| [Lineage coverage](https://auspect.github.io/linexcel/guide/coverage/) | What is in the graph, and what is not |
 | [HTML export](https://auspect.github.io/linexcel/guide/html/) | The standalone offline report |
 | [Workbook context & screenshots](https://auspect.github.io/linexcel/guide/context/) | What a reader sees, not only what the file computes |
 | [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/) | Ollama, OpenRouter, any OpenAI-compatible endpoint, or your own callable |

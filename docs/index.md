@@ -27,6 +27,7 @@ See the [Quick start guide](guide/quickstart.md) for more.
 ## Guide
 
 - [Quick start](guide/quickstart.md) — analyse a workbook, explore it, export it
+- [Lineage coverage](guide/coverage.md) — what is in the graph, and what is not
 - [HTML export](guide/html.md) — the standalone offline report
 - [Workbook context & screenshots](guide/context.md) — what a reader sees, not
   only what the file computes
