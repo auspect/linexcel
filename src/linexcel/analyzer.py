@@ -322,17 +322,24 @@ class _ValueResolver:
     def _recover(
         self, sheet: str, row: int, col: int, formula: str
     ) -> tuple[Any, str | None]:
+        uncomputed = None
         if self._engine_alive:
             try:
                 raw = self.engine.evaluate_cell(sheet, row, col)
-                if raw is not None and not _is_uncomputed(raw):
-                    return raw, "engine"
+                if raw is not None:
+                    if _is_uncomputed(raw):
+                        uncomputed = raw
+                    else:
+                        return raw, "engine"
             except Exception:
                 # The first failure poisons the engine for good: every later
                 # whole-graph evaluation would raise the same way.
                 self._engine_alive = False
         expr = formula if formula.startswith("=") else "=" + formula
-        return self._remember(sheet, row, col, self._eval_formula(sheet, expr, 0))
+        result = self._eval_formula(sheet, expr, 0)
+        if result[0] is None and uncomputed is not None:
+            result = uncomputed, None
+        return self._remember(sheet, row, col, result)
 
     def _eval_formula(
         self, sheet: str, expr: str, depth: int
@@ -346,13 +353,18 @@ class _ValueResolver:
         if not self._engine_alive:
             self._resolve_precedents(sheet, expr, depth)
         raw, ok = self._eval_raw(expr, sheet)
+        uncomputed = raw if ok and raw is not None and _is_uncomputed(raw) else None
         if ok and raw is not None and not _is_uncomputed(raw):
             return raw, "engine"
         fallback = _guard_fallback_expr(expr)
         if fallback is not None:
             raw, ok = self._eval_raw(fallback, sheet)
+            if uncomputed is None and ok and raw is not None and _is_uncomputed(raw):
+                uncomputed = raw
             if ok and raw is not None and not _is_uncomputed(raw):
                 return raw, "fallback"
+        if uncomputed is not None:
+            return uncomputed, None
         return None, None
 
     def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
@@ -410,7 +422,7 @@ class _ValueResolver:
         """Memoize a recovered value and feed it back into the engine."""
         self._resolved[(sheet, row, col)] = result
         raw, _source = result
-        if raw is None:
+        if raw is None or _is_uncomputed(raw):
             self.n_unrecovered += 1
             return result
         self.n_recovered += 1

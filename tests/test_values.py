@@ -46,8 +46,13 @@ def node_of(graph: dict, node_id: str) -> dict:
 class _StubEngine:
     """Engine stand-in: only reports stored values, never recalculates."""
 
-    def __init__(self, values: dict[tuple[str, int, int], Any]):
+    def __init__(
+        self,
+        values: dict[tuple[str, int, int], Any],
+        evaluated: dict[tuple[str, int, int], Any] | None = None,
+    ):
         self._values = values
+        self._evaluated = evaluated or {}
 
     def get_value(self, sheet: str, row: int, col: int) -> Any:
         return self._values.get((sheet, row, col))
@@ -55,17 +60,26 @@ class _StubEngine:
     def get_formula(self, sheet: str, row: int, col: int) -> None:
         return None
 
+    def evaluate_cell(self, sheet: str, row: int, col: int) -> Any:
+        return self._evaluated.get((sheet, row, col))
+
 
 def resolver_for(
-    engine_values: dict, cached: CachedValues, warnings: list
+    engine_values: dict,
+    cached: CachedValues,
+    warnings: list,
+    *,
+    evaluated: dict[tuple[str, int, int], Any] | None = None,
+    engine_alive: bool = True,
 ) -> _ValueResolver:
     resolver = _ValueResolver(
-        _StubEngine(engine_values),
+        _StubEngine(engine_values, evaluated=evaluated),
         {SHEET},
         cached,
         warnings,
         _Budget(0),
         scratch_ready=False,
+        engine_alive=engine_alive,
     )
     return resolver
 
@@ -509,6 +523,35 @@ class TestUncomputableFormulas:
         resolver = resolver_for({(SHEET, 1, 1): error("NImpl")}, cached, warnings)
         assert resolver.value(SHEET, 1, 1) == (31, "file", None)
         assert warnings == []
+        assert resolver.uncomputed_warning() == (
+            "1 cell(s) use a formula the engine does not implement and keep the "
+            "value stored in the file: S!A1"
+        )
+
+    def test_a_per_cell_recovery_limit_is_named_in_the_warning(self, monkeypatch):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): 31}, set(), False)
+        resolver = resolver_for(
+            {},
+            cached,
+            warnings,
+            evaluated={(SHEET, 1, 1): error("NImpl")},
+        )
+        monkeypatch.setattr(resolver, "_eval_formula", lambda *_args: (None, None))
+        assert resolver.value(SHEET, 1, 1, "=UNSUPPORTED()") == (31, "file", None)
+        assert resolver.uncomputed_warning() == (
+            "1 cell(s) use a formula the engine does not implement and keep the "
+            "value stored in the file: S!A1"
+        )
+
+    def test_a_scratch_recovery_limit_is_named_in_the_warning(self, monkeypatch):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): 31}, set(), False)
+        resolver = resolver_for({}, cached, warnings, engine_alive=False)
+        monkeypatch.setattr(
+            resolver, "_eval_raw", lambda *_args: (error("NImpl"), True)
+        )
+        assert resolver.value(SHEET, 1, 1, "=UNSUPPORTED()") == (31, "file", None)
         assert resolver.uncomputed_warning() == (
             "1 cell(s) use a formula the engine does not implement and keep the "
             "value stored in the file: S!A1"
