@@ -2021,3 +2021,105 @@ class TestSheetClassModules:
         warnings: list[str] = []
         assert extract_vba_modules(b"", "m.xlsm", warnings) == {}
         assert warnings == []
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TestVbaOnARealWorkbook:
+    """The one thing a stub cannot prove: olevba on a real vbaProject.bin.
+
+    See ``tests/fixtures/README.md`` for how the workbook is built. The test
+    skips itself while the file is absent so the suite stays green without it.
+    """
+
+    WORKBOOK = FIXTURES / "macros.xlsm"
+
+    @pytest.fixture()
+    def graph(self):
+        if not self.WORKBOOK.exists():
+            pytest.skip(f"{self.WORKBOOK.name} absent — see fixtures/README.md")
+        return analyze(self.WORKBOOK).graph
+
+    def test_the_modules_come_out_of_the_real_container(self, graph):
+        # One, not five: Excel also writes a class module per worksheet and one
+        # for ThisWorkbook. They come out of olevba as a handful of Attribute
+        # declarations and no statement, and are not modules anybody wrote.
+        assert graph["meta"]["stats"]["vbaModules"] == 1
+        assert graph["meta"]["stats"]["vbaProcs"] == 2
+        assert not [
+            w for w in graph["meta"]["warnings"] if "VBA" in w or "oletools" in w
+        ], "a real macro workbook must raise no extraction warning"
+
+    def test_both_procedures_keep_their_declared_kind(self, graph):
+        procs = {n["label"]: n for n in graph["nodes"] if n["kind"] == "vba"}
+        assert set(procs) == {"Module1.Refresh", "Module1.Rate"}
+        assert procs["Module1.Refresh"]["procKind"] == "Sub"
+        assert procs["Module1.Rate"]["procKind"] == "Function"
+
+    def test_the_call_edge_survives_the_round_trip(self, graph):
+        calls = [
+            (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
+        ]
+        assert calls == [("vp:Module1.Refresh", "vp:Module1.Rate")]
+
+    def test_the_sheet_reads_and_writes_reach_their_ranges(self, graph):
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        written = {
+            by_id[e["target"]]["label"]
+            for e in graph["edges"]
+            if e["kind"] == "vba-write"
+        }
+        read = {
+            by_id[e["source"]]["label"]
+            for e in graph["edges"]
+            if e["kind"] == "vba-read"
+        }
+        assert "Synthesis!B10" in written
+        assert "Params!A1" in read
+
+    def test_a_reference_with_no_sheet_does_not_guess_one(self, graph):
+        """``Cells(3, 2)`` acts on whatever sheet is active at run time.
+
+        A static reader cannot know which, so it must not pick one: the target
+        is an external-reference node, not a cell of some plausible sheet.
+        """
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        targets = [
+            by_id[e["target"]]
+            for e in graph["edges"]
+            if e["kind"] == "vba-write" and e["source"] == "vp:Module1.Refresh"
+        ]
+        unqualified = [n for n in targets if n["kind"] == "opaque"]
+        assert [n["label"] for n in unqualified] == ["VBA:?!B3"]
+
+    def test_the_extracted_source_is_carried_into_the_report(self, graph):
+        refresh = next(n for n in graph["nodes"] if n["label"] == "Module1.Refresh")
+        assert "Worksheets(" in refresh["code"]
+        assert refresh["module"] == "Module1"
+
+
+class TestPowerQueryWorkbook:
+    """Power Query is not part of the lineage yet; it must still not break.
+
+    ``power_query.xlsx`` holds two M queries, one loaded onto a sheet. The
+    queries, their M source and the table they read are invisible to the graph
+    today — this pins what *is* produced, so the gap is visible in the suite
+    rather than only in a document.
+    """
+
+    WORKBOOK = FIXTURES / "power_query.xlsx"
+
+    def test_a_mashup_workbook_analyses_without_error(self):
+        result = analyze(self.WORKBOOK)
+        assert result.sheets == ["Loaded", "Source"]
+        assert result.stats["totalFormulas"] == 0
+
+    def test_the_loaded_range_is_seen_but_not_what_fills_it(self):
+        """The query output is a range whose provenance the graph cannot show."""
+        result = analyze(self.WORKBOOK)
+        labels = {n["label"] for n in result.nodes}
+        assert "Loaded!A1:B3" in labels
+        assert not [n for n in result.nodes if "BusyProducts" in n["label"]], (
+            "when queries become nodes, this expectation is what changes"
+        )

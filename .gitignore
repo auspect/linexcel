@@ -23,6 +23,13 @@ coverage.xml
 *.xlsm
 *.xlsb
 out.html
+# Checked-in fixtures are the exception: openpyxl cannot author a
+# vbaProject.bin or a Power Query mashup, so those workbooks are built once,
+# with Excel, and committed. Only this directory is exempt — `--file` invites
+# dropping a real workbook of your own in the tree, and that must stay ignored.
+!tests/fixtures/
+!tests/fixtures/*.xlsx
+!tests/fixtures/*.xlsm
 
 # validate_manual.py output (generated, may embed workbook data and AI answers)
 validate_out_*.html
