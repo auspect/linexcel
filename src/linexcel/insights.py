@@ -412,7 +412,14 @@ def _missing_renderer_message(office: str | None, converter: str | None) -> str:
 
 
 def _safe_value(value: Any) -> Any:
-    if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
+    # A date cell reads back as a midnight datetime, and "2026-01-03T00:00:00"
+    # is a timestamp nobody typed: the preview and the AI dossier both show what
+    # the cell holds, which is a day.
+    if isinstance(value, datetime.datetime):
+        if value.time() == datetime.time.min:
+            return value.date().isoformat()
+        return value.isoformat(sep=" ")
+    if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value

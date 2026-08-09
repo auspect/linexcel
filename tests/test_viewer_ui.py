@@ -350,3 +350,74 @@ class TestNewInterfaceStrings:
         html = render_html(demo_graph())
         assert "function () { return replacements[k]; }" in html
         assert "str.replace('{' + k + '}', replacements[k])" not in html
+
+
+def sheets_graph(screenshots=None) -> dict:
+    """A graph carrying the workbook context the Sheets tab reads."""
+    graph = demo_graph()
+    graph["meta"] = {
+        "workbookContext": {
+            "sheets": [
+                {
+                    "name": "In",
+                    "visibility": "visible",
+                    "dimensions": {"rows": 2, "columns": 2},
+                    "preview_range": "A1:B2",
+                    "preview": [
+                        {"row": 1, "values": ["Label", "Amount"]},
+                        {"row": 2, "values": ["Rent", 1200]},
+                    ],
+                    "freeze_panes": None,
+                    "merged_ranges": [],
+                    "hidden_columns": ["B"],
+                    "comments": [],
+                }
+            ]
+        }
+    }
+    if screenshots is not None:
+        graph["meta"]["screenshots"] = screenshots
+    return graph
+
+
+class TestSheetsTab:
+    """The tab used to hold badges and comments and nothing else.
+
+    The first cells of every sheet were already embedded in the document and
+    never drawn, and the rendered image was only ever shown when the caller
+    happened to hand in a per-sheet mapping — which nothing produced.
+    """
+
+    def test_the_first_cells_of_the_sheet_are_drawn(self):
+        script = script_of(render_html(sheets_graph()))
+        assert "previewGrid" in script
+        assert "lin-grid" in script
+
+    def test_the_preview_is_labelled_with_the_range_it_covers(self):
+        script = script_of(render_html(sheets_graph()))
+        assert "sheet.preview_range" in script
+
+    def test_a_hidden_column_is_marked_in_the_preview_header(self):
+        """The badge says column B is hidden; the grid must agree with it."""
+        script = script_of(render_html(sheets_graph()))
+        assert "hidden.indexOf(letter)" in script
+        assert "is-hidden" in render_html(sheets_graph())
+
+    def test_the_rendered_sheet_has_its_own_heading(self):
+        html = render_html(sheets_graph())
+        assert EN["sheet_render"] in html
+        assert EN["sheet_preview"] in html
+
+    def test_a_flat_page_list_is_not_shown_under_a_sheet(self):
+        """Print pages belong to the workbook; only a mapping names sheets."""
+        script = script_of(render_html(sheets_graph(["a.png", "b.png"])))
+        assert "Array.isArray(screens)" in script
+
+    def test_the_rendered_image_scrolls_inside_a_frame(self):
+        """A sheet renders onto one page, so a long one is a very tall image."""
+        css = render_html(sheets_graph({"In": ["a.png"]}))
+        assert ".lin-frame" in css
+        assert "max-height: min(52vh, 460px); overflow: auto" in css
+
+    def test_a_wide_preview_scrolls_rather_than_widening_the_card(self):
+        assert ".lin-gridwrap { overflow-x: auto" in render_html(sheets_graph())

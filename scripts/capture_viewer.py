@@ -84,7 +84,7 @@ SHOTS = (
     ),
     Shot(
         name="viewer_sheets_context.png",
-        caption="Sheet context: comments, frozen panes, rendered pages",
+        caption="Sheet context: the sheet rendered, its first cells, its comments",
         clicks=("lin-tab-sheets",),
     ),
 )

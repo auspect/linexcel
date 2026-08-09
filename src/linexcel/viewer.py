@@ -492,14 +492,38 @@ _TEMPLATE = r"""
   }
   .lin-note-head { font-weight: 700; margin-bottom: .25rem; color: var(--ink); }
   .lin-note-body { color: var(--ink2); white-space: pre-wrap; }
-  .lin-gallery {
-    display: flex; flex-direction: column; gap: 1rem; align-items: center;
-    margin-top: .5rem;
+  .lin-gallery { display: flex; flex-direction: column; gap: 1rem; margin-top: .5rem; }
+  /* A sheet renders onto a single page, so a long one is a very tall image.
+     The frame is a window onto it: the image keeps the column width of the
+     sheet and the reader scrolls down it, instead of the sheet card growing to
+     several screens and burying whatever follows. */
+  .lin-frame {
+    max-height: min(52vh, 460px); overflow: auto; border: 1px solid var(--line);
+    border-radius: 6px; box-shadow: 0 3px 12px var(--shadow);
+    background: var(--paper);
   }
-  .lin-gallery img {
-    max-width: 100%; border: 1px solid var(--line); border-radius: 6px;
-    box-shadow: 0 3px 12px var(--shadow); background: var(--paper);
+  .lin-gallery img { display: block; max-width: 100%; }
+
+  /* The first cells of the sheet, as openpyxl read them. Always present, where
+     the rendered image needs LibreOffice, so this is what the tab shows when
+     the workbook was never rendered. */
+  .lin-gridwrap { overflow-x: auto; border: 1px solid var(--hair); border-radius: 6px; }
+  .lin-grid {
+    border-collapse: collapse; font-size: .8rem; background: var(--surface);
+    font-variant-numeric: tabular-nums;
   }
+  .lin-grid th, .lin-grid td {
+    border: 1px solid var(--hair); padding: .25rem .5rem; text-align: left;
+    white-space: nowrap; max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lin-grid thead th, .lin-grid tbody th {
+    background: var(--surface2); color: var(--ink2); font-weight: 600;
+    text-align: center; position: sticky; left: 0;
+  }
+  .lin-grid thead th { top: 0; z-index: 1; }
+  .lin-grid td { color: var(--ink); }
+  .lin-grid td.num { text-align: right; }
+  .lin-grid .is-hidden { opacity: .45; font-style: italic; }
 
   /* --- visual preview tab ---------------------------------------------- */
   .lin-shots { display: flex; flex-direction: column; gap: 1.2rem; align-items: center; }
@@ -705,10 +729,15 @@ _TEMPLATE = r"""
       line: v('--line', '#c3c2b7'), nodeBorder: v('--node-border', 'rgba(11,11,11,0.18)')
     };
   }
-  // Engine error objects → the text Excel itself would show.
+  // Engine error objects → the text Excel itself would show. analyze() resolves
+  // these to their text before the graph is built, so this only covers a graph
+  // assembled elsewhere and handed to LineageResult. Keys are the engine's own
+  // kind names — 'Na', not 'NA' — which is what made an error object fall
+  // through to JSON.stringify() and reach the panel as Python source.
   var ERRTEXT = {
-    Div: '#DIV/0!', Ref: '#REF!', Value: '#VALUE!', NA: '#N/A',
-    Name: '#NAME?', Num: '#NUM!', Null: '#NULL!'
+    Div: '#DIV/0!', Na: '#N/A', Name: '#NAME?', Num: '#NUM!',
+    Null: '#NULL!', Ref: '#REF!', Value: '#VALUE!', Spill: '#SPILL!',
+    Calc: '#CALC!'
   };
   var byId = {};
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
@@ -1120,20 +1149,79 @@ _TEMPLATE = r"""
           card.appendChild(commList);
         }
 
-        var screens = GRAPH.meta.screenshots;
-        if (screens && typeof screens === 'object' && !Array.isArray(screens) && screens[sheet.name] && screens[sheet.name].length) {
-          card.appendChild(el('h4', 'lin-sub', '📸 ' + _t('visual')));
+        var shots = sheetShots(sheet.name);
+        if (shots) {
+          card.appendChild(el('h4', 'lin-sub', '📸 ' + _t('sheet_render')));
           var imgGallery = el('div', 'lin-gallery');
-          screens[sheet.name].forEach(function(imgSrc) {
+          shots.forEach(function (imgSrc) {
+            var frame = el('div', 'lin-frame');
             var img = el('img');
             img.src = imgSrc;
-            img.alt = sheet.name;
-            imgGallery.appendChild(img);
+            img.alt = _t('sheet_render') + ' — ' + sheet.name;
+            img.loading = 'lazy';
+            frame.appendChild(img);
+            imgGallery.appendChild(frame);
           });
           card.appendChild(imgGallery);
         }
 
+        var grid = previewGrid(sheet);
+        if (grid) {
+          card.appendChild(el('h4', 'lin-sub',
+            '📋 ' + _t('sheet_preview') + ' — ' + sheet.preview_range));
+          card.appendChild(grid);
+        }
+
         detailsContainer.appendChild(card);
+      }
+
+      // Images are only ever tied to a sheet when the renderer produced one page
+      // per sheet; a flat list of print pages belongs to the workbook, not to
+      // any one sheet, and lives in its own tab.
+      function sheetShots(name) {
+        var screens = GRAPH.meta.screenshots;
+        if (!screens || typeof screens !== 'object' || Array.isArray(screens)) return null;
+        var list = screens[name];
+        return list && list.length ? list : null;
+      }
+
+      // The first cells of the sheet, laid out as they sit in it — no header row
+      // is assumed, so row 1 is shown as row 1 whatever it holds.
+      function previewGrid(sheet) {
+        var rows = sheet.preview || [];
+        var width = 0;
+        rows.forEach(function (r) { width = Math.max(width, (r.values || []).length); });
+        if (!width) return null;
+        var hidden = sheet.hidden_columns || [];
+        var wrap = el('div', 'lin-gridwrap');
+        var table = el('table', 'lin-grid');
+
+        var headRow = el('tr');
+        headRow.appendChild(el('th'));
+        for (var c = 1; c <= width; c++) {
+          var letter = colLetter(c);
+          var th = el('th', hidden.indexOf(letter) >= 0 ? 'is-hidden' : null, letter);
+          if (hidden.indexOf(letter) >= 0) th.title = _t('hidden_columns');
+          headRow.appendChild(th);
+        }
+        var thead = el('thead'); thead.appendChild(headRow); table.appendChild(thead);
+
+        var tbody = el('tbody');
+        rows.forEach(function (r) {
+          var tr = el('tr');
+          tr.appendChild(el('th', null, String(r.row)));
+          for (var i = 0; i < width; i++) {
+            var v = (r.values || [])[i];
+            var blank = v === null || v === undefined || v === '';
+            var td = el('td', typeof v === 'number' ? 'num' : null, blank ? '' : fmt(v));
+            if (!blank) td.title = String(v);
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        return wrap;
       }
 
       ctx.sheets.forEach(function(sheet, idx) {
@@ -1318,6 +1406,16 @@ _TEMPLATE = r"""
     if (cls) e.className = cls;
     if (txt !== undefined) e.textContent = txt;
     return e;
+  }
+  // 1 → A, 27 → AA. Bijective base 26, so no zero digit to carry.
+  function colLetter(n) {
+    var out = '';
+    while (n > 0) {
+      var rest = (n - 1) % 26;
+      out = String.fromCharCode(65 + rest) + out;
+      n = (n - 1 - rest) / 26;
+    }
+    return out;
   }
   function section(title) { var s = el('div'); s.appendChild(el('h3', null, title)); return s; }
 

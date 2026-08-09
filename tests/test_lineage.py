@@ -1395,6 +1395,28 @@ class TestWorkbookPresentationContext:
         dossier = build_workbook_dossier(analyze(lineage_excel).graph)
         assert all("preview" not in sheet for sheet in dossier["sheets"])
 
+    def test_a_date_cell_previews_as_the_day_it_holds(self):
+        """openpyxl reads a date back as a midnight datetime, and
+        "2026-01-03T00:00:00" is a timestamp nobody typed into the sheet."""
+        import datetime
+        import io as _io
+
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        workbook.active["A1"] = datetime.date(2026, 1, 3)
+        workbook.active["A2"] = datetime.datetime(2026, 1, 3, 14, 30)
+        buffer = _io.BytesIO()
+        workbook.save(buffer)
+
+        sheet = analyze(buffer.getvalue(), filename="d.xlsx").workbook_context[
+            "sheets"
+        ][0]
+        assert [row["values"][0] for row in sheet["preview"]] == [
+            "2026-01-03",
+            "2026-01-03 14:30:00",
+        ]
+
     def test_document_workbook_sends_the_context_by_default(self, lineage_excel):
         seen: list[str] = []
 

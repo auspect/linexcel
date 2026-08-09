@@ -91,7 +91,8 @@ written from that same deterministic dossier.
 
 ### Sheet context
 
-Comments, frozen panes, merged ranges and the rendered pages of each sheet.
+Each sheet rendered whole, over a grid of its first cells, alongside its
+comments, frozen panes, merged ranges and hidden columns.
 
 ![Sheet context tab](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_sheets_context.png)
 
