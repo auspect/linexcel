@@ -56,6 +56,16 @@ workbook overview now sees the workbook, not only its formula graph.
   the dossier" guarantee is unchanged, and no image is ever uploaded. Migration:
   pass `include_context=False` to restore the previous payload.
 
+- **`save_screenshots()` returns a mapping keyed by sheet name**, not a flat
+  `list[Path]` of print pages. The flat list could not be shown under the sheet
+  it belonged to, which is the whole reason to render a workbook at all; the
+  report was reduced to a separate tab of unlabelled pages. Migration: pass
+  `per_sheet=False` for the previous return value and the previous tab. Note
+  that a mapping is still downgraded to that flat list when the renderer does
+  not produce exactly one page per sheet — an older LibreOffice ignores the
+  single-page option — so a caller that does not pass `per_sheet=False` should
+  handle both shapes. `to_html()` and `save_html()` already accept either.
+
 ### Added
 
 - `token_budget=` on `document()` and `document_workbook()`: a ceiling on the
@@ -80,6 +90,32 @@ workbook overview now sees the workbook, not only its formula graph.
   no formula — a data-only tab contributes no lineage node — now appear in the
   dossier through the context rather than being invisible to the overview
 
+- `per_sheet=` on `save_screenshots()` (default `True`). LibreOffice is asked to
+  put each sheet on a single page, which is what makes a page map onto a sheet
+  at all: under the workbook's own print layout a long sheet spans several pages
+  and short ones share one, so no page number maps back and the images could
+  only ever be shown as an unlabelled flat list. Rendered files are named after
+  the sheet they show (`demo-Synthese.png`). Pass `per_sheet=False` for the
+  print pages instead. A sheet with nothing on it renders one pixel tall and is
+  left out rather than shown as a broken image
+
+- `tests/fixtures/`, holding the two workbooks `openpyxl` cannot author:
+  `macros.xlsm` (a real `vbaProject.bin`) and `power_query.xlsx` (a real M
+  mashup). The VBA extraction code had been tested only against a stubbed
+  `olevba`, which is to say the boundary with it had never run at all; the
+  fixture put `vba.py` at 99% coverage and immediately turned up the sheet
+  class modules above. `.gitignore` exempts that one directory from the blanket
+  Excel-file ignore, so a workbook of your own dropped in the tree stays ignored
+
+- `--check-max-tokens` in `validate_manual.py`, which documents one node under
+  several `max_tokens` ceilings and reports which of them actually cut the
+  response. An OpenAI-compatible endpoint is free to ignore the parameter, and
+  no test suite can answer that for the endpoint you happen to run; the check
+  reports rather than asserts, and says so when a ceiling was simply never
+  reached — the same prompt sampled twice comes back at very different lengths,
+  so a shorter answer under a ceiling is no evidence the ceiling caused it.
+  `--max-tokens` also now applies to a whole validation run
+
 - `scripts/capture_viewer.py`, which captures the README images from a real
   report by driving the interface (clicking tabs, searching for a node) instead
   of photographing the landing state repeatedly. It records the hashes of
@@ -90,6 +126,16 @@ workbook overview now sees the workbook, not only its formula graph.
   commit does not
 
 ### Changed — HTML report
+
+- **The Sheets tab shows the sheets.** It listed badges and comments and left
+  the rest of the pane blank: the first cells of every sheet were already
+  embedded in the document and never drawn, and the rendered image only appeared
+  when the caller happened to hand in a per-sheet mapping, which nothing
+  produced. Each sheet now shows its own rendered image — in a scrollable frame,
+  since a sheet renders onto one page and a long one is a very tall picture —
+  above a grid of its first cells, with column letters, row numbers and the
+  hidden columns marked. The grid comes from `openpyxl` alone, so the tab has
+  content on a machine with no renderer installed at all
 
 - The **value card now states what it is comparing**. Reading values back is a
   headline feature and the report undersold it: one figure and a small
@@ -148,6 +194,50 @@ workbook overview now sees the workbook, not only its formula graph.
   indent) are still set inline
 
 ### Fixed
+
+- **Excel error values are shown as Excel spells them.** The engine reports an
+  error as a `{"type": "Error", "kind": ...}` dictionary, and nothing turned it
+  into text, so the panel showed `{'type': 'Error', 'kind': 'Na'}` — Python
+  source, where the reader was looking for `#N/A`. Worse, that string could
+  never equal the `#N/A` stored in the file, so the value card announced *every*
+  error cell as "the recalculated value differs from the file" while both
+  readings said the same thing. `#DIV/0!`, `#N/A`, `#NAME?`, `#NUM!`, `#NULL!`,
+  `#REF!`, `#VALUE!`, `#SPILL!` and `#CALC!` now read as themselves, compare
+  against the stored value as themselves, and a divergence warning names them in
+  the same terms
+
+- **A limit of the engine is no longer reported as a value of the cell.** A
+  formula the engine does not implement — the range intersection in
+  `=SUM(D2:D10 D5:D20)` — came back as an internal `NImpl` error and was
+  presented as what linexcel recalculated, then set against the file's own
+  figure as if the workbook were wrong. Nothing was recalculated. Such a cell
+  now keeps the value stored in the file and says so, its step decomposition
+  reads *not evaluated*, and a warning names the cells it happened to. Reference
+  cycles (`Circ`), a cancelled evaluation, and any error kind whose spreadsheet
+  meaning we cannot vouch for are treated the same way
+
+- **A VBA project that cannot be read no longer fails silently.** Every failure
+  in `extract_vba_modules()` — an unreadable project, a module stream olevba
+  chokes on, oletools missing — returned the same empty mapping as a workbook
+  holding no macro at all, so a `.xlsm` full of code was reported as having
+  none and nothing said otherwise. The reason is now a workbook warning, as is
+  the case where the file declares macros but no module could be read. A failure
+  part-way through keeps the modules already read rather than discarding them:
+  their procedures and call graph are real, and the warning says the rest is
+  missing
+
+- **A workbook with one macro module no longer reports five.** Excel writes a
+  class module per worksheet and one for `ThisWorkbook` whether or not anybody
+  puts code in them, and they are not empty — they hold `Attribute VB_*`
+  declarations, so they counted. `vbaModules` now counts modules somebody wrote.
+  A sheet module that does hold code — a `Worksheet_Change` handler — has lines
+  beyond the attributes and is kept. Found by reading a real `.xlsm` rather than
+  a stub
+
+- A date cell previewed as `2026-01-03T00:00:00`, a timestamp nobody typed:
+  `openpyxl` reads a date back as a midnight datetime and the whole ISO form was
+  kept. It now reads as the day it holds, in the Sheets tab and in the dossier
+  the AI overview is written from
 
 - One unresolvable reference no longer costs the whole workbook its computed
   values. `evaluate_all` is all-or-nothing and gives up on the *first* reference
@@ -238,6 +328,18 @@ workbook overview now sees the workbook, not only its formula graph.
   modules directly
 
 ### Documentation
+
+- A [Lineage coverage](https://auspect.github.io/linexcel/guide/coverage/) page:
+  what is in the graph, what is represented but not resolved, and what is not
+  there at all. A lineage tool is only useful if you know where it stops, and
+  the honest entry is **Power Query**: a workbook whose data arrives through a
+  query shows the range it loaded into and nothing about where that data came
+  from — not the query, not its M source, not the table it reads. Everything
+  needed is in the file (`customXml/item1.xml` carries the M source of every
+  query, `xl/connections.xml` names the range each lands in), so this is a gap
+  to close rather than a limit of the format; tracked for a release after 1.0.
+  `tests/fixtures/power_query.xlsx` pins what the graph produces today, so the
+  gap is visible in the suite and not only in a document
 
 - The README is a landing page again — install, usage, features, screenshots,
   and a table of links. It had grown to carry the AI provider matrix, the
