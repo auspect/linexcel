@@ -213,14 +213,31 @@ class LineageResult:
         *,
         dpi: int = 144,
         timeout: int = 180,
-    ) -> list[Path]:
-        """Render workbook pages to PNG using LibreOffice headless.
+        per_sheet: bool = True,
+    ) -> dict[str, list[Path]] | list[Path]:
+        """Render the workbook to PNG using LibreOffice headless.
 
         Works on Linux, macOS and Windows. The optional renderer requires
         LibreOffice and ``pdftoppm`` from Poppler; both are found on ``PATH`` or
         in their standard install directory, since the Windows and macOS
         installers do not extend ``PATH``. Use :attr:`workbook_context` when
         only the non-rendered context is needed.
+
+        By default each sheet is rendered whole, onto one image, and the result
+        is a ``{sheet name: [png]}`` mapping — the shape :meth:`to_html` shows
+        under each sheet in its Sheets tab:
+
+            >>> result.save_html(                          # doctest: +SKIP
+            ...     "report.html",
+            ...     screenshots=result.save_screenshots("shots/"),
+            ... )
+
+        ``per_sheet=False`` returns the flat ``list[Path]`` of print pages
+        instead, laid out by the workbook's own page setup; the report then
+        shows them in a separate tab, since no page can be tied to a sheet.
+        A mapping is also downgraded to that flat list when the renderer does
+        not produce exactly one page per sheet, rather than filing images under
+        sheets they may not belong to.
         """
         from linexcel.insights import render_workbook_screenshots
 
@@ -230,6 +247,7 @@ class LineageResult:
             output_dir,
             dpi=dpi,
             timeout=timeout,
+            per_sheet=per_sheet,
         )
 
     # -- AI documentation (optional) --------------------------------------

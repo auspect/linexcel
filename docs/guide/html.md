@@ -22,6 +22,10 @@ screenshots = result.save_screenshots("screenshots/")
 result.save_html("lineage.html", screenshots=screenshots)
 ```
 
+One image per sheet, keyed by sheet name, so the **Sheets** tab shows each one
+under the sheet it renders. See [screenshots](context.md#screenshots) for the
+flat print-page alternative.
+
 ## In a notebook
 
 ```python

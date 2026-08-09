@@ -76,10 +76,6 @@ class Case:
     build: Callable[[], bytes]
     workbook: Path
     languages: tuple[str, ...]
-    #: Report pages per sheet, when the print layout is known. The viewer shows
-    #: a mapping inline under each sheet and a flat list in its own tab, so an
-    #: unpredictable layout is better left flat than guessed at.
-    pages_by_sheet: Callable[[list[Path]], dict | list] | None = None
     checks: Sequence[str] = field(default_factory=tuple)
     #: False for a workbook the user supplied: it is read, never rewritten, and
     #: already carries the results Excel stored.
@@ -94,12 +90,6 @@ class Case:
         return SCREENSHOTS_ROOT / self.name
 
 
-def _sales_pages(pages: list[Path]) -> dict | list:
-    if len(pages) < 5:
-        return pages
-    return {"Ventes": pages[0:3], "Synthese": [pages[3]], "Params": [pages[4]]}
-
-
 CASES = {
     "sales": Case(
         name="sales",
@@ -107,12 +97,12 @@ CASES = {
         build=validation_workbooks.build_sales_workbook,
         workbook=Path("validation_demo.xlsx"),
         languages=("fr", "en"),
-        pages_by_sheet=_sales_pages,
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
             "  It should name the title in B2, the hidden Prix column and the",
             "  comment on B3, none of which any formula reveals.",
-            "'Sheets' — comments, frozen panes, merged ranges, rendered pages.",
+            "'Sheets' — every sheet shows its own rendered image and its first",
+            "  cells, alongside comments, frozen panes and merged ranges.",
             "'Graph' — select a node, read its card against the decomposition.",
         ),
     ),
@@ -304,23 +294,25 @@ def report_context(result: linexcel.LineageResult) -> None:
 def render_screenshots(
     result: linexcel.LineageResult, case: Case
 ) -> dict | list | None:
-    """Render the sheets to PNG and map the pages back to their sheet."""
+    """Render each sheet to a PNG, keyed by the sheet it shows."""
     print("\n3. 📸 Sheet screenshots (LibreOffice headless + pdftoppm)")
     target = case.screenshots_dir
     try:
         if target.exists():
             shutil.rmtree(target)
-        screenshots = sorted(result.save_screenshots(target, dpi=200))
+        screenshots = result.save_screenshots(target, dpi=200)
     except Exception as exc:
         print(f"   ⚠️  Not rendered: {exc}")
         return None
-    print(f"   ✅ {len(screenshots)} page(s) in {target.as_posix()}/")
-
-    if case.pages_by_sheet is None:
-        # Page count per sheet is not knowable up front, so the pages go to the
-        # viewer's own tab as a flat list rather than under a guessed sheet.
-        return screenshots
-    return case.pages_by_sheet(screenshots)
+    if isinstance(screenshots, dict):
+        print(f"   ✅ {len(screenshots)} sheet(s) rendered in {target.as_posix()}/")
+        for name in screenshots:
+            print(f"     📄 {name}")
+    else:
+        # The renderer did not give one page per sheet, so nothing ties a page
+        # to a sheet: they go to the viewer's own tab as a flat list.
+        print(f"   ⚠️  {len(screenshots)} page(s), not one per sheet — shown flat")
+    return screenshots
 
 
 def document(

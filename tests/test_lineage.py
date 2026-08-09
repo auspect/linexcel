@@ -3,6 +3,7 @@
 import io
 import json
 import re
+import struct
 from pathlib import Path
 from typing import Any, cast
 
@@ -552,6 +553,7 @@ class TestPackageApi:
         monkeypatch.setattr("linexcel.insights.shutil.which", commands.get)
         monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
         screenshots = analyze(lineage_excel).save_screenshots(tmp_path)
+        assert isinstance(screenshots, list)
         assert [path.name for path in screenshots] == ["workbook-1.png"]
         assert calls[0][2:5] == ["--headless", "--norestore", "--convert-to"]
         assert calls[1][1:3] == ["-png", "-r"]
@@ -1651,3 +1653,125 @@ class TestVbaGraph:
             (e["source"], e["target"]) for e in graph["edges"] if e["kind"] == "call"
         ]
         assert calls == [("vp:ModA.Run", "vp:ModB.Helper")]
+
+
+def png_bytes(width: int = 40, height: int = 30) -> bytes:
+    """Enough of a PNG for the renderer to read its dimensions back."""
+    return (
+        b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", width, height)
+    )
+
+
+class TestScreenshotsPerSheet:
+    """A page can only be shown under a sheet if it *is* that sheet.
+
+    LibreOffice is asked to put each sheet on one page, which is what makes the
+    two line up at all: under the workbook's own print layout a long sheet spans
+    several pages and short ones share one, and no page number maps back.
+    """
+
+    @staticmethod
+    def _renderer(monkeypatch, pages: list[bytes]):
+        """Stand in for LibreOffice and pdftoppm, producing ``pages``."""
+        calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            if command[0] == "libreoffice":
+                pdf_dir = Path(command[command.index("--outdir") + 1])
+                (pdf_dir / "workbook.pdf").write_bytes(b"%PDF-1.4")
+            else:
+                width = len(str(len(pages)))
+                for index, page in enumerate(pages, start=1):
+                    Path(f"{command[-1]}-{index:0{width}d}.png").write_bytes(page)
+
+        monkeypatch.setattr(
+            "linexcel.insights.shutil.which",
+            {"libreoffice": "libreoffice", "pdftoppm": "pdftoppm"}.get,
+        )
+        monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
+        return calls
+
+    def test_one_page_per_sheet_is_keyed_by_sheet_name(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        self._renderer(monkeypatch, [png_bytes()] * 3)
+        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        assert isinstance(shots, dict)
+        assert list(shots) == ["Ventes", "Synthese", "Params"]
+        assert [p.name for pages in shots.values() for p in pages] == [
+            "workbook-Ventes.png",
+            "workbook-Synthese.png",
+            "workbook-Params.png",
+        ]
+
+    def test_the_single_page_filter_is_what_is_asked_for(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        calls = self._renderer(monkeypatch, [png_bytes()] * 3)
+        analyze(lineage_excel).save_screenshots(tmp_path)
+        assert "SinglePageSheets" in calls[0][calls[0].index("--convert-to") + 1]
+
+    def test_print_pages_are_a_flat_list_under_the_workbook_layout(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        calls = self._renderer(monkeypatch, [png_bytes()] * 2)
+        shots = analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        assert isinstance(shots, list)
+        assert calls[0][calls[0].index("--convert-to") + 1] == "pdf"
+        assert [p.name for p in shots] == ["workbook-1.png", "workbook-2.png"]
+
+    def test_a_page_count_that_does_not_match_is_not_mapped_by_guesswork(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        """An older LibreOffice ignores the option and paginates as it prints.
+
+        Naming those pages after sheets would file each image under a sheet it
+        may not show, so the flat list is returned instead.
+        """
+        self._renderer(monkeypatch, [png_bytes()] * 5)  # 5 pages, 3 sheets
+        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        assert isinstance(shots, list)
+        assert [p.name for p in shots] == [f"workbook-{n}.png" for n in range(1, 6)]
+
+    def test_a_sheet_with_nothing_on_it_gets_no_image(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        """An empty sheet renders one pixel tall and would read as a broken
+        image; the sheet is simply left without one."""
+        self._renderer(monkeypatch, [png_bytes(), png_bytes(97, 1), png_bytes()])
+        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        assert isinstance(shots, dict)
+        assert list(shots) == ["Ventes", "Params"]
+
+    def test_pages_of_an_earlier_run_are_not_returned_as_this_one(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        """pdftoppm pads the page number to the width of the page count, so a
+        reused directory holds both "-1.png" and "-01.png"."""
+        self._renderer(monkeypatch, [png_bytes()] * 12)
+        analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        self._renderer(monkeypatch, [png_bytes()] * 2)
+        shots = analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        assert isinstance(shots, list)
+        assert [p.name for p in shots] == ["workbook-1.png", "workbook-2.png"]
+
+    def test_a_sheet_name_no_filesystem_accepts_still_gets_a_file(
+        self, monkeypatch, tmp_path
+    ):
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        workbook.active.title = "O'Brien & Café"
+        workbook.create_sheet("O Brien  Caf")  # sanitizes to the same name
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+
+        self._renderer(monkeypatch, [png_bytes()] * 2)
+        shots = analyze(buffer.getvalue(), filename="w.xlsx").save_screenshots(tmp_path)
+        assert isinstance(shots, dict)
+        assert list(shots) == ["O'Brien & Café", "O Brien  Caf"]
+        assert [p.name for pages in shots.values() for p in pages] == [
+            "w-O-Brien-Caf.png",
+            "w-O-Brien-Caf-2.png",
+        ]
