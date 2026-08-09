@@ -1487,6 +1487,19 @@ class TestVba:
         )
         assert procs[0].refs == []
 
+    def test_bracket_shortcut_references_are_found(self):
+        """`[A1] = 1` is the shortcut form; the docstring advertises it."""
+        procs = analyze_vba({"M": "Sub S()\n    [B7] = 1\n    x = [D2:E4]\nEnd Sub\n"})
+        accesses = {(r.sheet, r.ref): r.access for r in procs[0].refs}
+        assert accesses == {(None, "B7"): "write", (None, "D2:E4"): "read"}
+
+    def test_a_procedure_missing_its_end_still_yields_its_body(self):
+        """A truncated module is what a partial extraction leaves behind."""
+        procs = analyze_vba({"M": 'Sub S()\n    Range("A1") = 1\n'})
+        assert [p.name for p in procs] == ["S"]
+        assert procs[0].line_end == 2
+        assert [(r.ref, r.access) for r in procs[0].refs] == [("A1", "write")]
+
     def test_calls_are_case_insensitive(self):
         """VBA is case-insensitive: `helper` must reach `Helper`."""
         procs = analyze_vba(
@@ -1511,7 +1524,7 @@ class TestVbaGraph:
     def _graph(workbook: bytes, monkeypatch, modules: dict[str, str]) -> dict:
         monkeypatch.setattr(
             "linexcel.analyzer.extract_vba_modules",
-            lambda data, filename: dict(modules),
+            lambda data, filename, warnings=None: dict(modules),
         )
         return analyze_workbook(workbook, "macro.xlsm")["graph"]
 
@@ -1775,3 +1788,236 @@ class TestScreenshotsPerSheet:
             "w-O-Brien-Caf.png",
             "w-O-Brien-Caf-2.png",
         ]
+
+
+class _StubVbaParser:
+    """Stand-in for ``olevba.VBA_Parser``.
+
+    The real one needs a ``vbaProject.bin``, which is an OLE compound file that
+    ``openpyxl`` cannot author — so no generated fixture can carry macros and
+    the extraction loop had never run in a test. This drives it with the tuples
+    olevba yields, including the shapes that only turn up on real files: a
+    module name and a body coming back as undecoded bytes.
+    """
+
+    #: Set per test: (subfile, stream_path, vba_filename, code) tuples.
+    macros: tuple = ()
+    #: Set per test to raise from the matching call.
+    fail_on_open = False
+    fail_on_extract = False
+    detects = True
+    closed = False
+
+    def __init__(self, filename, data=None, **_kwargs):
+        if type(self).fail_on_open:
+            raise OSError("not an OLE file")
+        self.filename = filename
+
+    def detect_vba_macros(self):
+        return type(self).detects
+
+    def extract_macros(self):
+        for index, macro in enumerate(type(self).macros):
+            if type(self).fail_on_extract and index:
+                raise ValueError("stream 2 is corrupt")
+            yield macro
+
+    def close(self):
+        type(self).closed = True
+
+
+@pytest.fixture()
+def stub_olevba(monkeypatch):
+    """Install the stub and reset its per-test state."""
+    import oletools.olevba
+
+    for attribute, value in (
+        ("macros", ()),
+        ("fail_on_open", False),
+        ("fail_on_extract", False),
+        ("detects", True),
+        ("closed", False),
+    ):
+        setattr(_StubVbaParser, attribute, value)
+    monkeypatch.setattr(oletools.olevba, "VBA_Parser", _StubVbaParser)
+    return _StubVbaParser
+
+
+class TestVbaExtraction:
+    """The olevba boundary: everything below it was tested, this was not."""
+
+    def test_modules_are_read_and_named_after_their_stream(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            ("x.xlsm", "VBA/Module1", "VBA/Module1.bas", "Sub A()\nEnd Sub\n"),
+            ("x.xlsm", "VBA/Sheet1", "VBA/Sheet1.cls", "Sub B()\nEnd Sub\n"),
+        )
+        modules = extract_vba_modules(b"", "x.xlsm")
+        assert list(modules) == ["Module1", "Sheet1"]
+        assert modules["Module1"].startswith("Sub A()")
+        assert stub_olevba.closed, "the parser must be closed even on success"
+
+    def test_an_undecodable_stream_is_decoded_rather_than_dropped(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            ("x", "p", b"VBA/M\xff.bas", b"Sub A()\n  x = \xff\nEnd Sub\n"),
+        )
+        modules = extract_vba_modules(b"", "x.xlsm")
+        assert list(modules) == ["M�"]
+        assert "Sub A()" in modules["M�"]
+
+    def test_two_streams_of_one_module_are_joined(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            ("x", "p", "VBA/M.bas", "Sub A()\nEnd Sub\n"),
+            ("x", "p", "VBA/M.cls", "Sub B()\nEnd Sub\n"),
+        )
+        modules = extract_vba_modules(b"", "x.xlsm")
+        assert list(modules) == ["M"]
+        assert "Sub A()" in modules["M"] and "Sub B()" in modules["M"]
+
+    def test_an_empty_stream_contributes_no_module(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (("x", "p", "VBA/M.bas", "   \n"),)
+        warnings: list[str] = []
+        assert extract_vba_modules(b"", "x.xlsm", warnings) == {}
+        assert warnings == [], "an empty module stream is not a failure"
+
+    def test_macros_announced_but_no_stream_handed_back_is_reported(self, stub_olevba):
+        """olevba saying yes and then yielding nothing is the anomaly."""
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = ()
+        warnings: list[str] = []
+        assert extract_vba_modules(b"", "x.xlsm", warnings) == {}
+        assert warnings == [
+            "the workbook declares VBA macros but no module stream could be read"
+        ]
+
+    def test_a_workbook_without_macros_says_nothing(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.detects = False
+        warnings: list[str] = []
+        assert extract_vba_modules(b"", "plain.xlsx", warnings) == {}
+        assert warnings == [], "having no macros is not a defect to report"
+
+    def test_an_unreadable_project_is_reported(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.fail_on_open = True
+        warnings: list[str] = []
+        assert extract_vba_modules(b"", "x.xlsm", warnings) == {}
+        assert warnings == ["the VBA project could not be opened: not an OLE file"]
+
+    def test_a_failure_part_way_keeps_what_was_read(self, stub_olevba):
+        """Dropping the modules already read trades a partial answer for none."""
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            ("x", "p", "VBA/M1.bas", "Sub A()\nEnd Sub\n"),
+            ("x", "p", "VBA/M2.bas", "Sub B()\nEnd Sub\n"),
+        )
+        stub_olevba.fail_on_extract = True
+        warnings: list[str] = []
+        modules = extract_vba_modules(b"", "x.xlsm", warnings)
+        assert list(modules) == ["M1"]
+        assert warnings == [
+            "VBA extraction stopped after 1 module(s) read: stream 2 is corrupt"
+        ]
+        assert stub_olevba.closed, "the parser must be closed even on failure"
+
+    def test_the_analyzer_surfaces_the_reason_in_its_warnings(
+        self, lineage_excel, stub_olevba
+    ):
+        """A macro workbook showing no VBA must not do so silently."""
+        stub_olevba.fail_on_open = True
+        graph = analyze_workbook(lineage_excel, "macro.xlsm")["graph"]
+        assert graph["meta"]["stats"]["vbaProcs"] == 0
+        assert any(
+            "VBA project could not be opened" in w for w in graph["meta"]["warnings"]
+        )
+
+    def test_a_real_macro_workbook_reaches_the_graph(self, lineage_excel, stub_olevba):
+        """End to end through the real extraction code, only olevba stubbed."""
+        stub_olevba.macros = (
+            (
+                "x",
+                "p",
+                "VBA/Module1.bas",
+                'Sub Refresh()\n    Worksheets("Synthese").Range("B10").Value = 1\n'
+                "End Sub\n",
+            ),
+        )
+        graph = analyze_workbook(lineage_excel, "macro.xlsm")["graph"]
+        assert graph["meta"]["stats"]["vbaModules"] == 1
+        assert graph["meta"]["stats"]["vbaProcs"] == 1
+        assert [n["label"] for n in graph["nodes"] if n["kind"] == "vba"] == [
+            "Module1.Refresh"
+        ]
+
+
+class TestSheetClassModules:
+    """Excel writes a class module per worksheet whether or not anybody uses it.
+
+    Found on the real `macros.xlsm`: a workbook with a single macro module was
+    reported as having five, because the four Excel wrote for its sheets and
+    ThisWorkbook are not empty — they hold `Attribute VB_*` declarations.
+    """
+
+    SHEET_STUB = (
+        'Attribute VB_Name = "Feuil1"\n'
+        'Attribute VB_Base = "0{00020820-0000-0000-C000-000000000046}"\n'
+        "Attribute VB_GlobalNameSpace = False\n"
+        "Attribute VB_Exposed = True\n"
+    )
+
+    def test_an_attribute_only_module_is_not_a_module(self, stub_olevba):
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            ("x", "p", "VBA/Feuil1.cls", self.SHEET_STUB),
+            ("x", "p", "VBA/ThisWorkbook.cls", self.SHEET_STUB),
+            (
+                "x",
+                "p",
+                "VBA/Module1.bas",
+                'Attribute VB_Name = "Module1"\nSub Go()\nEnd Sub\n',
+            ),
+        )
+        warnings: list[str] = []
+        assert list(extract_vba_modules(b"", "m.xlsm", warnings)) == ["Module1"]
+        assert warnings == []
+
+    def test_a_sheet_module_holding_an_event_handler_is_kept(self, stub_olevba):
+        """The filter must drop empty shells, not sheet code someone wrote."""
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (
+            (
+                "x",
+                "p",
+                "VBA/Feuil1.cls",
+                self.SHEET_STUB
+                + "Private Sub Worksheet_Change(ByVal Target As Range)\n"
+                '    Range("Z1") = 1\n'
+                "End Sub\n",
+            ),
+        )
+        modules = extract_vba_modules(b"", "m.xlsm")
+        assert list(modules) == ["Feuil1"]
+        procs = analyze_vba(modules)
+        assert [p.name for p in procs] == ["Worksheet_Change"]
+
+    def test_a_workbook_of_nothing_but_shells_stays_quiet(self, stub_olevba):
+        """A macro-enabled workbook nobody wrote code in is not a defect."""
+        from linexcel.vba import extract_vba_modules
+
+        stub_olevba.macros = (("x", "p", "VBA/Feuil1.cls", self.SHEET_STUB),)
+        warnings: list[str] = []
+        assert extract_vba_modules(b"", "m.xlsm", warnings) == {}
+        assert warnings == []

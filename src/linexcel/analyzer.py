@@ -858,7 +858,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         nodes[node_id] = node
 
     # --- 6. VBA --------------------------------------------------------------
-    vba_modules = extract_vba_modules(data, filename)
+    vba_modules = extract_vba_modules(data, filename, warnings)
     vba_procs: list[VbaProc] = analyze_vba(vba_modules) if vba_modules else []
     # Node ids keep the declared spelling, but both lookups are keyed on the
     # lowercased name: VBA is case-insensitive, so Module1.Taux and
