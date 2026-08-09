@@ -524,7 +524,7 @@ class TestUncomputableFormulas:
         assert resolver.value(SHEET, 1, 1) == (31, "file", None)
         assert warnings == []
         assert resolver.uncomputed_warning() == (
-            "1 cell(s) use a formula the engine does not implement and keep the "
+            "1 cell(s) could not be computed by the engine and keep the "
             "value stored in the file: S!A1"
         )
 
@@ -540,7 +540,7 @@ class TestUncomputableFormulas:
         monkeypatch.setattr(resolver, "_eval_formula", lambda *_args: (None, None))
         assert resolver.value(SHEET, 1, 1, "=UNSUPPORTED()") == (31, "file", None)
         assert resolver.uncomputed_warning() == (
-            "1 cell(s) use a formula the engine does not implement and keep the "
+            "1 cell(s) could not be computed by the engine and keep the "
             "value stored in the file: S!A1"
         )
 
@@ -553,7 +553,7 @@ class TestUncomputableFormulas:
         )
         assert resolver.value(SHEET, 1, 1, "=UNSUPPORTED()") == (31, "file", None)
         assert resolver.uncomputed_warning() == (
-            "1 cell(s) use a formula the engine does not implement and keep the "
+            "1 cell(s) could not be computed by the engine and keep the "
             "value stored in the file: S!A1"
         )
 
@@ -578,7 +578,8 @@ class TestUncomputableFormulas:
     def test_the_unimplemented_cells_are_named_in_the_warnings(self):
         graph = graph_of({"A1": 1, "A2": 2, "A3": 3, "B1": "=SUM(A1:A3 A2:A3)"})
         assert any(
-            "does not implement" in w and "S!B1" in w for w in graph["meta"]["warnings"]
+            "could not be computed by the engine" in w and "S!B1" in w
+            for w in graph["meta"]["warnings"]
         )
 
     def test_an_unimplemented_step_reads_as_not_evaluated(self):
