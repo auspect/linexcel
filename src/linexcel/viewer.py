@@ -518,9 +518,11 @@ _TEMPLATE = r"""
   }
   .lin-grid thead th, .lin-grid tbody th {
     background: var(--surface2); color: var(--ink2); font-weight: 600;
-    text-align: center; position: sticky; left: 0;
+    text-align: center;
   }
-  .lin-grid thead th { top: 0; z-index: 1; }
+  .lin-grid thead th { position: sticky; top: 0; z-index: 1; }
+  .lin-grid tbody th { position: sticky; left: 0; }
+  .lin-grid thead th:first-child { left: 0; z-index: 2; }
   .lin-grid td { color: var(--ink); }
   .lin-grid td.num { text-align: right; }
   .lin-grid .is-hidden { opacity: .45; font-style: italic; }
