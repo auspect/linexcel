@@ -38,9 +38,11 @@ data came from — not the query, not its M source, not the table or file it
 reads. On such a workbook the graph is silently incomplete, which is the one
 failure mode this page exists to warn about.
 
-Everything needed is in the file — `customXml/item1.xml` carries the M source of
-every query, and `xl/connections.xml` names the range each one lands in — so
-this is a gap to be closed, not a limitation of the format. Tracked in
+Everything needed is in the file — the `customXml` part whose schema is
+`http://schemas.microsoft.com/DataMashup` carries the M source, while
+`xl/connections.xml` names each query connection and `xl/queryTables/*.xml`
+ties it to the destination `ListObject` and sheet range — so this is a gap to
+be closed, not a limitation of the format. Tracked in
 [#34](https://github.com/auspect/linexcel/issues/34) for a release after 1.0.
 
 ### Formulas the engine does not implement
