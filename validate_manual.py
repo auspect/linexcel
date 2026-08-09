@@ -444,7 +444,7 @@ def check_max_tokens(
         )
     else:
         print(
-            "   ⚠️  No ceiling bit, so nothing is proven either way. Lower the "
+            "   ⚠️  No ceiling hit, so nothing is proven either way. Lower the "
             "smallest value in MAX_TOKENS_PROBES and run again."
         )
 
