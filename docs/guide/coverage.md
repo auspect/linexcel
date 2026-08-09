@@ -40,8 +40,8 @@ failure mode this page exists to warn about.
 
 Everything needed is in the file — `customXml/item1.xml` carries the M source of
 every query, and `xl/connections.xml` names the range each one lands in — so
-this is a gap to be closed, not a limitation of the format. Planned for a
-release after 1.0.
+this is a gap to be closed, not a limitation of the format. Tracked in
+[#34](https://github.com/auspect/linexcel/issues/34) for a release after 1.0.
 
 ### Formulas the engine does not implement
 

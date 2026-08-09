@@ -337,7 +337,8 @@ workbook overview now sees the workbook, not only its formula graph.
   from — not the query, not its M source, not the table it reads. Everything
   needed is in the file (`customXml/item1.xml` carries the M source of every
   query, `xl/connections.xml` names the range each lands in), so this is a gap
-  to close rather than a limit of the format; tracked for a release after 1.0.
+  to close rather than a limit of the format; tracked in
+  [#34](https://github.com/auspect/linexcel/issues/34) for a release after 1.0.
   `tests/fixtures/power_query.xlsx` pins what the graph produces today, so the
   gap is visible in the suite and not only in a document
 
