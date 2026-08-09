@@ -331,9 +331,9 @@ def _place_by_sheet(
             continue
         slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip(".-") or f"sheet{index}"
         unique, attempt = slug, 2
-        while unique in taken:
+        while unique.casefold() in taken:
             unique, attempt = f"{slug}-{attempt}", attempt + 1
-        taken.add(unique)
+        taken.add(unique.casefold())
         by_sheet[name] = [_move(page, target / f"{stem}-{unique}.png")]
     return by_sheet
 
