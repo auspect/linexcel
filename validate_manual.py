@@ -414,11 +414,10 @@ def check_max_tokens(
         label = "none" if ceiling is None else str(ceiling)
         print(f"   {label:>7}   {produced:>21}   {chars:>10}")
 
-    # The verdict rests on one thing only: did the response stop *at* the
-    # ceiling. Comparing against the uncapped run would prove nothing — the
-    # same prompt sampled twice comes back at very different lengths, so a
-    # shorter answer under a ceiling is not evidence the ceiling did it.
-    enforced = exceeded = False
+    # Response length alone can disprove enforcement when it overshoots the
+    # ceiling, but it cannot prove enforcement. A near-ceiling result is only
+    # suggestive unless the provider also reports a length/limit finish reason.
+    suggestive = exceeded = False
     for ceiling, produced, _chars in measured:
         if ceiling is None:
             continue
@@ -426,8 +425,11 @@ def check_max_tokens(
             exceeded = True
             print(f"   ❌ {ceiling} exceeded ({produced} tokens) — not enforced")
         elif produced >= ceiling - MAX_TOKENS_SLACK:
-            enforced = True
-            print(f"   ✅ {ceiling} reached exactly — the ceiling cut the response")
+            suggestive = True
+            print(
+                f"   ➖ {ceiling} stopped near the ceiling ({produced} tokens) — "
+                "suggestive, but unproven without a finish reason"
+            )
         else:
             print(
                 f"   ➖ {ceiling} inconclusive — the model stopped at {produced} "
@@ -435,8 +437,11 @@ def check_max_tokens(
             )
     if exceeded:
         print("   → this endpoint does not honour max_tokens.")
-    elif enforced:
-        print("   → this endpoint honours max_tokens.")
+    elif suggestive:
+        print(
+            "   ⚠️  Some runs stopped near the ceiling, but without a provider "
+            "finish reason that remains suggestive only."
+        )
     else:
         print(
             "   ⚠️  No ceiling bit, so nothing is proven either way. Lower the "
