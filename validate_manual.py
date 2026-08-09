@@ -17,8 +17,14 @@ full run costs nothing and sends nothing off the machine. Nothing is documented
 unless a provider answers: there is no implicit cloud fallback.
 
 Neither fixture can contain VBA: ``openpyxl`` preserves a ``vbaProject.bin`` but
-cannot author one, so macros need a workbook Excel itself wrote. Point ``--file``
-at a real ``.xlsm`` to exercise that path end to end.
+cannot author one, so macros need a workbook Excel itself wrote.
+``tests/fixtures/macros.xlsm`` is one, and the pytest suite reads it; point
+``--file`` at a workbook of your own to exercise the path on a real model.
+
+``--check-max-tokens`` answers a question the test suite cannot: an
+OpenAI-compatible endpoint is free to ignore ``max_tokens``, and only the
+endpoint you actually use can say whether yours does. It documents one node
+under several ceilings and reports which of them cut the response.
 
     uv run validate_manual.py                        # sales, local Ollama
     uv run validate_manual.py --workbook stress      # the hostile one
@@ -27,6 +33,7 @@ at a real ``.xlsm`` to exercise that path end to end.
     uv run validate_manual.py --model gemma4:12b     # another local model
     uv run validate_manual.py --no-ai                # deterministic paths only
     uv run validate_manual.py --token-budget 50000 --max-nodes 8
+    uv run validate_manual.py --check-max-tokens     # does the endpoint obey?
 """
 
 from __future__ import annotations
@@ -76,10 +83,6 @@ class Case:
     build: Callable[[], bytes]
     workbook: Path
     languages: tuple[str, ...]
-    #: Report pages per sheet, when the print layout is known. The viewer shows
-    #: a mapping inline under each sheet and a flat list in its own tab, so an
-    #: unpredictable layout is better left flat than guessed at.
-    pages_by_sheet: Callable[[list[Path]], dict | list] | None = None
     checks: Sequence[str] = field(default_factory=tuple)
     #: False for a workbook the user supplied: it is read, never rewritten, and
     #: already carries the results Excel stored.
@@ -94,12 +97,6 @@ class Case:
         return SCREENSHOTS_ROOT / self.name
 
 
-def _sales_pages(pages: list[Path]) -> dict | list:
-    if len(pages) < 5:
-        return pages
-    return {"Ventes": pages[0:3], "Synthese": [pages[3]], "Params": [pages[4]]}
-
-
 CASES = {
     "sales": Case(
         name="sales",
@@ -107,12 +104,12 @@ CASES = {
         build=validation_workbooks.build_sales_workbook,
         workbook=Path("validation_demo.xlsx"),
         languages=("fr", "en"),
-        pages_by_sheet=_sales_pages,
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
             "  It should name the title in B2, the hidden Prix column and the",
             "  comment on B3, none of which any formula reveals.",
-            "'Sheets' — comments, frozen panes, merged ranges, rendered pages.",
+            "'Sheets' — every sheet shows its own rendered image and its first",
+            "  cells, alongside comments, frozen panes and merged ranges.",
             "'Graph' — select a node, read its card against the decomposition.",
         ),
     ),
@@ -304,23 +301,25 @@ def report_context(result: linexcel.LineageResult) -> None:
 def render_screenshots(
     result: linexcel.LineageResult, case: Case
 ) -> dict | list | None:
-    """Render the sheets to PNG and map the pages back to their sheet."""
+    """Render each sheet to a PNG, keyed by the sheet it shows."""
     print("\n3. 📸 Sheet screenshots (LibreOffice headless + pdftoppm)")
     target = case.screenshots_dir
     try:
         if target.exists():
             shutil.rmtree(target)
-        screenshots = sorted(result.save_screenshots(target, dpi=200))
+        screenshots = result.save_screenshots(target, dpi=200)
     except Exception as exc:
         print(f"   ⚠️  Not rendered: {exc}")
         return None
-    print(f"   ✅ {len(screenshots)} page(s) in {target.as_posix()}/")
-
-    if case.pages_by_sheet is None:
-        # Page count per sheet is not knowable up front, so the pages go to the
-        # viewer's own tab as a flat list rather than under a guessed sheet.
-        return screenshots
-    return case.pages_by_sheet(screenshots)
+    if isinstance(screenshots, dict):
+        print(f"   ✅ {len(screenshots)} sheet(s) rendered in {target.as_posix()}/")
+        for name in screenshots:
+            print(f"     📄 {name}")
+    else:
+        # The renderer did not give one page per sheet, so nothing ties a page
+        # to a sheet: they go to the viewer's own tab as a flat list.
+        print(f"   ⚠️  {len(screenshots)} page(s), not one per sheet — shown flat")
+    return screenshots
 
 
 def document(
@@ -341,7 +340,10 @@ def document(
     try:
         print(f"   - {language}: workbook overview…")
         workbook_doc = result.document_workbook(
-            language=language, token_budget=args.token_budget, **provider
+            language=language,
+            token_budget=args.token_budget,
+            max_tokens=args.max_tokens,
+            **provider,
         )
         print(f"   - {language}: node cards…")
         docs = result.document(
@@ -349,6 +351,7 @@ def document(
             language=language,
             max_workers=args.max_workers,
             token_budget=args.token_budget,
+            max_tokens=args.max_tokens,
             **provider,
         )
     except AiDocError as exc:
@@ -356,6 +359,94 @@ def document(
         return None, None
     print(f"   - {language}: {len(docs)} card(s) written")
     return docs, workbook_doc
+
+
+#: Ceilings the max_tokens check documents one node under. ``None`` is the
+#: reference length. 500 is the everyday case, which a small local model rarely
+#: reaches — it shows the argument breaks nothing, and nothing more. 48 is the
+#: one that has to bite, and is the only one that can prove enforcement.
+MAX_TOKENS_PROBES = (None, 500, 48)
+#: Providers count a response's tokens their own way, and a runtime may overrun
+#: a ceiling by a token or two. Past this the ceiling is being ignored, not
+#: rounded.
+MAX_TOKENS_SLACK = 8
+
+
+def check_max_tokens(
+    result: linexcel.LineageResult, args: argparse.Namespace, language: str
+) -> None:
+    """Document one node under several ceilings and report what came back.
+
+    ``max_tokens`` is passed straight through to the endpoint, so whether it is
+    honoured is a property of the runtime, not of linexcel — an OpenAI-compatible
+    server is free to ignore it. That is precisely why this is worth running
+    against the endpoint you actually use, and why it reports rather than
+    asserts: the useful outcome is knowing, not passing.
+    """
+    node = next(
+        (n for n in result.nodes if n.get("kind") in ("cell", "group", "vba")), None
+    )
+    if node is None:
+        return
+    print(f"\n6. 🎚  max_tokens — one node ({node['label']}) under three ceilings")
+
+    measured: list[tuple[int | None, int, int]] = []
+    for ceiling in MAX_TOKENS_PROBES:
+        before = result.token_usage.output_tokens
+        try:
+            cards = result.document(
+                [node["id"]],
+                language=language,
+                base_url=args.base_url,
+                model=args.model,
+                max_tokens=ceiling,
+                token_budget=args.token_budget,
+            )
+        except AiDocError as exc:
+            print(f"   ❌ {exc}")
+            return
+        produced = result.token_usage.output_tokens - before
+        measured.append((ceiling, produced, len(cards.get(node["id"], ""))))
+
+    counted = "estimated" if result.token_usage.estimated else "reported"
+    print(f"   ceiling   output tokens ({counted})   characters")
+    for ceiling, produced, chars in measured:
+        label = "none" if ceiling is None else str(ceiling)
+        print(f"   {label:>7}   {produced:>21}   {chars:>10}")
+
+    # Response length alone can disprove enforcement when it overshoots the
+    # ceiling, but it cannot prove enforcement. A near-ceiling result is only
+    # suggestive unless the provider also reports a length/limit finish reason.
+    suggestive = exceeded = False
+    for ceiling, produced, _chars in measured:
+        if ceiling is None:
+            continue
+        if produced > ceiling + MAX_TOKENS_SLACK:
+            exceeded = True
+            print(f"   ❌ {ceiling} exceeded ({produced} tokens) — not enforced")
+        elif produced >= ceiling - MAX_TOKENS_SLACK:
+            suggestive = True
+            print(
+                f"   ➖ {ceiling} stopped near the ceiling ({produced} tokens) — "
+                "suggestive, but unproven without a finish reason"
+            )
+        else:
+            print(
+                f"   ➖ {ceiling} inconclusive — the model stopped at {produced} "
+                "on its own, so nothing was cut"
+            )
+    if exceeded:
+        print("   → this endpoint does not honour max_tokens.")
+    elif suggestive:
+        print(
+            "   ⚠️  Some runs stopped near the ceiling, but without a provider "
+            "finish reason that remains suggestive only."
+        )
+    else:
+        print(
+            "   ⚠️  No ceiling hit, so nothing is proven either way. Lower the "
+            "smallest value in MAX_TOKENS_PROBES and run again."
+        )
 
 
 def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
@@ -401,6 +492,8 @@ def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
         print(f"\n5. 🧾 Token usage: {result.token_usage}")
         if result.token_usage.estimated:
             print("   (approximated — this endpoint reported no usage block)")
+        if args.check_max_tokens:
+            check_max_tokens(result, args, case.languages[0])
 
     print(f"\n   Open {case.output(case.languages[0]).name} and check:")
     for line in case.checks:
@@ -463,6 +556,20 @@ def main() -> int:
         help=(
             "skip the LibreOffice round-trip that gives a generated fixture the "
             "stored results a real Excel file carries"
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="cap each individual AI response (approximate, provider-dependent)",
+    )
+    parser.add_argument(
+        "--check-max-tokens",
+        action="store_true",
+        help=(
+            "document one node under several max_tokens ceilings and report "
+            "whether the endpoint enforces them (costs a few extra requests)"
         ),
     )
     parser.add_argument(

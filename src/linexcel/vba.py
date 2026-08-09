@@ -75,38 +75,96 @@ class VbaProc:
     calls: list[str] = field(default_factory=list)
 
 
-def extract_vba_modules(data: bytes, filename: str) -> dict[str, str]:
-    """Extract {module_name: code} via olevba. Empty dict if no VBA."""
+def extract_vba_modules(
+    data: bytes, filename: str, warnings: list[str] | None = None
+) -> dict[str, str]:
+    """Extract ``{module_name: code}`` via olevba.
+
+    A workbook holding no macro yields an empty mapping, and so did every
+    failure below: an unreadable VBA project, a module stream olevba chokes on,
+    oletools missing altogether. The report then showed a macro workbook as
+    having no code at all and said nothing about it — the one reading it cannot
+    tell "no macros" from "we could not read them". Every such reason is
+    therefore appended to ``warnings`` when a list is given.
+
+    A failure part-way through keeps the modules already read. Their procedures
+    and call graph are real, and the warning says the rest is missing; dropping
+    them would trade a partial answer for none.
+
+    olevba dispatches on the file's own header rather than on ``filename``, so
+    a macro workbook is found whatever it is called — including the default name
+    :func:`linexcel.analyze` gives a workbook handed to it as bytes.
+    """
     try:
         from oletools.olevba import VBA_Parser
     except ImportError:  # pragma: no cover - dependency installed in prod
+        _warn(warnings, "oletools is not installed; VBA code was not extracted")
         return {}
     try:
         parser = VBA_Parser(filename, data=data)
-    except Exception:
+    except Exception as exc:
+        _warn(warnings, f"the VBA project could not be opened: {exc}")
         return {}
     modules: dict[str, str] = {}
     try:
-        if parser.detect_vba_macros():
-            for _f, _path, vba_filename, code in parser.extract_macros():
-                # oletools may yield bytes (undecodable module streams)
-                if isinstance(vba_filename, bytes):
-                    vba_filename = vba_filename.decode("utf-8", "replace")
-                if isinstance(code, bytes):
-                    code = code.decode("utf-8", "replace")
-                name = (vba_filename or "Module").rsplit("/", 1)[-1]
-                name = re.sub(r"\.(bas|cls|frm)$", "", name, flags=re.IGNORECASE)
-                if code and code.strip():
-                    existing = modules.get(name)
-                    modules[name] = (existing + "\n" + code) if existing else code
-    except Exception:
-        return {}
+        if not parser.detect_vba_macros():
+            return {}
+        streams = 0
+        for _f, _path, vba_filename, code in parser.extract_macros():
+            streams += 1
+            # oletools may yield bytes (undecodable module streams)
+            if isinstance(vba_filename, bytes):
+                vba_filename = vba_filename.decode("utf-8", "replace")
+            if isinstance(code, bytes):
+                code = code.decode("utf-8", "replace")
+            name = (vba_filename or "Module").rsplit("/", 1)[-1]
+            name = re.sub(r"\.(bas|cls|frm)$", "", name, flags=re.IGNORECASE)
+            if code and code.strip() and not _is_attribute_only(code):
+                existing = modules.get(name)
+                modules[name] = (existing + "\n" + code) if existing else code
+        # Only the case where olevba announces macros and then hands back no
+        # stream at all. A macro-enabled workbook nobody wrote code in — saved
+        # from a template, say — yields the sheet shells and no module, and
+        # that is not a defect to report.
+        if not streams:
+            _warn(
+                warnings,
+                "the workbook declares VBA macros but no module stream could be read",
+            )
+    except Exception as exc:
+        _warn(
+            warnings,
+            f"VBA extraction stopped after {len(modules)} module(s) read: {exc}",
+        )
     finally:
         try:
             parser.close()
         except Exception:
             pass
     return modules
+
+
+def _warn(warnings: list[str] | None, message: str) -> None:
+    if warnings is not None:
+        warnings.append(message)
+
+
+def _is_attribute_only(code: str) -> bool:
+    """True for a module stream holding nothing but ``Attribute VB_*`` lines.
+
+    Excel writes one class module per worksheet and one for ThisWorkbook,
+    whether or not anybody put code in them. They come out of olevba as a
+    handful of ``Attribute`` declarations and no statement, so counting them as
+    modules reports a workbook with one macro module as having five.
+
+    A sheet module that *does* hold code — a ``Worksheet_Change`` handler, say —
+    has lines beyond the attributes and is kept.
+    """
+    return all(
+        line.strip().lower().startswith("attribute ")
+        for line in code.splitlines()
+        if line.strip()
+    )
 
 
 def _strip_comments(line: str) -> str:

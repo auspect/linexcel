@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.styles.numbers import is_date_format, is_datetime
 
 from linexcel.refs import num_to_col
 
@@ -25,6 +27,8 @@ MAX_COMMENTS_PER_SHEET = 20
 MAX_COMMENT_SCAN_CELLS = 100_000
 MAX_COMMENT_CHARS = 1_000
 MAX_MERGED_RANGES = 30
+#: Under this, in either dimension, a rendered page carries nothing to look at.
+MIN_SCREENSHOT_PIXELS = 8
 
 # ``soffice.com`` first on Windows: it is the console front-end and waits for
 # the conversion, while ``soffice.exe`` detaches and returns to the caller
@@ -44,6 +48,14 @@ _INSTALL_HINTS = {
     "darwin": "brew install --cask libreoffice and brew install poppler",
 }
 _DEFAULT_INSTALL_HINT = "sudo apt install libreoffice-calc poppler-utils"
+
+#: LibreOffice PDF export asking for one page per sheet. It is what ties an
+#: image to a sheet at all: under the workbook's own print layout a long sheet
+#: spans several pages and short ones share one, so page number and sheet have
+#: no relation left to read off.
+_PDF_FILTER_SINGLE_PAGE = (
+    'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"true"}}'
+)
 
 
 class WorkbookRenderError(RuntimeError):
@@ -81,7 +93,10 @@ def extract_workbook_context(
             preview = [
                 {
                     "row": row[0].row,
-                    "values": [_safe_value(cell.value) for cell in row],
+                    "values": [
+                        _safe_value(cell.value, getattr(cell, "number_format", None))
+                        for cell in row
+                    ],
                 }
                 for row in worksheet.iter_rows(
                     min_row=1,
@@ -163,12 +178,28 @@ def render_workbook_screenshots(
     *,
     dpi: int = 144,
     timeout: int = 180,
-) -> list[Path]:
-    """Render workbook pages to PNG with LibreOffice and Poppler.
+    per_sheet: bool = True,
+) -> dict[str, list[Path]] | list[Path]:
+    """Render workbook sheets to PNG with LibreOffice and Poppler.
 
     Works on Linux, macOS and Windows. LibreOffice runs headlessly; no desktop
     Excel process is needed. It exports the workbook to PDF, then ``pdftoppm``
     creates one PNG per rendered page.
+
+    With ``per_sheet`` — the default — LibreOffice is asked to put each sheet on
+    a single page, so the result is a ``{sheet name: [png]}`` mapping keyed by
+    the workbook's own sheet names, and the report shows each image under the
+    sheet it belongs to. Sheets are not split across pages, so a long one comes
+    out as one tall image rather than as print pages nobody can map back.
+
+    Setting ``per_sheet=False`` returns the flat ``list[Path]`` of print pages
+    instead, as the page setup of the workbook lays them out.
+
+    The mapping is only returned when LibreOffice produced exactly one page per
+    sheet. When it did not — an older build ignoring the option, a page setup
+    that overrides it — the flat page list is returned rather than a guessed
+    mapping, because a screenshot filed under the wrong sheet is worse than one
+    filed under none.
     """
     office = find_libreoffice()
     converter = find_pdftoppm()
@@ -186,6 +217,7 @@ def render_workbook_screenshots(
         suffix = ".xlsx"
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")
     stem = stem or "workbook"
+    sheet_names = _sheet_names(data) if per_sheet else []
 
     with tempfile.TemporaryDirectory(prefix="linexcel-render-") as temp_dir:
         temp = Path(temp_dir)
@@ -205,7 +237,7 @@ def render_workbook_screenshots(
                     "--headless",
                     "--norestore",
                     "--convert-to",
-                    "pdf",
+                    _PDF_FILTER_SINGLE_PAGE if per_sheet else "pdf",
                     "--outdir",
                     str(pdf_dir),
                     str(input_path),
@@ -228,10 +260,15 @@ def render_workbook_screenshots(
         pdfs = list(pdf_dir.glob("*.pdf"))
         if not pdfs:
             raise WorkbookRenderError("LibreOffice did not produce a PDF")
-        prefix = target / stem
+        # Rendered aside, then moved in: pdftoppm pads the page number to the
+        # width of the page count, so a directory reused across two workbooks
+        # holds both "-1.png" and "-01.png" and a glob over it would return the
+        # previous run's pages alongside this one's.
+        png_dir = temp / "png"
+        png_dir.mkdir()
         try:
             subprocess.run(
-                [converter, "-png", "-r", str(dpi), str(pdfs[0]), str(prefix)],
+                [converter, "-png", "-r", str(dpi), str(pdfs[0]), str(png_dir / stem)],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -246,10 +283,83 @@ def render_workbook_screenshots(
             raise WorkbookRenderError(
                 f"pdftoppm could not create screenshots: {details}"
             ) from exc
-    screenshots = sorted(target.glob(f"{stem}-*.png"))
-    if not screenshots:
-        raise WorkbookRenderError("pdftoppm did not produce PNG screenshots")
-    return screenshots
+        pages = sorted(png_dir.glob(f"{stem}-*.png"))
+        if not pages:
+            raise WorkbookRenderError("pdftoppm did not produce PNG screenshots")
+        if per_sheet and sheet_names and len(pages) == len(sheet_names):
+            return _place_by_sheet(pages, sheet_names, target, stem)
+        return _place_pages(pages, target, stem)
+
+
+def _sheet_names(data: bytes) -> list[str]:
+    """Sheet names in workbook order — the order LibreOffice paginates in.
+
+    Hidden sheets included: LibreOffice gives them a page like any other, so
+    dropping them here would shift every name onto the wrong image.
+    """
+    try:
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception:
+        return []
+    try:
+        return [worksheet.title for worksheet in workbook.worksheets]
+    finally:
+        workbook.close()
+
+
+def _place_pages(pages: list[Path], target: Path, stem: str) -> list[Path]:
+    """Move rendered pages into the output directory, numbered in page order."""
+    width = len(str(len(pages)))
+    return [
+        _move(page, target / f"{stem}-{index:0{width}d}.png")
+        for index, page in enumerate(pages, start=1)
+    ]
+
+
+def _place_by_sheet(
+    pages: list[Path], sheet_names: list[str], target: Path, stem: str
+) -> dict[str, list[Path]]:
+    """Move each page to a file named after the sheet it renders.
+
+    The mapping is keyed by the sheet's real name; only the file name is
+    sanitized, and two sheets whose names sanitize alike are kept apart by a
+    suffix so neither overwrites the other. A sheet with nothing on it renders
+    as a page one pixel tall and is left out: shown at the report's width it
+    reads as a broken image, and its card already says the sheet is empty.
+    """
+    by_sheet: dict[str, list[Path]] = {}
+    taken: set[str] = set()
+    for index, (page, name) in enumerate(zip(pages, sheet_names), start=1):
+        width, height = _png_size(page)
+        if min(width, height) < MIN_SCREENSHOT_PIXELS:
+            continue
+        slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip(".-") or f"sheet{index}"
+        unique, attempt = slug, 2
+        while unique.casefold() in taken:
+            unique, attempt = f"{slug}-{attempt}", attempt + 1
+        taken.add(unique.casefold())
+        by_sheet[name] = [_move(page, target / f"{stem}-{unique}.png")]
+    return by_sheet
+
+
+def _move(source: Path, destination: Path) -> Path:
+    destination.unlink(missing_ok=True)
+    shutil.move(str(source), str(destination))
+    return destination
+
+
+def _png_size(path: Path) -> tuple[int, int]:
+    """``(width, height)`` from a PNG's IHDR, ``(0, 0)`` if unreadable."""
+    try:
+        header = path.read_bytes()[:24]
+    except OSError:
+        return 0, 0
+    if header[:8] != b"\x89PNG\r\n\x1a\n" or len(header) < 24:
+        return 0, 0
+    try:
+        return struct.unpack(">II", header[16:24])
+    except struct.error:
+        return 0, 0
 
 
 def _program_roots() -> Iterator[Path]:
@@ -305,12 +415,29 @@ def _missing_renderer_message(office: str | None, converter: str | None) -> str:
     )
 
 
-def _safe_value(value: Any) -> Any:
-    if isinstance(value, (datetime.date, datetime.datetime, datetime.time)):
+def _safe_value(value: Any, number_format: Any = None) -> Any:
+    # A date cell reads back as a midnight datetime, and "2026-01-03T00:00:00"
+    # is a timestamp nobody typed: the preview and the AI dossier both show what
+    # the cell holds, which is a day.
+    if isinstance(value, datetime.datetime):
+        if value.time() == datetime.time.min and _is_date_only_format(number_format):
+            return value.date().isoformat()
+        return value.isoformat(sep=" ")
+    if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _is_date_only_format(number_format: Any) -> bool:
+    if not number_format:
+        return False
+    try:
+        kind = is_datetime(number_format)
+        return kind == "date" or (kind is None and bool(is_date_format(number_format)))
+    except Exception:
+        return False
 
 
 def _extract_comments(

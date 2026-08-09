@@ -34,6 +34,23 @@ screenshots = result.save_screenshots("screenshots/")
 result.save_html("out.html", screenshots=screenshots)
 ```
 
+Each sheet is rendered whole, onto a single image, and the result is keyed by
+sheet name — which is what lets the **Sheets** tab show every sheet's image
+beside its comments, frozen panes and first cells:
+
+```python
+result.save_screenshots("screenshots/")
+# {'Ventes': [PosixPath('screenshots/demo-Ventes.png')],
+#  'Synthese': [PosixPath('screenshots/demo-Synthese.png')], ...}
+```
+
+Pass `per_sheet=False` for the flat `list[Path]` of print pages instead, laid
+out by the workbook's own page setup; the report then shows them in a separate
+**Visual preview** tab, since no page can be tied to a sheet. That flat list is
+also what you get back when the renderer does not produce exactly one page per
+sheet — an older LibreOffice ignores the single-page option — because a
+screenshot filed under the wrong sheet is worse than one filed under none.
+
 Requires LibreOffice and Poppler's `pdftoppm`. Both are located on `PATH` or in
 their standard install directory, so the Windows and macOS installers work
 without any `PATH` setup:
