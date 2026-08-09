@@ -1403,18 +1403,30 @@ class TestWorkbookPresentationContext:
 
         from openpyxl import Workbook
 
+        from linexcel.aidoc import build_workbook_dossier
+
         workbook = Workbook()
         workbook.active["A1"] = datetime.date(2026, 1, 3)
+        workbook.active["A1"].number_format = "yyyy-mm-dd"
         workbook.active["A2"] = datetime.datetime(2026, 1, 3, 14, 30)
+        workbook.active["A2"].number_format = "yyyy-mm-dd hh:mm:ss"
+        workbook.active["A3"] = datetime.datetime(2026, 1, 3, 0, 0)
+        workbook.active["A3"].number_format = "yyyy-mm-dd hh:mm:ss"
         buffer = _io.BytesIO()
         workbook.save(buffer)
 
-        sheet = analyze(buffer.getvalue(), filename="d.xlsx").workbook_context[
-            "sheets"
-        ][0]
+        result = analyze(buffer.getvalue(), filename="d.xlsx")
+        sheet = result.workbook_context["sheets"][0]
         assert [row["values"][0] for row in sheet["preview"]] == [
             "2026-01-03",
             "2026-01-03 14:30:00",
+            "2026-01-03 00:00:00",
+        ]
+        dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
+        assert [row["values"][0] for row in dossier["sheets"][0]["preview"]] == [
+            "2026-01-03",
+            "2026-01-03 14:30:00",
+            "2026-01-03 00:00:00",
         ]
 
     def test_document_workbook_sends_the_context_by_default(self, lineage_excel):

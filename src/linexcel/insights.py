@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.styles.numbers import is_date_format, is_datetime
 
 from linexcel.refs import num_to_col
 
@@ -92,7 +93,10 @@ def extract_workbook_context(
             preview = [
                 {
                     "row": row[0].row,
-                    "values": [_safe_value(cell.value) for cell in row],
+                    "values": [
+                        _safe_value(cell.value, getattr(cell, "number_format", None))
+                        for cell in row
+                    ],
                 }
                 for row in worksheet.iter_rows(
                     min_row=1,
@@ -411,12 +415,12 @@ def _missing_renderer_message(office: str | None, converter: str | None) -> str:
     )
 
 
-def _safe_value(value: Any) -> Any:
+def _safe_value(value: Any, number_format: Any = None) -> Any:
     # A date cell reads back as a midnight datetime, and "2026-01-03T00:00:00"
     # is a timestamp nobody typed: the preview and the AI dossier both show what
     # the cell holds, which is a day.
     if isinstance(value, datetime.datetime):
-        if value.time() == datetime.time.min:
+        if value.time() == datetime.time.min and _is_date_only_format(number_format):
             return value.date().isoformat()
         return value.isoformat(sep=" ")
     if isinstance(value, (datetime.date, datetime.time)):
@@ -424,6 +428,16 @@ def _safe_value(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _is_date_only_format(number_format: Any) -> bool:
+    if not number_format:
+        return False
+    try:
+        kind = is_datetime(number_format)
+        return kind == "date" or (kind is None and bool(is_date_format(number_format)))
+    except Exception:
+        return False
 
 
 def _extract_comments(
