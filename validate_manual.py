@@ -17,8 +17,14 @@ full run costs nothing and sends nothing off the machine. Nothing is documented
 unless a provider answers: there is no implicit cloud fallback.
 
 Neither fixture can contain VBA: ``openpyxl`` preserves a ``vbaProject.bin`` but
-cannot author one, so macros need a workbook Excel itself wrote. Point ``--file``
-at a real ``.xlsm`` to exercise that path end to end.
+cannot author one, so macros need a workbook Excel itself wrote.
+``tests/fixtures/macros.xlsm`` is one, and the pytest suite reads it; point
+``--file`` at a workbook of your own to exercise the path on a real model.
+
+``--check-max-tokens`` answers a question the test suite cannot: an
+OpenAI-compatible endpoint is free to ignore ``max_tokens``, and only the
+endpoint you actually use can say whether yours does. It documents one node
+under several ceilings and reports which of them cut the response.
 
     uv run validate_manual.py                        # sales, local Ollama
     uv run validate_manual.py --workbook stress      # the hostile one
@@ -27,6 +33,7 @@ at a real ``.xlsm`` to exercise that path end to end.
     uv run validate_manual.py --model gemma4:12b     # another local model
     uv run validate_manual.py --no-ai                # deterministic paths only
     uv run validate_manual.py --token-budget 50000 --max-nodes 8
+    uv run validate_manual.py --check-max-tokens     # does the endpoint obey?
 """
 
 from __future__ import annotations
@@ -333,7 +340,10 @@ def document(
     try:
         print(f"   - {language}: workbook overview…")
         workbook_doc = result.document_workbook(
-            language=language, token_budget=args.token_budget, **provider
+            language=language,
+            token_budget=args.token_budget,
+            max_tokens=args.max_tokens,
+            **provider,
         )
         print(f"   - {language}: node cards…")
         docs = result.document(
@@ -341,6 +351,7 @@ def document(
             language=language,
             max_workers=args.max_workers,
             token_budget=args.token_budget,
+            max_tokens=args.max_tokens,
             **provider,
         )
     except AiDocError as exc:
@@ -348,6 +359,89 @@ def document(
         return None, None
     print(f"   - {language}: {len(docs)} card(s) written")
     return docs, workbook_doc
+
+
+#: Ceilings the max_tokens check documents one node under. ``None`` is the
+#: reference length. 500 is the everyday case, which a small local model rarely
+#: reaches — it shows the argument breaks nothing, and nothing more. 48 is the
+#: one that has to bite, and is the only one that can prove enforcement.
+MAX_TOKENS_PROBES = (None, 500, 48)
+#: Providers count a response's tokens their own way, and a runtime may overrun
+#: a ceiling by a token or two. Past this the ceiling is being ignored, not
+#: rounded.
+MAX_TOKENS_SLACK = 8
+
+
+def check_max_tokens(
+    result: linexcel.LineageResult, args: argparse.Namespace, language: str
+) -> None:
+    """Document one node under several ceilings and report what came back.
+
+    ``max_tokens`` is passed straight through to the endpoint, so whether it is
+    honoured is a property of the runtime, not of linexcel — an OpenAI-compatible
+    server is free to ignore it. That is precisely why this is worth running
+    against the endpoint you actually use, and why it reports rather than
+    asserts: the useful outcome is knowing, not passing.
+    """
+    node = next(
+        (n for n in result.nodes if n.get("kind") in ("cell", "group", "vba")), None
+    )
+    if node is None:
+        return
+    print(f"\n6. 🎚  max_tokens — one node ({node['label']}) under three ceilings")
+
+    measured: list[tuple[int | None, int, int]] = []
+    for ceiling in MAX_TOKENS_PROBES:
+        before = result.token_usage.output_tokens
+        try:
+            cards = result.document(
+                [node["id"]],
+                language=language,
+                base_url=args.base_url,
+                model=args.model,
+                max_tokens=ceiling,
+                token_budget=args.token_budget,
+            )
+        except AiDocError as exc:
+            print(f"   ❌ {exc}")
+            return
+        produced = result.token_usage.output_tokens - before
+        measured.append((ceiling, produced, len(cards.get(node["id"], ""))))
+
+    counted = "estimated" if result.token_usage.estimated else "reported"
+    print(f"   ceiling   output tokens ({counted})   characters")
+    for ceiling, produced, chars in measured:
+        label = "none" if ceiling is None else str(ceiling)
+        print(f"   {label:>7}   {produced:>21}   {chars:>10}")
+
+    # The verdict rests on one thing only: did the response stop *at* the
+    # ceiling. Comparing against the uncapped run would prove nothing — the
+    # same prompt sampled twice comes back at very different lengths, so a
+    # shorter answer under a ceiling is not evidence the ceiling did it.
+    enforced = exceeded = False
+    for ceiling, produced, _chars in measured:
+        if ceiling is None:
+            continue
+        if produced > ceiling + MAX_TOKENS_SLACK:
+            exceeded = True
+            print(f"   ❌ {ceiling} exceeded ({produced} tokens) — not enforced")
+        elif produced >= ceiling - MAX_TOKENS_SLACK:
+            enforced = True
+            print(f"   ✅ {ceiling} reached exactly — the ceiling cut the response")
+        else:
+            print(
+                f"   ➖ {ceiling} inconclusive — the model stopped at {produced} "
+                "on its own, so nothing was cut"
+            )
+    if exceeded:
+        print("   → this endpoint does not honour max_tokens.")
+    elif enforced:
+        print("   → this endpoint honours max_tokens.")
+    else:
+        print(
+            "   ⚠️  No ceiling bit, so nothing is proven either way. Lower the "
+            "smallest value in MAX_TOKENS_PROBES and run again."
+        )
 
 
 def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
@@ -393,6 +487,8 @@ def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
         print(f"\n5. 🧾 Token usage: {result.token_usage}")
         if result.token_usage.estimated:
             print("   (approximated — this endpoint reported no usage block)")
+        if args.check_max_tokens:
+            check_max_tokens(result, args, case.languages[0])
 
     print(f"\n   Open {case.output(case.languages[0]).name} and check:")
     for line in case.checks:
@@ -455,6 +551,20 @@ def main() -> int:
         help=(
             "skip the LibreOffice round-trip that gives a generated fixture the "
             "stored results a real Excel file carries"
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="cap each individual AI response (approximate, provider-dependent)",
+    )
+    parser.add_argument(
+        "--check-max-tokens",
+        action="store_true",
+        help=(
+            "document one node under several max_tokens ceilings and report "
+            "whether the endpoint enforces them (costs a few extra requests)"
         ),
     )
     parser.add_argument(
