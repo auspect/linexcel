@@ -529,6 +529,11 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     finally:
         owb.close()
 
+    # Table detection: openpyxl read-only mode does not expose tables, so the
+    # workbook is opened once more in normal mode to read TableObjects. The
+    # result is a per-cell lookup used to enrich lineage nodes.
+    table_index = _build_table_index(data)
+
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
     cached = load_cached_values(data)
@@ -710,6 +715,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             }
             if rect.ncells == 1 and rect.sheet is not None:
                 node.update(resolver.describe(rect.sheet, rect.r1, rect.c1))
+                _enrich_with_table(node, table_index, rect.sheet, rect.r1, rect.c1)
             nodes[node_id] = node
         input_nodes[label] = node_id
         return node_id
@@ -867,6 +873,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             "samples": samples,
             "steps": steps,
         }
+        _enrich_with_table(node, table_index, sheet, rep_r, rep_c)
         nodes[node_id] = node
 
     # --- 6. VBA --------------------------------------------------------------
@@ -948,6 +955,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
                 "vbaModules": len(vba_modules),
                 "vbaProcs": len(vba_procs),
                 "definedNames": len(defined_names),
+                "tables": sum(len(t) for t in table_index.values()),
             },
         },
         "sheets": list(sheet_dims.keys()),
@@ -1199,6 +1207,63 @@ def _ensure_scratch(engine) -> bool:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_table_index(
+    data: bytes,
+) -> dict[str, list[dict[str, Any]]]:
+    """Per-sheet table list, for cell→table enrichment of lineage nodes.
+
+    openpyxl read-only mode drops ``ws.tables``, so the workbook is opened
+    once in normal mode. Each table dict carries the bounds and headers that
+    :func:`linexcel.insights.detect_tables` extracts.
+    """
+    from linexcel.insights import detect_tables
+
+    index: dict[str, list[dict[str, Any]]] = {}
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=False, data_only=False)
+    except Exception:
+        return index
+    try:
+        for ws in wb.worksheets:
+            try:
+                tables = detect_tables(ws)
+            except Exception:
+                continue
+            if tables:
+                index[ws.title] = tables
+    finally:
+        wb.close()
+    return index
+
+
+def _enrich_with_table(
+    node: dict[str, Any],
+    table_index: dict[str, list[dict[str, Any]]],
+    sheet: str,
+    row: int,
+    col: int,
+) -> None:
+    """Tag a node with ``table_name``/``table_column``/``table_row``.
+
+    The representative cell (``row``, ``col``) is checked against every table
+    on its sheet; the first match wins. ``table_column`` is the header text of
+    the column the cell sits in, ``table_row`` the 0-based offset into the
+    table's data area (header row excluded).
+    """
+    for tbl in table_index.get(sheet, ()):
+        if (
+            tbl["first_col"] <= col <= tbl["last_col"]
+            and tbl["header_row"] <= row <= tbl["last_row"]
+        ):
+            node["table_name"] = tbl["name"]
+            node["table_kind"] = tbl["kind"]
+            idx = col - tbl["first_col"]
+            headers = tbl["headers"]
+            node["table_column"] = headers[idx] if 0 <= idx < len(headers) else None
+            node["table_row"] = max(0, row - tbl["first_row"])
+            return
 
 
 def _force_dimensions(ws) -> tuple[int, int]:
