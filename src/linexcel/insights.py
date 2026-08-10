@@ -18,6 +18,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format, is_datetime
+from openpyxl.utils.cell import range_boundaries
 
 from linexcel.refs import num_to_col
 
@@ -27,6 +28,14 @@ MAX_COMMENTS_PER_SHEET = 20
 MAX_COMMENT_SCAN_CELLS = 100_000
 MAX_COMMENT_CHARS = 1_000
 MAX_MERGED_RANGES = 30
+MAX_TABLES_PER_SHEET = 50
+MAX_STATIC_TABLES_PER_SHEET = 10
+# ponytail: static-table heuristic scans only this many rows/columns — enough
+# for a header + a few data rows without walking a whole sheet.
+STATIC_TABLE_SCAN_ROWS = 30
+STATIC_TABLE_SCAN_COLS = 50
+STATIC_TABLE_MIN_COLS = 2
+STATIC_TABLE_MIN_DATA_ROWS = 2
 #: Under this, in either dimension, a rendered page carries nothing to look at.
 MIN_SCREENSHOT_PIXELS = 8
 
@@ -131,6 +140,7 @@ def extract_workbook_context(
                     ],
                     "hidden_columns": _hidden_columns(worksheet, column_limit),
                     "comments": comments,
+                    "tables": detect_tables(worksheet),
                 }
             )
     finally:
@@ -141,6 +151,151 @@ def extract_workbook_context(
         "stats": {"sheets": len(sheets), "comments": total_comments},
         "warnings": warnings,
     }
+
+
+def detect_tables(worksheet) -> list[dict[str, Any]]:
+    """Detect Excel tables (TableObjects) and static tables on a worksheet.
+
+    Returns one dict per table with ``name``, ``kind`` ("dynamic" or
+    "static"), ``ref``, bounds (``header_row``, ``first_row``, ``last_row``,
+    ``first_col``, ``last_col``), ``headers`` and ``data_rows``.
+
+    Dynamic tables come from ``ws.tables`` (what Excel calls a *Table* / List
+    Object). Static tables are ranges that *look* like a table — a header row
+    of text above contiguous data — detected heuristically so a workbook with
+    no formal tables still benefits from header/index enrichment.
+    """
+    tables: list[dict[str, Any]] = []
+    covered: list[tuple[int, int, int, int]] = []  # (r1, c1, r2, c2) already taken
+
+    # --- dynamic tables (TableObject) -------------------------------------
+    try:
+        table_items = list(worksheet.tables.items())
+    except Exception:
+        table_items = []
+    for _name, _value in table_items[:MAX_TABLES_PER_SHEET]:
+        try:
+            tbl = worksheet.tables[_name]
+        except Exception:
+            continue
+        ref = getattr(tbl, "ref", None)
+        if not ref:
+            continue
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(ref)
+        except (ValueError, TypeError):
+            continue
+        header_row = min_row
+        header_count = getattr(tbl, "headerRowCount", 1) or 1
+        first_data_row = min_row + header_count
+        headers = [
+            _safe_value(worksheet.cell(row=min_row, column=c).value)
+            for c in range(min_col, max_col + 1)
+        ]
+        tables.append(
+            {
+                "name": getattr(tbl, "displayName", _name) or _name,
+                "kind": "dynamic",
+                "ref": ref,
+                "header_row": header_row,
+                "first_row": first_data_row,
+                "last_row": max_row,
+                "first_col": min_col,
+                "last_col": max_col,
+                "headers": headers,
+                "data_rows": max(0, max_row - first_data_row + 1),
+            }
+        )
+        covered.append((min_row, min_col, max_row, max_col))
+
+    # --- static tables (heuristic) ---------------------------------------
+    tables.extend(_detect_static_tables(worksheet, covered))
+    return tables
+
+
+def _detect_static_tables(
+    worksheet, covered: list[tuple[int, int, int, int]]
+) -> list[dict[str, Any]]:
+    """Heuristically find header+data blocks not already inside a table.
+
+    A static table is a run of ≥2 contiguous columns whose first row is text
+    and whose following rows hold values, bounded by the first blank row.
+    """
+    found: list[dict[str, Any]] = []
+    max_r = min(getattr(worksheet, "max_row", 1) or 1, STATIC_TABLE_SCAN_ROWS)
+    max_c = min(getattr(worksheet, "max_column", 1) or 1, STATIC_TABLE_SCAN_COLS)
+    if max_r < 3 or max_c < STATIC_TABLE_MIN_COLS:
+        return found
+    # Read the scan window once — ponytail: one iter_rows over a small window.
+    rows: list[list[Any]] = []
+    for row in worksheet.iter_rows(min_row=1, max_row=max_r, min_col=1, max_col=max_c):
+        rows.append([cell.value for cell in row])
+
+    used_starts: set[int] = set()
+    for r_idx in range(len(rows) - 1):
+        row = rows[r_idx]
+        r = r_idx + 1  # 1-indexed
+        if r in used_starts:
+            continue
+        # Find the longest run of contiguous non-None string cells in this row.
+        best_start, best_len = -1, 0
+        run_start, run_len = -1, 0
+        for c_idx, val in enumerate(row):
+            if isinstance(val, str) and val.strip():
+                if run_start < 0:
+                    run_start = c_idx
+                run_len += 1
+            else:
+                if run_start >= 0 and run_len > best_len:
+                    best_start, best_len = run_start, run_len
+                run_start, run_len = -1, 0
+        if run_start >= 0 and run_len > best_len:
+            best_start, best_len = run_start, run_len
+        if best_len < STATIC_TABLE_MIN_COLS:
+            continue
+        c1 = best_start + 1  # 1-indexed
+        c2 = best_start + best_len
+        # The row below must have at least one non-None value in those columns.
+        next_row = rows[r_idx + 1]
+        if not any(next_row[c] is not None for c in range(best_start, c2)):
+            continue
+        # Extend data rows downward until a fully-blank row in those columns.
+        last_data = r_idx + 1
+        for dr in range(r_idx + 1, len(rows)):
+            if any(rows[dr][c] is not None for c in range(best_start, c2)):
+                last_data = dr
+            else:
+                break
+        data_rows = last_data - r_idx
+        if data_rows < STATIC_TABLE_MIN_DATA_ROWS:
+            continue
+        # Skip if this overlaps an existing dynamic table.
+        r1, r2 = r, last_data + 1
+        if any(
+            not (r2 < cr1 or r1 > cr2 or c2 < cc1 or c1 > cc2)
+            for cr1, cc1, cr2, cc2 in covered
+        ):
+            continue
+        headers = [_safe_value(row[c]) for c in range(best_start, c2)]
+        found.append(
+            {
+                "name": f"Table{r}C{c1}",
+                "kind": "static",
+                "ref": f"{num_to_col(c1)}{r}:{num_to_col(c2)}{r2}",
+                "header_row": r,
+                "first_row": r + 1,
+                "last_row": r2,
+                "first_col": c1,
+                "last_col": c2,
+                "headers": headers,
+                "data_rows": data_rows,
+            }
+        )
+        used_starts.add(r)
+        covered.append((r, c1, r2, c2))
+        if len(found) >= MAX_STATIC_TABLES_PER_SHEET:
+            break
+    return found
 
 
 def find_libreoffice() -> str | None:

@@ -2157,3 +2157,147 @@ class TestPowerQueryWorkbook:
         assert not [n for n in result.nodes if "BusyProducts" in n["label"]], (
             "when queries become nodes, this expectation is what changes"
         )
+
+
+def _workbook_with_dynamic_table() -> bytes:
+    """Workbook with a formal Excel Table object and a formula column."""
+    from openpyxl import Workbook
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sales"
+    ws.append(["Product", "Revenue", "Cost", "Margin"])
+    ws.append(["Widget", 100, 60, "=B2-C2"])
+    ws.append(["Gadget", 200, 120, "=B3-C3"])
+    ws.append(["Gizmo", 150, 90, "=B4-C4"])
+    tab = Table(displayName="SalesTable", ref="A1:D4")
+    tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+    ws.add_table(tab)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _workbook_with_static_table() -> bytes:
+    """Workbook with no formal table — just a header row over contiguous data."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stats"
+    ws.append(["Month", "Sales", "Region"])
+    ws.append(["Jan", 1000, "North"])
+    ws.append(["Feb", 1200, "South"])
+    ws.append(["Mar", 900, "East"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestTableDetection:
+    """Excel tables (dynamic and static) enrich the lineage graph."""
+
+    def test_detect_dynamic_table(self):
+        from openpyxl import load_workbook
+
+        from linexcel.insights import detect_tables
+
+        data = _workbook_with_dynamic_table()
+        wb = load_workbook(io.BytesIO(data), read_only=False)
+        tables = detect_tables(wb["Sales"])
+        wb.close()
+        assert len(tables) == 1
+        t = tables[0]
+        assert t["kind"] == "dynamic"
+        assert t["name"] == "SalesTable"
+        assert t["ref"] == "A1:D4"
+        assert t["headers"] == ["Product", "Revenue", "Cost", "Margin"]
+        assert t["data_rows"] == 3
+        assert t["header_row"] == 1
+        assert t["first_row"] == 2
+        assert t["last_row"] == 4
+
+    def test_detect_static_table(self):
+        from openpyxl import load_workbook
+
+        from linexcel.insights import detect_tables
+
+        data = _workbook_with_static_table()
+        wb = load_workbook(io.BytesIO(data), read_only=False)
+        tables = detect_tables(wb["Stats"])
+        wb.close()
+        assert len(tables) == 1
+        t = tables[0]
+        assert t["kind"] == "static"
+        assert t["ref"] == "A1:C4"
+        assert t["headers"] == ["Month", "Sales", "Region"]
+        assert t["data_rows"] == 3
+
+    def test_no_table_detected_on_blank_sheet(self):
+        from openpyxl import load_workbook
+
+        from linexcel.insights import detect_tables
+
+        wb = load_workbook(io.BytesIO(_workbook_with_static_table()), read_only=False)
+        ws = wb.active
+        ws.delete_rows(1, ws.max_row)
+        assert detect_tables(ws) == []
+        wb.close()
+
+    def test_workbook_context_carries_tables(self):
+        data = _workbook_with_dynamic_table()
+        result = analyze(data, filename="tables.xlsx")
+        ctx = result.workbook_context
+        sheet = ctx["sheets"][0]
+        assert len(sheet["tables"]) == 1
+        assert sheet["tables"][0]["name"] == "SalesTable"
+
+    def test_graph_node_enriched_with_table(self):
+        """A formula cell inside a table carries table_name/column/row."""
+        data = _workbook_with_dynamic_table()
+        result = analyze(data, filename="tables.xlsx")
+        assert result.stats["tables"] == 1
+        # The three Margin formulas (=B-C) group into one node on D2.
+        enriched = [n for n in result.nodes if n.get("table_name") == "SalesTable"]
+        assert enriched, "at least one node must be tagged with the table"
+        node = enriched[0]
+        assert node["table_column"] == "Margin"
+        assert node["table_row"] == 0  # representative cell D2 → first data row
+
+    def test_static_table_enriches_graph(self):
+        data = _workbook_with_static_table()
+        result = analyze(data, filename="static.xlsx")
+        assert result.stats["tables"] >= 1
+        # No formulas, but the graph stats should still report the table.
+        assert result.stats["tables"] == 1
+
+    def test_table_enrichment_does_not_break_empty_workbook(self):
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        buf = io.BytesIO()
+        wb.save(buf)
+        result = analyze(buf.getvalue(), filename="empty.xlsx")
+        assert result.stats["tables"] == 0
+        assert not any("table_name" in n for n in result.nodes)
+
+    def test_input_node_inside_table_is_enriched(self):
+        """A referenced input cell that sits inside a table is tagged too."""
+        from openpyxl import Workbook
+        from openpyxl.worksheet.table import Table
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws.append(["A", "B", "Result"])
+        ws.append([10, 20, "=A2+B2"])  # single formula → no stretching
+        ws.add_table(Table(displayName="T", ref="A1:C2"))
+        buf = io.BytesIO()
+        wb.save(buf)
+        result = analyze(buf.getvalue(), filename="t.xlsx")
+        # A2 and B2 are single-cell input precedents of C2; tagged with table T.
+        tagged = [n for n in result.nodes if n.get("table_name") == "T"]
+        columns = {n.get("table_column") for n in tagged}
+        assert "A" in columns, "input cell A2 should carry its column header"
+        assert "B" in columns, "input cell B2 should carry its column header"
