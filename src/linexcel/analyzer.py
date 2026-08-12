@@ -149,7 +149,67 @@ class CachedValues:
 
 
 def load_cached_values(data: bytes) -> CachedValues:
-    """Read the file's cached values once, keyed by (sheet, row, col)."""
+    """Read the file's cached values once, keyed by (sheet, row, col).
+
+    python-calamine (the Rust engine) is the hot path: it returns native Python
+    types directly, so dates are detected by type instead of by number_format
+    string, and it is roughly an order of magnitude faster than openpyxl on
+    large files. openpyxl remains the fallback for the rare file calamine cannot
+    open; there its number_format-based date detection keeps the edge case (a
+    number formatted as a date but stored as a float) covered.
+    """
+    try:
+        return _load_cached_values_calamine(data)
+    except Exception:
+        return _load_cached_values_openpyxl(data)
+
+
+def _load_cached_values_calamine(data: bytes) -> CachedValues:
+    """Fast path: read cached values via python-calamine.
+
+    ``to_python(skip_empty_area=False)`` preserves the cell coordinates —
+    linexcel keys values by ``(sheet, row, col)`` 1-indexed, and the default
+    ``skip_empty_area=True`` would shift everything toward the top-left.
+    Empty cells come back as ``""`` (calamine) or ``None``; both are skipped,
+    matching openpyxl which reads an empty cell back as ``None``.
+
+    Dates are detected by type: calamine returns ``datetime.date`` for
+    date-only cells and ``datetime.datetime`` for timestamps. openpyxl always
+    returns ``datetime.datetime`` (even for a date-only cell), so a bare
+    ``datetime.date`` is normalized to a midnight ``datetime.datetime`` to keep
+    downstream equality checks and the resolver seeing one consistent type.
+    """
+    from python_calamine import CalamineWorkbook
+
+    values: dict[tuple[str, int, int], Any] = {}
+    date_cells: set[tuple[str, int, int]] = set()
+    epoch_1904 = _detect_epoch_1904(data)
+    wb = CalamineWorkbook.from_object(io.BytesIO(data))
+    for name in wb.sheet_names:
+        sheet = wb.get_sheet_by_name(name)
+        rows = sheet.to_python(skip_empty_area=False)
+        scanned = 0
+        for r_idx, row in enumerate(rows):
+            scanned += len(row)
+            if scanned > MAX_CELLS_PER_SHEET:
+                break
+            for c_idx, v in enumerate(row):
+                if v is None or v == "":
+                    continue
+                key = (name, r_idx + 1, c_idx + 1)
+                if isinstance(v, datetime.datetime):
+                    date_cells.add(key)
+                elif isinstance(v, datetime.date):
+                    # openpyxl reads a date-only cell as a midnight datetime;
+                    # normalize so the two readers are interchangeable.
+                    v = datetime.datetime(v.year, v.month, v.day)
+                    date_cells.add(key)
+                values[key] = v
+    return CachedValues(values, date_cells, epoch_1904)
+
+
+def _load_cached_values_openpyxl(data: bytes) -> CachedValues:
+    """Fallback: read cached values via openpyxl with number_format date detection."""
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = False
@@ -181,6 +241,26 @@ def load_cached_values(data: bytes) -> CachedValues:
     finally:
         wb.close()
     return CachedValues(values, date_cells, epoch_1904)
+
+
+def _detect_epoch_1904(data: bytes) -> bool:
+    """True if the workbook declares the 1904 date system.
+
+    calamine converts 1904-epoch dates to correct values itself, but linexcel
+    also needs the flag to interpret *engine* serials (from formualizer, not
+    calamine) via :func:`serial_to_date_text`. The flag lives on
+    ``<workbookPr date1904="1" />`` in ``xl/workbook.xml``; reading it from the
+    zip avoids opening openpyxl a second time just for this one attribute.
+    """
+    import re
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
+    except Exception:
+        return False
+    return bool(re.search(r"""date1904=["']1""", xml))
 
 
 class _ValueResolver:
