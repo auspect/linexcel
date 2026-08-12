@@ -392,6 +392,58 @@ class TestDates:
         assert not cached.is_date(SHEET, 2, 1)
         assert cached.epoch_1904 is False
 
+    def test_calamine_and_openpyxl_agree_on_values(self):
+        """The calamine fast path and the openpyxl fallback must return the
+        same values, date flags, and epoch flag for a representative workbook."""
+        from linexcel.analyzer import (
+            _detect_epoch_1904,
+            _load_cached_values_calamine,
+            _load_cached_values_openpyxl,
+        )
+
+        data = build(
+            {
+                "A1": datetime.date(2026, 8, 7),
+                "A2": datetime.datetime(2026, 8, 7, 15, 30),
+                "A3": 3,
+                "B1": 3.5,
+                "B2": "text",
+                "B3": True,
+            },
+            {"A1": "yyyy-mm-dd", "A2": "yyyy-mm-dd hh:mm:ss", "A3": "0.00"},
+        )
+        cal = _load_cached_values_calamine(data)
+        opx = _load_cached_values_openpyxl(data)
+        assert set(cal._values) == set(opx._values)
+        assert cal._date_cells == opx._date_cells
+        for key in opx._values:
+            cval, oval = cal._values[key], opx._values[key]
+            # Numbers: int vs float differ in type but compare equal.
+            if isinstance(cval, (int, float)) and isinstance(oval, (int, float)):
+                assert cval == oval or abs(float(cval) - float(oval)) < 1e-9
+            else:
+                assert cval == oval, (key, cval, oval)
+        assert cal.epoch_1904 == opx.epoch_1904
+        assert _detect_epoch_1904(data) is False
+        assert cal.epoch_1904 is False
+
+    def test_epoch_1904_is_detected_from_the_workbook_xml(self):
+        """A 1904-date-system workbook sets the epoch flag so the resolver
+        interprets engine serials with the right base date."""
+        from openpyxl.utils.datetime import MAC_EPOCH
+
+        from linexcel.analyzer import _detect_epoch_1904
+
+        wb = Workbook()
+        wb.active.title = SHEET
+        wb.epoch = MAC_EPOCH
+        wb.active["A1"] = datetime.date(2026, 8, 7)
+        buf = io.BytesIO()
+        wb.save(buf)
+        cached = load_cached_values(buf.getvalue())
+        assert cached.epoch_1904 is True
+        assert _detect_epoch_1904(buf.getvalue()) is True
+
 
 class TestProvenance:
     def test_formula_node_reports_the_engine(self):
