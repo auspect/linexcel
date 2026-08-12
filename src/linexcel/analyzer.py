@@ -228,6 +228,7 @@ class _ValueResolver:
         self._uncomputed: list[str] = []
         self.n_recovered = 0
         self.n_unrecovered = 0
+        self._step_cache: dict[str, tuple[Any, bool]] = {}
 
     # -- public API --------------------------------------------------------
     def value(
@@ -299,7 +300,60 @@ class _ValueResolver:
         """
         if not self.scratch_ready or not self.budget.take():
             return None, False
+        cached = self._step_cache.pop(expr, None)
+        if cached is not None:
+            return cached
         return _scratch_eval(self.engine, expr, sheet)
+
+    def preload_steps(self, exprs: list[str], sheet: str) -> None:
+        """Batch-evaluate step expressions in one ``evaluate_cells`` call.
+
+        Each ``evaluate_cell`` on a large workbook recalculates the whole
+        dependency graph (~77 ms).  Batching N expressions into a single
+        ``evaluate_cells`` pays that cost once instead of N times.  When
+        ``engine_alive`` is False the engine state mutates during
+        decomposition (``_remember`` calls ``set_value``), so batching is
+        unsafe — the pre-computed values would be stale.  In that case the
+        cache stays empty and every expression falls back to
+        ``_scratch_eval`` one at a time, exactly as before.
+        """
+        self._step_cache.clear()
+        if not self.scratch_ready or not self._engine_alive or not exprs:
+            return
+        # ponytail: dedup preserves order — identical sub-expressions share
+        # one scratch cell and one cache entry; _eval_raw pops on first hit
+        # so the second occurrence falls through to _scratch_eval, matching
+        # the old per-call behaviour.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for e in exprs:
+            if e not in seen:
+                seen.add(e)
+                unique.append(e)
+        targets: list[tuple[str, int, int]] = []
+        valid: list[str] = []
+        for i, e in enumerate(unique):
+            try:
+                qualified = qualify_sheet(e, sheet)
+            except Exception:
+                continue
+            try:
+                self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, qualified)
+            except Exception:
+                continue
+            targets.append((SCRATCH_SHEET, 2, i + 1))
+            valid.append(e)
+        if not targets:
+            return
+        try:
+            results = self.engine.evaluate_cells(targets)
+        except Exception:
+            return  # a broken reference poisons the batch — fall back
+        for e, val in zip(valid, results):
+            if val is not None and not _is_uncomputed(val):
+                self._step_cache[e] = (_jsonable(val), True)
+            else:
+                self._step_cache[e] = (None, False)
 
     def _engine_read(
         self, sheet: str, row: int, col: int, formula: str | None
@@ -854,6 +908,9 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
 
         steps = None
         if ast_dict is not None:
+            step_exprs = _collect_step_exprs(ast_dict)
+            if step_exprs:
+                resolver.preload_steps(step_exprs, sheet)
             steps = _decompose(ast_dict, sheet, resolver, defined_names)
 
         node: dict[str, Any] = {
@@ -970,6 +1027,39 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
 # ---------------------------------------------------------------------------
 
 _STEP_KINDS = {"Function", "BinaryOp", "UnaryOp"}
+
+
+def _collect_step_exprs(ast_dict: dict) -> list[str]:
+    """First pass: collect every step expression ``_decompose`` will evaluate.
+
+    The counter and ``_STEP_KINDS`` filter mirror ``_decompose`` exactly so
+    the expressions batch-evaluated here are the same ones looked up later
+    in ``_eval_raw``.  Order is pre-order (parent before children) — it does
+    not match the post-order evaluation in ``_decompose`` but that is fine:
+    the batch evaluates all at once and the cache is order-independent.
+    """
+    exprs: list[str] = []
+    counter = itertools.count()
+
+    def walk(node: dict) -> None:
+        ntype = node.get("node_type")
+        if ntype not in _STEP_KINDS:
+            return
+        if next(counter) >= MAX_STEPS_PER_FORMULA:
+            return
+        exprs.append(_render_expr(node))
+        if ntype == "Function":
+            children = node.get("args", [])
+        elif ntype == "BinaryOp":
+            children = [node.get("left"), node.get("right")]
+        else:
+            children = [node.get("operand") or node.get("expr")]
+        for c in children:
+            if c:
+                walk(c)
+
+    walk(ast_dict)
+    return exprs
 
 
 def _decompose(
