@@ -48,7 +48,12 @@ def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
     raise TypeError("source must be a path, bytes, or a binary file object.")
 
 
-def analyze(source: Source, filename: str | None = None) -> LineageResult:
+def analyze(
+    source: Source,
+    filename: str | None = None,
+    *,
+    verbose: bool = False,
+) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
     Parameters
@@ -57,10 +62,12 @@ def analyze(source: Source, filename: str | None = None) -> LineageResult:
         Path to the file, raw content, or file object opened in ``rb``.
     filename : str, optional
         Logical name (used for labels and VBA detection).
+    verbose : bool, optional
+        Print per-phase timing to stderr.
     """
     data, name = _read_source(source, filename)
     try:
-        payload = analyze_workbook(data, filename=name)
+        payload = analyze_workbook(data, filename=name, verbose=verbose)
     except Exception as exc:
         # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)
         # en message clair sur le vrai problème.
