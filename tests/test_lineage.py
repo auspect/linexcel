@@ -2234,6 +2234,32 @@ class TestTableDetection:
         assert t["headers"] == ["Month", "Sales", "Region"]
         assert t["data_rows"] == 3
 
+    def test_static_table_formula_header_falls_back_to_column(self):
+        """A formula cell in the header row must not leak into table_column.
+
+        openpyxl returns formula text as a str; without the guard, a header
+        like ``=SUM(...)`` becomes the table_column for every data cell in
+        that column. The column letter is used as a readable fallback instead.
+        """
+        from openpyxl import Workbook, load_workbook
+
+        from linexcel.insights import detect_tables
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sens"
+        ws.append(["Month", "=SUM(B2:B3)", "Region"])
+        ws.append(["Jan", 1000, "North"])
+        ws.append(["Feb", 1200, "South"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        wb2 = load_workbook(io.BytesIO(buf.getvalue()), read_only=False)
+        tables = detect_tables(wb2["Sens"])
+        wb2.close()
+        assert len(tables) == 1
+        t = tables[0]
+        assert t["headers"] == ["Month", "Column B", "Region"]
+
     def test_no_table_detected_on_blank_sheet(self):
         from openpyxl import load_workbook
 
