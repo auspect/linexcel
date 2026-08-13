@@ -17,6 +17,8 @@ import datetime
 import io
 import itertools
 import re
+import sys
+import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -646,11 +648,23 @@ def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
 
-def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, Any]:
+def analyze_workbook(
+    data: bytes,
+    filename: str = "workbook.xlsx",
+    *,
+    verbose: bool = False,
+) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine."""
     warnings: list[str] = []
+    _t0 = time.perf_counter()
+
+    def _v(label: str, t: float) -> None:
+        if verbose:
+            elapsed = time.perf_counter() - t
+            print(f"[linexcel] {label}: {elapsed:.1f}s", file=sys.stderr)
 
     # --- 1. structure -----------------------------------------------------
+    _t = time.perf_counter()
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
     try:
         sheet_dims: dict[str, tuple[int, int]] = {}
@@ -667,12 +681,16 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     # workbook is opened once more in normal mode to read TableObjects. The
     # result is a per-cell lookup used to enrich lineage nodes.
     table_index = _build_table_index(data)
+    _v("structure+tables", _t)
 
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
+    _t = time.perf_counter()
     cached = load_cached_values(data)
+    _v("cached_values", _t)
 
     # --- 2. computation engine -------------------------------------------
+    _t = time.perf_counter()
     engine = fz.Workbook.from_bytes(data)
     engine_sheets = set(engine.sheet_names)
     engine_alive = True
@@ -711,6 +729,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
             quarantined = {}
 
     scratch_ready = _ensure_scratch(engine)
+    _v("engine_init+evaluate_all", _t)
     budget = _Budget(MAX_SCRATCH_EVALS)
     resolver = _ValueResolver(
         engine,
@@ -724,6 +743,7 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
     )
 
     # --- 3. extraction + grouping ----------------------------------------
+    _t = time.perf_counter()
     groups: dict[tuple[str, str], FormulaGroup] = {}
     cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
     formula_count = 0
@@ -780,6 +800,8 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         )
 
     # --- 4. formula nodes -------------------------------------------------
+    _v("extraction+grouping", _t)
+    _t = time.perf_counter()
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
 
@@ -1099,6 +1121,14 @@ def analyze_workbook(data: bytes, filename: str = "workbook.xlsx") -> dict[str, 
         "nodes": list(nodes.values()),
         "edges": list(edges.values()),
     }
+    _v("nodes+edges+graph", _t)
+    if verbose:
+        print(
+            f"[linexcel] total: {time.perf_counter() - _t0:.1f}s | "
+            f"{len(nodes)} nodes | {len(edges)} edges | "
+            f"{formula_count:,} formulas",
+            file=sys.stderr,
+        )
     return {"graph": graph, "engine": engine, "analysisId": uuid.uuid4().hex[:16]}
 
 
