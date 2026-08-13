@@ -276,7 +276,16 @@ def _detect_static_tables(
             for cr1, cc1, cr2, cc2 in covered
         ):
             continue
-        headers = [_safe_value(row[c]) for c in range(best_start, c2)]
+        # ponytail: header cells may hold formulas (=...) or be blank — openpyxl
+        # returns the formula text as a str, which would leak into table_column.
+        # Fall back to the column letter so the lineage graph stays readable.
+        headers: list[Any] = []
+        for i, c in enumerate(range(best_start, c2)):
+            val = row[c]
+            if isinstance(val, str) and val.strip() and not val.startswith("="):
+                headers.append(_safe_value(val))
+            else:
+                headers.append(f"Column {num_to_col(c1 + i)}")
         found.append(
             {
                 "name": f"Table{r}C{c1}",
