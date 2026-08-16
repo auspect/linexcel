@@ -30,7 +30,7 @@ overview = result.document_workbook(base_url=..., model=..., include_context=Fal
 # Or keep the whole run local — a local runtime receives everything, and it
 # never leaves your machine
 overview = result.document_workbook(
-    base_url="http://localhost:11434/v1", model="llama3.1"
+    base_url="http://localhost:11434/v1", model="laguna-xs-2.1"
 )
 ```
 

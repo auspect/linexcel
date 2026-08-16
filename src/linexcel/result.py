@@ -10,7 +10,7 @@ Minimal example, without backend or AI key:
 
 AI documentation is optional — pick a provider explicitly (no default):
 
-    result.document(base_url="http://localhost:11434/v1", model="llama3.1")
+    result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
 """
 
 from __future__ import annotations

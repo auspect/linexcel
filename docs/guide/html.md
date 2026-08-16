@@ -11,7 +11,7 @@ Fully offline — Cytoscape.js embedded, no internet needed.
 ## With AI documentation
 
 ```python
-docs = result.document(base_url="http://localhost:11434/v1", model="llama3.1")
+docs = result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
 result.save_html("lineage.html", docs=docs)
 ```
 

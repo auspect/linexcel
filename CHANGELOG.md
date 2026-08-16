@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Command-line interface: `linexcel analyze workbook.xlsx`, exposed as a
+  `[project.scripts]` entry point so `uvx linexcel analyze ...` works without
+  installing anything. Deterministic by default; `--ai-docs` opts into AI
+  documentation and needs the `ai` extra
+  (`uvx --from "linexcel[ai]" linexcel ...`). Also runnable as
+  `python -m linexcel`.
+
 ## [1.0.0] — 2026-08-08
 
 First stable release. The AI surface changed in two ways that a caller can

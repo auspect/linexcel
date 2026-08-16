@@ -840,12 +840,12 @@ class TestAiProviders:
         result = analyze(lineage_excel)
         assert (
             result.document_workbook(
-                base_url="http://localhost:11434/v1", model="llama3.1"
+                base_url="http://localhost:11434/v1", model="laguna-xs-2.1"
             )
             == "# overview"
         )
         assert captured["base_url"] == "http://localhost:11434/v1"
-        assert captured["model"] == "llama3.1"
+        assert captured["model"] == "laguna-xs-2.1"
         assert captured["api_key"] is None  # left to the client to resolve
 
     def test_env_vars_are_the_equivalent_of_base_url_and_model(
