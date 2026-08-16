@@ -38,6 +38,9 @@ dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.9", "ty>=0.0.63"]
 screenshots = ["playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
 
+[project.scripts]
+linexcel = "linexcel.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/auspect/linexcel"
 Repository = "https://github.com/auspect/linexcel"

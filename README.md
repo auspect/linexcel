@@ -22,6 +22,29 @@ uv add linexcel[ai]           # + AI documentation (optional)
 
 ## Usage
 
+### Command line
+
+No install needed — `uvx` fetches and runs it in one step:
+
+```Shell
+uvx linexcel analyze workbook.xlsx           # -> workbook_lineage.html
+uvx linexcel analyze workbook.xlsx --json graph.json --no-html
+```
+
+The default is deterministic: lineage only, no network, no key. `--ai-docs`
+opts in, and needs the `ai` extra plus an OpenAI-compatible endpoint:
+
+```Shell
+uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
+    --base-url http://localhost:11434/v1 --model laguna-xs-2.1 --language fr
+```
+
+`--base-url`, `--model` and `--api-key` also read `LINEXCEL_AI_BASE_URL`,
+`LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY`. Run `linexcel analyze --help`
+for the full list, including `--token-budget` to cap what a run may cost.
+
+### Python
+
 ```python
 from linexcel import analyze
 
@@ -61,17 +84,17 @@ takes any callable for anything else. See
 
 ## Documentation
 
-| Guide | |
-| --- | --- |
-| [Quick start](https://auspect.github.io/linexcel/guide/quickstart/) | Analyse a workbook, explore it, export it |
-| [Lineage coverage](https://auspect.github.io/linexcel/guide/coverage/) | What is in the graph, and what is not |
-| [HTML export](https://auspect.github.io/linexcel/guide/html/) | The standalone offline report |
-| [Workbook context & screenshots](https://auspect.github.io/linexcel/guide/context/) | What a reader sees, not only what the file computes |
-| [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/) | Ollama, OpenRouter, any OpenAI-compatible endpoint, or your own callable |
-| [AI documentation](https://auspect.github.io/linexcel/guide/ai/) | Provable cards, token usage, `token_budget=` |
-| [Languages](https://auspect.github.io/linexcel/guide/languages/) | The nine supported locales |
-| [Data handling](https://auspect.github.io/linexcel/guide/data-handling/) | What leaves the machine, and when |
-| [API reference](https://auspect.github.io/linexcel/api/result/) | `LineageResult`, `analyzer`, `aidoc`, … |
+| Guide                                                                                  |                                                                          |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [Quick start](https://auspect.github.io/linexcel/guide/quickstart/)                     | Analyse a workbook, explore it, export it                                |
+| [Lineage coverage](https://auspect.github.io/linexcel/guide/coverage/)                  | What is in the graph, and what is not                                    |
+| [HTML export](https://auspect.github.io/linexcel/guide/html/)                           | The standalone offline report                                            |
+| [Workbook context &amp; screenshots](https://auspect.github.io/linexcel/guide/context/) | What a reader sees, not only what the file computes                      |
+| [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/)          | Ollama, OpenRouter, any OpenAI-compatible endpoint, or your own callable |
+| [AI documentation](https://auspect.github.io/linexcel/guide/ai/)                        | Provable cards, token usage, `token_budget=`                            |
+| [Languages](https://auspect.github.io/linexcel/guide/languages/)                        | The nine supported locales                                               |
+| [Data handling](https://auspect.github.io/linexcel/guide/data-handling/)                | What leaves the machine, and when                                        |
+| [API reference](https://auspect.github.io/linexcel/api/result/)                         | `LineageResult`, `analyzer`, `aidoc`, …                           |
 
 ## Sample output
 
