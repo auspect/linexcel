@@ -37,8 +37,8 @@ you choose the provider — nothing is sent anywhere until you name one:
 
 ```python
 # A local runtime keeps the workbook on your machine and costs nothing
-docs = result.document(base_url="http://localhost:11434/v1", model="llama3.1")
-overview = result.document_workbook(base_url="http://localhost:11434/v1", model="llama3.1")
+docs = result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
+overview = result.document_workbook(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
 result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 

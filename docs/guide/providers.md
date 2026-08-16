@@ -31,7 +31,7 @@ Same two arguments every time; only the URL and the model name change.
     ```python
     docs = result.document(
         base_url="http://localhost:11434/v1",
-        model="llama3.1",
+        model="laguna-xs-2.1",
     )
     ```
 
@@ -87,7 +87,7 @@ once outside the code:
 
 ```bash
 export LINEXCEL_AI_BASE_URL=http://localhost:11434/v1
-export LINEXCEL_AI_MODEL=llama3.1
+export LINEXCEL_AI_MODEL=laguna-xs-2.1
 ```
 
 ```python
@@ -97,7 +97,7 @@ docs = result.document()   # configured entirely by the environment
 !!! note "A model must always be named"
 
     `base_url=` without a model raises rather than falling back to one.
-    Endpoints do not agree on a default — `llama3.1` means nothing to a hosted
+    Endpoints do not agree on a default — `laguna-xs-2.1` means nothing to a hosted
     API and a hosted model id means nothing to Ollama — so linexcel does not
     invent one.
 

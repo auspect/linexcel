@@ -12,7 +12,7 @@ example below uses a local Ollama runtime; substitute your own endpoint.
 from linexcel import analyze
 
 result = analyze("workbook.xlsx")
-docs = result.document(base_url="http://localhost:11434/v1", model="llama3.1")
+docs = result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
 result.save_html("out.html", docs=docs)
 ```
 
@@ -88,11 +88,11 @@ dropped — so a small workbook loses nothing.
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document(base_url=..., model="llama3.1")
-overview = result.document_workbook(base_url=..., model="llama3.1")
+docs = result.document(base_url=..., model="laguna-xs-2.1")
+overview = result.document_workbook(base_url=..., model="laguna-xs-2.1")
 
 print(result.token_usage)
-# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [openai-compatible/llama3.1]
+# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [openai-compatible/laguna-xs-2.1]
 
 usage = result.token_usage
 usage.input_tokens, usage.output_tokens, usage.total, usage.requests
