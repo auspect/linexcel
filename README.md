@@ -81,6 +81,24 @@ takes any callable for anything else. See
 - **Workbook context** — sheet previews, comments, merged ranges, frozen panes and hidden columns, plus optional LibreOffice-rendered screenshots
 - **AI documentation** — vendor-neutral, grounded in deterministic lineage, with token accounting and a spend ceiling
 - **Nine interface languages** — for both the report and the AI prompts
+- **Command line** — `uvx linexcel analyze workbook.xlsx`, no install required
+
+## Roadmap
+
+Shipped:
+
+- [x] Deterministic lineage — formula extraction, stretched-pattern grouping, dependency graph, VBA
+- [x] Step-by-step evaluation, with every value checked against the one stored in the file
+- [x] Standalone offline HTML viewer, in nine languages
+- [x] Workbook context and LibreOffice-rendered sheet screenshots
+- [x] AI documentation — any OpenAI-compatible endpoint, token accounting, spend ceiling
+- [x] Command-line interface, installable-free through `uvx`
+
+Planned:
+
+- [ ] **Power Query lineage** ([#34](https://github.com/auspect/linexcel/issues/34)) — queries are invisible today, so a workbook fed by Get &amp; Transform shows the range the data landed in and nothing about where it came from. Everything needed sits in the file, so this is a gap to close rather than a limit of the format.
+- [ ] **Vision** ([#46](https://github.com/auspect/linexcel/issues/46)) — let a multimodal model read the sheet screenshots. Colour conventions such as blue inputs against black formulas, conditional formatting, charts and block layout are invisible to a text dossier, however complete it is.
+- [ ] **`formulas` as a fallback** ([#37](https://github.com/auspect/linexcel/issues/37)) — a second parser for the workbooks formualizer cannot read, so an unsupported construct degrades the graph instead of failing the analysis.
 
 ## Documentation
 
