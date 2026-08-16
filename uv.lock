@@ -716,12 +716,6 @@ ai = [
 all = [
     { name = "openai" },
 ]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "ty" },
-]
 docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
@@ -732,6 +726,14 @@ openai = [
 ]
 screenshots = [
     { name = "playwright" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "ty" },
 ]
 
 [package.metadata]
@@ -746,13 +748,17 @@ requires-dist = [
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "playwright", marker = "extra == 'screenshots'", specifier = ">=1.40" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "python-calamine", specifier = ">=0.8.2" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.63" },
 ]
-provides-extras = ["ai", "all", "dev", "docs", "openai", "screenshots"]
+provides-extras = ["ai", "all", "docs", "openai", "screenshots"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "ruff", specifier = ">=0.9" },
+    { name = "ty", specifier = ">=0.0.63" },
+]
 
 [[package]]
 name = "markdown"
