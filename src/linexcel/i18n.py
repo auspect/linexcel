@@ -6,9 +6,9 @@ allowlist rather than escaped or passed through: an arbitrary string would let a
 caller steer the model's instructions or reach the generated JavaScript.
 
 Adding a language means adding an entry here *and* in :mod:`linexcel.aidoc`'s
-two prompt registries. ``tests/test_lineage.py`` asserts the three stay in sync,
-so a partial addition fails the suite instead of surfacing as raw keys in the
-report or a ``KeyError`` at generation time.
+three prompt registries (node, workbook, screenshot). ``tests/test_lineage.py``
+asserts they all stay in sync, so a partial addition fails the suite instead of
+surfacing as raw keys in the report or a ``KeyError`` at generation time.
 
 Provenance: ``en`` and ``fr`` were written by hand. The other seven languages,
 here and in the prompt registries, were produced with AI assistance and have not
@@ -63,8 +63,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel could not complete this evaluation: the figure shown is an "
             "error-guarded fallback."
         ),
+        "value_volatile": "Not recalculated (volatile)",
+        "value_volatile_desc": (
+            "TODAY, NOW and RAND answer differently every time they are computed, "
+            "so linexcel keeps what the file stores rather than inventing a "
+            "value the workbook never had."
+        ),
+        "external_books": "External workbooks",
+        "external_read_folder": "read from the folder provided",
+        "external_read_cache": "not read — value cached in this file",
+        "external_read_none": "not read",
+        "value_external": "Read from another workbook",
+        "value_external_desc": (
+            "This value comes from a workbook linexcel was pointed at, not from "
+            "the analyzed file: the reference was replaced by the value before "
+            "the formula was evaluated."
+        ),
+        "external_hint": (
+            "Pass the folder holding these files (--refs-dir) so linexcel can "
+            "read them."
+        ),
+        "query_source": "M source",
+        "query_loaded": "Loaded into",
+        "query_not_loaded": "Not loaded onto a sheet (connection only)",
+        "query_reads": "Reads",
+        "query_reads_hint": (
+            "A source outside this workbook is named by the query, not read by "
+            "linexcel: what it holds is not in the file."
+        ),
         "value_col_file": "Excel file",
         "value_col_calc": "linexcel recalc",
+        "value_col_cell": "Cell",
+        "value_not_in_file": "Not stored",
+        "value_not_recalc": "Not recalculated",
+        "value_no_cache_desc": (
+            "The file stores no value to compare with: Excel writes one only "
+            "when it saves a calculated workbook."
+        ),
+        "sampled_cells": "{shown} cells sampled out of {count}.",
         "value_match": "The recalculated value matches the file",
         "value_mismatch": "The recalculated value differs from the file",
         "target": "Target",
@@ -76,6 +112,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependents",
         "cells": "cells",
         "ai_doc": "🤖 AI Documentation (Generated)",
+        "ai_vision": "🤖 AI — read from the screenshot",
         "ai_overview": "🤖 AI Generated Overview",
         "ai_overview_desc": (
             "This overview was written by an AI model from the deterministic "
@@ -92,6 +129,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Source data",
         "kind_name": "Named cell/range",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Other (aggregated)",
         "kind_opaque": "External reference",
         "placeholder_title": "Select a node",
@@ -148,8 +186,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel n'a pas pu mener l'évaluation à son terme : la valeur "
             "affichée est un repli protégé contre l'erreur."
         ),
+        "value_volatile": "Non recalculée (volatile)",
+        "value_volatile_desc": (
+            "TODAY, NOW et RAND répondent différemment à chaque calcul : linexcel "
+            "conserve donc la valeur du fichier plutôt que d'en inventer une "
+            "que le classeur n'a jamais eue."
+        ),
+        "external_books": "Classeurs externes",
+        "external_read_folder": "lu depuis le dossier fourni",
+        "external_read_cache": ("non lu — valeur mise en cache dans ce fichier"),
+        "external_read_none": "non lu",
+        "value_external": "Lue d'un autre classeur",
+        "value_external_desc": (
+            "Cette valeur provient d'un classeur vers lequel linexcel a été "
+            "pointé, pas du fichier analysé : la référence a été remplacée par "
+            "la valeur avant l'évaluation de la formule."
+        ),
+        "external_hint": (
+            "Indiquez le dossier contenant ces fichiers (--refs-dir) pour que "
+            "linexcel puisse les lire."
+        ),
+        "query_source": "Source M",
+        "query_loaded": "Chargée dans",
+        "query_not_loaded": "Non chargée dans une feuille (connexion seule)",
+        "query_reads": "Lit",
+        "query_reads_hint": (
+            "Une source hors de ce classeur est nommée par la requête, pas lue "
+            "par linexcel : son contenu n'est pas dans le fichier."
+        ),
         "value_col_file": "Fichier Excel",
         "value_col_calc": "Recalcul linexcel",
+        "value_col_cell": "Cellule",
+        "value_not_in_file": "Absente",
+        "value_not_recalc": "Non recalculée",
+        "value_no_cache_desc": (
+            "Le fichier ne contient aucune valeur à comparer : Excel n'en "
+            "enregistre une qu'en sauvegardant un classeur calculé."
+        ),
+        "sampled_cells": "{shown} cellules échantillonnées sur {count}.",
         "value_match": "La valeur recalculée correspond au fichier",
         "value_mismatch": "La valeur recalculée diffère du fichier",
         "target": "Cible",
@@ -161,6 +235,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dépendants",
         "cells": "cellules",
         "ai_doc": "🤖 Documentation IA (Générée)",
+        "ai_vision": "🤖 IA — lu sur la capture",
         "ai_overview": "🤖 Synthèse Générée par IA",
         "ai_overview_desc": (
             "Cette synthèse a été rédigée par un modèle d'IA à partir du "
@@ -177,6 +252,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Source de données",
         "kind_name": "Cellule/plage nommée",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Autre (agrégé)",
         "kind_opaque": "Référence externe",
         "placeholder_title": "Sélectionner un nœud",
@@ -233,8 +309,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel no ha podido completar esta evaluación: la cifra mostrada "
             "es un valor alternativo protegido frente a errores."
         ),
+        "value_volatile": "No recalculado (volátil)",
+        "value_volatile_desc": (
+            "TODAY, NOW y RAND responden de forma distinta en cada cálculo, así que "
+            "linexcel conserva lo que guarda el archivo en lugar de inventar un "
+            "valor que el libro nunca tuvo."
+        ),
+        "external_books": "Libros externos",
+        "external_read_folder": "leído de la carpeta indicada",
+        "external_read_cache": "no leído — valor en caché en este archivo",
+        "external_read_none": "no leído",
+        "value_external": "Leído de otro libro",
+        "value_external_desc": (
+            "Este valor procede de un libro al que se apuntó a linexcel, no del "
+            "archivo analizado: la referencia se sustituyó por el valor antes "
+            "de evaluar la fórmula."
+        ),
+        "external_hint": (
+            "Indique la carpeta que contiene estos archivos (--refs-dir) para "
+            "que linexcel pueda leerlos."
+        ),
+        "query_source": "Origen M",
+        "query_loaded": "Cargada en",
+        "query_not_loaded": "No cargada en una hoja (solo conexión)",
+        "query_reads": "Lee",
+        "query_reads_hint": (
+            "La consulta nombra un origen externo a este libro, pero linexcel "
+            "no lo lee: su contenido no está en el archivo."
+        ),
         "value_col_file": "Archivo Excel",
         "value_col_calc": "Recálculo linexcel",
+        "value_col_cell": "Celda",
+        "value_not_in_file": "No guardado",
+        "value_not_recalc": "No recalculado",
+        "value_no_cache_desc": (
+            "El archivo no guarda ningún valor con el que comparar: Excel solo "
+            "lo escribe al guardar un libro calculado."
+        ),
+        "sampled_cells": "{shown} celdas muestreadas de {count}.",
         "value_match": "El valor recalculado coincide con el archivo",
         "value_mismatch": "El valor recalculado difiere del archivo",
         "target": "Destino",
@@ -246,6 +358,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependientes",
         "cells": "celdas",
         "ai_doc": "🤖 Documentación IA (generada)",
+        "ai_vision": "🤖 IA — leído en la captura",
         "ai_overview": "🤖 Resumen generado por IA",
         "ai_overview_desc": (
             "Este resumen ha sido redactado por un modelo de IA a partir del "
@@ -262,6 +375,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Datos de origen",
         "kind_name": "Celda/rango con nombre",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Otros (agregados)",
         "kind_opaque": "Referencia externa",
         "placeholder_title": "Seleccione un nodo",
@@ -319,8 +433,45 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel konnte diese Auswertung nicht abschließen: der angezeigte "
             "Wert ist ein fehlergeschützter Ersatzwert."
         ),
+        "value_volatile": "Nicht neu berechnet (volatil)",
+        "value_volatile_desc": (
+            "TODAY, NOW und RAND antworten bei jeder Berechnung anders, daher behält "
+            "linexcel den Wert aus der Datei, statt einen zu erfinden, den die "
+            "Arbeitsmappe nie hatte."
+        ),
+        "external_books": "Externe Arbeitsmappen",
+        "external_read_folder": "aus dem angegebenen Ordner gelesen",
+        "external_read_cache": ("nicht gelesen — Wert in dieser Datei gespeichert"),
+        "external_read_none": "nicht gelesen",
+        "value_external": "Aus einer anderen Arbeitsmappe gelesen",
+        "value_external_desc": (
+            "Dieser Wert stammt aus einer Arbeitsmappe, auf die linexcel "
+            "verwiesen wurde, nicht aus der analysierten Datei: der Bezug wurde "
+            "vor der Auswertung durch den Wert ersetzt."
+        ),
+        "external_hint": (
+            "Geben Sie den Ordner mit diesen Dateien an (--refs-dir), damit "
+            "linexcel sie lesen kann."
+        ),
+        "query_source": "M-Quelltext",
+        "query_loaded": "Geladen in",
+        "query_not_loaded": "Nicht in ein Blatt geladen (nur Verbindung)",
+        "query_reads": "Liest",
+        "query_reads_hint": (
+            "Eine Quelle außerhalb dieser Arbeitsmappe wird von der Abfrage "
+            "genannt, aber nicht von linexcel gelesen: ihr Inhalt steht nicht "
+            "in der Datei."
+        ),
         "value_col_file": "Excel-Datei",
         "value_col_calc": "linexcel-Neuberechnung",
+        "value_col_cell": "Zelle",
+        "value_not_in_file": "Nicht gespeichert",
+        "value_not_recalc": "Nicht neu berechnet",
+        "value_no_cache_desc": (
+            "Die Datei enthält keinen Wert zum Vergleich: Excel schreibt ihn nur "
+            "beim Speichern einer berechneten Arbeitsmappe."
+        ),
+        "sampled_cells": "{shown} von {count} Zellen als Stichprobe.",
         "value_match": "Der neu berechnete Wert stimmt mit der Datei überein",
         "value_mismatch": "Der neu berechnete Wert weicht von der Datei ab",
         "target": "Ziel",
@@ -332,6 +483,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Nachfolger",
         "cells": "Zellen",
         "ai_doc": "🤖 KI-Dokumentation (generiert)",
+        "ai_vision": "🤖 KI — aus dem Screenshot gelesen",
         "ai_overview": "🤖 KI-generierter Überblick",
         "ai_overview_desc": (
             "Dieser Überblick wurde von einem KI-Modell auf Basis der "
@@ -348,6 +500,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Quelldaten",
         "kind_name": "Benannte Zelle/Bereich",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Sonstige (aggregiert)",
         "kind_opaque": "Externer Bezug",
         "placeholder_title": "Knoten auswählen",
@@ -406,8 +559,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel non è riuscito a completare questa valutazione: il valore "
             "mostrato è un ripiego protetto dagli errori."
         ),
+        "value_volatile": "Non ricalcolato (volatile)",
+        "value_volatile_desc": (
+            "TODAY, NOW e RAND rispondono in modo diverso a ogni calcolo, quindi "
+            "linexcel conserva quanto è salvato nel file invece di inventare un "
+            "valore che la cartella di lavoro non ha mai avuto."
+        ),
+        "external_books": "Cartelle di lavoro esterne",
+        "external_read_folder": "letta dalla cartella indicata",
+        "external_read_cache": ("non letta — valore memorizzato in questo file"),
+        "external_read_none": "non letta",
+        "value_external": "Letto da un'altra cartella di lavoro",
+        "value_external_desc": (
+            "Questo valore proviene da una cartella di lavoro indicata a "
+            "linexcel, non dal file analizzato: il riferimento è stato "
+            "sostituito dal valore prima di valutare la formula."
+        ),
+        "external_hint": (
+            "Indica la cartella che contiene questi file (--refs-dir) perché "
+            "linexcel possa leggerli."
+        ),
+        "query_source": "Sorgente M",
+        "query_loaded": "Caricata in",
+        "query_not_loaded": "Non caricata in un foglio (solo connessione)",
+        "query_reads": "Legge",
+        "query_reads_hint": (
+            "Una sorgente esterna a questa cartella di lavoro è nominata dalla "
+            "query, non letta da linexcel: il suo contenuto non è nel file."
+        ),
         "value_col_file": "File Excel",
         "value_col_calc": "Ricalcolo linexcel",
+        "value_col_cell": "Cella",
+        "value_not_in_file": "Non salvato",
+        "value_not_recalc": "Non ricalcolato",
+        "value_no_cache_desc": (
+            "Il file non contiene alcun valore da confrontare: Excel lo scrive "
+            "solo salvando una cartella di lavoro calcolata."
+        ),
+        "sampled_cells": "{shown} celle campionate su {count}.",
         "value_match": "Il valore ricalcolato coincide con il file",
         "value_mismatch": "Il valore ricalcolato differisce dal file",
         "target": "Destinazione",
@@ -419,6 +608,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dipendenti",
         "cells": "celle",
         "ai_doc": "🤖 Documentazione IA (generata)",
+        "ai_vision": "🤖 IA — letto dalla schermata",
         "ai_overview": "🤖 Panoramica generata dall'IA",
         "ai_overview_desc": (
             "Questa panoramica è stata redatta da un modello di IA a partire "
@@ -435,6 +625,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Dati di origine",
         "kind_name": "Cella/intervallo denominato",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Altro (aggregato)",
         "kind_opaque": "Riferimento esterno",
         "placeholder_title": "Seleziona un nodo",
@@ -491,8 +682,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "O linexcel não conseguiu concluir esta avaliação: o valor "
             "apresentado é uma alternativa protegida contra erros."
         ),
+        "value_volatile": "Não recalculado (volátil)",
+        "value_volatile_desc": (
+            "TODAY, NOW e RAND respondem de forma diferente a cada cálculo, pelo que "
+            "o linexcel mantém o que o ficheiro guarda em vez de inventar um "
+            "valor que o livro nunca teve."
+        ),
+        "external_books": "Livros externos",
+        "external_read_folder": "lido da pasta indicada",
+        "external_read_cache": "não lido — valor em cache neste ficheiro",
+        "external_read_none": "não lido",
+        "value_external": "Lido de outro livro",
+        "value_external_desc": (
+            "Este valor vem de um livro para o qual o linexcel foi apontado, "
+            "não do ficheiro analisado: a referência foi substituída pelo valor "
+            "antes de a fórmula ser avaliada."
+        ),
+        "external_hint": (
+            "Indique a pasta com estes ficheiros (--refs-dir) para que o "
+            "linexcel os possa ler."
+        ),
+        "query_source": "Origem M",
+        "query_loaded": "Carregada em",
+        "query_not_loaded": "Não carregada numa folha (apenas ligação)",
+        "query_reads": "Lê",
+        "query_reads_hint": (
+            "Uma origem fora deste livro é nomeada pela consulta, não lida "
+            "pelo linexcel: o seu conteúdo não está no ficheiro."
+        ),
         "value_col_file": "Ficheiro Excel",
         "value_col_calc": "Recálculo linexcel",
+        "value_col_cell": "Célula",
+        "value_not_in_file": "Não guardado",
+        "value_not_recalc": "Não recalculado",
+        "value_no_cache_desc": (
+            "O ficheiro não guarda qualquer valor para comparar: o Excel só o "
+            "escreve ao gravar um livro calculado."
+        ),
+        "sampled_cells": "{shown} células amostradas em {count}.",
         "value_match": "O valor recalculado coincide com o ficheiro",
         "value_mismatch": "O valor recalculado difere do ficheiro",
         "target": "Destino",
@@ -504,6 +731,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependentes",
         "cells": "células",
         "ai_doc": "🤖 Documentação de IA (gerada)",
+        "ai_vision": "🤖 IA — lido na captura",
         "ai_overview": "🤖 Visão geral gerada por IA",
         "ai_overview_desc": (
             "Esta visão geral foi redigida por um modelo de IA a partir da "
@@ -520,6 +748,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Dados de origem",
         "kind_name": "Célula/intervalo nomeado",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Outros (agregados)",
         "kind_opaque": "Referência externa",
         "placeholder_title": "Selecione um nó",
@@ -578,8 +807,44 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel kon deze evaluatie niet voltooien: de getoonde waarde is "
             "een foutbeveiligde terugvalwaarde."
         ),
+        "value_volatile": "Niet herberekend (vluchtig)",
+        "value_volatile_desc": (
+            "TODAY, NOW en RAND antwoorden bij elke berekening anders, dus linexcel "
+            "houdt aan wat het bestand bewaart in plaats van een waarde te "
+            "verzinnen die de werkmap nooit had."
+        ),
+        "external_books": "Externe werkmappen",
+        "external_read_folder": "gelezen uit de opgegeven map",
+        "external_read_cache": ("niet gelezen — waarde in dit bestand bewaard"),
+        "external_read_none": "niet gelezen",
+        "value_external": "Uit een andere werkmap gelezen",
+        "value_external_desc": (
+            "Deze waarde komt uit een werkmap die linexcel kreeg aangewezen, "
+            "niet uit het geanalyseerde bestand: de verwijzing werd door de "
+            "waarde vervangen voordat de formule werd berekend."
+        ),
+        "external_hint": (
+            "Geef de map met deze bestanden op (--refs-dir) zodat linexcel ze "
+            "kan lezen."
+        ),
+        "query_source": "M-bron",
+        "query_loaded": "Geladen in",
+        "query_not_loaded": "Niet in een blad geladen (alleen verbinding)",
+        "query_reads": "Leest",
+        "query_reads_hint": (
+            "Een bron buiten deze werkmap wordt door de query genoemd, niet "
+            "door linexcel gelezen: de inhoud staat niet in het bestand."
+        ),
         "value_col_file": "Excel-bestand",
         "value_col_calc": "Herberekening linexcel",
+        "value_col_cell": "Cel",
+        "value_not_in_file": "Niet opgeslagen",
+        "value_not_recalc": "Niet herberekend",
+        "value_no_cache_desc": (
+            "Het bestand bevat geen waarde om mee te vergelijken: Excel schrijft "
+            "die alleen bij het opslaan van een berekende werkmap."
+        ),
+        "sampled_cells": "{shown} van {count} cellen bemonsterd.",
         "value_match": "De herberekende waarde komt overeen met het bestand",
         "value_mismatch": "De herberekende waarde wijkt af van het bestand",
         "target": "Doel",
@@ -591,6 +856,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Afhankelijken",
         "cells": "cellen",
         "ai_doc": "🤖 AI-documentatie (gegenereerd)",
+        "ai_vision": "🤖 AI — van de schermafbeelding",
         "ai_overview": "🤖 Door AI gegenereerd overzicht",
         "ai_overview_desc": (
             "Dit overzicht is geschreven door een AI-model op basis van de "
@@ -607,6 +873,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "Brongegevens",
         "kind_name": "Benoemde cel/bereik",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "Overig (samengevoegd)",
         "kind_opaque": "Externe verwijzing",
         "placeholder_title": "Selecteer een knoop",
@@ -661,8 +928,43 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "linexcel はこの評価を完了できませんでした。"
             "表示されている値はエラー保護のための代替値です。"
         ),
+        "value_volatile": "再計算なし（揮発性）",
+        "value_volatile_desc": (
+            "TODAY、NOW、RAND は計算のたびに異なる値を返すため、linexcel は"
+            "ブックが持たなかった値を作らず、ファイルの値をそのまま示します。"
+        ),
+        "external_books": "外部ブック",
+        "external_read_folder": "指定フォルダーから読み取り",
+        "external_read_cache": "未読み取り — このファイル内のキャッシュ値",
+        "external_read_none": "未読み取り",
+        "value_external": "他のブックから読み取り",
+        "value_external_desc": (
+            "この値は linexcel に指定された別のブックのものであり、解析対象の"
+            "ファイルのものではありません。数式の評価前に、参照そのものが値に"
+            "置き換えられています。"
+        ),
+        "external_hint": (
+            "これらのファイルを含むフォルダーを --refs-dir で指定すると、"
+            "linexcel が読み取れます。"
+        ),
+        "query_source": "M ソース",
+        "query_loaded": "読み込み先",
+        "query_not_loaded": "シートに読み込まれていません（接続のみ）",
+        "query_reads": "参照元",
+        "query_reads_hint": (
+            "このブックの外にあるソースは、クエリが名前を挙げているだけで、"
+            "linexcel は読み取っていません。その内容はファイルにありません。"
+        ),
         "value_col_file": "Excel ファイル",
         "value_col_calc": "linexcel 再計算",
+        "value_col_cell": "セル",
+        "value_not_in_file": "未保存",
+        "value_not_recalc": "再計算なし",
+        "value_no_cache_desc": (
+            "比較できる値がファイルに保存されていません"
+            "（Excel は計算済みブックを保存したときにのみ書き込みます）。"
+        ),
+        "sampled_cells": "{count} セル中 {shown} セルを抽出。",
         "value_match": "再計算値はファイルの値と一致します",
         "value_mismatch": "再計算値はファイルの値と異なります",
         "target": "対象範囲",
@@ -674,6 +976,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "参照先",
         "cells": "セル",
         "ai_doc": "🤖 AI ドキュメント（生成）",
+        "ai_vision": "🤖 AI — スクリーンショットから",
         "ai_overview": "🤖 AI が生成した概要",
         "ai_overview_desc": (
             "この概要は、決定論的に抽出された計算系統に基づいて AI モデルが"
@@ -689,6 +992,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "ソースデータ",
         "kind_name": "名前付きセル/範囲",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "その他（集約）",
         "kind_opaque": "外部参照",
         "placeholder_title": "ノードを選択してください",
@@ -741,8 +1045,39 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_fallback_desc": (
             "linexcel 未能完成本次求值：所显示的值是一个已防错的回退值。"
         ),
+        "value_volatile": "未重算（易失性）",
+        "value_volatile_desc": (
+            "TODAY、NOW、RAND 每次计算的结果都不同，"
+            "因此 linexcel 保留文件中保存的值，而不是编造工作簿从未有过的值。"
+        ),
+        "external_books": "外部工作簿",
+        "external_read_folder": "已从所提供的文件夹读取",
+        "external_read_cache": "未读取 — 使用本文件中缓存的值",
+        "external_read_none": "未读取",
+        "value_external": "读取自其他工作簿",
+        "value_external_desc": (
+            "该值来自指定给 linexcel 的另一个工作簿，而非被分析的文件："
+            "公式求值前，引用本身已被替换为该值。"
+        ),
+        "external_hint": (
+            "使用 --refs-dir 指定包含这些文件的文件夹，linexcel 即可读取。"
+        ),
+        "query_source": "M 源代码",
+        "query_loaded": "加载到",
+        "query_not_loaded": "未加载到工作表（仅连接）",
+        "query_reads": "读取",
+        "query_reads_hint": (
+            "查询指明了本工作簿之外的数据源，但 linexcel 并未读取：其内容不在本文件中。"
+        ),
         "value_col_file": "Excel 文件",
         "value_col_calc": "linexcel 重算",
+        "value_col_cell": "单元格",
+        "value_not_in_file": "文件中无",
+        "value_not_recalc": "未重算",
+        "value_no_cache_desc": (
+            "文件中没有可用于比较的值（Excel 仅在保存已计算的工作簿时才写入）。"
+        ),
+        "sampled_cells": "已抽样 {count} 个单元格中的 {shown} 个。",
         "value_match": "重算值与文件中的值一致",
         "value_mismatch": "重算值与文件中的值不一致",
         "target": "目标区域",
@@ -754,6 +1089,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "从属单元格",
         "cells": "个单元格",
         "ai_doc": "🤖 AI 文档（自动生成）",
+        "ai_vision": "🤖 AI — 读自截图",
         "ai_overview": "🤖 AI 生成的概览",
         "ai_overview_desc": (
             "本概览由 AI 模型根据确定性的计算血缘生成。"
@@ -769,6 +1105,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_input": "源数据",
         "kind_name": "命名单元格/区域",
         "kind_vba": "VBA",
+        "kind_query": "Power Query",
         "kind_misc": "其他（已聚合）",
         "kind_opaque": "外部引用",
         "placeholder_title": "请选择一个节点",

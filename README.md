@@ -29,19 +29,37 @@ No install needed — `uvx` fetches and runs it in one step:
 ```Shell
 uvx linexcel analyze workbook.xlsx           # -> workbook_lineage.html
 uvx linexcel analyze workbook.xlsx --json graph.json --no-html
+uvx linexcel analyze workbook.xlsx --refs-dir ./linked   # workbooks it reads
 ```
+
+A workbook that reads `'[Budget FY26.xlsx]Annual'!B4` depends on a file
+linexcel does not have. It always names that file and the path the workbook
+declares; `--refs-dir` points at a folder holding them, and the reference is
+then read for real — the same folder is searched for the `.xlam`/`.xla`
+add-ins whose VBA the workbook calls.
 
 The default is deterministic: lineage only, no network, no key. `--ai-docs`
 opts in, and needs the `ai` extra plus an OpenAI-compatible endpoint:
 
 ```Shell
 uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
-    --base-url http://localhost:11434/v1 --model laguna-xs-2.1 --language fr
+    --base-url http://localhost:11434/v1 --model qwen3.8 --language fr
 ```
 
 `--base-url`, `--model` and `--api-key` also read `LINEXCEL_AI_BASE_URL`,
 `LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY`. Run `linexcel analyze --help`
 for the full list, including `--token-budget` to cap what a run may cost.
+
+Sheets can also be rendered and, separately, read by a multimodal model:
+
+```Shell
+uvx linexcel analyze workbook.xlsx --screenshots shots/    # LibreOffice, local
+uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx \
+    --screenshots shots/ --vision-docs --base-url ... --vision-model ...
+```
+
+`--vision-docs` is the only option that puts a picture of a sheet in a request,
+so it is opt-in and independent of `--ai-docs`.
 
 ### Python
 
@@ -60,8 +78,8 @@ you choose the provider — nothing is sent anywhere until you name one:
 
 ```python
 # A local runtime keeps the workbook on your machine and costs nothing
-docs = result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
-overview = result.document_workbook(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
+docs = result.document(base_url="http://localhost:11434/v1", model="qwen3.8")
+overview = result.document_workbook(base_url="http://localhost:11434/v1", model="qwen3.8")
 result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 
@@ -74,12 +92,16 @@ takes any callable for anything else. See
 
 - **Formula extraction** via [formualizer](https://pypi.org/project/formualizer/) (Rust engine)
 - **Stretched pattern grouping** — 1000 identical formulas → 1 node
-- **Dependency graph** — cells, ranges, defined names, VBA procedures
+- **Dependency graph** — cells, ranges, defined names, VBA procedures, Power Query queries
+- **Power Query lineage** — each query with its M source, what it reads and the range it fills, so data from Get &amp; Transform is not a dead end
 - **Step-by-step evaluation** — each operator/function evaluated individually
 - **Standalone HTML viewer** — Cytoscape.js embedded, fully offline, keyboard-navigable, light by default with a dark toggle
-- **Values you can check** — each figure states whether it was read from the workbook or recalculated by linexcel, and shows both side by side when the file disagrees
+- **Values you can check** — what the file stores and what linexcel recomputed, always side by side, each named and each stated when it is missing; a stretched formula is compared cell by cell over a sample spanning the whole group
+- **Honest about what it cannot compute** — volatile formulas (`TODAY`, `NOW`, `RAND`) are shown as *not recalculated* rather than compared against the clock, and a cell reading another workbook names that file, its path, and whether it was read
+- **Dependencies you can supply** — `--refs-dir` resolves linked workbooks and reads the VBA of the add-ins a file calls into
 - **Workbook context** — sheet previews, comments, merged ranges, frozen panes and hidden columns, plus optional LibreOffice-rendered screenshots
 - **AI documentation** — vendor-neutral, grounded in deterministic lineage, with token accounting and a spend ceiling
+- **Screenshots a model can read** — optional, opt-in: a multimodal model describes each rendered sheet, for the colour conventions and layout no extraction reaches
 - **Nine interface languages** — for both the report and the AI prompts
 - **Command line** — `uvx linexcel analyze workbook.xlsx`, no install required
 
@@ -93,11 +115,11 @@ Shipped:
 - [x] Workbook context and LibreOffice-rendered sheet screenshots
 - [x] AI documentation — any OpenAI-compatible endpoint, token accounting, spend ceiling
 - [x] Command-line interface, installable-free through `uvx`
+- [x] Power Query lineage ([#34](https://github.com/auspect/linexcel/issues/34)) — queries as nodes, with their M source, their sources and the range they fill
+- [x] Vision ([#46](https://github.com/auspect/linexcel/issues/46)) — an optional multimodal description of each sheet screenshot, for what a text dossier cannot carry
 
 Planned:
 
-- [ ] **Power Query lineage** ([#34](https://github.com/auspect/linexcel/issues/34)) — queries are invisible today, so a workbook fed by Get &amp; Transform shows the range the data landed in and nothing about where it came from. Everything needed sits in the file, so this is a gap to close rather than a limit of the format.
-- [ ] **Vision** ([#46](https://github.com/auspect/linexcel/issues/46)) — let a multimodal model read the sheet screenshots. Colour conventions such as blue inputs against black formulas, conditional formatting, charts and block layout are invisible to a text dossier, however complete it is.
 - [ ] **`formulas` as a fallback** ([#37](https://github.com/auspect/linexcel/issues/37)) — a second parser for the workbooks formualizer cannot read, so an unsupported construct degrades the graph instead of failing the analysis.
 
 ## Documentation
@@ -112,7 +134,7 @@ Planned:
 | [AI documentation](https://auspect.github.io/linexcel/guide/ai/)                        | Provable cards, token usage, `token_budget=`                            |
 | [Languages](https://auspect.github.io/linexcel/guide/languages/)                        | The nine supported locales                                               |
 | [Data handling](https://auspect.github.io/linexcel/guide/data-handling/)                | What leaves the machine, and when                                        |
-| [API reference](https://auspect.github.io/linexcel/api/result/)                         | `LineageResult`, `analyzer`, `aidoc`, …                           |
+| [API reference](https://auspect.github.io/linexcel/api/result/)                         | `LineageResult`, `analyzer`, `aidoc`, `powerquery`, `external`, … |
 
 ## Sample output
 

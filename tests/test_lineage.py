@@ -707,12 +707,13 @@ class TestLanguages:
     """
 
     def test_registries_cover_every_language(self):
-        from linexcel.aidoc import _SYSTEM, _WORKBOOK_SYSTEM
+        from linexcel.aidoc import _SYSTEM, _VISION_SYSTEM, _WORKBOOK_SYSTEM
         from linexcel.i18n import LANGUAGES, UI_STRINGS
 
         assert set(UI_STRINGS) == set(LANGUAGES)
         assert set(_SYSTEM) == set(LANGUAGES)
         assert set(_WORKBOOK_SYSTEM) == set(LANGUAGES)
+        assert set(_VISION_SYSTEM) == set(LANGUAGES)
 
     def test_every_language_defines_every_ui_key(self):
         from linexcel.i18n import DEFAULT_LANGUAGE, UI_STRINGS
@@ -840,12 +841,12 @@ class TestAiProviders:
         result = analyze(lineage_excel)
         assert (
             result.document_workbook(
-                base_url="http://localhost:11434/v1", model="laguna-xs-2.1"
+                base_url="http://localhost:11434/v1", model="qwen3.8"
             )
             == "# overview"
         )
         assert captured["base_url"] == "http://localhost:11434/v1"
-        assert captured["model"] == "laguna-xs-2.1"
+        assert captured["model"] == "qwen3.8"
         assert captured["api_key"] is None  # left to the client to resolve
 
     def test_env_vars_are_the_equivalent_of_base_url_and_model(
@@ -1860,6 +1861,179 @@ class _StubVbaParser:
         type(self).closed = True
 
 
+class _VisionStub:
+    """A provider that accepts an image, and records what it was handed."""
+
+    def __init__(self, reply: str = "A grid of blue input cells."):
+        self.reply = reply
+        self.calls: list[dict] = []
+
+    def generate(self, system_prompt, user_prompt, *, temperature=0.2, max_tokens=None):
+        raise AssertionError("a screenshot must go through generate_with_image")
+
+    def generate_with_image(
+        self,
+        system_prompt,
+        user_prompt,
+        image,
+        *,
+        media_type="image/png",
+        temperature=0.2,
+        max_tokens=None,
+    ):
+        from linexcel.aidoc import TokenUsage
+
+        self.calls.append(
+            {
+                "system": system_prompt,
+                "user": user_prompt,
+                "bytes": image,
+                "media_type": media_type,
+            }
+        )
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply, TokenUsage(input_tokens=800, output_tokens=40, requests=1)
+
+
+class TestScreenshotDescriptions:
+    """The one thing linexcel documents from a picture rather than the graph.
+
+    Colour conventions, conditional formatting and layout never reach a text
+    dossier, so a model is shown the screenshot itself. What matters is that it
+    is *shown* one — a text-only provider must fail loudly rather than have the
+    image dropped from the request.
+    """
+
+    def test_each_sheet_comes_back_described(self, lineage_excel, tmp_path):
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        result = analyze(lineage_excel)
+        docs = result.describe_screenshots({"Ventes": [shot]}, provider=vision)
+        assert docs == {"Ventes": "A grid of blue input cells."}
+        assert vision.calls[0]["user"] == "Sheet: Ventes"
+        assert vision.calls[0]["bytes"] == png_bytes()
+
+    def test_the_sheet_name_reaches_the_model_but_the_dossier_does_not(
+        self, lineage_excel, tmp_path
+    ):
+        """The evidence is the image; sending the graph too would blur that."""
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        analyze(lineage_excel).describe_screenshots({"Ventes": [shot]}, provider=vision)
+        (call,) = vision.calls
+        assert "formula" not in call["user"].lower()
+        assert "screenshot" in call["system"].lower()
+
+    def test_the_media_type_follows_the_file(self, lineage_excel, tmp_path):
+        shot = tmp_path / "Ventes.jpg"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        analyze(lineage_excel).describe_screenshots({"Ventes": [shot]}, provider=vision)
+        assert vision.calls[0]["media_type"] == "image/jpeg"
+
+    def test_one_image_per_sheet_may_be_given_without_a_list(
+        self, lineage_excel, tmp_path
+    ):
+        """A lone path is a path: indexing it would send the letter ``C``."""
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        docs = analyze(lineage_excel).describe_screenshots(
+            {"Ventes": str(shot)}, provider=vision
+        )
+        assert set(docs) == {"Ventes"}
+        assert vision.calls[0]["bytes"] == png_bytes()
+
+    def test_a_flat_list_of_pages_is_keyed_by_file_name(self, lineage_excel, tmp_path):
+        """No page belongs to one sheet, so the page is what gets named."""
+        pages = []
+        for index in (1, 2):
+            page = tmp_path / f"workbook-{index}.png"
+            page.write_bytes(png_bytes())
+            pages.append(page)
+        vision = _VisionStub()
+        docs = analyze(lineage_excel).describe_screenshots(pages, provider=vision)
+        assert set(docs) == {"workbook-1", "workbook-2"}
+
+    def test_a_text_only_provider_is_refused_by_name(self, lineage_excel, tmp_path):
+        from linexcel.aidoc import AiDocError
+
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+
+        class TextOnly:
+            def generate(self, system, user, *, temperature=0.2, max_tokens=None):
+                return "text"
+
+        result = analyze(lineage_excel)
+        with pytest.raises(AiDocError, match="generate_with_image"):
+            result.describe_screenshots({"Ventes": [shot]}, provider=TextOnly())
+
+    def test_an_oversized_image_is_named_rather_than_posted(
+        self, lineage_excel, tmp_path, monkeypatch
+    ):
+        from linexcel import aidoc
+
+        monkeypatch.setattr(aidoc, "MAX_IMAGE_BYTES", 8)
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        with pytest.raises(aidoc.AiDocError, match="Ventes"):
+            analyze(lineage_excel).describe_screenshots(
+                {"Ventes": [shot]}, provider=vision
+            )
+        assert vision.calls == []
+
+    def test_one_failure_does_not_discard_the_others(self, lineage_excel, tmp_path):
+        from linexcel.aidoc import AiDocError, describe_images
+
+        good = tmp_path / "Ventes.png"
+        good.write_bytes(png_bytes())
+
+        class Choosy(_VisionStub):
+            def generate_with_image(self, system, user, image, **kwargs):
+                if "Params" in user:
+                    raise AiDocError("model refused")
+                return super().generate_with_image(system, user, image, **kwargs)
+
+        with pytest.warns(UserWarning, match="not described"):
+            docs = describe_images({"Ventes": good, "Params": good}, provider=Choosy())
+        assert set(docs) == {"Ventes"}
+
+    def test_the_tokens_are_counted_on_the_result(self, lineage_excel, tmp_path):
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        result = analyze(lineage_excel)
+        result.describe_screenshots({"Ventes": [shot]}, provider=_VisionStub())
+        assert result.token_usage.total == 840
+
+    def test_the_budget_stops_the_next_image(self, lineage_excel, tmp_path):
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        vision = _VisionStub()
+        result = analyze(lineage_excel)
+        with pytest.warns(UserWarning, match="budget"):
+            result.describe_screenshots(
+                {"A": shot, "B": shot, "C": shot},
+                provider=vision,
+                token_budget=1000,
+            )
+        assert len(vision.calls) == 2  # the third is never sent
+
+    def test_the_description_travels_with_the_report(self, lineage_excel, tmp_path):
+        shot = tmp_path / "Ventes.png"
+        shot.write_bytes(png_bytes())
+        html = analyze(lineage_excel).to_html(
+            screenshots={"Ventes": [shot]},
+            screenshot_docs={"Ventes": "Blue inputs, black formulas."},
+        )
+        assert "Blue inputs, black formulas." in html
+        assert '"screenshotDocs"' in html
+
+
 @pytest.fixture()
 def stub_olevba(monkeypatch):
     """Install the stub and reset its per-test state."""
@@ -2134,12 +2308,13 @@ class TestVbaOnARealWorkbook:
 
 
 class TestPowerQueryWorkbook:
-    """Power Query is not part of the lineage yet; it must still not break.
+    """A workbook fed by Get & Transform, read on a file Excel itself wrote.
 
-    ``power_query.xlsx`` holds two M queries, one loaded onto a sheet. The
-    queries, their M source and the table they read are invisible to the graph
-    today — this pins what *is* produced, so the gap is visible in the suite
-    rather than only in a document.
+    ``power_query.xlsx`` holds two M queries. ``BusyProducts`` reads the
+    ``SalesTable`` of the ``Source`` sheet and lands on ``Loaded``;
+    ``TinyConnectionOnly`` is computed and loaded nowhere. Both halves matter:
+    the lineage has to cross the query, and a query that loads nothing must
+    not invent a destination.
     """
 
     WORKBOOK = FIXTURES / "power_query.xlsx"
@@ -2149,14 +2324,47 @@ class TestPowerQueryWorkbook:
         assert result.sheets == ["Loaded", "Source"]
         assert result.stats["totalFormulas"] == 0
 
-    def test_the_loaded_range_is_seen_but_not_what_fills_it(self):
-        """The query output is a range whose provenance the graph cannot show."""
+    def test_each_query_is_a_node_carrying_its_m_source(self):
         result = analyze(self.WORKBOOK)
-        labels = {n["label"] for n in result.nodes}
-        assert "Loaded!A1:B3" in labels
-        assert not [n for n in result.nodes if "BusyProducts" in n["label"]], (
-            "when queries become nodes, this expectation is what changes"
-        )
+        queries = {n["label"]: n for n in result.nodes if n["kind"] == "query"}
+        assert set(queries) == {"BusyProducts", "TinyConnectionOnly"}
+        assert "Table.SelectRows" in queries["BusyProducts"]["code"]
+
+    def test_the_lineage_crosses_the_query_from_source_to_destination(self):
+        """``Source!A1:B4`` → ``BusyProducts`` → ``Loaded!A1:B3``."""
+        result = analyze(self.WORKBOOK)
+        ids = {n["label"]: n["id"] for n in result.nodes}
+        edges = {(e["source"], e["target"]): e["kind"] for e in result.graph["edges"]}
+        assert edges[ids["Source!A1:B4"], ids["BusyProducts"]] == "query"
+        assert edges[ids["BusyProducts"], ids["Loaded!A1:B3"]] == "query-load"
+
+    def test_a_query_says_which_table_it_reads(self):
+        result = analyze(self.WORKBOOK)
+        busy = next(n for n in result.nodes if n["label"] == "BusyProducts")
+        assert busy["sources"] == [
+            {
+                "kind": "table",
+                "target": "SalesTable",
+                "function": "Excel.CurrentWorkbook",
+            }
+        ]
+        assert busy["loadedTo"][0]["sheet"] == "Loaded"
+
+    def test_a_connection_only_query_claims_no_destination(self):
+        result = analyze(self.WORKBOOK)
+        tiny = next(n for n in result.nodes if n["label"] == "TinyConnectionOnly")
+        assert tiny["loadedTo"] == []
+        assert not [e for e in result.graph["edges"] if e["source"] == tiny["id"]]
+
+    def test_the_stats_count_the_queries_and_the_loaded_ones(self):
+        result = analyze(self.WORKBOOK)
+        assert result.stats["queries"] == 2
+        assert result.stats["queriesLoaded"] == 1
+
+    def test_the_warning_says_how_many_queries_feed_the_workbook(self):
+        result = analyze(self.WORKBOOK)
+        (warning,) = [w for w in result.warnings if "Power Query" in w]
+        assert "2 Power Query queries" in warning
 
 
 def _workbook_with_dynamic_table() -> bytes:
@@ -2327,3 +2535,62 @@ class TestTableDetection:
         columns = {n.get("table_column") for n in tagged}
         assert "A" in columns, "input cell A2 should carry its column header"
         assert "B" in columns, "input cell B2 should carry its column header"
+
+
+class TestScanCeiling:
+    """The formula sweep is bounded per sheet, and says what it left out.
+
+    The ceiling exists for a file that *declares* far more than it holds — one
+    stray cell at XFD1048576 makes the used range 17 billion cells — not to
+    keep an honest workbook quick: sweeping costs about 0.7 µs per cell.
+    """
+
+    @staticmethod
+    def sheet_of(rows: int, cols: int) -> bytes:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        for r in range(1, rows + 1):
+            ws.cell(row=r, column=1, value=r)
+            for c in range(2, cols + 1):
+                ws.cell(row=r, column=c, value=f"=A{r}*{c}")
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_a_sheet_under_the_ceiling_is_swept_whole(self):
+        graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
+        assert graph["meta"]["stats"]["totalFormulas"] == 60
+        assert graph["meta"]["warnings"] == []
+
+    def test_the_last_chunk_is_clipped_to_the_ceiling_not_dropped(self, monkeypatch):
+        """Dropping it stopped a 4,000,000-cell budget at 3,600,000."""
+        from linexcel import analyzer
+
+        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(analyzer, "SCAN_CHUNK_ROWS", 100)
+        graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
+        # 30 cells of budget over 3 columns: rows 1-10, two formulas each
+        assert graph["meta"]["stats"]["totalFormulas"] == 20
+
+    def test_the_warning_names_the_first_row_left_out(self, monkeypatch):
+        from linexcel import analyzer
+
+        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(analyzer, "SCAN_CHUNK_ROWS", 100)
+        graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
+        (warning,) = graph["meta"]["warnings"]
+        assert "scanned to row 10 of 30" in warning
+        assert "missing from the lineage" in warning
+
+    def test_a_wide_sheet_is_chunked_by_cells_rather_than_rows(self):
+        """A 20,000-row chunk of a 16,384-column sheet is 327M strings."""
+        from linexcel.analyzer import SCAN_CHUNK_CELLS, SCAN_CHUNK_ROWS, _chunk_rows
+
+        assert _chunk_rows(3) == SCAN_CHUNK_ROWS
+        assert _chunk_rows(16_384) == SCAN_CHUNK_CELLS // 16_384
+        assert _chunk_rows(16_384) * 16_384 <= SCAN_CHUNK_CELLS
+        # never zero, however wide the sheet
+        assert _chunk_rows(SCAN_CHUNK_CELLS * 2) == 1

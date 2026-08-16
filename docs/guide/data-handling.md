@@ -15,6 +15,7 @@ configured yourself. Nothing is configured by default: a call without
 | `document()` | Per node: formula, computed value, precedent/dependent labels, formula decomposition, stretched-group extent, and extracted VBA code |
 | `document_workbook()` | Sheet statistics, the largest formula patterns, defined names, VBA procedures, unresolved references, analysis warnings |
 | `document_workbook()` with `include_context=True` *(default)* | **Also** the first rows and columns of every sheet, cell comments and their authors, merged ranges, frozen panes, hidden columns |
+| `describe_screenshots()` | The sheet screenshots themselves — one PNG per call, inline in the request |
 
 That last row means cell *contents* leave the machine, not only formulas and
 structure. It is on by default because an overview written without them is not
@@ -30,13 +31,18 @@ overview = result.document_workbook(base_url=..., model=..., include_context=Fal
 # Or keep the whole run local — a local runtime receives everything, and it
 # never leaves your machine
 overview = result.document_workbook(
-    base_url="http://localhost:11434/v1", model="laguna-xs-2.1"
+    base_url="http://localhost:11434/v1", model="qwen3.8"
 )
 ```
 
-Sheet screenshots are never uploaded. They are rendered for a human to look at
-in the report; the model is given the same facts in text, read from the file by
-`openpyxl`.
+Screenshots are the widest thing linexcel can send, so nothing sends them
+unless you ask. `document()` and `document_workbook()` never do: they are given
+facts in text, read from the file by `openpyxl`. Only
+[`describe_screenshots()`](ai.md#describing-the-screenshots) — and its
+`--vision-docs` flag, which additionally requires `--screenshots` — puts a
+picture of a sheet in a request, and a picture shows everything on that sheet,
+including rows no dossier would have quoted. The image travels inline in the
+request body, so nothing is uploaded or left behind under a file id.
 
 ## Where it goes
 

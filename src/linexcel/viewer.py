@@ -386,9 +386,50 @@ _TEMPLATE = r"""
     font-family: ui-monospace, monospace; font-size: 1rem; font-weight: 600;
     color: var(--ink); overflow-wrap: anywhere;
   }
-  .lin-samples {
-    font-family: ui-monospace, monospace; font-size: .72rem; color: var(--ink2);
-    margin-top: .4rem; display: flex; flex-direction: column; gap: .1rem;
+  /* The workbooks a cell reads from, and how far each one was followed. */
+  .lin-books { list-style: none; margin: 0; padding: 0; }
+  .lin-books li + li { margin-top: .4rem; }
+  .lin-book-head { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+  .lin-book-name { font-weight: 600; overflow-wrap: anywhere; }
+  .lin-book-state {
+    font-size: .68rem; color: var(--ink2); background: var(--chip-bg);
+    border: 1px solid var(--chip-line); border-radius: 99px; padding: .02rem .4rem;
+  }
+  .lin-book-path {
+    font-family: ui-monospace, monospace; font-size: .7rem; color: var(--muted);
+    overflow-wrap: anywhere; margin-top: .1rem;
+  }
+  /* One row per sampled cell of a stretched group. */
+  .lin-vtable { width: 100%; border-collapse: collapse; }
+  .lin-vtable th, .lin-vtable td {
+    padding: .3rem .5rem; text-align: left; vertical-align: top;
+  }
+  .lin-vtable thead th {
+    font-size: .64rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); line-height: 1.3;
+    border-bottom: 1px solid var(--hair); white-space: nowrap;
+  }
+  .lin-vtable thead th .lin-sw {
+    width: 8px; height: 8px; border-radius: 2px; margin-right: .25rem;
+  }
+  .lin-vtable tbody tr + tr th, .lin-vtable tbody tr + tr td {
+    border-top: 1px solid var(--hair);
+  }
+  .lin-vtable tbody td {
+    font-family: ui-monospace, monospace; font-size: .8rem; font-weight: 600;
+    color: var(--ink); overflow-wrap: anywhere;
+  }
+  .lin-vtable .lin-vaddr {
+    font-family: ui-monospace, monospace; font-size: .78rem; font-weight: 400;
+    color: var(--ink2); white-space: nowrap;
+  }
+  .lin-vtable tbody tr.is-diff th, .lin-vtable tbody tr.is-diff td {
+    background: var(--warn-bg); color: var(--warn-fg);
+  }
+  /* Nothing on this side to show: a stated absence, kept visibly lighter than
+     a figure so it is never mistaken for one. */
+  .lin-vnone, .lin-vtable tbody td.lin-vnone {
+    font-family: inherit; font-size: .74rem; font-weight: 400; color: var(--muted);
   }
   .lin-step {
     border-left: 3px solid var(--blue); background: var(--surface2);
@@ -421,6 +462,9 @@ _TEMPLATE = r"""
   .lin-ek { font-size: .66rem; color: var(--muted); flex-shrink: 0; }
   .lin-code { background: var(--code-bg); border-radius: 6px; padding: .5rem; font-size: .72rem;
     overflow-x: auto; max-height: 260px; font-family: ui-monospace, monospace; }
+  /* One M step runs far wider than a line of VBA, and a step scrolled out of
+     sight is a step the reader will not check. Wrapped, never truncated. */
+  .lin-code.is-wrapped { white-space: pre-wrap; overflow-wrap: anywhere; }
   .lin-doc { font-size: .82rem; line-height: 1.45; }
   .lin-doc h1,.lin-doc h2,.lin-doc h3 { font-size: .9rem; margin: .4rem 0 .2rem; }
   .lin-doc p { margin: .25rem 0; }
@@ -562,6 +606,10 @@ _TEMPLATE = r"""
   @media (max-width: 560px) {
     .lin-vgrid { grid-template-columns: 1fr; }
     .lin-reading + .lin-reading { border-left: none; border-top: 1px solid var(--hair); }
+    /* The sample table keeps its three columns — a per-cell comparison read
+       row by row is the point — but tightens up to fit the overlay. */
+    .lin-vtable th, .lin-vtable td { padding: .28rem .35rem; }
+    .lin-vtable tbody td { font-size: .74rem; }
   }
 </style>
 
@@ -665,7 +713,8 @@ _TEMPLATE = r"""
   // Cytoscape canvas cannot resolve var(), so the hex has to live here too.
   var PALETTE = {
     blue:   '#2a78d6', violet: '#4a3aa7', green: '#1baf7a',
-    amber:  '#eda100', orange: '#eb6834', grey:  '#898781'
+    amber:  '#eda100', orange: '#eb6834', grey:  '#898781',
+    magenta: '#a3348e'
   };
   var KIND = {
     cell:  { color: PALETTE.blue, shape: 'round-rectangle', labelKey: 'kind_cell' },
@@ -673,6 +722,7 @@ _TEMPLATE = r"""
     input: { color: PALETTE.green, shape: 'ellipse', labelKey: 'kind_input' },
     name:  { color: PALETTE.amber, shape: 'diamond', labelKey: 'kind_name' },
     vba:   { color: PALETTE.orange, shape: 'hexagon', labelKey: 'kind_vba' },
+    query: { color: PALETTE.magenta, shape: 'tag', labelKey: 'kind_query' },
     misc:  { color: PALETTE.grey, shape: 'octagon', labelKey: 'kind_misc' },
     opaque:{ color: PALETTE.grey, shape: 'ellipse', labelKey: 'kind_opaque' }
   };
@@ -683,8 +733,28 @@ _TEMPLATE = r"""
   var SRC = {
     engine:   { labelKey: 'value_recalc',    descKey: 'value_recalc_desc',    color: PALETTE.blue },
     file:     { labelKey: 'value_from_file', descKey: 'value_from_file_desc', color: PALETTE.green },
-    fallback: { labelKey: 'value_fallback',  descKey: 'value_fallback_desc',  color: PALETTE.amber }
+    fallback: { labelKey: 'value_fallback',  descKey: 'value_fallback_desc',  color: PALETTE.amber },
+    // Grey, not green: the volatile column states an abstention, and a colour
+    // that means "the file's own value" elsewhere would claim a reading here.
+    volatile: { labelKey: 'value_volatile',  descKey: 'value_volatile_desc',  color: PALETTE.grey },
+    external: { labelKey: 'value_external',  descKey: 'value_external_desc',  color: PALETTE.orange },
+    'external-cache': { labelKey: 'value_external', descKey: 'value_external_desc', color: PALETTE.orange }
   };
+  // How far each linked workbook was followed, in the order of decreasing
+  // certainty: read for real, taken from the cache Excel left behind, or not
+  // read at all — which is a fact about the analysis, not a blank.
+  var EXTERNAL_READ = {
+    folder: { labelKey: 'external_read_folder', color: PALETTE.green },
+    cache:  { labelKey: 'external_read_cache',  color: PALETTE.amber },
+    none:   { labelKey: 'external_read_none',   color: PALETTE.grey }
+  };
+  // Provenances under which the figure on screen *is* the stored one, so the
+  // recalculation column has nothing of its own to show.
+  var STORED_SOURCES = { file: true, volatile: true };
+  // What a query reads. Listed here are the sources that live in this very
+  // workbook, and so are in the graph; everything else — a path, a URL, a
+  // server — is grey, because it was named by the query and never opened.
+  var QUERY_SRC = { table: PALETTE.green, query: PALETTE.magenta };
   // Inline SVG paths, so no glyph, webfont or external image is needed. The
   // markup around them is ours, which is why innerHTML is safe here.
   var ICONS = {
@@ -830,12 +900,16 @@ _TEMPLATE = r"""
     } catch (e) { /* already registered */ }
 
     var stats = GRAPH.meta.stats;
-    var vbaText = stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '';
+    // One tail for everything the workbook holds beside formulas. The
+    // placeholder is still called {vba} in the nine locales; what it carries
+    // is whatever this file actually has.
+    var extraText = (stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '')
+      + (stats.queries ? ' · ' + stats.queries + ' Power Query' : '');
     document.getElementById('lin-stats').textContent = _t('stats', {
       formulas: stats.totalFormulas.toLocaleString(LANG),
       nodes: stats.totalNodes,
       edges: stats.totalEdges,
-      vba: vbaText
+      vba: extraText
     });
 
     var big = GRAPH.nodes.length + GRAPH.edges.length > 2500;
@@ -1165,6 +1239,18 @@ _TEMPLATE = r"""
             imgGallery.appendChild(frame);
           });
           card.appendChild(imgGallery);
+          // What the picture says and the dossier cannot: colour conventions,
+          // conditional formatting, charts, the shape of the layout. It sits
+          // under the image it describes, badged like every other AI card.
+          var seen = (GRAPH.meta.screenshotDocs || {})[sheet.name];
+          if (seen) {
+            var box = el('div', 'lin-ai-box');
+            box.appendChild(el('span', 'lin-ai-badge', _t('ai_vision')));
+            var prose = el('div', 'lin-doc');
+            prose.innerHTML = _md(seen);
+            box.appendChild(prose);
+            card.appendChild(box);
+          }
         }
 
         var grid = previewGrid(sheet);
@@ -1264,12 +1350,13 @@ _TEMPLATE = r"""
   function nodeSize(n) {
     if (n.kind === 'group') return Math.min(64, 30 + 6 * Math.log2((n.count || 1)));
     if (n.kind === 'misc') return 44;
-    if (n.kind === 'vba') return 34;
+    if (n.kind === 'vba' || n.kind === 'query') return 34;
     return 26;
   }
   function shortLabel(n) {
     if (n.kind === 'name') return '📛 ' + n.label;
     if (n.kind === 'vba') return '⚙ ' + n.label;
+    if (n.kind === 'query') return '⟳ ' + n.label;
     return n.label;
   }
   function layoutOpts(name, hasFcose) {
@@ -1301,6 +1388,10 @@ _TEMPLATE = r"""
         'target-arrow-color': PALETTE.orange } },
       { selector: 'edge.vba-read', style: { 'line-style': 'dashed', 'line-color': PALETTE.orange,
         'target-arrow-color': PALETTE.orange } },
+      { selector: 'edge.query', style: { 'line-style': 'dashed', 'line-color': PALETTE.magenta,
+        'target-arrow-color': PALETTE.magenta } },
+      { selector: 'edge.query-load', style: { 'line-color': PALETTE.magenta,
+        'target-arrow-color': PALETTE.magenta } },
       { selector: 'edge.approx', style: { opacity: 0.55 } },
       { selector: 'node:selected', style: { 'border-width': 3.5,
         'border-color': t.ink, color: t.ink, 'font-size': 11 } },
@@ -1470,21 +1561,7 @@ _TEMPLATE = r"""
         sf.appendChild(el('code', 'lin-formula', n.r1c1));
       }
       p.appendChild(sf);
-      var sv = valueSection(n);
-      if (n.samples && n.samples.length) {
-        var box = el('div', 'lin-samples');
-        n.samples.forEach(function (s) {
-          // The graph names the field valueSource, as it does on a node; older
-          // graphs called it source, so both are read.
-          var ssrc = s.valueSource || s.source;
-          var line = s.addr + ' = ' + fmt(s.value);
-          if (s.date) line += ' (' + s.date + ')';
-          if (SRC[ssrc] && ssrc !== 'engine') line += ' [' + _t(SRC[ssrc].labelKey) + ']';
-          box.appendChild(el('div', null, line));
-        });
-        sv.appendChild(box);
-      }
-      p.appendChild(sv);
+      p.appendChild(valueSection(n));
     }
     if (n.kind === 'input' && n.values && n.values.length) {
       var si = section(_t('value_samples'));
@@ -1506,10 +1583,12 @@ _TEMPLATE = r"""
       renderStep(ss, n.steps, 0);
       p.appendChild(ss);
     }
+    if (n.externalBooks && n.externalBooks.length) p.appendChild(externalSection(n));
     if (n.kind === 'vba') {
       var sc = section(n.procKind + ' — module ' + n.module);
       sc.appendChild(el('pre', 'lin-code', n.code || '')); p.appendChild(sc);
     }
+    if (n.kind === 'query') p.appendChild(querySection(n));
     if (n.doc) {
       var sd = el('div', 'lin-ai-box');
       var badge = el('span', 'lin-ai-badge', _t('ai_doc'));
@@ -1524,51 +1603,217 @@ _TEMPLATE = r"""
       .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
   }
 
-  // The value section. Reading values back out of the workbook is the point of
-  // this tool, so the reader must never have to guess whether the figure on
-  // screen is Excel's or linexcel's. When both readings exist they are shown
-  // side by side and the card states the verdict — agreement included, because
-  // saying nothing reads as "unknown" rather than as "they match".
-  function valueSection(n) {
-    var sv = section(_t('value_heading'));
-    var shown = n.valueDate || fmt(n.value);
-    var hasValue = n.value !== undefined && n.value !== null;
-    var hasCached = n.cachedValue !== undefined && n.cachedValue !== null;
-    var cached = hasCached ? fmt(n.cachedValue) : null;
-    // A date node compares on the date part only: a file-cached datetime string
+  // A query is the one thing in a workbook that produces values with no
+  // formula behind them, so the panel has to stand in for the formula: the M
+  // source verbatim, the range it lands in, and what it reads. Naming a
+  // source is not the same as having read it, and the last line says so.
+  function querySection(n) {
+    var frag = document.createDocumentFragment();
+    var sq = section(_t('query_source'));
+    if (n.loadedTo && n.loadedTo.length) {
+      var dest = n.loadedTo.map(function (d) {
+        return (d.sheet ? d.sheet + '!' : '') + (d.ref || '');
+      }).join(' ; ');
+      sq.appendChild(el('p', 'lin-hint', _t('query_loaded') + ' ' + dest));
+    } else {
+      sq.appendChild(el('p', 'lin-hint', _t('query_not_loaded')));
+    }
+    sq.appendChild(el('pre', 'lin-code is-wrapped', n.code || ''));
+    frag.appendChild(sq);
+    if (n.sources && n.sources.length) {
+      var ss = section(_t('query_reads'));
+      var list = el('ul', 'lin-books');
+      var outside = false;
+      n.sources.forEach(function (s) {
+        if (!QUERY_SRC[s.kind]) outside = true;
+        var li = el('li');
+        var head = el('div', 'lin-book-head');
+        var dot = el('span', 'lin-sw');
+        dot.style.background = QUERY_SRC[s.kind] || PALETTE.grey;
+        head.appendChild(dot);
+        head.appendChild(el('span', 'lin-book-name', s.target));
+        // The M function, untranslated on purpose: it is what the query
+        // literally says, and the reader can search the file for it.
+        head.appendChild(el('span', 'lin-book-state', s.function));
+        li.appendChild(head);
+        list.appendChild(li);
+      });
+      ss.appendChild(list);
+      if (outside) ss.appendChild(el('p', 'lin-hint', _t('query_reads_hint')));
+      frag.appendChild(ss);
+    }
+    return frag;
+  }
+
+  // The workbooks this cell reads, and how far each one was followed. A cell
+  // whose value lives in another file is only as trustworthy as the reading of
+  // that file, so the panel names it, gives its declared path, and says plainly
+  // whether it was read, taken from a cache, or never opened.
+  function externalSection(n) {
+    var sx = section(_t('external_books'));
+    var list = el('ul', 'lin-books');
+    var unread = false;
+    n.externalBooks.forEach(function (book) {
+      var state = EXTERNAL_READ[book.read] || EXTERNAL_READ.none;
+      if (book.read !== 'folder') unread = true;
+      var li = el('li');
+      var head = el('div', 'lin-book-head');
+      var dot = el('span', 'lin-sw');
+      dot.style.background = state.color;
+      head.appendChild(dot);
+      head.appendChild(el('span', 'lin-book-name', book.name));
+      head.appendChild(el('span', 'lin-book-state', _t(state.labelKey)));
+      li.appendChild(head);
+      if (book.path) li.appendChild(el('div', 'lin-book-path', book.path));
+      if (book.file) li.appendChild(el('div', 'lin-book-path', book.file));
+      list.appendChild(li);
+    });
+    sx.appendChild(list);
+    if (unread) sx.appendChild(el('p', 'lin-hint', _t('external_hint')));
+    return sx;
+  }
+
+  // What one cell reads as, column by column. The value the file carries and
+  // the value linexcel recomputed are never merged into one figure: which of
+  // the two is on screen is the question this tool exists to answer. A column
+  // with nothing to show says so — "not stored", "not recalculated" — because
+  // an empty cell reads as a rendering bug rather than as a fact.
+  function readings(o) {
+    // The graph names these valueSource/valueDate, as it does on a node; the
+    // range samples say source/date, so both spellings are read.
+    var src = o.valueSource || o.source;
+    var dateText = o.valueDate || o.date;
+    var shown = dateText || fmt(o.value);
+    var hasValue = o.value !== undefined && o.value !== null;
+    var hasCached = o.cachedValue !== undefined && o.cachedValue !== null;
+    var cached = hasCached ? fmt(o.cachedValue) : null;
+    // A date cell compares on the date part only: a file-cached datetime string
     // ("2026-08-07 00:00:00") is the same day as valueDate.
-    var sameDate = n.valueDate && typeof n.cachedValue === 'string' &&
-      n.cachedValue.slice(0, 10) === n.valueDate;
-    var src = SRC[n.valueSource];
-    // Two readings only when they are genuinely two: under 'file' or 'fallback'
+    var sameDate = dateText && typeof o.cachedValue === 'string' &&
+      o.cachedValue.slice(0, 10) === dateText;
+    // Two readings only when they are genuinely two: under 'file' or 'volatile'
     // the displayed value *is* the stored one, and a second identical column
     // would claim a corroboration that never happened.
-    var paired = hasCached && hasValue && n.valueSource === 'engine';
+    var stored = !!STORED_SOURCES[src];
+    var comparable = hasValue && hasCached && src === 'engine';
+    return {
+      source: src, shown: shown, hasValue: hasValue,
+      file: stored ? shown : cached,
+      calc: (stored || !hasValue) ? null : shown,
+      comparable: comparable,
+      agree: comparable && (!!sameDate || cached === shown)
+    };
+  }
+
+  // The value section. The card lays the two provenances side by side and
+  // states the verdict — agreement included, because saying nothing reads as
+  // "unknown" rather than as "they match". A stretched group is shown one row
+  // per sampled cell: a single figure standing in for 200,000 cells hides the
+  // very cell where the pattern broke.
+  function valueSection(n) {
+    var sv = section(_t('value_heading'));
+    var main = readings(n);
+    var rows = (n.samples || []).map(function (s) {
+      var r = readings(s); r.addr = s.addr; return r;
+    });
+    var judged = rows.length ? rows : [main];
+    var comparable = judged.filter(function (r) { return r.comparable; });
     var card = el('div', 'lin-vcard');
-    var grid = el('div', 'lin-vgrid');
-    if (paired) {
-      var agree = !!sameDate || cached === shown;
+    if (comparable.length) {
+      var agree = comparable.every(function (r) { return r.agree; });
       if (!agree) card.className = 'lin-vcard is-diff';
       var verdict = el('div', 'lin-verdict');
       verdict.appendChild(icon(agree ? 'check' : 'warn'));
       verdict.appendChild(document.createTextNode(_t(agree ? 'value_match' : 'value_mismatch')));
       card.appendChild(verdict);
-      grid.appendChild(reading(_t('value_col_file'), cached, SRC.file.color));
-      grid.appendChild(reading(_t('value_col_calc'), shown, SRC.engine.color));
-    } else {
-      grid.className = 'lin-vgrid is-single';
-      if (n.valueSource === 'fallback') card.className = 'lin-vcard is-guarded';
-      grid.appendChild(reading(src ? _t(src.labelKey) : null, shown,
-        src ? src.color : null));
+    } else if (main.source === 'fallback') {
+      card.className = 'lin-vcard is-guarded';
     }
-    card.appendChild(grid);
+    card.appendChild(rows.length ? sampleTable(rows) : pairGrid(main));
     sv.appendChild(card);
-    if (src) sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
+    if (rows.length) {
+      sv.appendChild(el('p', 'lin-hint', _t('sampled_cells', {
+        shown: rows.length,
+        count: (n.count || rows.length).toLocaleString(LANG)
+      })));
+    }
+    // The provenance sentence speaks of one figure. Over a sample table it
+    // would only repeat the column header in the singular, so it is kept for
+    // the states a header cannot express: a file reading, or a guarded one.
+    var src = SRC[main.source];
+    if (src && !(rows.length && main.source === 'engine'))
+      sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
+    // Only one column carries a figure: name the reason rather than let the
+    // reader take the empty half for a bug or for a disagreement.
+    if (!comparable.length && main.source === 'engine')
+      sv.appendChild(el('p', 'lin-hint', _t('value_no_cache_desc')));
     return sv;
+  }
+  // One cell, two columns. Without a recorded provenance neither column can be
+  // claimed, so the figure stands alone rather than being attributed.
+  function pairGrid(r) {
+    var grid = el('div', 'lin-vgrid');
+    if (!r.source) {
+      grid.className = 'lin-vgrid is-single';
+      grid.appendChild(reading(null, r.hasValue ? r.shown : null, null));
+      return grid;
+    }
+    grid.appendChild(reading(_t('value_col_file'), r.file, SRC.file.color,
+      _t('value_not_in_file')));
+    // Swatched by where the figure came from, not by the column it sits in: a
+    // guarded fallback and a value fetched from another workbook are both
+    // "not the engine reading this file", and the colour says so.
+    grid.appendChild(reading(_t('value_col_calc'), r.calc,
+      (SRC[r.source] || SRC.engine).color, notRecalculated(r)));
+    return grid;
+  }
+  // Why the recalculation column is empty. "Volatile" is the sharper answer
+  // when there is one: linexcel did not decline, it deliberately abstained.
+  function notRecalculated(r) {
+    return _t(r.source === 'volatile' ? 'value_volatile' : 'value_not_recalc');
+  }
+  // The sampled cells of a stretched group, one row each. A row whose two
+  // readings disagree is marked on the row itself: the card-level verdict
+  // covers the whole sample, and would not say *which* cell drifted.
+  function sampleTable(rows) {
+    var tbl = el('table', 'lin-vtable');
+    var head = el('tr');
+    head.appendChild(colHead(_t('value_col_cell'), null));
+    head.appendChild(colHead(_t('value_col_file'), SRC.file.color));
+    head.appendChild(colHead(_t('value_col_calc'), SRC.engine.color));
+    var thead = el('thead'); thead.appendChild(head); tbl.appendChild(thead);
+    var body = el('tbody');
+    rows.forEach(function (r) {
+      var tr = el('tr');
+      if (r.comparable && !r.agree) tr.className = 'is-diff';
+      var addr = el('th', 'lin-vaddr', r.addr);
+      addr.setAttribute('scope', 'row');
+      tr.appendChild(addr);
+      tr.appendChild(valueCell(r.file, _t('value_not_in_file')));
+      tr.appendChild(valueCell(r.calc, notRecalculated(r)));
+      body.appendChild(tr);
+    });
+    tbl.appendChild(body);
+    return tbl;
+  }
+  function colHead(labelText, color) {
+    var th = el('th');
+    th.setAttribute('scope', 'col');
+    if (color) {
+      var sw = el('span', 'lin-sw');
+      sw.style.background = color;
+      th.appendChild(sw);
+    }
+    th.appendChild(document.createTextNode(labelText));
+    return th;
+  }
+  function valueCell(valueText, missingText) {
+    return valueText === null || valueText === undefined
+      ? el('td', 'lin-vnone', missingText) : el('td', null, valueText);
   }
   // One labelled figure. The swatch repeats the provenance colour used by the
   // badges and the legend, so the two columns stay told apart at a glance.
-  function reading(labelText, valueText, color) {
+  function reading(labelText, valueText, color, missingText) {
     var box = el('div', 'lin-reading');
     if (labelText) {
       var lab = el('div', 'lin-reading-label');
@@ -1580,7 +1825,9 @@ _TEMPLATE = r"""
       lab.appendChild(document.createTextNode(labelText));
       box.appendChild(lab);
     }
-    box.appendChild(el('div', 'lin-reading-val', valueText));
+    var missing = valueText === null || valueText === undefined;
+    box.appendChild(el('div', missing ? 'lin-reading-val lin-vnone' : 'lin-reading-val',
+      missing ? (missingText || fmt(null)) : valueText));
     return box;
   }
 

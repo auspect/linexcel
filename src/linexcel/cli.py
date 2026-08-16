@@ -58,6 +58,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Viewer and AI prompt language (default: en).",
     )
     analyze.add_argument(
+        "--refs-dir",
+        type=Path,
+        help=(
+            "Folder holding the workbooks this one links to, and the add-ins "
+            "whose VBA it calls. Without it, a cell reading another file is "
+            "named but not resolved."
+        ),
+    )
+    analyze.add_argument(
+        "--screenshots",
+        type=Path,
+        metavar="DIR",
+        help=(
+            "Render each sheet to a PNG in DIR (needs LibreOffice) and show "
+            "them in the report."
+        ),
+    )
+    analyze.add_argument(
         "-v", "--verbose", action="store_true", help="Per-phase timing on stderr."
     )
 
@@ -77,7 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     ai = analyze.add_argument_group(
-        "AI options (with --ai-docs)",
+        "AI options (with --ai-docs or --vision-docs)",
         "Endpoint defaults come from LINEXCEL_AI_BASE_URL / LINEXCEL_AI_MODEL / "
         "LINEXCEL_AI_API_KEY. No provider is chosen implicitly.",
     )
@@ -98,13 +116,55 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the workbook-level overview, document nodes only.",
     )
+    ai.add_argument(
+        "--vision-docs",
+        action="store_true",
+        help=(
+            "Describe each sheet screenshot with a multimodal model. Needs "
+            "--screenshots; independent of --ai-docs."
+        ),
+    )
+    ai.add_argument(
+        "--vision-model",
+        help="Model that looks at the screenshots (default: --model).",
+    )
     return parser
 
 
 def _run_analyze(args: argparse.Namespace) -> int:
     from linexcel import analyze as analyze_workbook
 
-    result = analyze_workbook(args.workbook, verbose=args.verbose)
+    if args.vision_docs and args.screenshots is None:
+        raise ValueError(
+            "--vision-docs describes the sheet screenshots, so it needs "
+            "--screenshots DIR to render them first."
+        )
+    if args.vision_docs and args.deterministic_only:
+        raise ValueError(
+            "--vision-docs sends the screenshots to a model, which "
+            "--deterministic-only rules out."
+        )
+
+    result = analyze_workbook(
+        args.workbook, verbose=args.verbose, refs_dir=args.refs_dir
+    )
+
+    screenshots = None
+    if args.screenshots is not None:
+        screenshots = result.save_screenshots(args.screenshots)
+        print(f"Shots: {args.screenshots}", file=sys.stderr)
+
+    screenshot_docs: dict[str, str] | None = None
+    if args.vision_docs and screenshots:
+        screenshot_docs = result.describe_screenshots(
+            screenshots,
+            api_key=args.api_key,
+            model=args.vision_model or args.model,
+            base_url=args.base_url,
+            language=args.language,
+            max_tokens=args.max_tokens,
+            token_budget=args.token_budget,
+        )
 
     docs: dict[str, str] | None = None
     workbook_doc: str | None = None
@@ -140,7 +200,11 @@ def _run_analyze(args: argparse.Namespace) -> int:
         if args.output is not None and str(args.output) == "-":
             sys.stdout.write(
                 result.to_html(
-                    docs=docs, workbook_doc=workbook_doc, language=args.language
+                    docs=docs,
+                    workbook_doc=workbook_doc,
+                    screenshots=screenshots,
+                    screenshot_docs=screenshot_docs,
+                    language=args.language,
                 )
             )
         else:
@@ -148,7 +212,12 @@ def _run_analyze(args: argparse.Namespace) -> int:
                 f"{args.workbook.stem}_lineage.html"
             )
             result.save_html(
-                out, docs=docs, workbook_doc=workbook_doc, language=args.language
+                out,
+                docs=docs,
+                workbook_doc=workbook_doc,
+                screenshots=screenshots,
+                screenshot_docs=screenshot_docs,
+                language=args.language,
             )
             print(f"HTML:  {out}", file=sys.stderr)
 
@@ -157,7 +226,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
         f"Sheets: {len(result.sheets)}",
         file=sys.stderr,
     )
-    if args.ai_docs:
+    if args.ai_docs or args.vision_docs:
         print(f"AI:    {result.token_usage}", file=sys.stderr)
     for warning in result.warnings:
         print(f"warning: {warning}", file=sys.stderr)

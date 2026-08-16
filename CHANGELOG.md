@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Power Query is part of the lineage** ([#34](https://github.com/auspect/linexcel/issues/34)).
+  A workbook fed by Get & Transform used to show the range the data landed in
+  and nothing above it: no query, no M source, no table it read. Each query is
+  now a node carrying its M source verbatim, the range it loads into, and the
+  sources it names — so `Source!A1:B4` → `BusyProducts` → `Loaded!A1:B3` reads
+  end to end. A source that lives in the same workbook (`Excel.CurrentWorkbook`)
+  is linked to the table or defined name it reads; a query chaining off another
+  is an edge between the two; a source outside the file (`File.Contents`,
+  `Web.Contents`, `Sql.Database`, any `*.Database`/`*.Feed` connector) is named
+  as a node and said, in the panel and in the warnings, to have been named
+  rather than read. Connection-only queries are shown as loading nowhere
+  instead of being dropped. Read from the `DataMashup` custom XML part, with
+  `xl/connections.xml` and `xl/queryTables/*.xml` for the destination; two new
+  stats, `queries` and `queriesLoaded`.
+- **An optional multimodal description of each sheet screenshot**
+  ([#46](https://github.com/auspect/linexcel/issues/46)).
+  `result.describe_screenshots(shots, ...)` — `--screenshots DIR --vision-docs`
+  on the command line — sends each rendered sheet to a model that can look at
+  it, and the description lands under the image in the Sheets tab, badged *read
+  from the screenshot* so it is never confused with a claim about the lineage.
+  This is the one thing linexcel documents from a picture rather than from the
+  graph, because colour conventions, conditional formatting, charts and the
+  shape of a layout never reach a text dossier. It is opt-in, and separate from
+  `--ai-docs`, because a picture of a sheet shows every row on it: nothing
+  sends an image unless you ask. A text-only endpoint raises rather than having
+  the image quietly dropped, and `--vision-model` names the model that looks
+  when it differs from the one that writes. Providers may implement
+  `generate_with_image` to serve the same call. Note that this is the only card
+  in the report with nothing deterministic behind it: a weak vision model
+  invents confidently, and the description is placed under its own image so it
+  can be read against it.
+- **`refs_dir=` / `--refs-dir`: the workbooks this one depends on.** A cell
+  reading `'[Budget FY26.xlsx]Annual'!B4` used to be a grey "external
+  reference" node with no value, and every formula above it lost its own.
+  Three answers are now given, in order: the file **names** the workbook it
+  depends on and the path it declares (always, from `xl/externalLinks`); the
+  values Excel **cached** across the link are used when it saved them; and,
+  given a folder holding the referenced files, the workbook is **read** and the
+  reference evaluates to the value it stands for — the reference is stripped of
+  its path and resolved against that folder. The node panel lists each linked
+  workbook with its path and says which of the three it got, and the same
+  folder is searched for `.xlam`/`.xla`/`.xlsm` add-ins so the VBA a workbook
+  calls into becomes part of the lineage, each module tagged with its file.
 - Command-line interface: `linexcel analyze workbook.xlsx`, exposed as a
   `[project.scripts]` entry point so `uvx linexcel analyze ...` works without
   installing anything. Deterministic by default; `--ai-docs` opts into AI
@@ -18,6 +61,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The value panel always separates what the file carries from what linexcel
+  recomputed.** The card used to collapse to a single figure whenever the two
+  could not be compared, so "linexcel agrees with Excel" and "Excel never wrote
+  a value here" looked identical on screen. Both columns are now always laid
+  out, and a column with nothing to show says so — *Not stored*, *Not
+  recalculated* — with a sentence naming the reason (a workbook saved without a
+  calculation cache carries no value for its formula cells).
+- **A stretched formula shows one row per sampled cell** instead of a single
+  headline figure followed by a plain list. Each sampled cell keeps its own
+  pair of readings, a row whose two readings disagree is marked on the row, and
+  the sample is now spread evenly over the group — first cell, last cell and
+  three in between, where a pattern that broke actually shows — rather than
+  being the first three, near-identical, neighbours.
+- **Volatile formulas are reported as not recalculated, on purpose.** `TODAY`,
+  `NOW`, `RAND`, `RANDBETWEEN` and `RANDARRAY` answer differently every time
+  they are computed, so a recomputed `=TODAY()` could never agree with a file
+  saved last week — and linexcel called that a divergence, blaming the workbook
+  for the calendar. Such a cell now keeps the value the file stores, says *Not
+  recalculated (volatile)* in the recalculation column with a sentence
+  explaining why, is not decomposed step by step (every step would carry a
+  figure from today's clock), and raises no divergence warning. `OFFSET`,
+  `INDIRECT`, `CELL` and `INFO` — volatile to Excel but stable for a given
+  workbook — are still computed.
+- **Analysis is roughly 2.5× faster on a dense workbook**: 246 s → 94 s on a
+  47 MB file of 2.6M formulas, with an identical graph. Two costs went away.
+  The step decomposition no longer re-evaluates the *root* step — it is the
+  whole formula, so the value the engine already computed for the cell answers
+  it; re-running it made a root such as `SUM(Calculs!H2:H200001)` walk 200,000
+  formula cells again, 29 s for one node and 114 s over the run. And table
+  detection no longer opens the workbook a second time with openpyxl: declared
+  tables are read from the `xl/tables/*.xml` parts, static ones from the 30×50
+  window the engine already holds, which turns 45 s into nothing measurable.
+- **The per-sheet scan ceiling went from 4M cells to 64M**, and the last chunk
+  is clipped to what is left rather than dropped whole — a 4,000,000-cell
+  budget used to stop at 3,600,000. Sweeping costs about 0.7 µs per cell, so
+  the old ceiling bought 1.6 s on the reference workbook and cost that sheet
+  its tail; the new one is past any real used range and still bounds the file
+  that *declares* more than it holds (one stray cell at XFD1048576 makes the
+  used range 17 billion cells). The warning now names the first row left out
+  and says its formulas are missing from the lineage. Reads are chunked by
+  cells rather than by rows as well: 20,000 rows of a 16,384-column sheet
+  meant 327 million strings in one call.
 - The git tag is now the only source of the version, and the `VERSION` file is
   gone. It held `0.0.0` in the repository and was overwritten from the tag
   during a release, so it never showed anything true: every development build,
@@ -29,6 +114,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A step lost the parentheses of the formula it came from, and reported the
+  wrong number.** Each step renders its own expression from the AST and is then
+  evaluated by re-parsing that text — but the parser keeps grouping in the
+  *shape* of the tree, so `=D2*(1-Rate)` came back as `D2 * 1 - Rate`. The step
+  card showed 2470.06 under a cell plainly holding 1976.208. Parentheses are
+  now restored from operator precedence, both in what is displayed and in what
+  is evaluated.
+- **A step could report a value belonging to another cell.** The batch
+  evaluation reuses one scratch row across nodes, and `set_formula` does not
+  raise on an expression the engine will not take — a structured
+  `Table[Column]` it never loaded, a 3D `'A:B'!A1` — it leaves the cell as it
+  was. The step then read back whatever the previous node had computed in that
+  column. Each scratch cell is now primed with the sentinel first, so a refused
+  expression reads as *not evaluated*, which is what it is.
+- A root step over an array literal (`=SUM({1,2,3;4,5,6})`) read as `#NAME?`:
+  the AST renders an array as the placeholder `{...}`, which evaluates to
+  nothing. It now carries the value of its cell.
 - `publish` replayed via `workflow_dispatch` from a branch wrote the branch
   name as the version and failed later inside `uv build`. It now stops
   immediately, naming the ref and what to do instead.

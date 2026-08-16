@@ -221,15 +221,33 @@ def _detect_static_tables(
     A static table is a run of ≥2 contiguous columns whose first row is text
     and whose following rows hold values, bounded by the first blank row.
     """
-    found: list[dict[str, Any]] = []
     max_r = min(getattr(worksheet, "max_row", 1) or 1, STATIC_TABLE_SCAN_ROWS)
     max_c = min(getattr(worksheet, "max_column", 1) or 1, STATIC_TABLE_SCAN_COLS)
     if max_r < 3 or max_c < STATIC_TABLE_MIN_COLS:
-        return found
+        return []
     # Read the scan window once — ponytail: one iter_rows over a small window.
     rows: list[list[Any]] = []
     for row in worksheet.iter_rows(min_row=1, max_row=max_r, min_col=1, max_col=max_c):
         rows.append([cell.value for cell in row])
+    return static_tables_from_rows(rows, covered)
+
+
+def static_tables_from_rows(
+    rows: list[list[Any]], covered: list[tuple[int, int, int, int]]
+) -> list[dict[str, Any]]:
+    """The heuristic itself, over a top-left window of cell values.
+
+    Split out of :func:`_detect_static_tables` so the analyzer can run it on a
+    window read from the engine: openpyxl only reaches these values by parsing
+    the entire workbook, which costs seconds per million cells for a window of
+    at most ``STATIC_TABLE_SCAN_ROWS`` × ``STATIC_TABLE_SCAN_COLS``.
+
+    Values are expected as openpyxl's ``data_only=False`` hands them over: a
+    formula cell as its ``=…`` text, a blank cell as ``None``.
+    """
+    found: list[dict[str, Any]] = []
+    if len(rows) < 3 or max((len(r) for r in rows), default=0) < STATIC_TABLE_MIN_COLS:
+        return found
 
     used_starts: set[int] = set()
     for r_idx in range(len(rows) - 1):

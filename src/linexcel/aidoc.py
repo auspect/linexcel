@@ -18,13 +18,15 @@ claim traces back to a formula or a workbook value.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from linexcel.i18n import LANGUAGES as _LANGUAGES
@@ -38,6 +40,18 @@ MAX_DOSSIER_CHARS = 6_000
 # if a workbook still exceeds it, so a graph-only dossier is unaffected.
 MAX_WORKBOOK_DOSSIER_CHARS = 16_000
 MAX_DOSSIER_COMMENT_CHARS = 300
+#: Ceiling on one screenshot handed to a vision model, before base64 (which
+#: adds a third). A whole sheet rendered at 144 dpi lands well under it; a
+#: file above it is refused by name rather than silently posted.
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+#: Suffix → media type, for the data URI a vision call carries.
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 _SYSTEM = {
     "en": """
@@ -302,6 +316,133 @@ Markdown の概要のみで回答し、JSON や区切り記号は使わないこ
 """.strip(),
 }
 
+# The one prompt whose evidence is not the dossier. A screenshot carries what
+# no extraction reaches — colour conventions, conditional formatting, charts,
+# the shape of a layout — so the rule here is the mirror of the others: say
+# what is visible, and nothing that would have to be computed to be known.
+_VISION_SYSTEM = {
+    "en": """
+You are shown a screenshot of one sheet of an Excel workbook, rendered as it
+prints. Write a short Markdown description for a reader who cannot see it:
+1. **Layout** — where the blocks, tables, headers and totals sit;
+2. **Conventions** — colours, borders and formatting, and what they appear to
+ distinguish (input cells against computed ones, for instance);
+3. **Charts and objects** — what they show, as far as titles and axes say;
+4. **Worth noticing** — error text, empty areas, anything odd.
+Absolute rules: describe only what is visible in the image; never guess a
+formula, a value you cannot read, or the workbook's purpose; if the image is
+unreadable, say so in one sentence. Do not repeat the sheet name as a heading.
+Respond ONLY with the Markdown, no JSON, no delimiters.
+""".strip(),
+    "fr": """
+On te montre la capture d'une feuille d'un classeur Excel, rendue telle qu'elle
+s'imprime. Rédige une description courte en Markdown pour un lecteur qui ne la
+voit pas :
+1. **Disposition** — où se trouvent les blocs, tableaux, en-têtes et totaux ;
+2. **Conventions** — couleurs, bordures et mises en forme, et ce qu'elles
+ semblent distinguer (cellules de saisie face aux cellules calculées, etc.) ;
+3. **Graphiques et objets** — ce qu'ils montrent, d'après leurs titres et axes ;
+4. **À remarquer** — messages d'erreur, zones vides, tout ce qui détonne.
+Règles absolues : ne décris que ce qui est visible sur l'image ; ne devine
+jamais une formule, une valeur illisible ou la finalité du classeur ; si
+l'image est illisible, dis-le en une phrase. Ne répète pas le nom de la feuille
+en titre. Réponds UNIQUEMENT avec le Markdown, sans JSON ni délimiteur.
+""".strip(),
+    "es": """
+Se te muestra la captura de una hoja de un libro de Excel, tal como se imprime.
+Redacta una descripción breve en Markdown para quien no puede verla:
+1. **Disposición** — dónde están los bloques, tablas, encabezados y totales;
+2. **Convenciones** — colores, bordes y formatos, y qué parecen distinguir
+ (celdas de entrada frente a celdas calculadas, por ejemplo);
+3. **Gráficos y objetos** — qué muestran, según sus títulos y ejes;
+4. **A destacar** — textos de error, zonas vacías, cualquier anomalía.
+Reglas absolutas: describe solo lo visible en la imagen; nunca adivines una
+fórmula, un valor ilegible ni la finalidad del libro; si la imagen es
+ilegible, dilo en una frase. No repitas el nombre de la hoja como título.
+Responde ÚNICAMENTE con el Markdown, sin JSON ni delimitadores.
+""".strip(),
+    "de": """
+Du siehst den Screenshot eines Arbeitsblatts einer Excel-Arbeitsmappe, so
+gerendert wie es druckt. Schreibe eine kurze Markdown-Beschreibung für jemanden,
+der ihn nicht sehen kann:
+1. **Aufbau** — wo Blöcke, Tabellen, Überschriften und Summen liegen;
+2. **Konventionen** — Farben, Rahmen und Formatierungen und was sie zu
+ unterscheiden scheinen (etwa Eingabezellen gegenüber berechneten Zellen);
+3. **Diagramme und Objekte** — was sie zeigen, soweit Titel und Achsen es sagen;
+4. **Auffälliges** — Fehlertexte, leere Bereiche, alles Ungewöhnliche.
+Absolute Regeln: beschreibe nur, was im Bild sichtbar ist; rate nie eine Formel,
+einen unlesbaren Wert oder den Zweck der Arbeitsmappe; ist das Bild unlesbar,
+sage es in einem Satz. Wiederhole den Blattnamen nicht als Überschrift.
+Antworte AUSSCHLIESSLICH mit dem Markdown, ohne JSON, ohne Trennzeichen.
+""".strip(),
+    "it": """
+Ti viene mostrata la schermata di un foglio di una cartella di lavoro Excel,
+resa come viene stampata. Scrivi una breve descrizione in Markdown per chi non
+può vederla:
+1. **Disposizione** — dove stanno blocchi, tabelle, intestazioni e totali;
+2. **Convenzioni** — colori, bordi e formattazioni, e cosa sembrano distinguere
+ (celle di input rispetto a celle calcolate, per esempio);
+3. **Grafici e oggetti** — cosa mostrano, per quanto dicono titoli e assi;
+4. **Da notare** — testi di errore, aree vuote, qualunque anomalia.
+Regole assolute: descrivi solo ciò che è visibile nell'immagine; non indovinare
+mai una formula, un valore illeggibile o lo scopo della cartella di lavoro; se
+l'immagine è illeggibile, dillo in una frase. Non ripetere il nome del foglio
+come titolo. Rispondi SOLO con il Markdown, senza JSON né delimitatori.
+""".strip(),
+    "pt": """
+É-lhe mostrada a captura de uma folha de um livro do Excel, tal como é
+impressa. Escreva uma descrição curta em Markdown para quem não a vê:
+1. **Disposição** — onde estão os blocos, tabelas, cabeçalhos e totais;
+2. **Convenções** — cores, limites e formatações, e o que parecem distinguir
+ (células de entrada face a células calculadas, por exemplo);
+3. **Gráficos e objetos** — o que mostram, tanto quanto dizem títulos e eixos;
+4. **A notar** — textos de erro, zonas vazias, qualquer anomalia.
+Regras absolutas: descreva apenas o que está visível na imagem; nunca adivinhe
+uma fórmula, um valor ilegível ou a finalidade do livro; se a imagem estiver
+ilegível, diga-o numa frase. Não repita o nome da folha como título.
+Responda APENAS com o Markdown, sem JSON nem delimitadores.
+""".strip(),
+    "nl": """
+Je krijgt een schermafbeelding van één blad van een Excel-werkmap te zien,
+weergegeven zoals het afdrukt. Schrijf een korte beschrijving in Markdown voor
+wie hem niet kan zien:
+1. **Indeling** — waar de blokken, tabellen, koppen en totalen staan;
+2. **Conventies** — kleuren, randen en opmaak, en wat ze lijken te
+ onderscheiden (invoercellen tegenover berekende cellen, bijvoorbeeld);
+3. **Grafieken en objecten** — wat ze tonen, voor zover titels en assen zeggen;
+4. **Opvallend** — foutteksten, lege zones, alles wat afwijkt.
+Absolute regels: beschrijf alleen wat zichtbaar is op de afbeelding; gok nooit
+een formule, een onleesbare waarde of het doel van de werkmap; is de
+afbeelding onleesbaar, zeg dat dan in één zin. Herhaal de bladnaam niet als
+kop. Antwoord UITSLUITEND met de Markdown, zonder JSON of scheidingstekens.
+""".strip(),
+    "ja": """
+Excel ブックの 1 シートを印刷時の体裁でレンダリングしたスクリーンショットを
+示します。それを見られない読者のために、短い Markdown の説明を書いてください。
+1. **レイアウト** — ブロック、表、見出し、合計の位置；
+2. **表記の約束** — 色・罫線・書式と、それらが区別していると見えるもの
+ （入力セルと計算セルなど）；
+3. **グラフとオブジェクト** — 表題や軸から読み取れる範囲でその内容；
+4. **注目点** — エラー表示、空白領域、目を引くもの。
+絶対規則：画像に見えるものだけを述べること。数式、判読できない値、ブックの
+目的を推測しないこと。画像が判読できない場合は一文でそう述べること。
+シート名を見出しとして繰り返さないこと。
+JSON や区切り記号を使わず、Markdown のみで答えてください。
+""".strip(),
+    "zh": """
+现向你展示一张 Excel 工作簿中某个工作表的截图，按打印效果渲染。
+请为看不到该图的读者撰写一段简短的 Markdown 说明：
+1. **布局** — 区块、表格、标题与合计所在的位置；
+2. **约定** — 颜色、边框与格式，以及它们似乎在区分什么
+ （例如输入单元格与计算单元格）；
+3. **图表与对象** — 依据标题和坐标轴所能看出的内容；
+4. **值得注意之处** — 错误文本、空白区域以及任何异常。
+绝对规则：只描述图中可见的内容；不得猜测公式、看不清的数值或工作簿的用途；
+若图像无法辨认，请用一句话说明。不要把工作表名称重复为标题。
+仅以 Markdown 作答，不要使用 JSON 或分隔符。
+""".strip(),
+}
+
 
 class AiDocError(RuntimeError):
     pass
@@ -430,6 +571,28 @@ class UsageReportingProvider(Protocol):
         system_prompt: str,
         user_prompt: str,
         *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> tuple[str, TokenUsage]: ...
+
+
+@runtime_checkable
+class VisionProvider(Protocol):
+    """A provider that can be handed an image alongside the prompts.
+
+    Optional, and separate from :class:`LLMProvider` on purpose: most models
+    served behind an OpenAI-compatible endpoint are text-only, and a caller
+    asking for screenshot descriptions should be told so rather than have an
+    image quietly dropped from the request.
+    """
+
+    def generate_with_image(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes,
+        *,
+        media_type: str = "image/png",
         temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]: ...
@@ -603,6 +766,63 @@ class _OpenAICompatProvider:
             text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
             raise AiDocError(f"OpenAI-compatible API call failed: {exc}") from exc
+        return text, _usage_from(
+            getattr(response, "usage", None),
+            ("prompt_tokens", "completion_tokens"),
+            system_prompt + "\n\n" + user_prompt,
+            text,
+            model=self._model,
+            provider="openai-compatible",
+        )
+
+    def generate_with_image(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes,
+        *,
+        media_type: str = "image/png",
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> tuple[str, TokenUsage]:
+        """The same call, with the image inlined as a data URI.
+
+        No upload and no file id: the picture travels in the request body, so
+        nothing is left behind on the endpoint's side.
+        """
+        encoded = base64.b64encode(image).decode("ascii")
+        kwargs: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{encoded}"
+                                },
+                            },
+                        ],
+                    },
+                ],
+                **kwargs,
+            )
+            text = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            raise AiDocError(
+                f"OpenAI-compatible vision call failed: {exc}. A text-only "
+                "model refuses an image; name a multimodal one."
+            ) from exc
+        # The fallback estimate counts the prompts only — an image is worth
+        # hundreds of tokens that no character count can see — so a run whose
+        # endpoint reports nothing is under-counted, and says it is estimated.
         return text, _usage_from(
             getattr(response, "usage", None),
             ("prompt_tokens", "completion_tokens"),
@@ -952,6 +1172,113 @@ def document_workbook(
     if usage is not None:
         usage.add(call_usage)
     return text
+
+
+def describe_images(
+    images: Mapping[str, bytes | str | Path],
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    provider: ProviderLike | None = None,
+    language: str = "en",
+    usage: TokenUsage | None = None,
+    max_tokens: int | None = None,
+    token_budget: int | None = None,
+) -> dict[str, str]:
+    """Describe rendered images with a multimodal model, ``{name: markdown}``.
+
+    ``images`` maps a name — a sheet name, in practice — to a PNG, either as
+    bytes or as a path to read. Each one is sent on its own, so a description
+    is grounded in a single picture and nothing else.
+
+    This is the one part of linexcel whose evidence is not the deterministic
+    dossier: a screenshot shows what no extraction reaches — colour
+    conventions, conditional formatting, charts, the shape of a layout — and
+    the prompt confines the model to what is visible rather than letting it
+    reason about the calculation.
+
+    The provider must accept an image (:class:`VisionProvider`); a text-only
+    one raises rather than having the picture dropped from the request. Model
+    resolution is otherwise :func:`document_workbook`'s, so ``model=`` here is
+    where a vision model is named when it differs from the writing one.
+
+    Images are sent one at a time: they are large, and the local runtimes this
+    is most used against serialize them anyway. An image that fails is skipped
+    with a :class:`UserWarning`; :class:`AiDocError` is raised only when every
+    one failed. ``token_budget`` is checked before each call.
+    """
+    if language not in _LANGUAGES:
+        raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
+    _check_budget(token_budget, usage)
+    if not images:
+        return {}
+    llm = _resolve_provider(
+        provider=provider, model=model, api_key=api_key, base_url=base_url
+    )
+    if not isinstance(llm, VisionProvider):
+        raise AiDocError(
+            f"{type(llm).__name__} cannot be handed an image: describing "
+            "screenshots needs a provider exposing generate_with_image("
+            "system_prompt, user_prompt, image, *, media_type). The built-in "
+            "OpenAI-compatible client does; point it at a multimodal model."
+        )
+    system = _VISION_SYSTEM[language]
+    described: dict[str, str] = {}
+    failed: list[str] = []
+    for name, image in images.items():
+        try:
+            _check_budget(token_budget, usage)
+        except AiDocError:
+            warnings.warn(
+                f"Token budget reached: {len(images) - len(described)} "
+                "screenshot(s) left undescribed.",
+                UserWarning,
+                stacklevel=2,
+            )
+            break
+        try:
+            payload, media_type = _image_payload(name, image)
+            text, call_usage = llm.generate_with_image(
+                system,
+                f"Sheet: {name}",
+                payload,
+                media_type=media_type,
+                temperature=0.2,
+                max_tokens=max_tokens,
+            )
+        except (AiDocError, OSError) as exc:
+            failed.append(f"{name} ({exc})")
+            continue
+        if usage is not None:
+            usage.add(call_usage)
+        if text.strip():
+            described[name] = text.strip()
+    if failed and not described:
+        raise AiDocError("No screenshot could be described: " + "; ".join(failed))
+    if failed:
+        warnings.warn(
+            f"{len(failed)} screenshot(s) not described: " + "; ".join(failed),
+            UserWarning,
+            stacklevel=2,
+        )
+    return described
+
+
+def _image_payload(name: str, image: bytes | str | Path) -> tuple[bytes, str]:
+    """An image as ``(bytes, media type)``, whether given as data or a path."""
+    if isinstance(image, bytes | bytearray):
+        payload, media_type = bytes(image), "image/png"
+    else:
+        path = Path(image)
+        payload = path.read_bytes()
+        media_type = IMAGE_MEDIA_TYPES.get(path.suffix.lower(), "image/png")
+    if len(payload) > MAX_IMAGE_BYTES:
+        raise AiDocError(
+            f"{name}: image is {len(payload) / 1e6:.1f} MB, over the "
+            f"{MAX_IMAGE_BYTES / 1e6:.0f} MB ceiling; render it at a lower dpi."
+        )
+    return payload, media_type
 
 
 def document_nodes(

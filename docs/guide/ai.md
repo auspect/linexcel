@@ -12,7 +12,7 @@ example below uses a local Ollama runtime; substitute your own endpoint.
 from linexcel import analyze
 
 result = analyze("workbook.xlsx")
-docs = result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
+docs = result.document(base_url="http://localhost:11434/v1", model="qwen3.8")
 result.save_html("out.html", docs=docs)
 ```
 
@@ -69,9 +69,9 @@ somebody hid, a comment reading *"exported product category"* — no formula
 records any of it, and an overview written without them describes a structure
 nobody recognises.
 
-The images themselves are never uploaded: `openpyxl` reads the same facts
+The images themselves stay put for this call: `openpyxl` reads the same facts
 deterministically, so the "cite only the dossier" rule still holds and no vision
-model is required.
+model is required. Sending them is a separate, explicit step — see below.
 
 ```python
 # Lineage only — cell contents stay on your machine
@@ -83,16 +83,60 @@ exceeds it sheds detail in order — long previews shrink, then the tail of the
 pattern and VBA lists, and only as a last resort are previews and comments
 dropped — so a small workbook loses nothing.
 
+## Describing the screenshots
+
+Everything above is grounded in the graph. This one is not: a screenshot shows
+what no extraction reaches — colour conventions such as blue inputs against
+black formulas, conditional formatting, charts, the shape of a layout — and a
+model looking at the picture is the only way to put them into words.
+
+```python
+shots = result.save_screenshots("shots/")            # LibreOffice renders them
+seen = result.describe_screenshots(shots, base_url=..., model="<a vision model>")
+result.save_html("out.html", screenshots=shots, screenshot_docs=seen)
+```
+
+```bash
+linexcel analyze book.xlsx --screenshots shots/ --vision-docs \
+    --base-url http://localhost:11434/v1 --vision-model "<a vision model>"
+```
+
+Each description appears under the image it describes, in the Sheets tab,
+badged *read from the screenshot* rather than as ordinary AI documentation —
+the reader can tell a claim about pixels from a claim about the lineage.
+
+Three things worth knowing:
+
+- **The model must accept images.** `model=` here is where a vision model is
+  named when it differs from the writing one (`--vision-model` on the command
+  line). A text-only endpoint raises `AiDocError` rather than having the
+  picture silently dropped from the request.
+- **The prompt confines it to what is visible — the model may ignore it.**
+  This is the one card in the report with no deterministic counterpart to check
+  it against: nothing in the lineage can contradict a sentence about colours.
+  A weak vision model invents confidently — one local model described a
+  three-column sheet as having six, with a total row that was not there — so
+  read a description against its own image before trusting the model on the
+  next one.
+- **This is the widest thing linexcel sends.** A picture of a sheet shows every
+  row on it, including those no dossier would have quoted — see
+  [Data handling](data-handling.md).
+
+Images go one at a time, so an image that fails is skipped with a
+`UserWarning` and `token_budget` is checked before each call. A vision request
+is expensive and endpoints do not always report what an image cost, so the
+tally may read as estimated.
+
 ## Token usage
 
 Every AI call is tallied on the result:
 
 ```python
-docs = result.document(base_url=..., model="laguna-xs-2.1")
-overview = result.document_workbook(base_url=..., model="laguna-xs-2.1")
+docs = result.document(base_url=..., model="qwen3.8")
+overview = result.document_workbook(base_url=..., model="qwen3.8")
 
 print(result.token_usage)
-# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [openai-compatible/laguna-xs-2.1]
+# 48,210 tokens (44,900 in + 3,310 out) over 5 request(s) [openai-compatible/qwen3.8]
 
 usage = result.token_usage
 usage.input_tokens, usage.output_tokens, usage.total, usage.requests
