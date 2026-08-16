@@ -26,16 +26,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The version is derived from `git describe`, which needs the tags
+          # and the history behind them. The default shallow checkout has
+          # neither, and would build an 0.0.0+unknown wheel.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
           prune-cache: true
 
-      - name: Version from tag
+      - name: Releases run on a tag
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          echo "$tag" > VERSION
-          echo "Releasing version $tag"
+          # A workflow_dispatch replay must select the tag as its ref. Run from
+          # a branch and the build is a +dev version, which the consistency
+          # check below would reject anyway — but later, and less clearly.
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::publish must run on a v* tag, but ref is ${GITHUB_REF_NAME} (${GITHUB_REF_TYPE}). Re-run this workflow selecting the tag as the ref."
+            exit 1
+          fi
+          echo "Releasing ${GITHUB_REF_NAME#v}"
 
       - run: uv build
 
