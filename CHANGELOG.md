@@ -16,6 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`uvx --from "linexcel[ai]" linexcel ...`). Also runnable as
   `python -m linexcel`.
 
+### Changed
+
+- The git tag is now the only source of the version, and the `VERSION` file is
+  gone. It held `0.0.0` in the repository and was overwritten from the tag
+  during a release, so it never showed anything true: every development build,
+  and `linexcel --version` with it, reported `0.0.0` while PyPI was at 1.2.2.
+  A clean `v*` tag still builds exactly that number; anything else builds
+  `1.2.2+dev.8.g7f5caf5`, with a `.dirty` suffix for uncommitted edits. PyPI
+  rejects local versions, so a build that is not exactly a tag cannot be
+  published by accident.
+
+### Fixed
+
+- `publish` replayed via `workflow_dispatch` from a branch wrote the branch
+  name as the version and failed later inside `uv build`. It now stops
+  immediately, naming the ref and what to do instead.
+
 ## [1.0.0] — 2026-08-08
 
 First stable release. The AI surface changed in two ways that a caller can

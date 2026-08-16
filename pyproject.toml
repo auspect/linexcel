@@ -54,9 +54,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-source = "regex"
-path = "VERSION"
-pattern = "(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)"
+# version_source.py: the VERSION file when it holds a release number,
+# otherwise the last tag plus a +dev local segment derived from git.
+source = "code"
+path = "version_source.py"
+expression = "compute_version()"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/linexcel"]
