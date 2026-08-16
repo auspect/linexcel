@@ -26,7 +26,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked
       - run: uv run ruff check --output-format=github src/ tests/
       - run: uv run ruff format --check src/ tests/
 
@@ -38,7 +38,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked
       - run: uv run ty check --ignore unresolved-import src/
 
   test:
@@ -58,7 +58,7 @@ jobs:
           enable-cache: true
           prune-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked
       # No path argument: testpaths (tests/ + src/ doctests) applies.
       - run: >
           uv run pytest -v
