@@ -12,6 +12,7 @@ that a graph which looks complete can be trusted to be complete.
 | Cells and ranges | Precedent and dependent edges, including across sheets |
 | Defined names | Workbook-scoped and sheet-scoped, resolved to the cells they point at |
 | VBA | Procedures as nodes, their internal call graph, and the ranges they read and write when the reference is written literally — `Range("A1")`, `Cells(2, 3)`, `[A1:B4]`, `Worksheets("X").Range(...)` |
+| Power Query | Each query as a node with its M source, the range it loads into, the sources it names and the queries it chains from |
 | Values | Read back from the workbook and recomputed, with both readings shown side by side |
 
 ## Represented, but not resolved
@@ -28,22 +29,31 @@ file:
 Showing them as nodes rather than dropping them is deliberate: a formula whose
 precedent is missing is a fact about the workbook, not a gap to hide.
 
+## Power Query (Get & Transform)
+
+Queries are in the lineage. Each one is a node carrying its M source, and the
+graph crosses it: `Source!A1:B4` → `BusyProducts` → `Loaded!A1:B3`, where the
+landing range used to sit at the top of the graph with nothing above it.
+
+What is read, and from where:
+
+| | |
+| --- | --- |
+| The M source | the `customXml` part whose schema is `http://schemas.microsoft.com/DataMashup`: base64, then a ZIP whose `Formulas/Section1.m` holds every query in plain text |
+| The destination | `xl/connections.xml` names the query a connection loads, `xl/queryTables/*.xml` ties that connection to a table on a sheet |
+| The sources | read off the M — `Excel.CurrentWorkbook(){[Name="X"]}` is a table or defined name of this file and is linked to it, and a query reading another is an edge between the two |
+| Everything else | `File.Contents`, `Folder.Files`, `Web.Contents`, `Sql.Database` and any `*.Database`, `*.Feed` or `*.DataSource` connector: named, never opened |
+
+A query that computes without loading anywhere — connection only, or straight
+into the data model — is shown as loading nowhere rather than dropped.
+
+Where it stops is the data behind an outside source. A CSV on a share, a REST
+endpoint, a database: the query names them, linexcel does not read them, and
+the panel says so under the source list. And M is a real language — a source
+built at run time rather than written out is invisible to a static reader,
+which is the same limit VBA has below.
+
 ## Not in the graph
-
-### Power Query (Get & Transform)
-
-**Queries are not part of the lineage.** A workbook whose data arrives through
-Power Query shows the range the query loaded into, and nothing about where that
-data came from — not the query, not its M source, not the table or file it
-reads. On such a workbook the graph is silently incomplete, which is the one
-failure mode this page exists to warn about.
-
-Everything needed is in the file — the `customXml` part whose schema is
-`http://schemas.microsoft.com/DataMashup` carries the M source, while
-`xl/connections.xml` names each query connection and `xl/queryTables/*.xml`
-ties it to the destination `ListObject` and sheet range — so this is a gap to
-be closed, not a limitation of the format. Tracked in
-[#34](https://github.com/auspect/linexcel/issues/34) for a release after 1.0.
 
 ### Formulas the engine does not implement
 
@@ -54,9 +64,34 @@ recalculation that never happened.
 
 ### Volatile functions
 
-`TODAY()`, `NOW()`, `RAND()` and `RANDBETWEEN()` recompute to something other
-than what the file stores, by definition. The value card reports the difference
-like any other; it is not a defect in either reading.
+`TODAY()`, `NOW()`, `RAND()`, `RANDBETWEEN()` and `RANDARRAY()` answer
+differently every time they are computed, so there is nothing to check them
+against: a value recomputed today can never agree with a file saved last week.
+linexcel does not recompute them. The card shows the value the file stores and
+says *Not recalculated (volatile)* in the other column, and the cell is not
+decomposed step by step — every step would carry a figure from today's clock.
+
+`OFFSET`, `INDIRECT`, `CELL` and `INFO` are volatile to Excel in that they
+recalculate on every edit, but they return the same value for the same
+workbook, so those are still computed.
+
+### Other workbooks
+
+A formula reading `'[Budget FY26.xlsx]Annual'!B4` depends on a file that is not
+being analyzed, and the calculation engine has nothing to follow. Three answers,
+in decreasing order of certainty:
+
+| | |
+| --- | --- |
+| **named** | always — `xl/externalLinks` carries the file name and the path the workbook declares, and the node is labelled with them |
+| **cached** | when Excel saved the values it last read across the link, they are used and labelled as coming from that cache |
+| **read** | with `--refs-dir` (`refs_dir=`), the referenced workbook is opened from that folder and the reference evaluates to the value it stands for |
+
+The panel lists every linked workbook of a cell with its path and which of the
+three it got, so a stale or missing dependency is visible rather than silent.
+The same folder is searched for the `.xlam`, `.xla` and `.xlsm` add-ins whose
+VBA a workbook calls into; their procedures join the graph, each module tagged
+with the file it came from.
 
 ### VBA the parser cannot follow
 

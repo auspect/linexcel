@@ -44,6 +44,50 @@ def test_ai_docs_without_provider_exits_2(workbook_path, capsys, monkeypatch):
     assert "provider" in capsys.readouterr().err.lower()
 
 
+def test_vision_docs_without_screenshots_exits_2(workbook_path, capsys):
+    """There is nothing to look at until the sheets have been rendered."""
+    code = main(["analyze", str(workbook_path), "--no-html", "--vision-docs"])
+    assert code == 2
+    assert "--screenshots" in capsys.readouterr().err
+
+
+def test_vision_docs_is_refused_in_deterministic_mode(workbook_path, tmp_path, capsys):
+    code = main(
+        [
+            "analyze",
+            str(workbook_path),
+            "--no-html",
+            "--screenshots",
+            str(tmp_path / "shots"),
+            "--vision-docs",
+            "--deterministic-only",
+        ]
+    )
+    assert code == 2
+    assert "--deterministic-only" in capsys.readouterr().err
+
+
+def test_screenshots_are_rendered_and_embedded(workbook_path, tmp_path, monkeypatch):
+    """The flag renders the sheets and puts them in the report, no AI involved."""
+    shots = {"Ventes": [tmp_path / "Ventes.png"]}
+    shots["Ventes"][0].write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(
+        "linexcel.result.LineageResult.save_screenshots",
+        lambda self, output_dir, **kwargs: shots,
+    )
+    out = tmp_path / "o.html"
+    argv = [
+        "analyze",
+        str(workbook_path),
+        "-o",
+        str(out),
+        "--screenshots",
+        str(tmp_path),
+    ]
+    assert main(argv) == 0
+    assert "data:image/png;base64," in out.read_text(encoding="utf-8")
+
+
 def test_bad_workbook_exits_2(tmp_path, capsys):
     path = tmp_path / "not_excel.xlsx"
     path.write_text("plain text", encoding="utf-8")

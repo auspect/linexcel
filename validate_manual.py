@@ -30,7 +30,8 @@ under several ceilings and reports which of them cut the response.
     uv run validate_manual.py --workbook stress      # the hostile one
     uv run validate_manual.py --workbook both
     uv run validate_manual.py --file macros.xlsm     # your own workbook (VBA)
-    uv run validate_manual.py --model gemma4:12b     # another local model
+    uv run validate_manual.py --model <tag>          # another local model
+    uv run validate_manual.py --vision               # + describe the screenshots
     uv run validate_manual.py --no-ai                # deterministic paths only
     uv run validate_manual.py --token-budget 50000 --max-nodes 8
     uv run validate_manual.py --check-max-tokens     # does the endpoint obey?
@@ -66,7 +67,7 @@ from linexcel.aidoc import AiDocError  # noqa: E402
 #: Local OpenAI-compatible endpoint. Ollama serves one at this address.
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 #: Small local model, enough to exercise the prompts without a cloud key.
-DEFAULT_MODEL = "laguna-xs-2.1"
+DEFAULT_MODEL = "qwen3.8"
 #: Ceiling on the whole run. The sales workbook needs far less; the point is to
 #: show the knob exists before anyone points it at a real workbook and a paid API.
 DEFAULT_TOKEN_BUDGET = 200_000
@@ -361,6 +362,42 @@ def document(
     return docs, workbook_doc
 
 
+def describe(
+    result: linexcel.LineageResult,
+    screenshots,
+    args: argparse.Namespace,
+    language: str,
+) -> dict[str, str] | None:
+    """Have a multimodal model look at the rendered sheets.
+
+    The only check that cannot be made from the graph: whether the endpoint
+    actually reads the picture. A model that answers "the image is blank" is
+    telling you something about itself, which is exactly what a manual
+    validation run is for.
+    """
+    if not screenshots:
+        print("   ⚠️  no screenshots to describe")
+        return None
+    model = args.vision_model or args.model
+    print(f"   - {language}: describing screenshots with {model}…")
+    try:
+        seen = result.describe_screenshots(
+            screenshots,
+            base_url=args.base_url,
+            model=model,
+            language=language,
+            max_tokens=args.max_tokens,
+            token_budget=args.token_budget,
+        )
+    except AiDocError as exc:
+        print(f"   ❌ {exc}")
+        return None
+    for name, text in seen.items():
+        first = " ".join(text.split())[:110]
+        print(f"     · {name}: {first}…")
+    return seen
+
+
 #: Ceilings the max_tokens check documents one node under. ``None`` is the
 #: reference length. 500 is the everyday case, which a small local model rarely
 #: reaches — it shows the argument breaks nothing, and nothing more. 48 is the
@@ -449,7 +486,9 @@ def check_max_tokens(
         )
 
 
-def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
+def run_case(
+    case: Case, args: argparse.Namespace, use_ai: bool, use_vision: bool
+) -> bool:
     """Build, analyse, document and export one workbook. Returns whether AI ran."""
     print(f"\n═══ {case.name}: {case.headline} ═══")
     data = case.build()
@@ -472,18 +511,21 @@ def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
     screenshots = render_screenshots(result, case)
 
     print("\n4. 💾 Reports")
-    documented = False
+    documented = described = False
     for language in case.languages:
         docs, workbook_doc = (
             document(result, args, language) if use_ai else (None, None)
         )
         documented = documented or docs is not None
+        seen = describe(result, screenshots, args, language) if use_vision else None
+        described = described or seen is not None
         path = case.output(language)
         result.save_html(
             path,
             docs=docs,
             workbook_doc=workbook_doc,
             screenshots=screenshots,
+            screenshot_docs=seen,
             language=language,
         )
         print(f"   ✅ {path.resolve()}")
@@ -498,6 +540,12 @@ def run_case(case: Case, args: argparse.Namespace, use_ai: bool) -> bool:
     print(f"\n   Open {case.output(case.languages[0]).name} and check:")
     for line in case.checks:
         print(f"   · {line}" if not line.startswith("  ") else f"   {line}")
+    if described:
+        # The one claim in the report that nothing deterministic backs: read it
+        # against the picture it sits under, not against the graph.
+        print("   · 'Sheets' — each description is badged as read from the image.")
+        print("     Check it against that image: a weak vision model describes a")
+        print("     plausible spreadsheet rather than this one.")
     return documented
 
 
@@ -516,6 +564,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--model", default=DEFAULT_MODEL, help=f"model id (default: {DEFAULT_MODEL})"
+    )
+    parser.add_argument(
+        "--vision",
+        action="store_true",
+        help="also describe the rendered sheets with a multimodal model",
+    )
+    parser.add_argument(
+        "--vision-model",
+        default=None,
+        help="model that looks at the screenshots (default: --model)",
     )
     parser.add_argument(
         "--token-budget",
@@ -576,6 +634,14 @@ def main() -> int:
         "--no-ai", action="store_true", help="skip AI documentation entirely"
     )
     args = parser.parse_args()
+    # Refused rather than quietly dropped, as ``linexcel analyze`` refuses
+    # --vision-docs with --deterministic-only: a screenshot is the largest
+    # thing this script can send, and --no-ai is the promise that it sends
+    # nothing at all.
+    if args.vision and args.no_ai:
+        parser.error(
+            "--vision sends the screenshots to a model, which --no-ai rules out."
+        )
 
     print("--- 📊 linexcel manual validation ---")
     if args.file is not None:
@@ -589,16 +655,24 @@ def main() -> int:
         cases = [CASES[args.workbook]]
 
     use_ai = not args.no_ai
+    use_vision = args.vision
     if not use_ai:
         print("   AI skipped (--no-ai): reports keep every deterministic tab.")
     elif not check_local_provider(args.base_url, args.model):
         print("   Continuing without AI.")
-        use_ai = False
+        use_ai = use_vision = False
     else:
         print(f"   Budget: {args.token_budget:,} tokens per workbook")
+        # The model that looks at the images is the one to probe when it is not
+        # the one that writes: a request nothing serves fails per language, per
+        # workbook, after the screenshots have already been rendered.
+        if use_vision and args.vision_model and args.vision_model != args.model:
+            use_vision = check_local_provider(args.base_url, args.vision_model)
+            if not use_vision:
+                print("   Continuing without the screenshot descriptions.")
 
     for case in cases:
-        run_case(case, args, use_ai)
+        run_case(case, args, use_ai, use_vision)
 
     print("\n🎉 Done.")
     return 0

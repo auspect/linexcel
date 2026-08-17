@@ -40,3 +40,5 @@ validation_screenshots/
 
 # Docs build output
 site/
+
+graph.json

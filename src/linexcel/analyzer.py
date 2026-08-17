@@ -8,7 +8,8 @@ Steps:
 4. resolution of precedents (cells, ranges, names, other sheets);
 5. decomposition of each composite formula into individually evaluated steps
    in a scratch sheet of the engine;
-6. lineage of extracted VBA code (oletools).
+6. lineage of extracted VBA code (oletools);
+7. Power Query — the queries that fill a range no formula writes to.
 """
 
 from __future__ import annotations
@@ -20,17 +21,32 @@ import re
 import sys
 import time
 import uuid
+import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 import formualizer as fz
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format
 
+from linexcel.external import (
+    ExternalBook,
+    ExternalRef,
+    find_workbooks,
+    macro_files,
+    parse_external_refs,
+    read_external_links,
+    read_workbook_values,
+    resolve_books,
+)
+from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.refs import (
     Rect,
     num_to_col,
+    parse_ref,
     parse_ref_detailed,
     stretch_ref,
 )
@@ -39,13 +55,27 @@ from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
 # Guards to stay responsive on large workbooks.
 SCAN_CHUNK_ROWS = 20_000
-MAX_CELLS_PER_SHEET = 4_000_000
+#: Ceiling on one ``get_formulas`` call, in cells. The engine hands back a
+#: dense grid of Python strings, so a 16,384-column sheet read 20,000 rows at
+#: a time would materialize 327 million of them in one go.
+SCAN_CHUNK_CELLS = 1_000_000
+#: Ceiling on the formula sweep of a single sheet. It is not there to keep the
+#: analysis quick — sweeping costs about 0.7 µs per cell, so the 2.4M cells
+#: this used to cut from the reference workbook bought 1.6 s of a 95 s run,
+#: and cost the sheet its tail. It is there for the file that *declares* far
+#: more than it holds: one stray cell at XFD1048576 makes the used range 17
+#: billion cells, which would sweep for hours. At 64M the ceiling is past any
+#: real used range (a full-height sheet 60 columns wide) and still bounded.
+MAX_CELLS_PER_SHEET = 64_000_000
 SMALL_RANGE_CELLS = 20_000
 MAX_NODES_PER_SHEET = 400
 MAX_STEPS_PER_FORMULA = 48
 MAX_SCRATCH_EVALS = 4_000
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
+MAX_QUERY_CODE_CHARS = 6_000
+#: How many query sources one warning line names before it says "and more".
+MAX_QUERY_SOURCES_SHOWN = 6
 MAX_VALUE_WARNINGS = 25
 # Chained recovery: how deep the precedent walk goes, and how wide a referenced
 # range may be before its cells are left to the engine. Both only bound the
@@ -65,6 +95,20 @@ EXCEL_EPOCH_1904 = datetime.datetime(1904, 1, 1)
 # already absorbs the phantom day.
 EPOCH_EARLY_1900 = datetime.datetime(1899, 12, 31)
 GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
+#: Functions that answer with the clock or with chance. Excel calls a wider set
+#: "volatile" — OFFSET, INDIRECT, CELL and INFO recalculate on every edit too —
+#: but those return the same value for the same workbook, so linexcel keeps
+#: computing them. These cannot be checked against anything: a `=TODAY()`
+#: recomputed today never matches a file saved last week, and calling that a
+#: divergence blames the workbook for the calendar.
+VOLATILE_FUNCTIONS = frozenset({"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY"})
+_VOLATILE_RE = re.compile(
+    r"(?<![\w.])(?:_xlfn\.)?(?:" + "|".join(sorted(VOLATILE_FUNCTIONS)) + r")\s*\(",
+    re.IGNORECASE,
+)
+#: A double-quoted Excel string, doubled quotes included. Blanked before the
+#: volatile scan so `="TODAY() is volatile"` is not read as a call.
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"]|"")*"')
 #: Engine error kinds → the text a spreadsheet shows for them. These are values
 #: a cell genuinely holds: openpyxl reads the stored one back as this same text,
 #: so the graph carries the text on both sides and they compare directly.
@@ -254,9 +298,6 @@ def _detect_epoch_1904(data: bytes) -> bool:
     ``<workbookPr date1904="1" />`` in ``xl/workbook.xml``; reading it from the
     zip avoids opening openpyxl a second time just for this one attribute.
     """
-    import re
-    import zipfile
-
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
@@ -294,6 +335,8 @@ class _ValueResolver:
         scratch_ready: bool,
         engine_alive: bool = True,
         sheet_dims: dict[str, tuple[int, int]] | None = None,
+        externals: dict[str, ExternalBook] | None = None,
+        refs_files: dict[str, Path] | None = None,
     ):
         self.engine = engine
         self.engine_sheets = engine_sheets
@@ -302,6 +345,12 @@ class _ValueResolver:
         self.budget = budget
         self.scratch_ready = scratch_ready
         self.sheet_dims = sheet_dims or {}
+        self.externals = externals or {}
+        self.refs_files = refs_files or {}
+        self._declared_by_name = {
+            book.name.lower(): book for book in self.externals.values() if book.name
+        }
+        self._named_books: dict[str, ExternalBook] = {}
         self._engine_alive = engine_alive
         self._compared: set[tuple[str, int, int]] = set()
         self._n_mismatches = 0
@@ -321,6 +370,16 @@ class _ValueResolver:
             return None, None, None
         if sheet not in self.engine_sheets:
             return self._from_cache(sheet, row, col)
+        if formula is None:
+            formula = self._formula_at(sheet, row, col)
+        # A volatile formula answers differently every time it is computed, so
+        # recomputing it says nothing about the workbook: `=TODAY()` recalculated
+        # today cannot agree with a file saved last week, and reporting that as a
+        # divergence blames the file for the calendar. The stored value is kept
+        # and labelled as the only reading there is.
+        if formula and _is_volatile(formula):
+            value, _source, date_text = self._from_cache(sheet, row, col)
+            return value, "volatile", date_text
         raw, source = self._engine_read(sheet, row, col, formula)
         if _is_uncomputed(raw):
             self._note_uncomputed(sheet, row, col)
@@ -345,6 +404,106 @@ class _ValueResolver:
         if date_text is not None:
             fields["valueDate"] = date_text
         return fields
+
+    def external_books(self, formula: str | None) -> list[dict[str, Any]]:
+        """The other workbooks a formula reads, and how far each one was read.
+
+        Named even when unreadable: "this cell depends on Budget FY26.xlsx,
+        which linexcel was not given" is the answer a reader needs, and it is
+        one a grey ``[1]`` node never gave.
+        """
+        if not formula:
+            return []
+        seen: dict[str, dict[str, Any]] = {}
+        for ref in parse_external_refs(formula):
+            book = self._book_for(ref)
+            name = book.name if book else _external_name(ref)
+            if name in seen:
+                continue
+            entry: dict[str, Any] = {"name": name}
+            if book is not None and book.target:
+                entry["path"] = book.target
+            elif ref.directory:
+                entry["path"] = ref.directory + name
+            if book is not None and book.resolved:
+                entry["read"] = "folder"
+                entry["file"] = str(book.path)
+            elif book is not None and book.cached:
+                entry["read"] = "cache"
+            else:
+                entry["read"] = "none"
+            seen[name] = entry
+        return list(seen.values())
+
+    def external_value(self, ref: ExternalRef) -> tuple[Any, str | None]:
+        """``(value, source)`` for one external reference, or ``(None, None)``."""
+        book = self._book_for(ref)
+        position = _a1_position(ref.cell)
+        if book is None or position is None:
+            return None, None
+        return book.value(ref.sheet, *position)
+
+    def external_workbooks(self) -> list[ExternalBook]:
+        """Every workbook seen, whether the file declared the link or not."""
+        return list(self.externals.values()) + list(self._named_books.values())
+
+    def substitute_externals(self, expr: str) -> str:
+        """Replace external references by the values they resolve to.
+
+        The engine cannot follow a link to another workbook — nothing in the
+        file it loaded points there — so the reference is turned into the
+        literal it stands for before the expression is evaluated. A reference
+        that resolves to nothing is left alone: the evaluation then fails the
+        way it did before, which is the honest outcome.
+        """
+        refs = parse_external_refs(expr)
+        if not refs:
+            return expr
+        for ref in refs:
+            book = self._book_for(ref)
+            if book is None:
+                continue
+            position = _a1_position(ref.cell)
+            if position is None:
+                continue
+            value, source = book.value(ref.sheet, *position)
+            if source is None:
+                continue
+            expr = expr.replace(ref.text, _as_literal(value))
+        return expr
+
+    def _book_for(self, ref: ExternalRef) -> ExternalBook | None:
+        """The workbook a reference points at, read on first use.
+
+        A file that registered its links refers to them by index — ``[1]`` —
+        and those are known up front. A file that did not spells the name out,
+        ``[Budget FY26.xlsx]``, and then the reference folder is the only place
+        to look; the workbook is read once and remembered.
+        """
+        declared = self.externals.get(ref.book) or self._declared_by_name.get(
+            ref.book.lower()
+        )
+        if declared is not None:
+            return declared
+        if ref.book.isdigit():
+            return None  # an index whose link part the file does not carry
+        key = ref.book.lower()
+        book = self._named_books.get(key)
+        if book is None:
+            book = ExternalBook(
+                key=ref.book, target=ref.directory + ref.book, name=ref.book
+            )
+            path = self.refs_files.get(key)
+            if path is not None:
+                try:
+                    book.values = read_workbook_values(path)
+                    book.path = path
+                except Exception as exc:
+                    self.warnings.append(
+                        f"External workbook '{ref.book}' could not be read: {exc}"
+                    )
+            self._named_books[key] = book
+        return book
 
     def cached_value(self, sheet: str | None, row: int, col: int) -> Any:
         if sheet is None:
@@ -385,7 +544,9 @@ class _ValueResolver:
         cached = self._step_cache.pop(expr, None)
         if cached is not None:
             return cached
-        return _scratch_eval(self.engine, expr, sheet)
+        # Keyed on the expression as written, evaluated on the one the engine
+        # can take: a link to another workbook becomes the value it stands for.
+        return _scratch_eval(self.engine, self.substitute_externals(expr), sheet)
 
     def preload_steps(self, exprs: list[str], sheet: str) -> None:
         """Batch-evaluate step expressions in one ``evaluate_cells`` call.
@@ -416,10 +577,19 @@ class _ValueResolver:
         valid: list[str] = []
         for i, e in enumerate(unique):
             try:
-                qualified = qualify_sheet(e, sheet)
+                qualified = qualify_sheet(self.substitute_externals(e), sheet)
             except Exception:
                 continue
             try:
+                # Primed with the sentinel first, exactly as ``_scratch_eval``
+                # does: an expression the engine will not take — a structured
+                # reference it cannot resolve, say — makes ``set_formula``
+                # no-op rather than raise, and the cell then still holds the
+                # step value *another node* left in that column. Reported as
+                # this step's own result, that is a value from elsewhere.
+                self.engine.set_formula(
+                    SCRATCH_SHEET, 2, i + 1, f'="{SCRATCH_SENTINEL}"'
+                )
                 self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, qualified)
             except Exception:
                 continue
@@ -432,7 +602,7 @@ class _ValueResolver:
         except Exception:
             return  # a broken reference poisons the batch — fall back
         for e, val in zip(valid, results):
-            if val is not None and not _is_uncomputed(val):
+            if val is not None and val != SCRATCH_SENTINEL and not _is_uncomputed(val):
                 self._step_cache[e] = (_jsonable(val), True)
             else:
                 self._step_cache[e] = (None, False)
@@ -488,10 +658,13 @@ class _ValueResolver:
         """
         if not self._engine_alive:
             self._resolve_precedents(sheet, expr, depth)
+        # A value that came out of another workbook is not the engine's own
+        # reading of this file, and the card has to be able to say so.
+        computed = "external" if parse_external_refs(expr) else "engine"
         raw, ok = self._eval_raw(expr, sheet)
         uncomputed = raw if ok and raw is not None and _is_uncomputed(raw) else None
         if ok and raw is not None and not _is_uncomputed(raw):
-            return raw, "engine"
+            return raw, computed
         fallback = _guard_fallback_expr(expr)
         if fallback is not None:
             raw, ok = self._eval_raw(fallback, sheet)
@@ -644,6 +817,117 @@ class _ValueResolver:
         )
 
 
+def _external_warning(
+    workbooks: list[ExternalBook], refs_dir: str | Path | None
+) -> str | None:
+    """One line naming every workbook this file reads, and how far each got.
+
+    A workbook that depends on files nobody handed over is the common case in
+    practice, and the values above such a link are only as good as the cache
+    Excel left behind. Saying so is the point.
+    """
+    books = {b.name: b for b in workbooks if b.name}
+    if not books:
+        return None
+    read = [b.name for b in books.values() if b.resolved]
+    cached = [b.name for b in books.values() if not b.resolved and b.cached]
+    missing = [b.name for b in books.values() if not b.resolved and not b.cached]
+    parts = [f"This workbook reads {len(books)} external workbook(s)."]
+    if read:
+        parts.append(f"Read from the reference folder: {', '.join(sorted(read))}.")
+    if cached:
+        parts.append(
+            f"Not read, values taken from the cache Excel left in the file: "
+            f"{', '.join(sorted(cached))}."
+        )
+    if missing:
+        parts.append(
+            f"Neither read nor cached, so cells reading them have no value: "
+            f"{', '.join(sorted(missing))}."
+        )
+        if refs_dir is None:
+            parts.append("Pass refs_dir= (CLI: --refs-dir) to resolve them.")
+    return " ".join(parts)
+
+
+def _query_warning(queries: list[Query]) -> str | None:
+    """One line for the queries that feed the workbook from outside it.
+
+    A query whose source is a file, a URL or a server is a dependency of the
+    same nature as a link to another workbook: the values it produced are in
+    the file, what produced them is not. The graph shows the query and names
+    its source; nobody should read that as the source having been checked.
+    """
+    if not queries:
+        return None
+    loaded = sum(1 for query in queries if query.loaded)
+    if len(queries) == 1:
+        head = "1 Power Query query feeds this workbook" + (
+            ", loaded onto a sheet."
+            if loaded
+            else ", loaded nowhere (connection only)."
+        )
+    else:
+        head = (
+            f"{len(queries)} Power Query queries feed this workbook, "
+            f"{loaded} of them loaded onto a sheet."
+        )
+    parts = [head]
+    outside = sorted(
+        {source.target for query in queries for source in query.outside_sources()}
+    )
+    if outside:
+        shown = ", ".join(outside[:MAX_QUERY_SOURCES_SHOWN])
+        if len(outside) > MAX_QUERY_SOURCES_SHOWN:
+            shown += f", … (+{len(outside) - MAX_QUERY_SOURCES_SHOWN})"
+        parts.append(
+            f"Their data comes from outside the file and was not read: {shown}."
+        )
+    return " ".join(parts)
+
+
+def _external_name(ref: ExternalRef) -> str:
+    """The file name an external reference names, index or path alike."""
+    return ref.book if not ref.book.isdigit() else f"[{ref.book}]"
+
+
+def _a1_position(cell: str) -> tuple[int, int] | None:
+    """``B4`` → ``(4, 2)``; a range takes its top-left cell."""
+    rect = parse_ref(cell.split(":")[0])
+    return (rect.r1, rect.c1) if rect is not None else None
+
+
+def _as_literal(value: Any) -> str:
+    """A value as the engine would read it back in a formula."""
+    if value is None:
+        return "0"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, datetime.datetime):
+        return repr(_serial_of(value))
+    text = str(value)
+    if text in EXCEL_ERRORS:
+        return text
+    return '"' + text.replace('"', '""') + '"'
+
+
+def _serial_of(moment: datetime.datetime) -> float:
+    """A datetime as the 1900-epoch serial a formula computes with."""
+    delta = moment - EXCEL_EPOCH_1900
+    return delta.days + delta.seconds / 86_400
+
+
+def _is_volatile(formula: str) -> bool:
+    """Whether a formula answers with the clock or with chance.
+
+    Text is blanked first: a cell spelling out ``="uses TODAY()"`` holds a
+    string, not a call.
+    """
+    return bool(_VOLATILE_RE.search(_STRING_LITERAL_RE.sub('""', formula)))
+
+
 def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
@@ -653,8 +937,17 @@ def analyze_workbook(
     filename: str = "workbook.xlsx",
     *,
     verbose: bool = False,
+    refs_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Full analysis: returns the JSON-serializable graph and the engine."""
+    """Full analysis: returns the JSON-serializable graph and the engine.
+
+    ``refs_dir`` is a folder holding the workbooks this one links to. Without
+    it, a cell reading ``'[1]Annual'!B4`` is named and left unresolved — the
+    engine has nothing to follow. With it, the referenced file is read and the
+    reference is evaluated as the value it stands for; the report says, per
+    workbook, whether it was read from that folder, from the cache Excel left
+    in the file, or not at all.
+    """
     warnings: list[str] = []
     _t0 = time.perf_counter()
 
@@ -677,11 +970,15 @@ def analyze_workbook(
     finally:
         owb.close()
 
-    # Table detection: openpyxl read-only mode does not expose tables, so the
-    # workbook is opened once more in normal mode to read TableObjects. The
-    # result is a per-cell lookup used to enrich lineage nodes.
-    table_index = _build_table_index(data)
-    _v("structure+tables", _t)
+    # Workbooks this one links to. Always named; read for real only when the
+    # caller points at a folder holding them.
+    externals = read_external_links(data)
+    refs_files: dict[str, Path] = {}
+    if refs_dir is not None:
+        refs_files = find_workbooks(Path(refs_dir))
+        if externals:
+            resolve_books(externals, Path(refs_dir), warnings)
+    _v("structure", _t)
 
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
@@ -730,6 +1027,13 @@ def analyze_workbook(
 
     scratch_ready = _ensure_scratch(engine)
     _v("engine_init+evaluate_all", _t)
+
+    # Tables: declared ones from the package parts, static ones from a small
+    # window the engine already holds. A per-cell lookup enriching the nodes.
+    _t = time.perf_counter()
+    table_index = _build_table_index(data, engine, sheet_dims, engine_sheets)
+    _v("tables", _t)
+
     budget = _Budget(MAX_SCRATCH_EVALS)
     resolver = _ValueResolver(
         engine,
@@ -740,6 +1044,8 @@ def analyze_workbook(
         scratch_ready,
         engine_alive=engine_alive,
         sheet_dims=sheet_dims,
+        externals=externals,
+        refs_files=refs_files,
     )
 
     # --- 3. extraction + grouping ----------------------------------------
@@ -756,12 +1062,22 @@ def analyze_workbook(
         n_formulas = 0
         scanned = 0
         fsheet = engine.sheet(sheet)
-        for r0 in range(1, max_row + 1, SCAN_CHUNK_ROWS):
-            r1 = min(r0 + SCAN_CHUNK_ROWS - 1, max_row)
-            chunk_cells = (r1 - r0 + 1) * max_col
-            if scanned + chunk_cells > MAX_CELLS_PER_SHEET:
-                warnings.append(f"Sheet '{sheet}' truncated after {scanned:,} cells")
+        chunk_rows = _chunk_rows(max_col)
+        r0 = 1
+        while r0 <= max_row:
+            # The ceiling is spent in rows, and the last chunk is clipped to
+            # what is left rather than dropped whole: dropping it stopped a
+            # 4,000,000-cell budget at 3,600,000 and lost every row of the
+            # chunk that would have overshot.
+            rows_left = (MAX_CELLS_PER_SHEET - scanned) // max_col
+            if rows_left <= 0:
+                warnings.append(
+                    f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
+                    f"({MAX_CELLS_PER_SHEET:,} cell ceiling): formulas below "
+                    f"that row are missing from the lineage"
+                )
                 break
+            r1 = min(r0 + chunk_rows - 1, max_row, r0 + rows_left - 1)
             ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
             try:
                 rows = fsheet.get_formulas(ra)
@@ -789,6 +1105,7 @@ def analyze_workbook(
                     # (min), keep 3 example formulas
                     if len(grp.formulas) < 3:
                         grp.formulas[(r, c)] = f
+            r0 = r1 + 1
         formula_count += n_formulas
         sheet_stats.append(
             {
@@ -845,6 +1162,40 @@ def analyze_workbook(
     ast_cache: dict[str, Any] = {}
     input_nodes: dict[str, str] = {}  # full A1 key -> node id
 
+    def ensure_opaque_node(ref: str) -> str:
+        """A reference the graph cannot follow, named as precisely as it can be.
+
+        An external reference is one of those, but it is not opaque to the
+        *reader*: the file says which workbook it points at, and the node
+        carries that — with the value, when the workbook could be read.
+        """
+        external = parse_external_refs(ref)
+        if not external:
+            return ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label=ref)
+        first = external[0]
+        books = resolver.external_books(ref)
+        name = books[0]["name"] if books else _external_name(first)
+        label = f"[{name}]{first.sheet}!{first.cell}" if first.sheet else f"[{name}]"
+        node_id = input_nodes.get(label)
+        if node_id:
+            return node_id
+        node_id = f"x:{label}"
+        node: dict[str, Any] = {
+            "id": node_id,
+            "kind": "opaque",
+            "label": label,
+            "sheet": None,
+            "ref": ref,
+            "externalBooks": books,
+        }
+        value, source = resolver.external_value(first)
+        if source is not None:
+            node["value"] = _jsonable(value)
+            node["valueSource"] = source
+        nodes[node_id] = node
+        input_nodes[label] = node_id
+        return node_id
+
     def ensure_input_node(rect: Rect, opaque_label: str | None = None) -> str:
         label = opaque_label or rect.to_a1()
         node_id = input_nodes.get(label)
@@ -896,8 +1247,9 @@ def analyze_workbook(
         """Create precedent → target edges for a referenced range."""
         sheet = rect.sheet
         if sheet not in sheet_dims:
-            ensure_input_node(rect, opaque_label=rect.to_a1())
-            add_edge(input_nodes[rect.to_a1()], target_id, kind)
+            # A sheet this file does not have: another workbook, most often —
+            # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
+            add_edge(ensure_opaque_node(rect.to_a1()), target_id, kind)
             return
         clipped = rect.clipped(*sheet_dims[sheet])
         if clipped is None:
@@ -981,10 +1333,7 @@ def analyze_workbook(
                 if up in name_nodes:
                     add_edge(name_nodes[up], node_id, "name")
                 else:
-                    opaque_id = ensure_input_node(
-                        Rect(None, 1, 1, 1, 1), opaque_label=ref
-                    )
-                    add_edge(opaque_id, node_id, "dep")
+                    add_edge(ensure_opaque_node(ref), node_id, "dep")
                 continue
             rect = (
                 stretch_ref(detail, rep_r, rep_c, (rmin, rmax), (cmin, cmax))
@@ -999,21 +1348,32 @@ def analyze_workbook(
         value_fields = resolver.describe(sheet, rep_r, rep_c, formula)
         samples = None
         if is_group:
-            samples = []
-            for r, c in itertools.islice(sorted(grp.cells), 3):
-                samples.append(
-                    {
-                        "addr": a1(r, c),
-                        **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
-                    }
-                )
+            samples = [
+                {
+                    "addr": a1(r, c),
+                    **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
+                }
+                for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
+            ]
 
         steps = None
-        if ast_dict is not None:
-            step_exprs = _collect_step_exprs(ast_dict)
+        # A volatile cell is shown as *not* recalculated, so decomposing it
+        # would contradict its own card: every step under `=TODAY()+7` would
+        # carry a figure computed from today's clock.
+        if ast_dict is not None and value_fields.get("valueSource") != "volatile":
+            # The root step is the formula itself: when the engine computed the
+            # cell, its value is that step's value and needs no scratch pass.
+            root_value = (
+                value_fields["value"]
+                if value_fields.get("valueSource") == "engine"
+                else None
+            )
+            step_exprs = _collect_step_exprs(ast_dict, skip_root=root_value is not None)
             if step_exprs:
                 resolver.preload_steps(step_exprs, sheet)
-            steps = _decompose(ast_dict, sheet, resolver, defined_names)
+            steps = _decompose(
+                ast_dict, sheet, resolver, defined_names, root_value=root_value
+            )
 
         node: dict[str, Any] = {
             "id": node_id,
@@ -1032,12 +1392,26 @@ def analyze_workbook(
             "samples": samples,
             "steps": steps,
         }
+        books = resolver.external_books(formula)
+        if books:
+            node["externalBooks"] = books
         _enrich_with_table(node, table_index, sheet, rep_r, rep_c)
         nodes[node_id] = node
 
     # --- 6. VBA --------------------------------------------------------------
     vba_modules = extract_vba_modules(data, filename, warnings)
     vba_procs: list[VbaProc] = analyze_vba(vba_modules) if vba_modules else []
+    # Code a workbook calls often does not live in it: an .xlam add-in holds
+    # the functions, and the workbook only names them. Given the folder, that
+    # code is read too, and each module says which file it came from.
+    if refs_dir is not None:
+        for addin in macro_files(Path(refs_dir)):
+            extra = extract_vba_modules(addin.read_bytes(), addin.name, warnings)
+            if not extra:
+                continue
+            origin = {f"{addin.name}:{name}": code for name, code in extra.items()}
+            vba_modules.update(origin)
+            vba_procs.extend(analyze_vba(origin))
     # Node ids keep the declared spelling, but both lookups are keyed on the
     # lowercased name: VBA is case-insensitive, so Module1.Taux and
     # module1.TAUX designate the same procedure. proc_ids resolves a qualified
@@ -1090,6 +1464,73 @@ def analyze_workbook(
             else:
                 resolve_rect_edges(detail.rect, pid, kind="vba-read")
 
+    # --- 7. Power Query ------------------------------------------------------
+    # A range filled by a query has no formula above it, so without this the
+    # graph shows where the data landed and nothing about where it came from.
+    queries = read_queries(data)
+    # Keyed on the exact name: M is case-sensitive, so folding here would let
+    # two queries that differ only in case collapse onto one node.
+    query_ids = {q.name: f"q:{q.name}" for q in queries}
+    tables_by_name = {
+        table["name"].casefold(): (sheet, table["ref"])
+        for sheet, entries in table_index.items()
+        for table in entries
+        if table.get("name") and table.get("ref")
+    }
+
+    def query_source_node(source: QuerySource) -> str:
+        """A node for something a query reads that is not in this workbook."""
+        node_id = ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label=source.target)
+        nodes[node_id].setdefault("sourceKind", source.kind)
+        nodes[node_id].setdefault("function", source.function)
+        return node_id
+
+    for query in queries:
+        qid = query_ids[query.name]
+        nodes[qid] = {
+            "id": qid,
+            "kind": "query",
+            "label": query.name,
+            "sheet": query.loaded_to[0].sheet if query.loaded_to else None,
+            "code": query.source[:MAX_QUERY_CODE_CHARS],
+            "loadedTo": [d.as_dict() for d in query.loaded_to],
+            "sources": [s.as_dict() for s in query.sources],
+        }
+    for query in queries:
+        qid = query_ids[query.name]
+        for source in query.sources:
+            if source.kind == "query":
+                upstream = query_ids.get(source.target)
+                if upstream is not None:
+                    add_edge(upstream, qid, "query")
+                continue
+            if source.kind == "table":
+                # ``Excel.CurrentWorkbook`` reads a table or a defined name of
+                # this very file: that end of the link is in the graph already.
+                placed = tables_by_name.get(source.target.casefold())
+                if placed is not None:
+                    rect = parse_ref(placed[1], default_sheet=placed[0])
+                    if rect is not None:
+                        resolve_rect_edges(rect, qid, kind="query")
+                        continue
+                named = name_nodes.get(source.target.upper())
+                if named is not None:
+                    add_edge(named, qid, "query")
+                    continue
+            add_edge(query_source_node(source), qid, "query")
+        for destination in query.loaded_to:
+            rect = (
+                parse_ref(destination.ref, default_sheet=destination.sheet)
+                if destination.ref
+                else None
+            )
+            if rect is not None:
+                add_edge(qid, ensure_input_node(rect), "query-load")
+
+    query_warning = _query_warning(queries)
+    if query_warning:
+        warnings.append(query_warning)
+
     if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
         warnings.append(
             f"Values recovered cell by cell: {resolver.n_recovered} recomputed, "
@@ -1098,6 +1539,9 @@ def analyze_workbook(
     uncomputed = resolver.uncomputed_warning()
     if uncomputed:
         warnings.append(uncomputed)
+    external_warning = _external_warning(resolver.external_workbooks(), refs_dir)
+    if external_warning:
+        warnings.append(external_warning)
 
     graph = {
         "meta": {
@@ -1115,6 +1559,14 @@ def analyze_workbook(
                 "vbaProcs": len(vba_procs),
                 "definedNames": len(defined_names),
                 "tables": sum(len(t) for t in table_index.values()),
+                "externalWorkbooks": len(
+                    {b.name for b in resolver.external_workbooks() if b.name}
+                ),
+                "externalWorkbooksRead": len(
+                    {b.name for b in resolver.external_workbooks() if b.resolved}
+                ),
+                "queries": len(queries),
+                "queriesLoaded": sum(1 for q in queries if q.loaded),
             },
         },
         "sheets": list(sheet_dims.keys()),
@@ -1137,9 +1589,28 @@ def analyze_workbook(
 # ---------------------------------------------------------------------------
 
 _STEP_KINDS = {"Function", "BinaryOp", "UnaryOp"}
+#: Excel operator precedence, loosest first. An unknown operator scores 0 and
+#: is therefore always parenthesized, which is the safe way to be wrong.
+_PRECEDENCE = {
+    "=": 1,
+    "<": 1,
+    ">": 1,
+    "<=": 1,
+    ">=": 1,
+    "<>": 1,
+    "&": 2,
+    "+": 3,
+    "-": 3,
+    "*": 4,
+    "/": 4,
+    "^": 5,
+}
+#: Unary minus binds tighter than any binary operator: ``-2^2`` is 4 in Excel,
+#: and the parser agrees — it reads ``-A1^2`` as ``(-A1)^2``.
+_UNARY_PRECEDENCE = 6
 
 
-def _collect_step_exprs(ast_dict: dict) -> list[str]:
+def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]:
     """First pass: collect every step expression ``_decompose`` will evaluate.
 
     The counter and ``_STEP_KINDS`` filter mirror ``_decompose`` exactly so
@@ -1147,17 +1618,22 @@ def _collect_step_exprs(ast_dict: dict) -> list[str]:
     in ``_eval_raw``.  Order is pre-order (parent before children) — it does
     not match the post-order evaluation in ``_decompose`` but that is fine:
     the batch evaluates all at once and the cache is order-independent.
+
+    ``skip_root`` leaves out the whole-formula expression, which the caller
+    passes to ``_decompose`` as ``root_value`` instead. The counter still
+    counts it, so both passes keep budgeting the same steps.
     """
     exprs: list[str] = []
     counter = itertools.count()
 
-    def walk(node: dict) -> None:
+    def walk(node: dict, is_root: bool) -> None:
         ntype = node.get("node_type")
         if ntype not in _STEP_KINDS:
             return
         if next(counter) >= MAX_STEPS_PER_FORMULA:
             return
-        exprs.append(_render_expr(node))
+        if not (is_root and skip_root):
+            exprs.append(_render_expr(node))
         if ntype == "Function":
             children = node.get("args", [])
         elif ntype == "BinaryOp":
@@ -1166,9 +1642,9 @@ def _collect_step_exprs(ast_dict: dict) -> list[str]:
             children = [node.get("operand") or node.get("expr")]
         for c in children:
             if c:
-                walk(c)
+                walk(c, False)
 
-    walk(ast_dict)
+    walk(ast_dict, True)
     return exprs
 
 
@@ -1177,8 +1653,18 @@ def _decompose(
     sheet: str,
     resolver: _ValueResolver,
     defined_names: dict[str, list[Rect]] | None = None,
+    root_value: Any = None,
 ) -> dict | None:
-    """Step tree: each function / operator becomes an evaluated step."""
+    """Step tree: each function / operator becomes an evaluated step.
+
+    ``root_value`` is the value the engine already computed for the cell
+    itself. The root step *is* the whole formula, so re-evaluating it in the
+    scratch sheet recomputes a value the workbook already holds — and a root
+    such as ``SUM(Calculs!H2:H200001)`` makes the engine walk 200,000 formula
+    cells again, which measured 29 s on one node. Pass it only when it came
+    from the engine: a value read from the file, or an error-guarded fallback,
+    is not what evaluating this expression yields.
+    """
     counter = itertools.count()
 
     def expr_of(node: dict) -> str:
@@ -1222,7 +1708,10 @@ def _decompose(
                 elif ctype == "Literal":
                     inputs.append({"literal": child.get("value")})
 
-        value, evaluated = resolver.eval_expr(expr, sheet)
+        if depth == 0 and root_value is not None:
+            value, evaluated = root_value, True
+        else:
+            value, evaluated = resolver.eval_expr(expr, sheet)
         return {
             "kind": ntype,
             "label": label,
@@ -1243,13 +1732,27 @@ def _render_expr(node: dict) -> str:
         args = ", ".join(_render_expr(a) for a in node.get("args", []))
         return f"{node.get('name', '?')}({args})"
     if ntype == "BinaryOp":
-        return (
-            f"{_render_expr(node.get('left', {}))} {node.get('operator', '?')} "
-            f"{_render_expr(node.get('right', {}))}"
-        )
+        operator = node.get("operator", "?")
+        precedence = _PRECEDENCE.get(operator, 0)
+        left_node, right_node = node.get("left", {}), node.get("right", {})
+        # Rendered inline rather than through a helper: one Python frame per
+        # AST level, and the stress workbook carries a 700-term chain of
+        # additions — two frames per level exhausts the interpreter on it.
+        left = _render_expr(left_node)
+        if _needs_parens(left_node, precedence, right_side=False):
+            left = f"({left})"
+        right = _render_expr(right_node)
+        if _needs_parens(right_node, precedence, right_side=True):
+            right = f"({right})"
+        return f"{left} {operator} {right}"
     if ntype == "UnaryOp":
+        operator = node.get("operator", "?")
         operand = node.get("operand") or node.get("expr") or {}
-        return f"{node.get('operator', '?')}{_render_expr(operand)}"
+        rendered = _render_expr(operand)
+        if _needs_parens(operand, _UNARY_PRECEDENCE, right_side=True):
+            rendered = f"({rendered})"
+        # Percent is the one postfix operator: 25%, not %25.
+        return f"{rendered}%" if operator == "%" else f"{operator}{rendered}"
     if ntype == "Reference":
         return str(node.get("reference", "?"))
     if ntype == "Literal":
@@ -1267,6 +1770,28 @@ def _render_expr(node: dict) -> str:
         inner = node.get("expr") or node.get("inner") or {}
         return f"({_render_expr(inner)})"
     return "?"
+
+
+def _needs_parens(node: dict, parent_precedence: int, right_side: bool) -> bool:
+    """Whether a child operand has to be parenthesized under its parent.
+
+    The parser keeps grouping in the *shape* of the tree and drops the
+    parentheses themselves, so rendering a subtree flat changes what the text
+    means: ``=D2*(1-Rate)`` came back as ``D2 * 1 - Rate``. That is not only
+    misread by a human — each step is evaluated by re-parsing its own rendered
+    text, so the step reported 2470.06 for a cell holding 1976.208.
+
+    A right operand of *equal* precedence is parenthesized too: ``A - (B - C)``
+    and ``A - B - C`` are different sums, and spelling the grouping out keeps
+    the text re-parsing to the very tree it was rendered from, whichever way
+    the parser happens to associate.
+    """
+    if node.get("node_type") != "BinaryOp":
+        return False
+    precedence = _PRECEDENCE.get(node.get("operator", ""), 0)
+    return precedence < parent_precedence or (
+        right_side and precedence == parent_precedence
+    )
 
 
 def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
@@ -1411,31 +1936,192 @@ def _ensure_scratch(engine) -> bool:
 
 def _build_table_index(
     data: bytes,
+    engine,
+    sheet_dims: dict[str, tuple[int, int]],
+    engine_sheets: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
     """Per-sheet table list, for cell→table enrichment of lineage nodes.
 
-    openpyxl read-only mode drops ``ws.tables``, so the workbook is opened
-    once in normal mode. Each table dict carries the bounds and headers that
-    :func:`linexcel.insights.detect_tables` extracts.
+    Two sources, both cheap. Declared tables come from the package's own
+    ``xl/tables/*.xml`` parts, which carry the range and the column names that
+    structured references (``Sales[Amount]``) resolve against. Static ones stay
+    a heuristic, over a window of at most 30 × 50 cells read from the engine.
+
+    Neither needs openpyxl. Reaching ``ws.tables`` did — read-only mode drops
+    them — and that second, eager parse of the whole workbook cost 45 s of a
+    246 s run on a 2.6M-formula file, to read a handful of definitions.
     """
-    from linexcel.insights import detect_tables
+    from linexcel.insights import (
+        MAX_TABLES_PER_SHEET,
+        STATIC_TABLE_SCAN_COLS,
+        STATIC_TABLE_SCAN_ROWS,
+        static_tables_from_rows,
+    )
 
     index: dict[str, list[dict[str, Any]]] = {}
-    try:
-        wb = load_workbook(io.BytesIO(data), read_only=False, data_only=False)
-    except Exception:
-        return index
-    try:
-        for ws in wb.worksheets:
+    declared = _declared_tables(data)
+    for sheet, (max_row, max_col) in sheet_dims.items():
+        tables = declared.get(sheet, [])[:MAX_TABLES_PER_SHEET]
+        covered = [
+            (t["header_row"], t["first_col"], t["last_row"], t["last_col"])
+            for t in tables
+        ]
+        if sheet in engine_sheets:
+            rows = _sheet_window(
+                engine,
+                sheet,
+                min(max_row, STATIC_TABLE_SCAN_ROWS),
+                min(max_col, STATIC_TABLE_SCAN_COLS),
+            )
             try:
-                tables = detect_tables(ws)
+                tables = tables + static_tables_from_rows(rows, covered)
             except Exception:
-                continue
-            if tables:
-                index[ws.title] = tables
-    finally:
-        wb.close()
+                pass
+        if tables:
+            index[sheet] = tables
     return index
+
+
+def _sheet_window(engine, sheet: str, rows: int, cols: int) -> list[list[Any]]:
+    """Top-left window of a sheet, as ``data_only=False`` would hand it over.
+
+    A formula cell reads back as its ``=…`` text rather than as its result:
+    the static-table heuristic tells a text header from a computed one that
+    way, so the window has to keep the distinction openpyxl gave it.
+    """
+    if rows < 1 or cols < 1:
+        return []
+    try:
+        fsheet = engine.sheet(sheet)
+        address = fz.RangeAddress(sheet, 1, 1, rows, cols)
+        values = fsheet.get_values(address)
+        formulas = fsheet.get_formulas(address)
+    except Exception:
+        return []
+    window: list[list[Any]] = []
+    for r, row in enumerate(values):
+        frow = formulas[r] if r < len(formulas) else ()
+        line: list[Any] = []
+        for c, value in enumerate(row):
+            formula = frow[c] if c < len(frow) else ""
+            if formula:
+                line.append(formula if formula.startswith("=") else "=" + formula)
+            else:
+                line.append(value if value != "" else None)
+        window.append(line)
+    return window
+
+
+def _declared_tables(data: bytes) -> dict[str, list[dict[str, Any]]]:
+    """Table definitions per sheet, read straight from the package parts.
+
+    Follows the relationships the format itself uses: workbook → worksheet
+    parts → the table parts each sheet owns. Anything unreadable is skipped —
+    a missing table only costs a node its ``table_name`` tag.
+    """
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            book = _xml_part(zf, "xl/workbook.xml")
+            if book is None:
+                return {}
+            rels = _part_rels(zf, "xl/workbook.xml")
+            for element in book.iter():
+                if _local_name(element.tag) != "sheet":
+                    continue
+                name = element.get("name")
+                rid = next(
+                    (v for k, v in element.attrib.items() if _local_name(k) == "id"),
+                    None,
+                )
+                part = rels.get(rid or "")
+                if not name or not part:
+                    continue
+                for table_part in _part_rels(zf, part, kind="table").values():
+                    entry = _table_entry(_xml_part(zf, table_part))
+                    if entry is not None:
+                        out[name].append(entry)
+    except Exception:
+        return {}
+    return dict(out)
+
+
+def _table_entry(root) -> dict[str, Any] | None:
+    """One ``xl/tables/tableN.xml`` part as the index's table dict."""
+    if root is None:
+        return None
+    rect = parse_ref(root.get("ref") or "")
+    if rect is None:
+        return None
+    # An absent headerRowCount means one header row; a table declared without
+    # headers says so with a 0, and its first row is data.
+    try:
+        header_rows = int(root.get("headerRowCount", "1"))
+    except ValueError:
+        header_rows = 1
+    headers = [
+        column.get("name")
+        for column in root.iter()
+        if _local_name(column.tag) == "tableColumn"
+    ]
+    first_row = rect.r1 + max(header_rows, 0)
+    return {
+        "name": root.get("displayName") or root.get("name") or "Table",
+        "kind": "dynamic",
+        "ref": rect.to_a1(),
+        "header_row": rect.r1,
+        "first_row": first_row,
+        "last_row": rect.r2,
+        "first_col": rect.c1,
+        "last_col": rect.c2,
+        "headers": headers,
+        "data_rows": max(0, rect.r2 - first_row + 1),
+    }
+
+
+def _local_name(tag: str) -> str:
+    """``{namespace}sheet`` → ``sheet``."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_part(zf: zipfile.ZipFile, part: str):
+    try:
+        return ElementTree.fromstring(zf.read(part))
+    except (KeyError, ElementTree.ParseError):
+        return None
+
+
+def _part_rels(
+    zf: zipfile.ZipFile, part: str, kind: str | None = None
+) -> dict[str, str]:
+    """``{relationship id: part path}`` for one part, optionally by type."""
+    base, _, name = part.rpartition("/")
+    root = _xml_part(zf, f"{base}/_rels/{name}.rels")
+    if root is None:
+        return {}
+    out: dict[str, str] = {}
+    for rel in root:
+        rid, target = rel.get("Id"), rel.get("Target")
+        if not rid or not target:
+            continue
+        if kind is not None and not rel.get("Type", "").endswith("/" + kind):
+            continue
+        out[rid] = _resolve_part(base, target)
+    return out
+
+
+def _resolve_part(base: str, target: str) -> str:
+    """Resolve a relationship target against the part that declares it."""
+    if target.startswith("/"):
+        return target.lstrip("/")
+    segments = base.split("/") if base else []
+    for segment in target.split("/"):
+        if segment == "..":
+            if segments:
+                segments.pop()
+        elif segment not in ("", "."):
+            segments.append(segment)
+    return "/".join(segments)
 
 
 def _enrich_with_table(
@@ -1625,6 +2311,34 @@ def _bbox_a1(grp: FormulaGroup) -> str:
     return f"{a1(r1, c1)}:{a1(r2, c2)}"
 
 
+def _chunk_rows(max_col: int) -> int:
+    """How many rows to read per ``get_formulas`` call on a sheet that wide.
+
+    Rows alone are the wrong unit: the engine returns a dense grid of Python
+    strings, so 20,000 rows of a 16,384-column sheet is 327 million of them in
+    a single call. Never zero — one row at a time is the floor, however wide.
+    """
+    return max(1, min(SCAN_CHUNK_ROWS, SCAN_CHUNK_CELLS // max(max_col, 1)))
+
+
+def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
+    """``n`` cells spread evenly over a group, in reading order.
+
+    The head of a stretch is made of near-identical neighbours: sampling
+    ``B2, C2, B3`` out of 400,000 cells says nothing about the far end, which
+    is exactly where a pattern that broke — a hard-coded cell dropped into the
+    middle of a column — shows up. First and last are always included.
+    """
+    ordered = sorted(cells)
+    if n < 2:
+        return ordered[: max(n, 0)]
+    if len(ordered) <= n:
+        return ordered
+    last = len(ordered) - 1
+    picks = sorted({round(i * last / (n - 1)) for i in range(n)})
+    return [ordered[i] for i in picks]
+
+
 def _sample_range_values(resolver: _ValueResolver, rect: Rect) -> list:
     if rect.sheet is None:
         return []
@@ -1652,6 +2366,13 @@ def _ref_preview(
     defined_names: dict[str, list[Rect]] | None = None,
 ) -> tuple[Any, str | None]:
     """Preview of a referenced cell or range: ``(value, date_text)``."""
+    # A reference into another workbook parses as nothing local; it still has a
+    # value whenever that workbook was read, and the step is unreadable without.
+    external = parse_external_refs(ref)
+    if external:
+        value, source = resolver.external_value(external[0])
+        if source is not None:
+            return _jsonable(value), None
     detail = parse_ref_detailed(ref, default_sheet=sheet)
     if detail is None:
         # may be a defined name: show the value of its target

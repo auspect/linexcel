@@ -2,14 +2,21 @@
 
 import datetime
 import io
+import json
 from typing import Any
 
+import formualizer as fz
 import pytest
 from openpyxl import Workbook
 
 from linexcel.analyzer import (
+    SCRATCH_SENTINEL,
     CachedValues,
     _Budget,
+    _collect_step_exprs,
+    _is_volatile,
+    _render_expr,
+    _spread_cells,
     _ValueResolver,
     analyze_workbook,
     load_cached_values,
@@ -443,6 +450,300 @@ class TestDates:
         cached = load_cached_values(buf.getvalue())
         assert cached.epoch_1904 is True
         assert _detect_epoch_1904(buf.getvalue()) is True
+
+
+class TestVolatileFormulas:
+    """A volatile cell is reported as *not* recalculated, on purpose.
+
+    ``=TODAY()`` recomputed today can never agree with a file saved last week,
+    and reporting that as a divergence blames the workbook for the calendar.
+    linexcel keeps what the file stores and says why.
+    """
+
+    def test_a_volatile_cell_is_not_recalculated(self):
+        node = node_of(graph_of({"A1": "=TODAY()"}), "c:S!A1")
+        assert node["valueSource"] == "volatile"
+
+    def test_the_clock_never_reaches_the_graph(self):
+        """openpyxl stores no cached value, so there is nothing to show."""
+        node = node_of(graph_of({"A1": "=NOW()+1"}), "c:S!A1")
+        assert node["value"] is None
+        assert node["valueSource"] == "volatile"
+
+    def test_the_stored_value_is_kept_when_the_file_has_one(self):
+        cached = CachedValues({(SHEET, 1, 1): 45000.0}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): 46240.0}, cached, [])
+        assert resolver.value(SHEET, 1, 1, "=TODAY()") == (45000.0, "volatile", None)
+
+    def test_no_divergence_is_reported_against_the_clock(self):
+        warnings: list[str] = []
+        cached = CachedValues({(SHEET, 1, 1): 45000.0}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): 46240.0}, cached, warnings)
+        resolver.value(SHEET, 1, 1, "=TODAY()")
+        assert warnings == []
+
+    def test_a_volatile_cell_is_not_decomposed_either(self):
+        """Steps under it would carry figures computed from today's clock."""
+        node = node_of(graph_of({"A1": 1, "B1": "=A1+RAND()"}), "c:S!B1")
+        assert node["valueSource"] == "volatile"
+        assert node["steps"] is None
+
+    @pytest.mark.parametrize(
+        "formula",
+        ["=TODAY()", "=NOW()", "=RAND()", "=RANDBETWEEN(1,6)", "=A1*rand()"],
+    )
+    def test_the_volatile_functions_are_recognised(self, formula):
+        assert _is_volatile(formula)
+
+    @pytest.mark.parametrize(
+        "formula",
+        [
+            "=SUM(A1:A3)",
+            # volatile to Excel, but the same value for the same workbook
+            "=OFFSET(A1,1,1)",
+            '=INDIRECT("A" & 2)',
+            # a cell that merely talks about them
+            '="uses TODAY() somewhere"',
+            # a name that only starts like one
+            "=TODAYS_TOTAL",
+        ],
+    )
+    def test_a_stable_formula_is_still_recalculated(self, formula):
+        assert not _is_volatile(formula)
+
+
+class TestRootStep:
+    """The root step is the formula itself, so the cell already answers it.
+
+    Re-evaluating it in the scratch sheet recomputed what the workbook holds,
+    and on a root like ``SUM(H2:H200001)`` that means walking 200,000 formula
+    cells a second time — 29 s for a single node on a dense workbook.
+    """
+
+    def test_the_root_step_reports_the_value_of_the_cell(self):
+        node = node_of(
+            graph_of({"A1": 2, "A2": 3, "B1": "=ROUND(SUM(A1:A2) * 1.5, 2)"}),
+            "c:S!B1",
+        )
+        assert node["valueSource"] == "engine"
+        assert node["steps"]["label"] == "ROUND"
+        assert node["steps"]["value"] == node["value"] == 7.5
+        assert node["steps"]["evaluated"] is True
+
+    def test_the_children_are_still_evaluated_on_their_own(self):
+        """Only the root is taken from the cell; the steps below it are not."""
+        steps = node_of(
+            graph_of({"A1": 2, "A2": 3, "B1": "=ROUND(SUM(A1:A2) * 1.5, 2)"}),
+            "c:S!B1",
+        )["steps"]
+        inner = steps["children"][0]
+        assert inner["label"] == "*"
+        assert inner["value"] == 7.5
+        assert inner["children"][0]["label"] == "SUM"
+        assert inner["children"][0]["value"] == 5
+
+    def test_an_array_literal_root_no_longer_reads_as_an_error(self):
+        """A step expression is re-rendered from the AST, and an array
+        literal renders as the placeholder ``{...}``. Evaluating that gave
+        ``#NAME?`` for a cell that plainly holds 21."""
+        node = node_of(graph_of({"A1": "=SUM({1, 2, 3; 4, 5, 6})"}), "c:S!A1")
+        assert node["value"] == 21
+        assert node["steps"]["expr"] == "SUM({...})"
+        assert node["steps"]["value"] == 21
+
+    def test_a_value_that_is_not_the_engine_s_leaves_the_root_evaluated(self):
+        """Under a guard the shown value is a fallback, not this expression."""
+        node = node_of(graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"}), "c:S!A1")
+        assert node["valueSource"] == "fallback"
+        assert node["steps"]["label"] == "IFERROR"
+
+    def test_the_batch_drops_the_root_expression_but_keeps_the_rest(self):
+        ast = fz.parse("=ROUND(SUM(A1:A2) * 1.5, 2)").to_dict()
+        assert _collect_step_exprs(ast) == [
+            "ROUND(SUM(A1:A2) * 1.5, 2)",
+            "SUM(A1:A2) * 1.5",
+            "SUM(A1:A2)",
+        ]
+        assert _collect_step_exprs(ast, skip_root=True) == [
+            "SUM(A1:A2) * 1.5",
+            "SUM(A1:A2)",
+        ]
+
+
+class _RefusingEngine:
+    """Scratch engine that silently refuses one expression.
+
+    ``set_formula`` returning without raising while leaving the cell as it was
+    is what the real engine does with a reference it cannot resolve — a
+    structured ``Table[Column]`` it never loaded, a 3D ``'A:B'!A1``. The cell
+    then still holds what the previous batch wrote there.
+    """
+
+    def __init__(self, refuse: str, results: dict[str, Any]):
+        self.refuse = refuse
+        self.results = results
+        self.cells: dict[tuple[str, int, int], Any] = {}
+
+    def set_formula(self, sheet: str, row: int, col: int, formula: str) -> None:
+        if self.refuse in formula:
+            return  # silently keeps whatever the cell already held
+        body = formula[1:] if formula.startswith("=") else formula
+        if body.startswith('"') and body.endswith('"'):
+            self.cells[(sheet, row, col)] = body[1:-1]
+        else:
+            self.cells[(sheet, row, col)] = self.results.get(body)
+
+    def evaluate_cells(self, targets: list[tuple[str, int, int]]) -> list[Any]:
+        return [self.cells.get(t) for t in targets]
+
+
+class TestScratchIsolation:
+    """Steps share the scratch row, so each cell must be cleared before use.
+
+    ``set_formula`` does not raise on an expression the engine will not take —
+    it leaves the cell alone — and the batch then read back whatever the
+    *previous* node had computed in that column, reporting another cell's
+    value as this step's own. Seen on a workbook whose ``SUM(Sales[Revenue])``
+    step showed the text of an unrelated cell.
+    """
+
+    def resolver(self) -> _ValueResolver:
+        engine = _RefusingEngine("NoTable", {"1 + 2": 3})
+        return _ValueResolver(
+            engine,
+            {SHEET},
+            CachedValues({}, set(), False),
+            [],
+            _Budget(10),
+            scratch_ready=True,
+        )
+
+    def test_a_refused_expression_does_not_inherit_the_previous_value(self):
+        resolver = self.resolver()
+        resolver.preload_steps(["1 + 2"], SHEET)
+        assert resolver.eval_expr("1 + 2", SHEET) == (3, True)
+        # same scratch column, an expression the engine will not take
+        resolver.preload_steps(["SUM(NoTable[Amount])"], SHEET)
+        assert resolver.eval_expr("SUM(NoTable[Amount])", SHEET) == (None, False)
+
+    def test_the_sentinel_is_never_reported_as_a_value(self):
+        resolver = self.resolver()
+        resolver.preload_steps(["SUM(NoTable[Amount])"], SHEET)
+        value, evaluated = resolver.eval_expr("SUM(NoTable[Amount])", SHEET)
+        assert evaluated is False
+        assert value != SCRATCH_SENTINEL and value is None
+
+    def test_a_workbook_never_ships_the_sentinel(self):
+        graph = graph_of({"A1": "=1+2", "B1": "=SUM(NoSuchTable[Amount])"})
+        assert SCRATCH_SENTINEL not in json.dumps(graph)
+
+
+class TestStepExpressionRendering:
+    """A step is evaluated by re-parsing the text it renders itself as.
+
+    The parser keeps grouping in the shape of the tree and drops the
+    parentheses, so a subtree rendered flat says something else entirely:
+    ``=D2*(1-Rate)`` came back as ``D2 * 1 - Rate``, and the step reported
+    2470.06 under a cell holding 1976.208.
+    """
+
+    @staticmethod
+    def rendered(formula: str) -> str:
+        return _render_expr(fz.parse(formula).to_dict())
+
+    @pytest.mark.parametrize(
+        ("formula", "expected"),
+        [
+            ("=A1*(1-B1)", "A1 * (1 - B1)"),
+            ("=(A1+B1)*C1", "(A1 + B1) * C1"),
+            ("=A1-(B1-C1)", "A1 - (B1 - C1)"),
+            ("=A1/(B1*C1)", "A1 / (B1 * C1)"),
+            ("=-(A1+B1)", "-(A1 + B1)"),
+            ("=(A1>B1)*2", "(A1 > B1) * 2"),
+            ("=A1&(B1&C1)", "A1 & (B1 & C1)"),
+            # nothing to restore: the flat form already means what it says
+            ("=A1+B1+C1", "A1 + B1 + C1"),
+            ("=A1+B1*C1", "A1 + B1 * C1"),
+            ("=-A1^2", "-A1 ^ 2"),
+            # the one postfix operator
+            ("=A1%", "A1%"),
+            ("=A1%*2", "A1% * 2"),
+        ],
+    )
+    def test_the_grouping_survives_the_round_trip(self, formula, expected):
+        assert self.rendered(formula) == expected
+
+    def test_rendering_is_stable_under_re_parsing(self):
+        """Whatever comes out must parse back to the same tree."""
+        for formula in ("=ROUND(SUM(A1:A3)*(1+T),2)", "=IF(A1>B1,(A1-B1)/B1,0)"):
+            once = self.rendered(formula)
+            assert self.rendered("=" + once) == once
+
+    def test_a_grouped_formula_decomposes_to_the_value_of_its_cell(self):
+        node = node_of(
+            graph_of({"A1": 100, "B1": 0.2, "C1": "=A1*(1-B1)"}),
+            "c:S!C1",
+        )
+        assert node["value"] == 80
+        assert node["steps"]["expr"] == "A1 * (1 - B1)"
+        assert node["steps"]["value"] == 80
+
+    def test_a_grouped_child_step_is_evaluated_as_written(self):
+        """The child is re-parsed on its own, so it needs its parentheses."""
+        steps = node_of(
+            graph_of({"A1": 10, "B1": 2, "C1": 4, "D1": "=A1/(B1*C1)*100"}),
+            "c:S!D1",
+        )["steps"]
+        assert steps["expr"] == "A1 / (B1 * C1) * 100"
+        assert steps["value"] == 125
+        assert steps["children"][0]["expr"] == "A1 / (B1 * C1)"
+        assert steps["children"][0]["value"] == 1.25
+
+
+class TestStretchedSamples:
+    """A group node stands for every cell sharing one R1C1 pattern.
+
+    The panel shows the sampled cells one row per cell, so which cells are
+    sampled decides what the reader can actually verify: the head of a stretch
+    is made of near-identical neighbours, and a pattern that broke shows up
+    further down.
+    """
+
+    def stretched(self, rows: int = 10) -> dict:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = SHEET
+        for r in range(2, rows + 2):
+            ws.cell(row=r, column=2, value=r)
+            ws.cell(row=r, column=1, value=f"=B{r}*2")
+        buf = io.BytesIO()
+        wb.save(buf)
+        return analyze_workbook(buf.getvalue(), "stretched.xlsx")["graph"]
+
+    def test_the_sample_spans_the_whole_stretch(self):
+        samples = node_of(self.stretched(), "g:S!A2#10")["samples"]
+        assert [s["addr"] for s in samples] == ["A2", "A4", "A6", "A9", "A11"]
+
+    def test_the_first_and_last_cell_are_always_sampled(self):
+        samples = node_of(self.stretched(rows=500), "g:S!A2#500")["samples"]
+        assert samples[0]["addr"] == "A2"
+        assert samples[-1]["addr"] == "A501"
+
+    def test_each_sample_carries_its_own_provenance(self):
+        samples = node_of(self.stretched(), "g:S!A2#10")["samples"]
+        assert [s["value"] for s in samples] == [4.0, 8.0, 12.0, 18.0, 22.0]
+        assert {s["valueSource"] for s in samples} == {"engine"}
+
+    def test_a_group_smaller_than_the_sample_size_is_shown_whole(self):
+        samples = node_of(self.stretched(rows=3), "g:S!A2#3")["samples"]
+        assert [s["addr"] for s in samples] == ["A2", "A3", "A4"]
+
+    def test_the_sampler_keeps_reading_order(self):
+        cells = [(r, c) for r in range(1, 11) for c in (1, 2)]
+        picked = _spread_cells(cells, 5)
+        assert picked == sorted(picked)
+        assert picked[0] == (1, 1)
+        assert picked[-1] == (10, 2)
 
 
 class TestProvenance:

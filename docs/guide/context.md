@@ -78,10 +78,29 @@ without any `PATH` setup:
 LibreOffice runs headless with a throwaway user profile, so rendering works even
 while LibreOffice is open on the desktop, and never touches your own settings.
 
-!!! note "Screenshots are for readers, not for the model"
+!!! note "Screenshots are for readers first"
 
-    The PNGs are embedded in the report for a human to look at. The AI overview
-    never receives an image: it is given the same facts in text form, read
+    The PNGs are embedded in the report for a human to look at, and the AI
+    overview never receives one: it is given the same facts in text form, read
     deterministically from the file by `openpyxl`. So the overview describes the
     sheets as they look even when no renderer is installed at all, and no vision
     model is needed.
+
+## Letting a model look at them
+
+What survives that text extraction is what `openpyxl` can name. Colour
+conventions — blue inputs against black formulas — conditional formatting,
+charts and the shape of a layout do not, and one call sends the picture itself
+to a multimodal model:
+
+```python
+seen = result.describe_screenshots(shots, base_url=..., model="<a vision model>")
+result.save_html("out.html", screenshots=shots, screenshot_docs=seen)
+```
+
+The description appears under the image it describes, badged *read from the
+screenshot* so it is never mistaken for a claim about the lineage — and so it
+can be read against the picture it sits under, which is the only check there
+is. It is opt-in for a reason: a picture of a sheet shows every row on it. See
+[Describing the screenshots](ai.md#describing-the-screenshots) and
+[Data handling](data-handling.md).

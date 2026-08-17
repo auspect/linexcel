@@ -10,7 +10,7 @@ Minimal example, without backend or AI key:
 
 AI documentation is optional — pick a provider explicitly (no default):
 
-    result.document(base_url="http://localhost:11434/v1", model="laguna-xs-2.1")
+    result.document(base_url="http://localhost:11434/v1", model="qwen3.8")
 """
 
 from __future__ import annotations
@@ -30,6 +30,18 @@ if TYPE_CHECKING:  # aidoc stays lazily imported at runtime
 Source = str | Path | bytes | bytearray | BinaryIO
 # Covariant containers: callers commonly hold a list[Path] / dict[str, list[Path]].
 Screenshots = Sequence[str | Path] | Mapping[str, Sequence[str | Path]]
+
+
+def _first_shot(shots: str | Path | Sequence[str | Path]) -> str | Path | None:
+    """The image standing for one sheet, whether it came alone or in a list.
+
+    A lone ``str`` is a path, not a sequence of characters: indexing it would
+    hand the model the letter ``C`` of ``C:\\shots\\Sales.png``.
+    """
+    if isinstance(shots, (str, Path)):
+        return shots
+    listed = list(shots)
+    return listed[0] if listed else None
 
 
 def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
@@ -53,6 +65,7 @@ def analyze(
     filename: str | None = None,
     *,
     verbose: bool = False,
+    refs_dir: str | Path | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -64,10 +77,19 @@ def analyze(
         Logical name (used for labels and VBA detection).
     verbose : bool, optional
         Print per-phase timing to stderr.
+    refs_dir : str | Path, optional
+        Folder holding the workbooks this one links to, and the add-ins whose
+        VBA it calls. Without it a cell reading ``'[Budget.xlsx]Annual'!B4`` is
+        named but left unresolved; with it the referenced file is read and the
+        reference evaluates to the value it stands for. The report states, per
+        workbook, whether it was read from the folder, taken from the cache
+        Excel left in the file, or not read at all.
     """
     data, name = _read_source(source, filename)
     try:
-        payload = analyze_workbook(data, filename=name, verbose=verbose)
+        payload = analyze_workbook(
+            data, filename=name, verbose=verbose, refs_dir=refs_dir
+        )
     except Exception as exc:
         # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)
         # en message clair sur le vrai problème.
@@ -378,6 +400,57 @@ class LineageResult:
             context=context,
         )
 
+    def describe_screenshots(
+        self,
+        screenshots: Screenshots,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        provider: ProviderLike | None = None,
+        language: str = "en",
+        max_tokens: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, str]:
+        """Describe each sheet screenshot with a multimodal model.
+
+        Everything else linexcel documents is grounded in the graph. A
+        screenshot is the exception: colour conventions — blue inputs against
+        black formulas — conditional formatting, charts and the shape of a
+        layout are invisible to a text dossier however complete it is, and a
+        model looking at the picture is the only way to put them in words.
+
+        Takes what :meth:`save_screenshots` returns and gives back
+        ``{sheet name: markdown}``, ready for :meth:`save_html` as
+        ``screenshot_docs``. A flat list of print pages is described page by
+        page, keyed by file name, since no page belongs to a single sheet.
+
+        ``model=`` names the model that looks at the images, which is where a
+        vision model is named when it differs from the writing one; provider
+        resolution is otherwise :meth:`document`'s. A text-only endpoint
+        raises :class:`~linexcel.aidoc.AiDocError` rather than dropping the
+        picture from the request. Tokens are added to :attr:`token_usage`.
+        """
+        from linexcel.aidoc import describe_images
+
+        if isinstance(screenshots, Mapping):
+            by_sheet = cast("Mapping[str, Sequence[str | Path]]", screenshots)
+            paired = ((name, _first_shot(shots)) for name, shots in by_sheet.items())
+            images = {name: shot for name, shot in paired if shot is not None}
+        else:
+            images = {Path(shot).stem: shot for shot in screenshots}
+        return describe_images(
+            images,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            provider=provider,
+            language=language,
+            usage=self.token_usage,
+            max_tokens=max_tokens,
+            token_budget=token_budget,
+        )
+
     # -- visualization -----------------------------------------------------
     def to_html(
         self,
@@ -387,6 +460,7 @@ class LineageResult:
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
         screenshots: Screenshots | None = None,
+        screenshot_docs: dict[str, str] | None = None,
         language: str = "en",
     ) -> str:
         """Standalone HTML document (Cytoscape) — openable in a browser.
@@ -395,7 +469,8 @@ class LineageResult:
         for each node is embedded in the detail panel. If ``workbook_doc`` is
         provided (from :meth:`document_workbook`), it is shown in a separate
         overview tab. If ``screenshots`` is provided (paths or base64), they
-        are displayed in a preview tab.
+        are displayed in a preview tab, each under the description
+        ``screenshot_docs`` carries for it (from :meth:`describe_screenshots`).
         """
         graph = self.graph
         meta = dict(graph.get("meta", {}))
@@ -431,6 +506,9 @@ class LineageResult:
             else:
                 meta["screenshots"] = [_embed(s) for s in screenshots]
 
+        if screenshot_docs:
+            meta["screenshotDocs"] = dict(screenshot_docs)
+
         graph = {
             **graph,
             "meta": meta,
@@ -454,6 +532,7 @@ class LineageResult:
         docs: dict[str, str] | None = None,
         workbook_doc: str | None = None,
         screenshots: Screenshots | None = None,
+        screenshot_docs: dict[str, str] | None = None,
         language: str = "en",
     ) -> Path:
         path = path if isinstance(path, Path) else Path(path)
@@ -463,6 +542,7 @@ class LineageResult:
                 docs=docs,
                 workbook_doc=workbook_doc,
                 screenshots=screenshots,
+                screenshot_docs=screenshot_docs,
                 language=language,
             ),
             encoding="utf-8",

@@ -74,15 +74,55 @@ class TestValueProvenance:
         for key in ("value_recalc_desc", "value_from_file_desc", "value_fallback_desc"):
             assert f"descKey: '{key}'" in html, key
         assert EN["value_from_file_desc"] in html
-        assert "if (src) sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));" in html
+        assert "if (src && !(rows.length && main.source === 'engine'))" in html
+        assert "sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));" in html
+
+    def test_a_sampled_stretch_drops_the_sentence_its_headers_already_carry(self):
+        """Recomputed *this value*, said under a table of five, is noise."""
+        html = render_html(
+            graph(
+                kind="group",
+                count=200000,
+                valueSource="engine",
+                samples=[{"addr": "H2", "value": 1, "valueSource": "engine"}],
+            )
+        )
+        assert "if (src && !(rows.length && main.source === 'engine'))" in html
+
+    def test_a_volatile_cell_says_linexcel_did_not_recalculate(self):
+        """The recalculation column names the abstention, not a failure."""
+        html = render_html(
+            graph(valueSource="volatile", value=46236, cachedValue=46236)
+        )
+        assert EN["value_volatile"] == "Not recalculated (volatile)"
+        assert EN["value_volatile"] in html
+        assert EN["value_volatile_desc"] in html
+        assert "volatile: { labelKey: 'value_volatile'" in html
+        assert "function notRecalculated(r) {" in html
+        assert (
+            "return _t(r.source === 'volatile' ? 'value_volatile' "
+            ": 'value_not_recalc');" in html
+        )
+
+    def test_a_volatile_value_is_shown_as_the_file_s_own(self):
+        html = render_html(graph(valueSource="volatile", value=46236))
+        assert "var STORED_SOURCES = { file: true, volatile: true };" in html
+        assert "var stored = !!STORED_SOURCES[src];" in html
 
     def test_a_guarded_fallback_is_marked_on_the_card(self):
         html = render_html(graph(valueSource="fallback"))
-        mark = (
-            "if (n.valueSource === 'fallback') card.className = 'lin-vcard is-guarded';"
-        )
-        assert mark in html
+        assert "} else if (main.source === 'fallback') {" in html
+        assert "card.className = 'lin-vcard is-guarded';" in html
         assert ".lin-vcard.is-guarded { border-color: var(--amber); }" in html
+
+    def test_a_figure_is_swatched_by_where_it_came_from(self):
+        """A guarded fallback and a value fetched from another workbook both
+        sit in the recalculation column without being the engine's reading of
+        this file, and the swatch is what says so."""
+        html = render_html(graph(valueSource="fallback"))
+        assert "(SRC[r.source] || SRC.engine).color, notRecalculated(r)));" in html
+        assert "external: { labelKey: 'value_external'" in html
+        assert "color: PALETTE.orange" in html
 
 
 class TestValueDate:
@@ -93,7 +133,8 @@ class TestValueDate:
 
     def test_the_panel_prefers_the_date_over_the_raw_serial(self):
         html = render_html(graph(valueDate="2026-08-07", value=46236))
-        assert "var shown = n.valueDate || fmt(n.value);" in html
+        assert "var dateText = o.valueDate || o.date;" in html
+        assert "var shown = dateText || fmt(o.value);" in html
 
 
 class TestReadVersusRecalculated:
@@ -109,12 +150,41 @@ class TestReadVersusRecalculated:
         html = render_html(graph(value=42, cachedValue=41, valueSource="engine"))
         assert '"value": 42' in html
         assert '"cachedValue": 41' in html
-        left = "reading(_t('value_col_file'), cached, SRC.file.color)"
-        right = "reading(_t('value_col_calc'), shown, SRC.engine.color)"
+        left = "grid.appendChild(reading(_t('value_col_file'), r.file, SRC.file.color,"
+        right = "grid.appendChild(reading(_t('value_col_calc'), r.calc,"
         assert left in html
         assert right in html
         assert EN["value_col_file"] == "Excel file"
         assert EN["value_col_calc"] in html
+
+    def test_the_file_column_is_kept_even_when_the_file_stores_nothing(self):
+        """A missing counterpart is a fact about the workbook, so it is stated.
+
+        The single-column card left the reader unable to tell "linexcel agrees
+        with Excel" from "Excel never wrote a value here".
+        """
+        html = render_html(graph(value=42, valueSource="engine"))
+        assert EN["value_not_in_file"] == "Not stored"
+        assert EN["value_not_in_file"] in html
+        assert "_t('value_not_in_file')));" in html
+        assert (
+            "if (!comparable.length && main.source === 'engine')\n"
+            "      sv.appendChild(el('p', 'lin-hint', _t('value_no_cache_desc')));"
+            in html
+        )
+        assert EN["value_no_cache_desc"] in html
+
+    def test_a_file_sourced_cell_does_not_claim_a_recalculation(self):
+        html = render_html(graph(value=42, cachedValue=42, valueSource="file"))
+        assert "calc: (stored || !hasValue) ? null : shown," in html
+        assert EN["value_not_recalc"] == "Not recalculated"
+        assert EN["value_not_recalc"] in html
+
+    def test_a_missing_reading_is_muted_rather_than_shown_as_a_figure(self):
+        html = render_html(graph(value=42, valueSource="engine"))
+        assert "missing ? 'lin-reading-val lin-vnone' : 'lin-reading-val'," in html
+        assert ".lin-vnone, .lin-vtable tbody td.lin-vnone {" in html
+        assert "font-family: inherit; font-size: .74rem; font-weight: 400;" in html
 
     def test_agreement_is_stated_rather_than_left_silent(self):
         html = render_html(graph(value=42, cachedValue=42, valueSource="engine"))
@@ -138,10 +208,16 @@ class TestReadVersusRecalculated:
     def test_a_single_reading_is_never_dressed_up_as_a_corroboration(self):
         """Under 'file' the shown value *is* the stored one, not a second read."""
         html = render_html(graph(value=42, cachedValue=42, valueSource="file"))
-        assert (
-            "var paired = hasCached && hasValue && n.valueSource === 'engine';" in html
-        )
+        assert "var comparable = hasValue && hasCached && src === 'engine';" in html
+        assert "file: stored ? shown : cached," in html
+
+    def test_a_value_without_a_provenance_is_not_attributed_to_a_column(self):
+        html = render_html(graph(value=42))
         assert "grid.className = 'lin-vgrid is-single';" in html
+        assert (
+            "grid.appendChild(reading(null, r.hasValue ? r.shown : null, null));"
+            in html
+        )
 
     def test_a_date_node_compares_the_cached_date_part_only(self):
         # a file-cached "2026-08-07 00:00:00" is the same day as valueDate:
@@ -149,8 +225,8 @@ class TestReadVersusRecalculated:
         html = render_html(
             graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-07")
         )
-        assert "n.cachedValue.slice(0, 10) === n.valueDate;" in html
-        assert "var agree = !!sameDate || cached === shown;" in html
+        assert "o.cachedValue.slice(0, 10) === dateText;" in html
+        assert "agree: comparable && (!!sameDate || cached === shown)" in html
         assert '"cachedValue": "2026-08-07"' in html
 
     def test_a_genuinely_different_cached_date_still_flags(self):
@@ -167,24 +243,121 @@ class TestReadVersusRecalculated:
 
 
 class TestSamples:
-    def test_samples_carry_their_own_date_and_source(self):
+    """A stretched formula stands for hundreds of thousands of cells.
+
+    One headline figure said nothing about the other end of the stretch, and
+    the sampled cells were a one-line-per-cell afterthought under the card.
+    They are now the body of the card: one row per sampled cell, each with its
+    own pair of readings.
+    """
+
+    def stretched(self, **fields) -> dict:
+        node = {
+            "kind": "group",
+            "count": 200000,
+            "r1c1": "RC[-4]*(1-TauxTVA)",
+            "bbox": "H2:H200001",
+            "value": 1976.208,
+            "valueSource": "engine",
+        }
+        node.update(fields)
+        return graph(**node)
+
+    def test_the_sampled_cells_become_the_rows_of_the_card(self):
         html = render_html(
-            graph(
+            self.stretched(
                 samples=[
-                    {"addr": "S!A2", "value": 46236, "date": "2026-08-08"},
-                    {"addr": "S!A3", "value": 7, "valueSource": "file"},
+                    {"addr": "H2", "value": 1976.208, "valueSource": "engine"},
+                    {"addr": "H100001", "value": 5677.12, "valueSource": "engine"},
+                    {"addr": "H200001", "value": 2620, "valueSource": "engine"},
                 ]
             )
         )
-        assert '"date": "2026-08-08"' in html
-        assert '"valueSource": "file"' in html
-        assert "if (s.date) line += ' (' + s.date + ')';" in html
-        assert "SRC[ssrc] && ssrc !== 'engine'" in html
+        assert (
+            "card.appendChild(rows.length ? sampleTable(rows) : pairGrid(main));"
+            in html
+        )
+        assert "function sampleTable(rows) {" in html
+        assert "head.appendChild(colHead(_t('value_col_cell'), null));" in html
+        assert (
+            "head.appendChild(colHead(_t('value_col_file'), SRC.file.color));" in html
+        )
+        assert (
+            "head.appendChild(colHead(_t('value_col_calc'), SRC.engine.color));" in html
+        )
+        assert EN["value_col_cell"] == "Cell"
+        assert '"addr": "H200001"' in html
+
+    def test_the_sample_says_how_much_of_the_stretch_it_covers(self):
+        html = render_html(
+            self.stretched(
+                samples=[{"addr": "H2", "value": 1, "valueSource": "engine"}]
+            )
+        )
+        assert EN["sampled_cells"] == "{shown} cells sampled out of {count}."
+        assert EN["sampled_cells"] in html
+        assert "count: (n.count || rows.length).toLocaleString(LANG)" in html
+
+    def test_a_row_that_drifted_is_marked_on_the_row_itself(self):
+        """The card verdict covers the sample; it cannot say *which* cell."""
+        html = render_html(
+            self.stretched(
+                samples=[
+                    {
+                        "addr": "H2",
+                        "value": 10,
+                        "cachedValue": 10,
+                        "valueSource": "engine",
+                    },
+                    {
+                        "addr": "H3",
+                        "value": 11,
+                        "cachedValue": 99,
+                        "valueSource": "engine",
+                    },
+                ]
+            )
+        )
+        assert "if (r.comparable && !r.agree) tr.className = 'is-diff';" in html
+        assert (
+            ".lin-vtable tbody tr.is-diff th, .lin-vtable tbody tr.is-diff td {" in html
+        )
+        assert EN["value_mismatch"] in html
+
+    def test_the_verdict_covers_every_sampled_cell_not_just_the_first(self):
+        html = render_html(
+            self.stretched(
+                samples=[
+                    {
+                        "addr": "H2",
+                        "value": 1,
+                        "cachedValue": 1,
+                        "valueSource": "engine",
+                    }
+                ]
+            )
+        )
+        assert "var judged = rows.length ? rows : [main];" in html
+        assert (
+            "var comparable = judged.filter(function (r) { return r.comparable; });"
+            in html
+        )
+        assert "var agree = comparable.every(function (r) { return r.agree; });" in html
+
+    def test_a_sample_row_keeps_its_address_as_the_row_header(self):
+        html = render_html(
+            self.stretched(
+                samples=[{"addr": "H2", "value": 1, "valueSource": "engine"}]
+            )
+        )
+        assert "var addr = el('th', 'lin-vaddr', r.addr);" in html
+        assert "addr.setAttribute('scope', 'row');" in html
 
     def test_both_spellings_of_the_sample_source_field_are_read(self):
         """The graph names it valueSource; older graphs said source."""
-        html = render_html(graph(samples=[{"addr": "S!A3", "value": 7}]))
-        assert "var ssrc = s.valueSource || s.source;" in html
+        html = render_html(graph(samples=[{"addr": "S!A3", "value": 7, "date": None}]))
+        assert "var src = o.valueSource || o.source;" in html
+        assert "var dateText = o.valueDate || o.date;" in html
 
 
 class TestErrorValues:
@@ -276,6 +449,13 @@ class TestLocalization:
             "value_fallback_desc",
             "value_col_file",
             "value_col_calc",
+            "value_col_cell",
+            "value_volatile",
+            "value_volatile_desc",
+            "value_not_in_file",
+            "value_not_recalc",
+            "value_no_cache_desc",
+            "sampled_cells",
             "value_match",
             "value_mismatch",
             "final_result",
@@ -288,6 +468,25 @@ class TestLocalization:
         for language, strings in UI_STRINGS.items():
             for key in ("value_col_file", "value_col_calc"):
                 assert len(strings[key]) <= 28, f"{language}/{key} is too long"
+
+    def test_the_sample_table_headers_fit_three_to_a_row(self):
+        """Three columns now share the panel, so they are held tighter."""
+        for language, strings in UI_STRINGS.items():
+            width = sum(
+                len(strings[k])
+                for k in ("value_col_cell", "value_col_file", "value_col_calc")
+            )
+            assert width <= 48, f"{language} column headers total {width} chars"
+
+    def test_the_absence_placeholders_stay_short_enough_for_a_cell(self):
+        for language, strings in UI_STRINGS.items():
+            for key in ("value_not_in_file", "value_not_recalc"):
+                assert len(strings[key]) <= 22, f"{language}/{key} is too long"
+
+    def test_every_language_keeps_both_placeholders_of_the_sample_caption(self):
+        for language, strings in UI_STRINGS.items():
+            for token in ("{shown}", "{count}"):
+                assert token in strings["sampled_cells"], f"{language} lost {token}"
 
 
 def two_sheet_graph() -> dict:
@@ -586,6 +785,128 @@ class TestSearchControl:
         for language, strings in UI_STRINGS.items():
             missing = {"search_label", "search_none", "search_clear"} - set(strings)
             assert not missing, f"{language} is missing {missing}"
+
+
+def query_graph(**node_fields) -> dict:
+    """A one-node graph carrying a Power Query query."""
+    node = {
+        "id": "q:Sales",
+        "label": "Sales",
+        "kind": "query",
+        "sheet": "Loaded",
+        "code": 'let Source = Csv.Document(File.Contents("s.csv")) in Source',
+        "loadedTo": [{"sheet": "Loaded", "ref": "A1:C9", "table": "Sales_1"}],
+        "sources": [{"kind": "file", "target": "s.csv", "function": "File.Contents"}],
+    }
+    node.update(node_fields)
+    return {"nodes": [node], "edges": []}
+
+
+class TestPowerQueryPanel:
+    """A query has no formula, so the panel is all the reader gets."""
+
+    def test_the_m_source_ships_and_the_panel_renders_it(self):
+        html = render_html(query_graph())
+        assert "Csv.Document" in html
+        assert "if (n.kind === 'query') p.appendChild(querySection(n));" in html
+        assert "sq.appendChild(el('pre', 'lin-code is-wrapped', n.code || ''));" in html
+
+    def test_the_query_kind_has_its_own_colour_and_shape(self):
+        html = render_html(query_graph())
+        assert "query: { color: PALETTE.magenta, shape: 'tag'" in html
+        assert "'#a3348e'" in html  # the canvas cannot resolve var()
+        assert EN["kind_query"] == "Power Query"
+        assert EN["kind_query"] in html
+
+    def test_the_destination_is_named_rather_than_implied(self):
+        html = render_html(query_graph())
+        assert EN["query_loaded"] == "Loaded into"
+        assert EN["query_loaded"] in html
+        assert '"ref": "A1:C9"' in html
+
+    def test_a_connection_only_query_says_it_loads_nowhere(self):
+        html = render_html(query_graph(loadedTo=[]))
+        assert EN["query_not_loaded"] in html
+        assert "sq.appendChild(el('p', 'lin-hint', _t('query_not_loaded')));" in html
+
+    def test_an_outside_source_is_named_but_flagged_as_unread(self):
+        html = render_html(query_graph())
+        assert '"function": "File.Contents"' in html
+        assert EN["query_reads_hint"] in html
+        assert "if (outside) ss.appendChild(el('p', 'lin-hint'" in html
+
+    def test_a_source_of_this_workbook_is_not_flagged(self):
+        """Green for a table of this file: that end of the link is in the graph."""
+        html = render_html(
+            query_graph(
+                sources=[
+                    {
+                        "kind": "table",
+                        "target": "SalesTable",
+                        "function": "Excel.CurrentWorkbook",
+                    }
+                ]
+            )
+        )
+        assert (
+            "var QUERY_SRC = { table: PALETTE.green, query: PALETTE.magenta };" in html
+        )
+        assert "if (!QUERY_SRC[s.kind]) outside = true;" in html
+
+    def test_the_header_counts_the_queries_beside_the_formulas(self):
+        counted = query_graph()
+        counted["meta"] = {"stats": {"queries": 2}}
+        html = render_html(counted)
+        assert '"queries": 2' in html
+        assert "stats.queries ? ' · ' + stats.queries + ' Power Query' : ''" in html
+
+    def test_every_language_defines_the_query_keys(self):
+        keys = {
+            "kind_query",
+            "query_source",
+            "query_loaded",
+            "query_not_loaded",
+            "query_reads",
+            "query_reads_hint",
+        }
+        for language, strings in UI_STRINGS.items():
+            missing = keys - set(strings)
+            assert not missing, f"{language} is missing {missing}"
+
+
+class TestScreenshotDescription:
+    """What the picture says, under the picture it says it about."""
+
+    @staticmethod
+    def _report(**meta) -> str:
+        described = graph()
+        described["meta"] = {
+            "workbookContext": {"sheets": [{"name": "Ventes", "dims": [3, 3]}]},
+            **meta,
+        }
+        return render_html(described)
+
+    def test_the_description_is_rendered_under_its_sheet(self):
+        html = self._report(screenshotDocs={"Ventes": "Blue inputs, black formulas."})
+        assert "Blue inputs, black formulas." in html
+        assert "var seen = (GRAPH.meta.screenshotDocs || {})[sheet.name];" in html
+        assert "prose.innerHTML = _md(seen);" in html
+
+    def test_it_is_badged_as_read_from_the_image_not_from_the_lineage(self):
+        html = self._report(screenshotDocs={"Ventes": "..."})
+        assert EN["ai_vision"] == "🤖 AI — read from the screenshot"
+        assert EN["ai_vision"] in html
+        assert EN["ai_doc"] in html  # the two badges stay distinguishable
+        assert "box.appendChild(el('span', 'lin-ai-badge', _t('ai_vision')));" in html
+
+    def test_a_report_without_descriptions_renders_nothing_extra(self):
+        html = self._report()
+        assert "screenshotDocs" in html  # the guarded read is still shipped
+        assert '"screenshotDocs"' not in html  # but no data for it
+
+    def test_every_language_names_the_vision_badge(self):
+        for language, strings in UI_STRINGS.items():
+            assert strings.get("ai_vision"), language
 
 
 class TestIframeWrapping:
