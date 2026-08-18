@@ -108,17 +108,51 @@ jobs:
             $0 ~ /^## / { if (sec) exit; if (index($0, prefix) == 1) sec = 1 }
             sec { print }
           ' CHANGELOG.md > notes.md
-          [ -s notes.md ] && echo "found=true" >> "$GITHUB_OUTPUT" || echo "found=false" >> "$GITHUB_OUTPUT"
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "::notice::Release $GITHUB_REF_NAME already exists, skipping"
+          if printf '%s' "$v" | grep -qE '(a|b|rc)[0-9]+$'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -s notes.md ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "${{ steps.notes.outputs.found }}" = "true" ]; then
-            gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          # A pre-release ships to be installed and tried; its notes land with
+          # the final version. Anything else without a section used to publish
+          # a commit list under a version number, which is how six releases
+          # went out with nothing to read.
+          if printf '%s' "$v" | grep -qE '(a|b|rc)[0-9]+$'; then
+            echo "::notice::No changelog section for the pre-release $v"
           else
-            gh release create "$GITHUB_REF_NAME" --title "linexcel ${GITHUB_REF_NAME#v}" --generate-notes
+            echo "::error::CHANGELOG.md has no '## [$v]' section. Write it and re-tag, or tag a pre-release (v${v}rc1)."
+            exit 1
+          fi
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOUND: ${{ steps.notes.outputs.found }}
+          PRERELEASE: ${{ steps.notes.outputs.prerelease }}
+        run: |
+          flags=()
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          # A release drafted from the web UI is already there by the time this
+          # runs — the tag it created is what started the workflow — and its
+          # body is whatever the UI generated. Replace it with the changelog
+          # section rather than leaving the generated one in place.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [ "$FOUND" = "true" ]; then
+              gh release edit "$GITHUB_REF_NAME" \
+                --title "linexcel ${GITHUB_REF_NAME#v}" --notes-file notes.md "${flags[@]}"
+            else
+              echo "::notice::Release $GITHUB_REF_NAME exists and has no changelog section; its body is left as it is"
+            fi
+            exit 0
+          fi
+          if [ "$FOUND" = "true" ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "linexcel ${GITHUB_REF_NAME#v}" --notes-file notes.md "${flags[@]}"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "linexcel ${GITHUB_REF_NAME#v}" --generate-notes "${flags[@]}"
           fi
