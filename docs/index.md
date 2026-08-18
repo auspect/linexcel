@@ -24,9 +24,18 @@ print(result.stats)
 
 See the [Quick start guide](guide/quickstart.md) for more.
 
+## Or without writing any Python
+
+```bash
+uvx linexcel analyze workbook.xlsx        # -> workbook_lineage.html
+```
+
+See the [command line reference](guide/cli.md).
+
 ## Guide
 
 - [Quick start](guide/quickstart.md) — analyse a workbook, explore it, export it
+- [Command line](guide/cli.md) — the same, from a shell, with no install
 - [Lineage coverage](guide/coverage.md) — what is in the graph, and what is not
 - [HTML export](guide/html.md) — the standalone offline report
 - [Workbook context & screenshots](guide/context.md) — what a reader sees, not

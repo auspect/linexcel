@@ -1,5 +1,8 @@
 # Quick start
 
+Prefer a shell? The same analysis runs from the
+[command line](cli.md), with no install.
+
 ## Analyze a workbook
 
 ```python

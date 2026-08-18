@@ -52,6 +52,7 @@ nav:
   - Home: index.md
   - Guide:
       - Quick start: guide/quickstart.md
+      - Command line: guide/cli.md
       - Lineage coverage: guide/coverage.md
       - HTML export: guide/html.md
       - Workbook context & screenshots: guide/context.md
