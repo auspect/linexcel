@@ -1,17 +1,20 @@
 [[repos]]
-repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.15.0" # Ruff version.
-hooks = [
-  # Run the linter.
-  { id = "ruff-check", args = ["--fix"], types_or = ["python", "pyi"] },
-
-  # Run the formatter.
-  { id = "ruff-format", types_or = ["python", "pyi"] },
-]
-
-[[repos]]
 repo = "local"
 hooks = [
+  # Ruff comes from the project's own environment, not from the mirror repo:
+  # the mirror pins a version of its own, which drifts away from the one in
+  # uv.lock every time Dependabot bumps it, and the hook then formats a file
+  # differently from the CI that checks it. Same reasoning as ty below.
+  { id = "ruff-check",
+    name = "ruff check",
+    entry = "uv run ruff check --fix",
+    language = "system",
+    types_or = ["python", "pyi"] },
+  { id = "ruff-format",
+    name = "ruff format",
+    entry = "uv run ruff format",
+    language = "system",
+    types_or = ["python", "pyi"] },
   # Type check with ty (also enforced in CI).
   { id = "ty-check",
     name = "ty check",
