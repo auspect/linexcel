@@ -3,6 +3,8 @@ version: 2
 updates:
   # Updates action SHAs and their "# vX.Y.Z" comment automatically.
   # This is what keeps SHA pinning maintainable over time.
+  # Dependabot never groups two ecosystems, so this is always its own pull
+  # request — one for the workflows, one for the lockfile, and no more.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -18,10 +20,16 @@ updates:
     schedule:
       interval: "weekly"
     groups:
-      python-dev:
-        dependency-type: "development"
-      python-prod:
-        dependency-type: "production"
-        update-types: ["minor", "patch"]
+      # One pull request for the whole lockfile: dev and prod together, and
+      # majors with them. None of these updates can move a floor in
+      # pyproject.toml — uv only rewrites uv.lock — so they are one
+      # environment refresh to review and to run the CI over, not four.
+      python:
+        patterns: ["*"]
+        # The calculation engine is the exception: it decides what every
+        # value in a report says, so its bumps stay on their own, where a
+        # test failure names the cause and a revert costs nothing else.
+        exclude-patterns: ["formualizer"]
+        update-types: ["major", "minor", "patch"]
     commit-message:
       prefix: "deps"
