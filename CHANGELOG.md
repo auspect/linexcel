@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-08-18
+
 ### Added
 
 - **Power Query is part of the lineage** ([#34](https://github.com/auspect/linexcel/issues/34)).
@@ -52,12 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workbook with its path and says which of the three it got, and the same
   folder is searched for `.xlam`/`.xla`/`.xlsm` add-ins so the VBA a workbook
   calls into becomes part of the lineage, each module tagged with its file.
-- Command-line interface: `linexcel analyze workbook.xlsx`, exposed as a
-  `[project.scripts]` entry point so `uvx linexcel analyze ...` works without
-  installing anything. Deterministic by default; `--ai-docs` opts into AI
-  documentation and needs the `ai` extra
-  (`uvx --from "linexcel[ai]" linexcel ...`). Also runnable as
-  `python -m linexcel`.
 
 ### Changed
 
@@ -103,14 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and says its formulas are missing from the lineage. Reads are chunked by
   cells rather than by rows as well: 20,000 rows of a 16,384-column sheet
   meant 327 million strings in one call.
-- The git tag is now the only source of the version, and the `VERSION` file is
-  gone. It held `0.0.0` in the repository and was overwritten from the tag
-  during a release, so it never showed anything true: every development build,
-  and `linexcel --version` with it, reported `0.0.0` while PyPI was at 1.2.2.
-  A clean `v*` tag still builds exactly that number; anything else builds
-  `1.2.2+dev.8.g7f5caf5`, with a `.dirty` suffix for uncommitted edits. PyPI
-  rejects local versions, so a build that is not exactly a tag cannot be
-  published by accident.
 
 ### Fixed
 
@@ -131,9 +119,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A root step over an array literal (`=SUM({1,2,3;4,5,6})`) read as `#NAME?`:
   the AST renders an array as the placeholder `{...}`, which evaluates to
   nothing. It now carries the value of its cell.
+
+## [1.2.3] — 2026-08-16
+
+### Added
+
+- Command-line interface: `linexcel analyze workbook.xlsx`, exposed as a
+  `[project.scripts]` entry point so `uvx linexcel analyze ...` works without
+  installing anything. Deterministic by default; `--ai-docs` opts into AI
+  documentation and needs the `ai` extra
+  (`uvx --from "linexcel[ai]" linexcel ...`). Also runnable as
+  `python -m linexcel`.
+
+### Changed
+
+- The git tag is now the only source of the version, and the `VERSION` file is
+  gone. It held `0.0.0` in the repository and was overwritten from the tag
+  during a release, so it never showed anything true: every development build,
+  and `linexcel --version` with it, reported `0.0.0` while PyPI was at 1.2.2.
+  A clean `v*` tag still builds exactly that number; anything else builds
+  `1.2.2+dev.8.g7f5caf5`, with a `.dirty` suffix for uncommitted edits. PyPI
+  rejects local versions, so a build that is not exactly a tag cannot be
+  published by accident.
+
+### Fixed
+
 - `publish` replayed via `workflow_dispatch` from a branch wrote the branch
   name as the version and failed later inside `uv build`. It now stops
   immediately, naming the ref and what to do instead.
+
+## [1.2.2] — 2026-08-13
+
+### Added
+
+- `verbose=` / `--verbose`: a timing breakdown of each phase of the analysis,
+  for finding where a large workbook spends its minutes.
+
+## [1.2.1] — 2026-08-13
+
+### Fixed
+
+- A static table whose header cell held a formula, or nothing at all, took that
+  cell's rendering as the column name. It falls back to the column letter.
+
+## [1.2.0] — 2026-08-12
+
+### Added
+
+- Cached values are read with `python-calamine`
+  ([#41](https://github.com/auspect/linexcel/issues/41)), so the value stored in
+  the file is available for every cell without a second openpyxl pass.
+
+## [1.1.1] — 2026-08-12
+
+### Fixed
+
+- Step evaluation called the engine once per cell. The calls are batched, which
+  is roughly 1200× faster on a large workbook.
+
+## [1.1.0] — 2026-08-10
+
+### Added
+
+- Excel tables are detected, and the lineage carries the header and the index of
+  a cell that sits in one.
+
+### Fixed
+
+- `formualizer>=0.8.0` is now required: earlier versions expanded shared formulas
+  incorrectly.
 
 ## [1.0.0] — 2026-08-08
 
