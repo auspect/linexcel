@@ -43,6 +43,7 @@ from linexcel.external import (
     resolve_books,
 )
 from linexcel.powerquery import Query, QuerySource, read_queries
+from linexcel.progress import Reporter
 from linexcel.refs import (
     Rect,
     col_to_num,
@@ -253,7 +254,11 @@ STRAY_CORNER_ADVICE = (
 )
 
 
-def load_cached_values(data: bytes, warnings: list[str] | None = None) -> CachedValues:
+def load_cached_values(
+    data: bytes,
+    warnings: list[str] | None = None,
+    reporter: Reporter | None = None,
+) -> CachedValues:
     """Read the file's cached values once, keyed by (sheet, row, col).
 
     python-calamine (the Rust engine) is the hot path: it returns native Python
@@ -280,14 +285,26 @@ def load_cached_values(data: bytes, warnings: list[str] | None = None) -> Cached
                 f"some may be missing from the report. If the sheet does not "
                 f"really hold that much: {STRAY_CORNER_ADVICE}"
             )
-        return _load_cached_values_openpyxl(data)
+        return _load_cached_values_openpyxl(data, reporter)
     try:
-        return _load_cached_values_calamine(data)
-    except Exception:
-        return _load_cached_values_openpyxl(data)
+        return _load_cached_values_calamine(data, reporter)
+    except Exception as exc:
+        # Not silent: the slow reader detects dates from the number format
+        # rather than from the type, which is a different answer on an edge
+        # case, and someone comparing two runs deserves to know which read it.
+        if warnings is not None:
+            warnings.append(
+                f"Values were read with openpyxl rather than the fast reader "
+                f"({type(exc).__name__}: {exc}). The lineage is unaffected; a "
+                f"cell whose date is stored as a plain number may read "
+                f"differently."
+            )
+        return _load_cached_values_openpyxl(data, reporter)
 
 
-def _load_cached_values_calamine(data: bytes) -> CachedValues:
+def _load_cached_values_calamine(
+    data: bytes, reporter: Reporter | None = None
+) -> CachedValues:
     """Fast path: read cached values via python-calamine.
 
     ``to_python(skip_empty_area=False)`` preserves the cell coordinates —
@@ -308,30 +325,48 @@ def _load_cached_values_calamine(data: bytes) -> CachedValues:
     date_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = _detect_epoch_1904(data)
     wb = CalamineWorkbook.from_object(io.BytesIO(data))
-    for name in wb.sheet_names:
-        sheet = wb.get_sheet_by_name(name)
-        rows = sheet.to_python(skip_empty_area=False)
-        scanned = 0
-        for r_idx, row in enumerate(rows):
-            scanned += len(row)
-            if scanned > MAX_CELLS_PER_SHEET:
-                break
-            for c_idx, v in enumerate(row):
-                if v is None or v == "":
-                    continue
-                key = (name, r_idx + 1, c_idx + 1)
-                if isinstance(v, datetime.datetime):
-                    date_cells.add(key)
-                elif isinstance(v, datetime.date):
-                    # openpyxl reads a date-only cell as a midnight datetime;
-                    # normalize so the two readers are interchangeable.
-                    v = datetime.datetime(v.year, v.month, v.day)
-                    date_cells.add(key)
-                values[key] = v
+    bar = (reporter or Reporter()).phase("cached values", total=len(wb.sheet_names))
+    with bar as progress:
+        for name in wb.sheet_names:
+            progress.step(f"reading {name}")
+            sheet = wb.get_sheet_by_name(name)
+            rows = sheet.to_python(skip_empty_area=False)
+            scanned = 0
+            for r_idx, row in enumerate(rows):
+                scanned += len(row)
+                if scanned > MAX_CELLS_PER_SHEET:
+                    break
+                for c_idx, v in enumerate(row):
+                    if v is None or v == "":
+                        continue
+                    key = (name, r_idx + 1, c_idx + 1)
+                    if isinstance(v, datetime.datetime):
+                        date_cells.add(key)
+                    elif isinstance(v, datetime.date):
+                        # openpyxl reads a date-only cell as a midnight datetime;
+                        # normalize so the two readers are interchangeable.
+                        v = datetime.datetime(v.year, v.month, v.day)
+                        date_cells.add(key)
+                    values[key] = v
     return CachedValues(values, date_cells, epoch_1904)
 
 
-def _load_cached_values_openpyxl(data: bytes) -> CachedValues:
+def _stepped(phase_cm, items, verb: str):
+    """Iterate ``items`` inside a reporter phase, one step each.
+
+    A generator rather than a ``with`` block around the loop: the loop bodies
+    it wraps are long, and re-indenting them to gain a bar is a diff nobody
+    can review against the logic it contains.
+    """
+    with phase_cm as progress:
+        for item in items:
+            progress.step(f"{verb} {getattr(item, 'title', item)}")
+            yield item
+
+
+def _load_cached_values_openpyxl(
+    data: bytes, reporter: Reporter | None = None
+) -> CachedValues:
     """Fallback: read cached values via openpyxl with number_format date detection."""
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
@@ -342,7 +377,8 @@ def _load_cached_values_openpyxl(data: bytes) -> CachedValues:
         return CachedValues(values, date_cells, epoch_1904)
     try:
         epoch_1904 = getattr(wb.epoch, "year", 1899) == 1904
-        for ws in wb.worksheets:
+        bar = (reporter or Reporter()).phase("cached values", total=len(wb.worksheets))
+        for ws in _stepped(bar, wb.worksheets, "reading"):
             scanned = 0
             for row in ws.iter_rows():
                 scanned += len(row)
@@ -1009,6 +1045,53 @@ def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
 
+def inspect_workbook(data: bytes) -> dict[str, Any]:
+    """What the file says about itself, before anything analyses it.
+
+    Everything here is read from the package headers — sheet dimensions and
+    external link declarations — so it costs milliseconds on a file that would
+    take minutes to analyse. That is the point: it answers "is this going to
+    be long, and will anything be left out?" *before* someone commits to
+    finding out the slow way.
+
+    Declared sizes, not real ones. A sheet claiming 17 billion cells holds
+    nothing of the sort, and saying so is exactly the warning worth having.
+    """
+    owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
+    try:
+        sheets = []
+        for ws in owb.worksheets:
+            max_row, max_col = ws.max_row, ws.max_column
+            if not max_row or not max_col:
+                max_row, max_col = _force_dimensions(ws)
+            rows, cols = max_row or 1, max_col or 1
+            sheets.append(
+                {
+                    "name": ws.title,
+                    "rows": rows,
+                    "cols": cols,
+                    "cells": rows * cols,
+                    "state": ws.sheet_state,
+                    "truncated": rows * cols > MAX_CELLS_PER_SHEET,
+                }
+            )
+    finally:
+        owb.close()
+    books = read_external_links(data)
+    return {
+        "bytes": len(data),
+        "sheets": sheets,
+        "declaredCells": sum(s["cells"] for s in sheets),
+        "externalWorkbooks": [b.name for b in books.values()],
+        "densePathRefused": declared_cells(data) > MAX_DENSE_CELLS,
+        "ceilings": {
+            "cellsPerSheet": MAX_CELLS_PER_SHEET,
+            "nodesPerSheet": MAX_NODES_PER_SHEET,
+            "denseCells": MAX_DENSE_CELLS,
+        },
+    }
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -1027,11 +1110,10 @@ def analyze_workbook(
     """
     warnings: list[str] = []
     _t0 = time.perf_counter()
+    reporter = Reporter(verbose)
 
     def _v(label: str, t: float) -> None:
-        if verbose:
-            elapsed = time.perf_counter() - t
-            print(f"[linexcel] {label}: {elapsed:.1f}s", file=sys.stderr)
+        reporter.note(f"{label}: {time.perf_counter() - t:.1f}s")
 
     # --- 1. structure -----------------------------------------------------
     _t = time.perf_counter()
@@ -1060,7 +1142,7 @@ def analyze_workbook(
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
     _t = time.perf_counter()
-    cached = load_cached_values(data, warnings)
+    cached = load_cached_values(data, warnings, reporter)
     _v("cached_values", _t)
 
     # --- 2. computation engine -------------------------------------------
@@ -1132,66 +1214,68 @@ def analyze_workbook(
     formula_count = 0
     sheet_stats: list[dict[str, Any]] = []
 
-    for sheet, (max_row, max_col) in sheet_dims.items():
-        if sheet not in engine_sheets:
-            warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
-            continue
-        n_formulas = 0
-        scanned = 0
-        fsheet = engine.sheet(sheet)
-        chunk_rows = _chunk_rows(max_col)
-        r0 = 1
-        while r0 <= max_row:
-            # The ceiling is spent in rows, and the last chunk is clipped to
-            # what is left rather than dropped whole: dropping it stopped a
-            # 4,000,000-cell budget at 3,600,000 and lost every row of the
-            # chunk that would have overshot.
-            rows_left = (MAX_CELLS_PER_SHEET - scanned) // max_col
-            if rows_left <= 0:
-                warnings.append(
-                    f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
-                    f"({MAX_CELLS_PER_SHEET:,} cell ceiling): formulas below "
-                    f"that row are missing from the lineage"
-                )
-                break
-            r1 = min(r0 + chunk_rows - 1, max_row, r0 + rows_left - 1)
-            ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
-            try:
-                rows = fsheet.get_formulas(ra)
-            except Exception as exc:
-                warnings.append(f"Could not read formulas on {sheet}: {exc}")
-                break
-            scanned += (r1 - r0 + 1) * max_col
-            for i, row_vals in enumerate(rows):
-                r = r0 + i
-                for j, f in enumerate(row_vals):
-                    if not f:
-                        # A quarantined cell reads back blank: its formula was
-                        # removed so the rest of the workbook could evaluate.
-                        f = quarantined.get((sheet, r, j + 1))
-                    if not f:
-                        continue
-                    c = j + 1
-                    n_formulas += 1
-                    key = (sheet, canonical_r1c1(f, r, c))
-                    grp = groups.get(key)
-                    if grp is None:
-                        grp = groups[key] = FormulaGroup(sheet, key[1])
-                    grp.cells.append((r, c))
-                    # row/col order scan: first cell seen is the representative
-                    # (min), keep 3 example formulas
-                    if len(grp.formulas) < 3:
-                        grp.formulas[(r, c)] = f
-            r0 = r1 + 1
-        formula_count += n_formulas
-        sheet_stats.append(
-            {
-                "name": sheet,
-                "rows": max_row,
-                "cols": max_col,
-                "formulaCells": n_formulas,
-            }
-        )
+    with reporter.phase("extraction+grouping", total=len(sheet_dims)) as _bar:
+        for sheet, (max_row, max_col) in sheet_dims.items():
+            if sheet not in engine_sheets:
+                warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
+                continue
+            n_formulas = 0
+            scanned = 0
+            fsheet = engine.sheet(sheet)
+            chunk_rows = _chunk_rows(max_col)
+            r0 = 1
+            while r0 <= max_row:
+                # The ceiling is spent in rows, and the last chunk is clipped to
+                # what is left rather than dropped whole: dropping it stopped a
+                # 4,000,000-cell budget at 3,600,000 and lost every row of the
+                # chunk that would have overshot.
+                rows_left = (MAX_CELLS_PER_SHEET - scanned) // max_col
+                if rows_left <= 0:
+                    warnings.append(
+                        f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
+                        f"({MAX_CELLS_PER_SHEET:,} cell ceiling): formulas below "
+                        f"that row are missing from the lineage"
+                    )
+                    break
+                r1 = min(r0 + chunk_rows - 1, max_row, r0 + rows_left - 1)
+                ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
+                try:
+                    rows = fsheet.get_formulas(ra)
+                except Exception as exc:
+                    warnings.append(f"Could not read formulas on {sheet}: {exc}")
+                    break
+                scanned += (r1 - r0 + 1) * max_col
+                for i, row_vals in enumerate(rows):
+                    r = r0 + i
+                    for j, f in enumerate(row_vals):
+                        if not f:
+                            # A quarantined cell reads back blank: its formula was
+                            # removed so the rest of the workbook could evaluate.
+                            f = quarantined.get((sheet, r, j + 1))
+                        if not f:
+                            continue
+                        c = j + 1
+                        n_formulas += 1
+                        key = (sheet, canonical_r1c1(f, r, c))
+                        grp = groups.get(key)
+                        if grp is None:
+                            grp = groups[key] = FormulaGroup(sheet, key[1])
+                        grp.cells.append((r, c))
+                        # row/col order scan: first cell seen is the representative
+                        # (min), keep 3 example formulas
+                        if len(grp.formulas) < 3:
+                            grp.formulas[(r, c)] = f
+                r0 = r1 + 1
+            formula_count += n_formulas
+            sheet_stats.append(
+                {
+                    "name": sheet,
+                    "rows": max_row,
+                    "cols": max_col,
+                    "formulaCells": n_formulas,
+                }
+            )
+            _bar.step(f"sweeping {sheet}")
 
     # --- 4. formula nodes -------------------------------------------------
     _v("extraction+grouping", _t)

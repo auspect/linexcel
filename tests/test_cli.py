@@ -93,3 +93,27 @@ def test_bad_workbook_exits_2(tmp_path, capsys):
     path.write_text("plain text", encoding="utf-8")
     assert main(["analyze", str(path), "--no-html"]) == 2
     assert "not an Excel file" in capsys.readouterr().err
+
+
+class TestDryRun:
+    """`--dry-run` answers "is this going to be long?" without finding out."""
+
+    def test_it_writes_no_report(self, workbook_path, capsys):
+        assert main(["analyze", str(workbook_path), "--dry-run"]) == 0
+        assert not workbook_path.with_name("book_lineage.html").exists()
+
+    def test_it_names_the_sheets_and_their_declared_size(self, workbook_path, capsys):
+        main(["analyze", str(workbook_path), "--dry-run"])
+        out = capsys.readouterr().out
+        assert "Ventes" in out
+        assert "cells declared" in out
+
+    def test_it_goes_to_stdout_so_it_can_be_piped(self, workbook_path, capsys):
+        main(["analyze", str(workbook_path), "--dry-run"])
+        captured = capsys.readouterr()
+        assert captured.out
+        assert "cells declared" not in captured.err
+
+    def test_it_says_which_ceilings_will_apply(self, workbook_path, capsys):
+        main(["analyze", str(workbook_path), "--dry-run"])
+        assert "ceilings:" in capsys.readouterr().out

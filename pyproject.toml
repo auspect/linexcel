@@ -32,7 +32,10 @@ dependencies = [
 # of vendor. `openai` is kept as an alias of `ai` for callers already using it.
 ai = ["openai>=1.0"]
 openai = ["openai>=1.0"]
-all = ["openai>=1.0"]
+all = ["openai>=1.0", "rich>=13.0"]
+# Progress while a large workbook is analysed. Optional on purpose: the
+# same phases and timings are printed without it, only unadorned.
+progress = ["rich>=13.0"]
 # Only for scripts/capture_viewer.py, which recaptures the README images.
 screenshots = ["playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
@@ -40,7 +43,7 @@ docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
 # The toolchain is a dependency group, not an extra: uv installs it on a plain
 # `uv sync`, and it stays out of what a consumer can `pip install linexcel[...]`.
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.9", "ty>=0.0.63"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.9", "ty>=0.0.63", "rich>=13.0"]
 
 [project.scripts]
 linexcel = "linexcel.cli:main"
