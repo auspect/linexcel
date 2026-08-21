@@ -45,6 +45,7 @@ from linexcel.external import (
 from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.refs import (
     Rect,
+    col_to_num,
     num_to_col,
     parse_ref,
     parse_ref_detailed,
@@ -67,6 +68,13 @@ SCAN_CHUNK_CELLS = 1_000_000
 #: billion cells, which would sweep for hours. At 64M the ceiling is past any
 #: real used range (a full-height sheet 60 columns wide) and still bounded.
 MAX_CELLS_PER_SHEET = 64_000_000
+#: The largest declared rectangle python-calamine is allowed to attempt.
+#: It builds a sheet as a dense rows × columns array — about 32 bytes a cell —
+#: before returning anything to Python, so the limit is memory, not time, and
+#: it is separate from the sweep budget above. 20M cells is roughly 640 MB:
+#: past any honest sheet's dense form, and far below the 512 GiB that one
+#: stray cell at XFD1048576 asks for. Beyond it the lazy reader takes over.
+MAX_DENSE_CELLS = 20_000_000
 SMALL_RANGE_CELLS = 20_000
 MAX_NODES_PER_SHEET = 400
 MAX_STEPS_PER_FORMULA = 48
@@ -194,7 +202,58 @@ class CachedValues:
         return len(self._values)
 
 
-def load_cached_values(data: bytes) -> CachedValues:
+#: ``<dimension ref="A1:XFD1048576"/>``, the rectangle a sheet claims to use.
+#: Only the bottom-right corner matters; the ``A1:`` half is absent on a sheet
+#: holding a single cell.
+_DIMENSION_RE = re.compile(
+    rb'<dimension[^>]*\sref="(?:[A-Z]{1,3}\d+:)?([A-Z]{1,3})(\d+)"'
+)
+#: How much of a sheet part is read looking for it. ``<dimension>`` is the
+#: first child of ``<worksheet>``, so it is within the first few hundred bytes
+#: of any file Excel wrote.
+_DIMENSION_WINDOW = 4096
+
+
+def declared_cells(data: bytes) -> int:
+    """The largest rectangle any sheet of the package *declares*, in cells.
+
+    Not what it holds — what it says it uses. The two differ wildly: one stray
+    cell at XFD1048576, and a sheet with three numbers in it declares 17
+    billion. Read from the ``<dimension>`` element rather than from the cells,
+    because the whole point is to know the size before reading anything.
+
+    ``0`` when no sheet declares one, which is also what a package this cannot
+    parse returns: the callers treat it as "no reason to worry", since a writer
+    that omits ``<dimension>`` is not the one that writes a stray corner cell.
+    """
+    largest = 0
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for part in zf.namelist():
+                if not re.fullmatch(r"xl/worksheets/sheet\d+\.xml", part):
+                    continue
+                with zf.open(part) as handle:
+                    match = _DIMENSION_RE.search(handle.read(_DIMENSION_WINDOW))
+                if match is None:
+                    continue
+                columns = col_to_num(match.group(1).decode("ascii"))
+                largest = max(largest, columns * int(match.group(2)))
+    except Exception:
+        return 0
+    return largest
+
+
+#: What to tell someone whose file declares far more than it holds. It is a
+#: real spreadsheet, made by a real Excel: a cell was touched once in the far
+#: corner, and the used range never shrank back.
+STRAY_CORNER_ADVICE = (
+    "Select the rows below and the columns to the right of your data, delete "
+    "them, then save — the used range shrinks back and the analysis takes the "
+    "fast path again."
+)
+
+
+def load_cached_values(data: bytes, warnings: list[str] | None = None) -> CachedValues:
     """Read the file's cached values once, keyed by (sheet, row, col).
 
     python-calamine (the Rust engine) is the hot path: it returns native Python
@@ -203,7 +262,25 @@ def load_cached_values(data: bytes) -> CachedValues:
     large files. openpyxl remains the fallback for the rare file calamine cannot
     open; there its number_format-based date detection keeps the edge case (a
     number formatted as a date but stored as a float) covered.
+
+    A sheet that declares more than :data:`MAX_DENSE_CELLS` never reaches
+    calamine at all. It builds a sheet as a dense rows × columns array before
+    returning anything to Python, so ``A1:XFD1048576`` asks the allocator for
+    512 GiB — and an allocation failure in Rust *aborts the process*. That is
+    not an exception, and no ``try`` around this call would see it. openpyxl's
+    read-only reader is lazy and already bounded, so it takes the file instead.
     """
+    declared = declared_cells(data)
+    if declared > MAX_DENSE_CELLS:
+        if warnings is not None:
+            warnings.append(
+                f"A sheet declares a used range of {declared:,} cells. Values "
+                f"were read the slow way, and only the first "
+                f"{MAX_CELLS_PER_SHEET:,} cells of each sheet were kept, so "
+                f"some may be missing from the report. If the sheet does not "
+                f"really hold that much: {STRAY_CORNER_ADVICE}"
+            )
+        return _load_cached_values_openpyxl(data)
     try:
         return _load_cached_values_calamine(data)
     except Exception:
@@ -983,7 +1060,7 @@ def analyze_workbook(
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
     _t = time.perf_counter()
-    cached = load_cached_values(data)
+    cached = load_cached_values(data, warnings)
     _v("cached_values", _t)
 
     # --- 2. computation engine -------------------------------------------

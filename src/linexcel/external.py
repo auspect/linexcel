@@ -208,6 +208,23 @@ def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
     """
     from python_calamine import CalamineWorkbook
 
+    # Imported here rather than at module scope: analyzer imports this module,
+    # so the dependency only goes the other way once the call is under way.
+    from linexcel.analyzer import MAX_DENSE_CELLS, declared_cells
+
+    # calamine builds a sheet as a dense rows × columns array before handing
+    # anything back, so a workbook declaring A1:XFD1048576 asks the allocator
+    # for 512 GiB and *aborts the process* — a Rust allocation failure, not an
+    # exception, so the caller's try/except would never see it. A file that
+    # claims more than any sheet can hold is refused by name instead.
+    declared = declared_cells(path.read_bytes())
+    if declared > MAX_DENSE_CELLS:
+        raise ValueError(
+            f"it declares a used range of {declared:,} cells, more than can be "
+            f"read; open it, delete the empty rows below and columns right of "
+            f"the data, and save"
+        )
+
     values: dict[tuple[str, int, int], Any] = {}
     workbook = CalamineWorkbook.from_path(str(path))
     for name in workbook.sheet_names:
