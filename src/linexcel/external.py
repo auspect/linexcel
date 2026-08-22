@@ -33,6 +33,8 @@ from typing import Any
 from urllib.parse import unquote
 from xml.etree import ElementTree
 
+from linexcel.loader import MAX_DENSE_CELLS, declared_cells
+
 #: Suffixes searched in a reference folder. The macro-enabled ones are also
 #: where an add-in keeps the VBA a workbook calls into.
 WORKBOOK_SUFFIXES = (".xlsx", ".xlsm", ".xlsb", ".xltx", ".xltm", ".xlam", ".xla")
@@ -207,10 +209,6 @@ def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
     need, and Excel itself stores nothing but values across a link.
     """
     from python_calamine import CalamineWorkbook
-
-    # Imported here rather than at module scope: analyzer imports this module,
-    # so the dependency only goes the other way once the call is under way.
-    from linexcel.analyzer import MAX_DENSE_CELLS, declared_cells
 
     # calamine builds a sheet as a dense rows × columns array before handing
     # anything back, so a workbook declaring A1:XFD1048576 asks the allocator

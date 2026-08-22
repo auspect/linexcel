@@ -63,6 +63,7 @@ nav:
   - API Reference:
       - result: api/result.md
       - analyzer: api/analyzer.md
+      - loader: api/loader.md
       - aidoc: api/aidoc.md
       - i18n: api/i18n.md
       - refs: api/refs.md

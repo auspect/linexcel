@@ -402,7 +402,7 @@ class TestDates:
     def test_calamine_and_openpyxl_agree_on_values(self):
         """The calamine fast path and the openpyxl fallback must return the
         same values, date flags, and epoch flag for a representative workbook."""
-        from linexcel.analyzer import (
+        from linexcel.loader import (
             _detect_epoch_1904,
             _load_cached_values_calamine,
             _load_cached_values_openpyxl,
@@ -439,7 +439,7 @@ class TestDates:
         interprets engine serials with the right base date."""
         from openpyxl.utils.datetime import MAC_EPOCH
 
-        from linexcel.analyzer import _detect_epoch_1904
+        from linexcel.loader import _detect_epoch_1904
 
         wb = Workbook()
         wb.active.title = SHEET
