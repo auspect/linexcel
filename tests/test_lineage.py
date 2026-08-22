@@ -2596,3 +2596,33 @@ class TestScanCeiling:
         assert _chunk_rows(16_384) * 16_384 <= SCAN_CHUNK_CELLS
         # never zero, however wide the sheet
         assert _chunk_rows(SCAN_CHUNK_CELLS * 2) == 1
+
+
+class TestPromptsShipAsFiles:
+    """The prompts are files now, and a build that loses them must say so."""
+
+    def test_every_language_has_all_three(self):
+        from linexcel.aidoc import _PROMPTS
+        from linexcel.i18n import LANGUAGES
+
+        for language in LANGUAGES:
+            for kind in ("node", "workbook", "vision"):
+                assert (_PROMPTS / language / f"{kind}.md").is_file(), (
+                    f"{language}/{kind}.md"
+                )
+
+    def test_none_of_them_is_empty(self):
+        from linexcel.aidoc import _SYSTEM, _VISION_SYSTEM, _WORKBOOK_SYSTEM
+
+        for prompts in (_SYSTEM, _WORKBOOK_SYSTEM, _VISION_SYSTEM):
+            for language, text in prompts.items():
+                assert len(text) > 100, language
+                assert text == text.strip(), language
+
+    def test_a_build_without_them_fails_loudly(self, tmp_path, monkeypatch):
+        """Better than a KeyError on a language code, mid-request."""
+        from linexcel import aidoc
+
+        monkeypatch.setattr(aidoc, "_PROMPTS", tmp_path)
+        with pytest.raises(RuntimeError, match="without its assets"):
+            aidoc._prompts("node")

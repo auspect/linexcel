@@ -53,395 +53,42 @@ IMAGE_MEDIA_TYPES = {
     ".gif": "image/gif",
 }
 
-_SYSTEM = {
-    "en": """
-You document Excel calculations for a business reader.
-For the provided node, write a short Markdown card:
-1. **Role** — one sentence on what the formula computes;
-2. **How** — the logic, step by step, relying STRICTLY on the provided
- decomposition (cite sub-expressions and their evaluated values);
-3. **Sources** — where the data comes from (precedents, ranges, names, VBA);
-4. **Proof** — the exact formula and, if available, the computed value.
-Absolute rules: do not invent data; do not assert anything not in the
-dossier; if information is missing, write "not determined by lineage".
-Respond ONLY with the Markdown card, no JSON, no delimiters.
-""".strip(),
-    "fr": """
-Tu documentes des calculs Excel pour un lecteur métier francophone.
-Pour le nœud fourni, rédige une fiche courte en Markdown :
-1. **Rôle** — une phrase sur ce que calcule la formule ;
-2. **Comment** — la logique, étape par étape, en t'appuyant STRICTEMENT sur la
- décomposition fournie (cite les sous-expressions et leurs valeurs évaluées) ;
-3. **Sources** — d'où viennent les données (précédents, plages, noms, VBA) ;
-4. **Preuve** — la formule exacte et, si disponible, la valeur calculée.
-Règles absolues : n'invente aucune donnée ; n'affirme rien qui ne soit pas dans
-le dossier ; si une information manque, écris « non déterminé par le lignage ».
-Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.
-""".strip(),
-    "es": """
-Documentas cálculos de Excel para un lector de negocio.
-Para el nodo proporcionado, redacta una ficha breve en Markdown:
-1. **Función** — una frase sobre lo que calcula la fórmula;
-2. **Cómo** — la lógica, paso a paso, apoyándote ESTRICTAMENTE en la
- descomposición proporcionada (cita las subexpresiones y sus valores evaluados);
-3. **Fuentes** — de dónde proceden los datos (precedentes, rangos, nombres, VBA);
-4. **Prueba** — la fórmula exacta y, si está disponible, el valor calculado.
-Reglas absolutas: no inventes ningún dato; no afirmes nada que no esté en el
-expediente; si falta información, escribe «no determinado por el linaje».
-Responde ÚNICAMENTE con la ficha Markdown, sin JSON ni delimitadores.
-""".strip(),
-    "de": """
-Du dokumentierst Excel-Berechnungen für einen Fachanwender.
-Verfasse für den angegebenen Knoten eine kurze Markdown-Karte:
-1. **Zweck** — ein Satz dazu, was die Formel berechnet;
-2. **Vorgehen** — die Logik Schritt für Schritt, STRIKT auf Basis der
- gelieferten Zerlegung (nenne Teilausdrücke und ihre ausgewerteten Werte);
-3. **Quellen** — woher die Daten stammen (Vorgänger, Bereiche, Namen, VBA);
-4. **Nachweis** — die exakte Formel und, falls vorhanden, der berechnete Wert.
-Absolute Regeln: erfinde keine Daten; behaupte nichts, was nicht im Dossier
-steht; fehlt eine Information, schreibe „nicht durch die Herkunft bestimmt“.
-Antworte AUSSCHLIESSLICH mit der Markdown-Karte, ohne JSON, ohne Trennzeichen.
-""".strip(),
-    "it": """
-Documenti calcoli Excel per un lettore aziendale.
-Per il nodo fornito, scrivi una scheda breve in Markdown:
-1. **Ruolo** — una frase su ciò che calcola la formula;
-2. **Come** — la logica, passo passo, basandoti RIGOROSAMENTE sulla
- scomposizione fornita (cita le sottoespressioni e i loro valori valutati);
-3. **Fonti** — da dove provengono i dati (precedenti, intervalli, nomi, VBA);
-4. **Prova** — la formula esatta e, se disponibile, il valore calcolato.
-Regole assolute: non inventare dati; non affermare nulla che non sia nel
-dossier; se manca un'informazione, scrivi «non determinato dalla derivazione».
-Rispondi SOLO con la scheda Markdown, senza JSON né delimitatori.
-""".strip(),
-    "pt": """
-Documente cálculos do Excel para um leitor de negócio.
-Para o nó fornecido, redija uma ficha curta em Markdown:
-1. **Função** — uma frase sobre o que a fórmula calcula;
-2. **Como** — a lógica, passo a passo, apoiando-se ESTRITAMENTE na
- decomposição fornecida (cite as subexpressões e os seus valores avaliados);
-3. **Fontes** — de onde vêm os dados (precedentes, intervalos, nomes, VBA);
-4. **Prova** — a fórmula exata e, se disponível, o valor calculado.
-Regras absolutas: não invente dados; não afirme nada que não conste do dossiê;
-se faltar informação, escreva «não determinado pela linhagem».
-Responda APENAS com a ficha Markdown, sem JSON nem delimitadores.
-""".strip(),
-    "nl": """
-Je documenteert Excel-berekeningen voor een zakelijke lezer.
-Schrijf voor het opgegeven knooppunt een korte Markdown-kaart:
-1. **Rol** — één zin over wat de formule berekent;
-2. **Hoe** — de logica, stap voor stap, STRIKT op basis van de geleverde
- ontleding (noem deelexpressies en hun geëvalueerde waarden);
-3. **Bronnen** — waar de gegevens vandaan komen (voorgangers, bereiken, namen,
- VBA);
-4. **Bewijs** — de exacte formule en, indien beschikbaar, de berekende waarde.
-Absolute regels: verzin geen gegevens; beweer niets dat niet in het dossier
-staat; ontbreekt informatie, schrijf dan "niet bepaald door de herkomst".
-Antwoord UITSLUITEND met de Markdown-kaart, zonder JSON of scheidingstekens.
-""".strip(),
-    "ja": """
-あなたはビジネス読者向けに Excel の計算を文書化します。
-指定されたノードについて、短い Markdown のカードを作成してください。
-1. **役割** — その数式が何を計算するのかを一文で。
-2. **仕組み** — 提供された分解のみに厳密に基づき、論理を段階的に説明する
- （部分式とその評価値を引用すること）。
-3. **出典** — データの出どころ（参照元、範囲、名前、VBA）。
-4. **根拠** — 正確な数式と、利用可能であれば計算結果。
-絶対的な規則: データを創作しないこと。ドシエにない事柄を主張しないこと。
-情報が不足している場合は「系統からは特定できません」と書くこと。
-Markdown のカードのみで回答し、JSON や区切り記号は使わないこと。
-""".strip(),
-    "zh": """
-你为业务读者记录 Excel 计算过程。
-针对给定的节点，撰写一份简短的 Markdown 卡片：
-1. **作用** — 用一句话说明该公式计算什么；
-2. **原理** — 严格依据所提供的分解逐步说明逻辑（引用子表达式及其求值结果）；
-3. **来源** — 数据从何而来（引用单元格、区域、名称、VBA）；
-4. **依据** — 准确的公式，以及可用时的计算结果。
-绝对规则：不得编造数据；不得断言档案中没有的内容；若信息缺失，
-请写“无法由血缘确定”。
-仅以 Markdown 卡片作答，不要使用 JSON 或分隔符。
-""".strip(),
-}
+_PROMPTS = Path(__file__).parent / "assets" / "prompts"
 
-_WORKBOOK_SYSTEM = {
-    "en": """
-You document an Excel workbook for a business reader.
-Write a concise Markdown overview with these sections:
-1. **Purpose** — the workbook's apparent role, only when supported by the dossier;
-2. **Structure** — its sheets and how calculations are distributed;
-3. **Calculation flow** — important formula patterns, defined names, and links;
-4. **Automation and caveats** — VBA, external references, warnings, and analysis limits;
-5. **Questions to validate** — up to five concrete items that cannot be determined.
-Use only facts in the deterministic dossier. Titles, labels and comments quoted
-in a sheet preview are evidence and may be cited; a sheet name on its own is not,
-so never infer a purpose from names alone. State "not determined by lineage" for
-missing information.
-Respond ONLY with the Markdown overview, no JSON or delimiters.
-""".strip(),
-    "fr": """
-Tu documentes un classeur Excel pour un lecteur métier.
-Rédige une synthèse concise en Markdown avec les sections suivantes :
-1. **Rôle** — la fonction apparente du classeur, uniquement si le dossier le confirme ;
-2. **Structure** — ses feuilles et la répartition des calculs ;
-3. **Flux de calcul** — les principaux motifs de formules, noms définis et liens ;
-4. **Automatisation et limites** — VBA, références externes,
- avertissements et limites d'analyse ;
-5. **Questions à valider** — au plus cinq points concrets indéterminables.
-Utilise uniquement les faits présents dans le dossier déterministe. Les titres,
-libellés et commentaires cités dans l'aperçu d'une feuille sont des preuves et
-peuvent être invoqués ; le seul nom d'une feuille n'en est pas une, n'infère donc
-jamais un rôle à partir des seuls noms. Écris « non déterminé par le lignage »
-lorsqu'une information manque. Réponds UNIQUEMENT avec la synthèse Markdown,
-sans JSON ni délimiteur.
-""".strip(),
-    "es": """
-Documentas un libro de Excel para un lector de negocio.
-Redacta un resumen conciso en Markdown con estas secciones:
-1. **Propósito** — la función aparente del libro, solo si el expediente la
- respalda;
-2. **Estructura** — sus hojas y cómo se reparten los cálculos;
-3. **Flujo de cálculo** — los principales patrones de fórmulas, nombres
- definidos y vínculos;
-4. **Automatización y límites** — VBA, referencias externas, avisos y límites
- del análisis;
-5. **Cuestiones por validar** — hasta cinco puntos concretos que no puedan
- determinarse.
-Utiliza únicamente los hechos del expediente determinista. Los títulos, etiquetas
-y comentarios citados en la vista previa de una hoja son pruebas y pueden
-citarse; el nombre de una hoja por sí solo no lo es, así que nunca deduzcas una
-finalidad solo a partir de los nombres. Escribe «no determinado por el linaje»
-cuando falte información.
-Responde ÚNICAMENTE con el resumen Markdown, sin JSON ni delimitadores.
-""".strip(),
-    "de": """
-Du dokumentierst eine Excel-Arbeitsmappe für einen Fachanwender.
-Verfasse einen knappen Markdown-Überblick mit diesen Abschnitten:
-1. **Zweck** — die erkennbare Rolle der Arbeitsmappe, nur wenn das Dossier sie
- belegt;
-2. **Struktur** — ihre Blätter und die Verteilung der Berechnungen;
-3. **Berechnungsfluss** — wichtige Formelmuster, definierte Namen und
- Verknüpfungen;
-4. **Automatisierung und Grenzen** — VBA, externe Bezüge, Warnungen und
- Analysegrenzen;
-5. **Zu klärende Fragen** — bis zu fünf konkrete, nicht bestimmbare Punkte.
-Nutze ausschließlich die Fakten des deterministischen Dossiers. Titel,
-Beschriftungen und Kommentare aus der Blattvorschau sind Belege und dürfen
-zitiert werden; ein Blattname allein ist keiner, leite also nie einen Zweck
-allein aus Namen ab. Schreibe „nicht durch die Herkunft bestimmt“, wenn eine
-Information fehlt.
-Antworte AUSSCHLIESSLICH mit dem Markdown-Überblick, ohne JSON oder
-Trennzeichen.
-""".strip(),
-    "it": """
-Documenti una cartella di lavoro Excel per un lettore aziendale.
-Scrivi una sintesi concisa in Markdown con queste sezioni:
-1. **Scopo** — il ruolo apparente della cartella, solo se il dossier lo
- conferma;
-2. **Struttura** — i suoi fogli e la distribuzione dei calcoli;
-3. **Flusso di calcolo** — i principali motivi di formule, nomi definiti e
- collegamenti;
-4. **Automazione e limiti** — VBA, riferimenti esterni, avvisi e limiti
- dell'analisi;
-5. **Questioni da validare** — al massimo cinque punti concreti non
- determinabili.
-Usa solo i fatti presenti nel dossier deterministico. Titoli, etichette e
-commenti citati nell'anteprima di un foglio sono prove e possono essere citati;
-il solo nome di un foglio non lo è, quindi non dedurre mai uno scopo dai soli
-nomi. Scrivi «non determinato dalla derivazione» quando manca un'informazione.
-Rispondi SOLO con la sintesi Markdown, senza JSON né delimitatori.
-""".strip(),
-    "pt": """
-Documente uma pasta de trabalho do Excel para um leitor de negócio.
-Redija uma síntese concisa em Markdown com estas secções:
-1. **Finalidade** — o papel aparente da pasta, apenas se o dossiê o confirmar;
-2. **Estrutura** — as suas folhas e a distribuição dos cálculos;
-3. **Fluxo de cálculo** — os principais padrões de fórmulas, nomes definidos e
- ligações;
-4. **Automação e limites** — VBA, referências externas, avisos e limites da
- análise;
-5. **Questões a validar** — no máximo cinco pontos concretos indetermináveis.
-Use apenas as informações do dossiê determinista. Títulos, rótulos e comentários
-citados na pré-visualização de uma folha são provas e podem ser citados; o nome
-de uma folha por si só não é, por isso nunca deduza uma finalidade apenas a
-partir dos nomes. Escreva «não determinado pela linhagem» quando faltar
-informação.
-Responda APENAS com a síntese Markdown, sem JSON nem delimitadores.
-""".strip(),
-    "nl": """
-Je documenteert een Excel-werkmap voor een zakelijke lezer.
-Schrijf een beknopt Markdown-overzicht met deze secties:
-1. **Doel** — de kennelijke rol van de werkmap, alleen als het dossier dit
- staaft;
-2. **Structuur** — de bladen en de verdeling van de berekeningen;
-3. **Berekeningsstroom** — belangrijke formulepatronen, gedefinieerde namen en
- koppelingen;
-4. **Automatisering en beperkingen** — VBA, externe verwijzingen,
- waarschuwingen en analysegrenzen;
-5. **Te valideren vragen** — maximaal vijf concrete, niet vast te stellen
- punten.
-Gebruik uitsluitend de gegevens uit het deterministische dossier. Titels, labels
-en opmerkingen uit een bladvoorbeeld zijn bewijs en mogen worden aangehaald; een
-bladnaam op zichzelf niet, leid dus nooit een doel af uit alleen de namen.
-Schrijf "niet bepaald door de herkomst" wanneer informatie ontbreekt.
-Antwoord UITSLUITEND met het Markdown-overzicht, zonder JSON of
-scheidingstekens.
-""".strip(),
-    "ja": """
-あなたはビジネス読者向けに Excel ブックを文書化します。
-次のセクションからなる簡潔な Markdown の概要を作成してください。
-1. **目的** — ドシエが裏付ける場合に限り、ブックの明らかな役割。
-2. **構成** — シートと計算の配分。
-3. **計算の流れ** — 主要な数式パターン、定義された名前、リンク。
-4. **自動化と留意点** — VBA、外部参照、警告、分析の限界。
-5. **確認すべき点** — 特定できない具体的な項目を最大 5 件。
-決定論的なドシエにある事実のみを使用すること。シートのプレビューに含まれる
-表題・見出し・コメントは根拠として引用してよいが、シート名だけは根拠に
-ならないため、名前だけから目的を推測しないこと。情報が不足している場合は
-「系統からは特定できません」と書くこと。
-Markdown の概要のみで回答し、JSON や区切り記号は使わないこと。
-""".strip(),
-    "zh": """
-你为业务读者记录一个 Excel 工作簿。
-撰写一份简明的 Markdown 概览，包含以下部分：
-1. **目的** — 仅在档案支持时，说明该工作簿的明显作用；
-2. **结构** — 其工作表以及计算的分布；
-3. **计算流程** — 主要的公式模式、定义的名称和链接；
-4. **自动化与局限** — VBA、外部引用、警告以及分析的限制；
-5. **待确认的问题** — 最多五个无法确定的具体事项。
-仅使用确定性档案中的事实。工作表预览中出现的标题、标签和批注属于证据，
-可以引用；仅有工作表名称不构成证据，因此不要仅凭名称推断目的。
-信息缺失时请写“无法由血缘确定”。
-仅以 Markdown 概览作答，不要使用 JSON 或分隔符。
-""".strip(),
-}
+
+def _prompts(kind: str) -> dict[str, str]:
+    """Every language's ``kind`` prompt, read from ``assets/prompts/<lang>/``.
+
+    They are prose, one document per language, and they lived as 380 lines of
+    triple-quoted strings in this module: correcting a phrasing in Japanese
+    meant a diff in a 1,400-line file, and adding a language meant editing
+    Python and cutting a release. As files they are what they are — text a
+    translator can open — and a missing one is a missing language, which the
+    key-parity test catches.
+    """
+    found = {
+        path.parent.name: path.read_text(encoding="utf-8").strip()
+        for path in sorted(_PROMPTS.glob(f"*/{kind}.md"))
+    }
+    if not found:
+        # A build that dropped the prompt files would otherwise fail much
+        # later, as a KeyError on a language code, in the middle of a request.
+        raise RuntimeError(
+            f"No {kind} prompts under {_PROMPTS}. The package is installed "
+            f"without its assets; reinstall linexcel."
+        )
+    return found
+
+
+_SYSTEM = _prompts("node")
+
+_WORKBOOK_SYSTEM = _prompts("workbook")
 
 # The one prompt whose evidence is not the dossier. A screenshot carries what
 # no extraction reaches — colour conventions, conditional formatting, charts,
 # the shape of a layout — so the rule here is the mirror of the others: say
 # what is visible, and nothing that would have to be computed to be known.
-_VISION_SYSTEM = {
-    "en": """
-You are shown a screenshot of one sheet of an Excel workbook, rendered as it
-prints. Write a short Markdown description for a reader who cannot see it:
-1. **Layout** — where the blocks, tables, headers and totals sit;
-2. **Conventions** — colours, borders and formatting, and what they appear to
- distinguish (input cells against computed ones, for instance);
-3. **Charts and objects** — what they show, as far as titles and axes say;
-4. **Worth noticing** — error text, empty areas, anything odd.
-Absolute rules: describe only what is visible in the image; never guess a
-formula, a value you cannot read, or the workbook's purpose; if the image is
-unreadable, say so in one sentence. Do not repeat the sheet name as a heading.
-Respond ONLY with the Markdown, no JSON, no delimiters.
-""".strip(),
-    "fr": """
-On te montre la capture d'une feuille d'un classeur Excel, rendue telle qu'elle
-s'imprime. Rédige une description courte en Markdown pour un lecteur qui ne la
-voit pas :
-1. **Disposition** — où se trouvent les blocs, tableaux, en-têtes et totaux ;
-2. **Conventions** — couleurs, bordures et mises en forme, et ce qu'elles
- semblent distinguer (cellules de saisie face aux cellules calculées, etc.) ;
-3. **Graphiques et objets** — ce qu'ils montrent, d'après leurs titres et axes ;
-4. **À remarquer** — messages d'erreur, zones vides, tout ce qui détonne.
-Règles absolues : ne décris que ce qui est visible sur l'image ; ne devine
-jamais une formule, une valeur illisible ou la finalité du classeur ; si
-l'image est illisible, dis-le en une phrase. Ne répète pas le nom de la feuille
-en titre. Réponds UNIQUEMENT avec le Markdown, sans JSON ni délimiteur.
-""".strip(),
-    "es": """
-Se te muestra la captura de una hoja de un libro de Excel, tal como se imprime.
-Redacta una descripción breve en Markdown para quien no puede verla:
-1. **Disposición** — dónde están los bloques, tablas, encabezados y totales;
-2. **Convenciones** — colores, bordes y formatos, y qué parecen distinguir
- (celdas de entrada frente a celdas calculadas, por ejemplo);
-3. **Gráficos y objetos** — qué muestran, según sus títulos y ejes;
-4. **A destacar** — textos de error, zonas vacías, cualquier anomalía.
-Reglas absolutas: describe solo lo visible en la imagen; nunca adivines una
-fórmula, un valor ilegible ni la finalidad del libro; si la imagen es
-ilegible, dilo en una frase. No repitas el nombre de la hoja como título.
-Responde ÚNICAMENTE con el Markdown, sin JSON ni delimitadores.
-""".strip(),
-    "de": """
-Du siehst den Screenshot eines Arbeitsblatts einer Excel-Arbeitsmappe, so
-gerendert wie es druckt. Schreibe eine kurze Markdown-Beschreibung für jemanden,
-der ihn nicht sehen kann:
-1. **Aufbau** — wo Blöcke, Tabellen, Überschriften und Summen liegen;
-2. **Konventionen** — Farben, Rahmen und Formatierungen und was sie zu
- unterscheiden scheinen (etwa Eingabezellen gegenüber berechneten Zellen);
-3. **Diagramme und Objekte** — was sie zeigen, soweit Titel und Achsen es sagen;
-4. **Auffälliges** — Fehlertexte, leere Bereiche, alles Ungewöhnliche.
-Absolute Regeln: beschreibe nur, was im Bild sichtbar ist; rate nie eine Formel,
-einen unlesbaren Wert oder den Zweck der Arbeitsmappe; ist das Bild unlesbar,
-sage es in einem Satz. Wiederhole den Blattnamen nicht als Überschrift.
-Antworte AUSSCHLIESSLICH mit dem Markdown, ohne JSON, ohne Trennzeichen.
-""".strip(),
-    "it": """
-Ti viene mostrata la schermata di un foglio di una cartella di lavoro Excel,
-resa come viene stampata. Scrivi una breve descrizione in Markdown per chi non
-può vederla:
-1. **Disposizione** — dove stanno blocchi, tabelle, intestazioni e totali;
-2. **Convenzioni** — colori, bordi e formattazioni, e cosa sembrano distinguere
- (celle di input rispetto a celle calcolate, per esempio);
-3. **Grafici e oggetti** — cosa mostrano, per quanto dicono titoli e assi;
-4. **Da notare** — testi di errore, aree vuote, qualunque anomalia.
-Regole assolute: descrivi solo ciò che è visibile nell'immagine; non indovinare
-mai una formula, un valore illeggibile o lo scopo della cartella di lavoro; se
-l'immagine è illeggibile, dillo in una frase. Non ripetere il nome del foglio
-come titolo. Rispondi SOLO con il Markdown, senza JSON né delimitatori.
-""".strip(),
-    "pt": """
-É-lhe mostrada a captura de uma folha de um livro do Excel, tal como é
-impressa. Escreva uma descrição curta em Markdown para quem não a vê:
-1. **Disposição** — onde estão os blocos, tabelas, cabeçalhos e totais;
-2. **Convenções** — cores, limites e formatações, e o que parecem distinguir
- (células de entrada face a células calculadas, por exemplo);
-3. **Gráficos e objetos** — o que mostram, tanto quanto dizem títulos e eixos;
-4. **A notar** — textos de erro, zonas vazias, qualquer anomalia.
-Regras absolutas: descreva apenas o que está visível na imagem; nunca adivinhe
-uma fórmula, um valor ilegível ou a finalidade do livro; se a imagem estiver
-ilegível, diga-o numa frase. Não repita o nome da folha como título.
-Responda APENAS com o Markdown, sem JSON nem delimitadores.
-""".strip(),
-    "nl": """
-Je krijgt een schermafbeelding van één blad van een Excel-werkmap te zien,
-weergegeven zoals het afdrukt. Schrijf een korte beschrijving in Markdown voor
-wie hem niet kan zien:
-1. **Indeling** — waar de blokken, tabellen, koppen en totalen staan;
-2. **Conventies** — kleuren, randen en opmaak, en wat ze lijken te
- onderscheiden (invoercellen tegenover berekende cellen, bijvoorbeeld);
-3. **Grafieken en objecten** — wat ze tonen, voor zover titels en assen zeggen;
-4. **Opvallend** — foutteksten, lege zones, alles wat afwijkt.
-Absolute regels: beschrijf alleen wat zichtbaar is op de afbeelding; gok nooit
-een formule, een onleesbare waarde of het doel van de werkmap; is de
-afbeelding onleesbaar, zeg dat dan in één zin. Herhaal de bladnaam niet als
-kop. Antwoord UITSLUITEND met de Markdown, zonder JSON of scheidingstekens.
-""".strip(),
-    "ja": """
-Excel ブックの 1 シートを印刷時の体裁でレンダリングしたスクリーンショットを
-示します。それを見られない読者のために、短い Markdown の説明を書いてください。
-1. **レイアウト** — ブロック、表、見出し、合計の位置；
-2. **表記の約束** — 色・罫線・書式と、それらが区別していると見えるもの
- （入力セルと計算セルなど）；
-3. **グラフとオブジェクト** — 表題や軸から読み取れる範囲でその内容；
-4. **注目点** — エラー表示、空白領域、目を引くもの。
-絶対規則：画像に見えるものだけを述べること。数式、判読できない値、ブックの
-目的を推測しないこと。画像が判読できない場合は一文でそう述べること。
-シート名を見出しとして繰り返さないこと。
-JSON や区切り記号を使わず、Markdown のみで答えてください。
-""".strip(),
-    "zh": """
-现向你展示一张 Excel 工作簿中某个工作表的截图，按打印效果渲染。
-请为看不到该图的读者撰写一段简短的 Markdown 说明：
-1. **布局** — 区块、表格、标题与合计所在的位置；
-2. **约定** — 颜色、边框与格式，以及它们似乎在区分什么
- （例如输入单元格与计算单元格）；
-3. **图表与对象** — 依据标题和坐标轴所能看出的内容；
-4. **值得注意之处** — 错误文本、空白区域以及任何异常。
-绝对规则：只描述图中可见的内容；不得猜测公式、看不清的数值或工作簿的用途；
-若图像无法辨认，请用一句话说明。不要把工作表名称重复为标题。
-仅以 Markdown 作答，不要使用 JSON 或分隔符。
-""".strip(),
-}
+_VISION_SYSTEM = _prompts("vision")
 
 
 class AiDocError(RuntimeError):
