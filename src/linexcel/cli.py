@@ -76,6 +76,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Say what the file declares — sheets, size, linked workbooks, "
+            "which ceilings will apply — and stop without analysing it."
+        ),
+    )
+    analyze.add_argument(
         "-v", "--verbose", action="store_true", help="Per-phase timing on stderr."
     )
 
@@ -131,8 +139,46 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _report_dry_run(workbook: Path, facts: dict) -> None:
+    """Print what the file claims, and what that means for the run.
+
+    Written to stdout: unlike the progress and the statistics, this *is* the
+    output of the command, and someone will pipe it.
+    """
+    ceilings = facts["ceilings"]
+    print(f"{workbook.name}  {facts['bytes'] / 1_048_576:.1f} MB")
+    print(f"{len(facts['sheets'])} sheet(s), {facts['declaredCells']:,} cells declared")
+    for sheet in facts["sheets"]:
+        state = "" if sheet["state"] == "visible" else f" [{sheet['state']}]"
+        flag = "  ← over the ceiling, will be cut short" if sheet["truncated"] else ""
+        print(
+            f"  {sheet['name']}{state}: {sheet['rows']:,} × {sheet['cols']:,} "
+            f"= {sheet['cells']:,} cells{flag}"
+        )
+    if facts["externalWorkbooks"]:
+        names = ", ".join(facts["externalWorkbooks"])
+        print(f"reads {len(facts['externalWorkbooks'])} other workbook(s): {names}")
+        print("  pass --refs-dir DIR to resolve them against a folder")
+    if facts["densePathRefused"]:
+        print(
+            "a sheet declares more than this can read densely: values will be "
+            "read the slow way, and some may be missing. If the sheet does not "
+            "really hold that much, delete the empty rows below and columns "
+            "right of the data and save."
+        )
+    print(
+        f"ceilings: {ceilings['cellsPerSheet']:,} cells and "
+        f"{ceilings['nodesPerSheet']:,} nodes per sheet"
+    )
+
+
 def _run_analyze(args: argparse.Namespace) -> int:
     from linexcel import analyze as analyze_workbook
+    from linexcel.analyzer import inspect_workbook
+
+    if args.dry_run:
+        _report_dry_run(args.workbook, inspect_workbook(args.workbook.read_bytes()))
+        return 0
 
     if args.vision_docs and args.screenshots is None:
         raise ValueError(
