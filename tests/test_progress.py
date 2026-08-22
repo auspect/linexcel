@@ -88,12 +88,12 @@ class TestDrawingOnlyForAHuman:
 class TestTheSlowReaderIsNotSilent:
     def test_falling_back_to_openpyxl_is_said_out_loud(self, small, monkeypatch):
         """A different reader is a different answer on an edge case."""
-        from linexcel import analyzer
+        from linexcel import loader
 
         def boom(data, reporter=None):
             raise RuntimeError("calamine said no")
 
-        monkeypatch.setattr(analyzer, "_load_cached_values_calamine", boom)
+        monkeypatch.setattr(loader, "_load_cached_values_calamine", boom)
         warnings: list[str] = []
         load_cached_values(small, warnings)
         (warning,) = warnings
@@ -101,10 +101,10 @@ class TestTheSlowReaderIsNotSilent:
         assert "calamine said no" in warning
 
     def test_the_values_are_still_there(self, small, monkeypatch):
-        from linexcel import analyzer
+        from linexcel import loader
 
         monkeypatch.setattr(
-            analyzer,
+            loader,
             "_load_cached_values_calamine",
             lambda data, reporter=None: (_ for _ in ()).throw(RuntimeError("no")),
         )
