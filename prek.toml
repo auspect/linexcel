@@ -37,5 +37,5 @@ hooks = [
     entry = "uv run python scripts/capture_viewer.py --check",
     language = "system",
     pass_filenames = false,
-    files = '^src/linexcel/(viewer|i18n)\.py$' }
+    files = '^src/linexcel/(assets/viewer\.html|(viewer|i18n)\.py)$' }
 ]
