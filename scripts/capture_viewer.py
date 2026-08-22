@@ -2,10 +2,10 @@
 """Capture the README screenshots from a generated linexcel report.
 
 The images in ``imgs/`` illustrate the viewer, so they go stale the moment
-``viewer.py`` or ``i18n.py`` changes and nobody notices — a README showing an
-interface the package no longer has. This script captures them from a real
-report, and records which sources they were captured from so the ``readme-shots``
-prek hook can tell when they no longer match.
+``viewer.html``, ``viewer.py`` or ``i18n.py`` changes and nobody notices — a
+README showing an interface the package no longer has. This script captures
+them from a real report, and records which sources they were captured from so
+the ``readme-shots`` prek hook can tell when they no longer match.
 
 Each shot drives the interface the way a reader would — clicking tabs, searching
 for a node — rather than photographing the landing state four times:
@@ -35,6 +35,10 @@ DEFAULT_REPORT = ROOT / "validate_out_en.html"
 #: Changing any of these changes what the report looks like.
 WATCHED_SOURCES = (
     Path("src/linexcel/viewer.py"),
+    # The report itself. It left viewer.py for its own file, and it is what
+    # actually decides how a screenshot looks, so watching only the Python
+    # that loads it would watch the wrong thing.
+    Path("src/linexcel/assets/viewer.html"),
     Path("src/linexcel/i18n.py"),
 )
 

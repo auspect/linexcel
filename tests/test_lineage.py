@@ -725,11 +725,13 @@ class TestLanguages:
     def test_ui_keys_match_what_the_viewer_asks_for(self):
         """Guards against a key used by the template but defined nowhere."""
         import re as _re
-        from pathlib import Path as _Path
 
         from linexcel.i18n import DEFAULT_LANGUAGE, UI_STRINGS
 
-        source = _Path(viewer_module.__file__).read_text(encoding="utf-8")
+        # The template itself, not the module that loads it: it moved out to
+        # assets/viewer.html once, and reading it through _TEMPLATE means the
+        # check follows it wherever it goes next.
+        source = viewer_module._TEMPLATE
         used = set(_re.findall(r"_t\('([a-z_]+)'", source))
         used |= set(_re.findall(r"labelKey: '([a-z_]+)'", source))
         assert used, "no i18n key found in the viewer template"
