@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-08-22
+
+### Added
+
+- `-v` / `--verbose`: progress while a workbook is analysed, including per-sheet
+  progress through the long phases and the same timings even without the
+  optional `rich` dependency.
+- `--dry-run`: the workbook's declared sheets, sizes, linked workbooks, and the
+  ceilings that would apply, then stops before the full analysis.
+
+### Fixed
+
+- A fallback from the fast reader to `openpyxl` no longer happens silently: a
+  verbose run now says that it switched reader and names the exception that
+  caused it.
+
 ## [1.3.0] — 2026-08-18
 
 ### Added
