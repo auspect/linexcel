@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-08-23
+
+Housekeeping. Nothing an analysis does changes: the reports this version
+produces are identical, byte for byte, to the ones 1.3.1 produced, and the
+public API is unchanged. Upgrade for the packaging, or skip it.
+
+### Changed
+
+- **The report template and the AI prompts ship as files, not as Python
+  strings.** The viewer's 1,700 lines of HTML, CSS and JavaScript now live in
+  `assets/viewer.html`, and the 27 system prompts in
+  `assets/prompts/<language>/{node,workbook,vision}.md`. Both were unreachable
+  by every tool that could check them — no syntax highlighting, no linting, no
+  formatter — and a translator had to edit Python to correct a phrasing.
+  Adding a language is now three Markdown files and the interface strings; see
+  [Languages](https://auspect.github.io/linexcel/guide/languages/).
+- **`linexcel.analyzer` is 2,335 lines rather than 2,714**, with two of its
+  jobs in modules of their own: `linexcel.loader` reads the values a workbook
+  already carries and answers how big it claims to be, and `linexcel.values`
+  decides what a value read from anywhere means. Every public name is still
+  importable from `linexcel.analyzer`, and is the same object.
+- A build installed without its assets now fails at import, naming the cause,
+  instead of raising `KeyError` on a language code in the middle of a request.
+
+### For anyone reaching into internals
+
+Private names moved with the code that owns them, and are not re-exported:
+`_load_cached_values_calamine`, `_load_cached_values_openpyxl` and
+`_detect_epoch_1904` are in `linexcel.loader`; `_jsonable`, `_is_uncomputed`,
+`_values_differ`, `_date_text_of` and `_error_kind` are in `linexcel.values`.
+
 ## [1.3.1] — 2026-08-22
 
 ### Added
