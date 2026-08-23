@@ -86,7 +86,16 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing always
+        # --check-url makes a re-run survivable. Without it, a release that
+        # got as far as uploading and then failed can never be finished: the
+        # retry is refused for a duplicate file, and github-release — which
+        # needs this job — is skipped, so the tag keeps its release forever
+        # missing. That is exactly how v1.3.1 ended up on PyPI with no GitHub
+        # release. With it, files already on the index are skipped and the run
+        # carries on to the part that had not happened yet.
+        run: >
+          uv publish --trusted-publishing always
+          --check-url https://pypi.org/simple/linexcel/
 
   github-release:
     # Only tag pushes are releases: a workflow_dispatch replay must not mint a
