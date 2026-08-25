@@ -117,3 +117,79 @@ class TestDryRun:
     def test_it_says_which_ceilings_will_apply(self, workbook_path, capsys):
         main(["analyze", str(workbook_path), "--dry-run"])
         assert "ceilings:" in capsys.readouterr().out
+
+
+class TestSayingHowLongItWillTake:
+    """A big workbook announces itself before the wait, not after.
+
+    The estimate comes from the uncompressed size of the sheet parts, which
+    the zip index carries — so asking costs about a twentieth of a
+    millisecond, and every run can afford to ask.
+    """
+
+    def test_the_index_gives_the_weight_without_unpacking_anything(self, workbook_path):
+        from linexcel.analyzer import sheet_bytes
+
+        assert sheet_bytes(workbook_path.read_bytes()) > 0
+
+    def test_something_that_is_not_a_package_weighs_nothing(self):
+        from linexcel.analyzer import sheet_bytes
+
+        assert sheet_bytes(b"not a zip") == 0
+
+    def test_a_small_workbook_says_nothing(self, workbook_path, capsys):
+        main(["analyze", str(workbook_path), "--no-html"])
+        assert "should take" not in capsys.readouterr().err
+
+    def test_a_large_one_says_how_long_before_it_starts(
+        self, workbook_path, monkeypatch, capsys
+    ):
+        from linexcel import analyzer
+
+        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        main(["analyze", str(workbook_path), "--no-html"])
+        err = capsys.readouterr().err
+        assert "200 MB of formulas" in err
+        assert "about 2 minutes" in err
+
+    def test_it_goes_to_stderr_so_a_piped_report_stays_clean(
+        self, workbook_path, monkeypatch, capsys
+    ):
+        from linexcel import analyzer
+
+        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        main(["analyze", str(workbook_path), "--no-html", "--json", "-"])
+        captured = capsys.readouterr()
+        assert "should take" in captured.err
+        assert "should take" not in captured.out
+
+    def test_it_names_the_two_ways_out(self, workbook_path, monkeypatch, capsys):
+        """Someone told a run will be long wants to know what else they can do."""
+        from linexcel import analyzer
+
+        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        main(["analyze", str(workbook_path), "--no-html"])
+        err = capsys.readouterr().err
+        assert "--dry-run" in err and "-v" in err
+
+    def test_the_dry_run_states_it_too(self, workbook_path, capsys):
+        main(["analyze", str(workbook_path), "--dry-run"])
+        assert "should take" in capsys.readouterr().out
+
+
+class TestTheEstimateReadsAsAnOrderOfMagnitude:
+    """Quoting seconds would claim a precision it does not have."""
+
+    from linexcel.cli import _format_duration as _fmt
+
+    def test_seconds_are_rounded_to_five(self):
+        from linexcel.cli import _format_duration
+
+        assert _format_duration(12) == "about 10 seconds"
+        assert _format_duration(0.2) == "about 5 seconds"
+
+    def test_past_a_minute_and_a_half_it_speaks_in_minutes(self):
+        from linexcel.cli import _format_duration
+
+        assert _format_duration(100) == "about 2 minutes"
+        assert _format_duration(600) == "about 10 minutes"

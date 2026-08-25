@@ -53,10 +53,27 @@ reads 2 other workbook(s): Rates.xlsx, Old.xlsx
 ceilings: 64,000,000 cells and 400 nodes per sheet
 ```
 
+The last line is an estimate, derived from how much formula the file holds.
+It is an order of magnitude, not a stopwatch reading — a workbook of mostly
+values finishes faster than it says.
+
 Everything there is read from the package headers, so it costs nothing.
 Declared sizes, not real ones — a sheet claiming 17 billion cells holds
 nothing of the sort, and saying so is the point: one stray cell in the far
 corner is what makes an otherwise ordinary file slow.
+
+You do not have to ask, either. Any run whose estimate passes a few seconds
+says so before it starts:
+
+```
+16 MB of formulas: this should take about 10 seconds. --dry-run says what is
+in the file without analysing it; -v shows progress.
+```
+
+Smaller files say nothing — a notice on every run is a notice people learn to
+skip. It reads the zip index and nothing else, so it costs about a twentieth
+of a millisecond, and it goes to stderr like everything else that is not the
+report.
 
 ## Watching it run
 
