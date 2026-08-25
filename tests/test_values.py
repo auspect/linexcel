@@ -952,3 +952,127 @@ class TestUncomputableFormulas:
         )["steps"]
         assert steps["evaluated"] is False
         assert steps["value"] is None
+
+
+class TestReadingsAgree:
+    """One rule for "do these two readings of a cell say the same thing?".
+
+    It used to be two, and they contradicted each other: Python returned "no
+    difference" for every pair of strings — missing a recalculated `non` over
+    a stored `oui` — while the viewer called any difference a disagreement,
+    which lit up a French workbook over `6,7 €`.
+    """
+
+    from linexcel.values import readings_agree as _agree
+
+    @pytest.mark.parametrize(
+        ("recalculated", "stored", "verdict"),
+        [
+            # the same value, written by two machines with different habits
+            ("6.7 €", "6,7 €", "format"),
+            ("6.7", "6,7", "format"),
+            ("Total : 1234.5", "Total : 1 234,5", "format"),  # espace insécable
+            ("1234.5", "1.234,5", "format"),  # German grouping
+            ("1234.5", "1'234.5", "format"),  # Swiss grouping
+            ("A 1,5 B", "A 1.5 B", "format"),
+            # the same value, written the same way
+            ("Réf. 12", "Réf. 12", "same"),
+            (6.7, 6.7, "same"),
+            # genuinely not the same
+            ("oui", "non", "differ"),
+            ("6.7 €", "6.8 €", "differ"),
+            (6.7, 6.8, "differ"),
+            # a comma that separates words, not decimals
+            ("oui, non", "oui. non", "differ"),
+            # the text around the numbers has to match
+            ("6.7 €", "6,7 $", "differ"),
+        ],
+    )
+    def test_the_verdict(self, recalculated, stored, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(recalculated, stored, None) == verdict
+
+    def test_a_text_disagreement_is_finally_reported(self):
+        """It never was: the old comparison returned False for any two strings."""
+        from linexcel.values import readings_agree
+
+        assert readings_agree("oui", "non", None) == "differ"
+
+    def test_a_number_of_digits_that_differs_is_not_a_formatting_quirk(self):
+        from linexcel.values import readings_agree
+
+        assert readings_agree("1 2", "12", None) == "differ"
+
+
+def with_stored_results(data: bytes, cells: dict[str, str]) -> bytes:
+    """Give formula cells the result a spreadsheet application would have stored.
+
+    openpyxl writes formulas and an empty ``<v/>``: a generated fixture has no
+    stored results at all, so the whole file-against-recalculated comparison
+    has nothing to compare. Filling that element is what a real Excel does on
+    save, and it is the only way to exercise the comparison without one —
+    including the case that started this, a French Excel storing ``6,7 €``.
+    """
+    import re as _re
+    import zipfile
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            blob = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                xml = blob.decode("utf-8")
+                for address, text in cells.items():
+                    xml = _re.sub(
+                        rf'<c r="{address}"([^>]*)>(<f>.*?</f>)\s*<v\s*/>',
+                        rf'<c r="{address}"\g<1> t="str">\g<2><v>{text}</v>',
+                        xml,
+                    )
+                blob = xml.encode("utf-8")
+            dst.writestr(item, blob)
+    return out.getvalue()
+
+
+class TestAFrenchWorkbookEndToEnd:
+    """The case a human found by saving a file in Excel and opening the report."""
+
+    @staticmethod
+    def workbook() -> bytes:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = 6.7
+        ws["B1"] = '=A1&" €"'
+        ws["B2"] = '=IF(A1>5,"oui","non")'
+        buf = io.BytesIO()
+        wb.save(buf)
+        # what a French Excel would have written into the file
+        return with_stored_results(buf.getvalue(), {"B1": "6,7 €", "B2": "non"})
+
+    def test_a_comma_against_a_dot_is_not_a_divergence(self):
+        from linexcel import analyze
+
+        result = analyze(self.workbook(), filename="fr.xlsx")
+        node = next(n for n in result.nodes if n.get("addr") == "B1")
+        assert node["value"] == "6.7 €"
+        assert node["cachedValue"] == "6,7 €"
+        assert node["cachedAgreement"] == "format"
+
+    def test_and_raises_no_warning(self):
+        from linexcel import analyze
+
+        result = analyze(self.workbook(), filename="fr.xlsx")
+        assert not [w for w in result.warnings if "B1" in w]
+
+    def test_a_text_that_really_differs_is_reported(self):
+        """Which it never was: the old rule ignored every pair of strings."""
+        from linexcel import analyze
+
+        result = analyze(self.workbook(), filename="fr.xlsx")
+        node = next(n for n in result.nodes if n.get("addr") == "B2")
+        assert node["cachedAgreement"] == "differ"
+        (warning,) = [w for w in result.warnings if "B2" in w]
+        assert "oui" in warning and "non" in warning

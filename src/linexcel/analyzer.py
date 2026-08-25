@@ -65,7 +65,7 @@ from linexcel.values import (
     _fmt_value,
     _is_uncomputed,
     _jsonable,
-    _values_differ,
+    readings_agree,
     serial_to_date_text,
 )
 from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
@@ -241,6 +241,9 @@ class _ValueResolver:
         cached = self.cached_value(sheet, row, col)
         if cached is not None:
             fields["cachedValue"] = cached
+            # Decided here rather than in the viewer's JavaScript: the same
+            # question was being answered twice, with two different answers.
+            fields["cachedAgreement"] = readings_agree(value, cached, date_text)
         if date_text is not None:
             fields["valueDate"] = date_text
         return fields
@@ -617,7 +620,7 @@ class _ValueResolver:
             return
         self._compared.add(key)
         cached = self.cached.get(sheet, row, col)
-        if cached is None or not _values_differ(raw, cached, date_text):
+        if cached is None or readings_agree(raw, cached, date_text) != "differ":
             return
         self._n_mismatches += 1
         if self._n_mismatches > MAX_VALUE_WARNINGS:
