@@ -1524,7 +1524,16 @@
       file: stored ? shown : cached,
       calc: (stored || !hasValue) ? null : shown,
       comparable: comparable,
-      agree: comparable && (!!sameDate || cached === shown)
+      // The verdict is decided in Python and travels with the node, so the
+      // two sides of the report cannot disagree about what a disagreement is.
+      // 'format' means the same value written with another locale's
+      // separators — 6,7 € against 6.7 € — which is not a divergence.
+      // The fallback is for a report written by an older version.
+      agreement: o.cachedAgreement ||
+        ((!!sameDate || cached === shown) ? 'same' : 'differ'),
+      agree: comparable &&
+        (o.cachedAgreement ? o.cachedAgreement !== 'differ'
+                           : (!!sameDate || cached === shown))
     };
   }
 
@@ -1544,10 +1553,15 @@
     var card = el('div', 'lin-vcard');
     if (comparable.length) {
       var agree = comparable.every(function (r) { return r.agree; });
+      // Same value, other separators: worth saying, and worth not shouting.
+      var formatted = agree && comparable.some(function (r) {
+        return r.agreement === 'format';
+      });
       if (!agree) card.className = 'lin-vcard is-diff';
       var verdict = el('div', 'lin-verdict');
       verdict.appendChild(icon(agree ? 'check' : 'warn'));
-      verdict.appendChild(document.createTextNode(_t(agree ? 'value_match' : 'value_mismatch')));
+      verdict.appendChild(document.createTextNode(
+        _t(!agree ? 'value_mismatch' : formatted ? 'value_match_format' : 'value_match')));
       card.appendChild(verdict);
     } else if (main.source === 'fallback') {
       card.className = 'lin-vcard is-guarded';

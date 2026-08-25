@@ -190,7 +190,7 @@ class TestReadVersusRecalculated:
         html = render_html(graph(value=42, cachedValue=42, valueSource="engine"))
         assert EN["value_match"] == "The recalculated value matches the file"
         assert EN["value_match"] in html
-        assert "_t(agree ? 'value_match' : 'value_mismatch')" in html
+        assert "'value_mismatch' : formatted ? 'value_match_format'" in html
 
     def test_a_disagreement_is_loud(self):
         html = render_html(graph(value=42, cachedValue=41, valueSource="engine"))
@@ -226,7 +226,7 @@ class TestReadVersusRecalculated:
             graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-07")
         )
         assert "o.cachedValue.slice(0, 10) === dateText;" in html
-        assert "agree: comparable && (!!sameDate || cached === shown)" in html
+        assert "(!!sameDate || cached === shown)" in html
         assert '"cachedValue": "2026-08-07"' in html
 
     def test_a_genuinely_different_cached_date_still_flags(self):
@@ -917,3 +917,48 @@ class TestIframeWrapping:
         decoded = base64.b64decode(payload).decode("utf-8")
         assert EN["value_from_file"] in decoded
         assert "2026-08-07" in decoded
+
+
+class TestSeparatorsAreNotADisagreement:
+    """`6,7 €` in the file against `6.7 €` recalculated is one value, not two.
+
+    The engine writes numbers with a dot because that is what engines do; a
+    workbook saved on a French machine stores a comma because that is what
+    that machine does. Reporting it as a divergence blames the workbook for a
+    regional setting — and it took a human opening a real French file to
+    notice, because nothing in the suite spoke anything but English.
+    """
+
+    def test_the_verdict_travels_with_the_node(self):
+        html = render_html(
+            graph(value="6.7 €", cachedValue="6,7 €", cachedAgreement="format")
+        )
+        assert '"cachedAgreement": "format"' in html
+
+    def test_the_viewer_trusts_it_rather_than_comparing_the_text_itself(self):
+        html = render_html(graph(value="6.7 €", cachedValue="6,7 €"))
+        assert "o.cachedAgreement ? o.cachedAgreement !== 'differ'" in html
+
+    def test_a_formatting_difference_is_named_rather_than_flagged(self):
+        html = render_html(
+            graph(value="6.7 €", cachedValue="6,7 €", cachedAgreement="format")
+        )
+        assert EN["value_match_format"] in html
+        assert "up to number formatting" in EN["value_match_format"]
+
+    def test_a_real_difference_is_still_loud(self):
+        html = render_html(
+            graph(value="oui", cachedValue="non", cachedAgreement="differ")
+        )
+        assert EN["value_mismatch"] in html
+
+    def test_a_report_from_an_older_version_still_renders(self):
+        """No cachedAgreement: fall back to comparing the text, as before."""
+        html = render_html(graph(value=42, cachedValue=42, valueSource="engine"))
+        assert "(!!sameDate || cached === shown)" in html
+
+    def test_every_language_defines_the_third_verdict(self):
+        from linexcel.i18n import LANGUAGES, UI_STRINGS
+
+        for language in LANGUAGES:
+            assert UI_STRINGS[language]["value_match_format"], language

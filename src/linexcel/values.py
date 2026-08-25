@@ -14,6 +14,7 @@ them.
 from __future__ import annotations
 
 import datetime
+import re
 from typing import Any
 
 EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
@@ -142,3 +143,106 @@ def _jsonable(value):
     if error_text is not None:
         return error_text
     return str(value)
+
+
+# ──────────────────────────────────────────────
+# Two readings of the same cell, written differently
+# ──────────────────────────────────────────────
+
+#: A number as some spreadsheet somewhere writes it: digits, with runs
+#: separated by a group mark — space, non-breaking space, narrow no-break
+#: space, apostrophe, dot or comma — and possibly a decimal mark.
+_NUMBER_RE = re.compile(r"\d[\d   '.,]*\d|\d")
+#: Marks a spreadsheet may use to group digits. The dot and the comma are in
+#: here too: which of the two groups and which one separates the decimal part
+#: is exactly what changes from one regional setting to the next.
+_GROUP_MARKS = " \u00a0\u202f'.,"
+#: Digits grouped the way every convention groups them — three at a time.
+_GROUPED_RE = re.compile(r"^\d{1,3}(?:[ \u00a0\u202f'.,]\d{3})*$|^\d+$")
+
+
+def _read_number(text: str) -> set[float]:
+    """Every value ``text`` could be, read as a number.
+
+    A set, because some spellings are genuinely ambiguous: ``1,234`` is a
+    thousand-and-something to an English reader and one-point-two-three-four
+    to a French one, and nothing in the string says which. Returning both is
+    what lets the caller ask "could these two be the same number?" without
+    pretending to know a locale the file never recorded.
+
+    Grouping is held to the convention it comes from — groups of exactly
+    three digits. Without that, ``1 2`` reads as twelve, and two genuinely
+    different texts would be called one value written two ways.
+    """
+    readings: set[float] = set()
+    for decimal_mark in (".", ","):
+        parts = text.split(decimal_mark)
+        if len(parts) > 2:
+            continue
+        whole, fraction = parts[0], parts[1] if len(parts) == 2 else ""
+        if fraction and not fraction.isdigit():
+            continue
+        if not _GROUPED_RE.match(whole):
+            continue
+        digits = whole
+        for mark in _GROUP_MARKS:
+            digits = digits.replace(mark, "")
+        try:
+            readings.add(float(f"{digits}.{fraction}" if fraction else digits))
+        except ValueError:
+            continue
+    return readings
+
+
+def _separators_only(left: str, right: str) -> bool:
+    """True when two strings differ in nothing but how numbers are written.
+
+    ``6.7 €`` against ``6,7 €``: linexcel computed with a dot because that is
+    what the engine does, and the file stores a comma because that is what the
+    machine that saved it does. The cell is right both times, and calling it a
+    disagreement blames the workbook for a regional setting.
+
+    The text around the numbers must match exactly — this is not a fuzzy
+    comparison. Only the numbers are read leniently, and only in the sense of
+    "is there a reading under which these are the same value".
+    """
+    left_numbers = list(_NUMBER_RE.finditer(left))
+    right_numbers = list(_NUMBER_RE.finditer(right))
+    if len(left_numbers) != len(right_numbers):
+        return False
+    if _NUMBER_RE.sub("#", left) != _NUMBER_RE.sub("#", right):
+        return False
+    if not left_numbers:
+        return False  # no numbers at all: the strings simply differ
+    return all(
+        _read_number(a.group()) & _read_number(b.group())
+        for a, b in zip(left_numbers, right_numbers)
+    )
+
+
+def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str:
+    """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
+
+    One rule, in one place. The report used to hold two: Python compared
+    values for the warnings and returned "no difference" for every pair of
+    strings — missing a recalculated ``non`` over a stored ``oui`` — while the
+    viewer compared the rendered text and called any difference a
+    disagreement, which is what made a French workbook light up red over
+    ``6,7 €``.
+
+    ``format`` is the middle answer neither of them had: the same value, spelt
+    with the separators of whatever saved the file. Both readings are still
+    shown; only the verdict softens.
+    """
+    if _values_differ(recalculated, stored, date_text):
+        return "differ"
+    left, right = _fmt_value(recalculated), _fmt_value(stored)
+    if left == right:
+        return "same"
+    if _separators_only(left, right):
+        return "format"
+    return (
+        "differ"
+        if isinstance(recalculated, str) and isinstance(stored, str)
+        else "same"
+    )
