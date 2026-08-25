@@ -139,6 +139,47 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _format_duration(seconds: float) -> str:
+    """An order of magnitude, not a stopwatch reading.
+
+    The estimate is derived from how much formula the file holds, on one
+    machine; quoting it to the second would claim a precision it does not
+    have, on hardware it knows nothing about.
+    """
+    if seconds < 90:
+        return f"about {round(seconds / 5) * 5 or 5} seconds"
+    return f"about {round(seconds / 60)} minute" + ("s" if seconds >= 90 else "")
+
+
+def _warn_if_long(workbook: Path) -> None:
+    """Say how long this is likely to take, before it starts taking it.
+
+    Reads the zip index and nothing else — the uncompressed size of the sheet
+    parts is in the central directory, so this costs about a twentieth of a
+    millisecond. Silence under a few seconds: a heads-up on every small file
+    would be noise, and noise is what people learn to skip.
+    """
+    from linexcel.analyzer import (
+        SECONDS_PER_SHEET_MB,
+        WORTH_MENTIONING_SECONDS,
+        sheet_bytes,
+    )
+
+    try:
+        weight = sheet_bytes(workbook.read_bytes())
+    except OSError:
+        return  # the analysis itself will report this properly
+    seconds = weight / 1_048_576 * SECONDS_PER_SHEET_MB
+    if seconds < WORTH_MENTIONING_SECONDS:
+        return
+    print(
+        f"{weight / 1_048_576:.0f} MB of formulas: this should take "
+        f"{_format_duration(seconds)}. --dry-run says what is in the file "
+        f"without analysing it; -v shows progress.",
+        file=sys.stderr,
+    )
+
+
 def _report_dry_run(workbook: Path, facts: dict) -> None:
     """Print what the file claims, and what that means for the run.
 
@@ -170,6 +211,12 @@ def _report_dry_run(workbook: Path, facts: dict) -> None:
         f"ceilings: {ceilings['cellsPerSheet']:,} cells and "
         f"{ceilings['nodesPerSheet']:,} nodes per sheet"
     )
+    seconds = facts["estimatedSeconds"]
+    print(
+        f"analysing it should take {_format_duration(seconds)}"
+        if seconds >= 1
+        else "analysing it should take a moment"
+    )
 
 
 def _run_analyze(args: argparse.Namespace) -> int:
@@ -179,6 +226,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
     if args.dry_run:
         _report_dry_run(args.workbook, inspect_workbook(args.workbook.read_bytes()))
         return 0
+    _warn_if_long(args.workbook)
 
     if args.vision_docs and args.screenshots is None:
         raise ValueError(

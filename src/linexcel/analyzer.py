@@ -775,6 +775,37 @@ def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
 
+#: Seconds per megabyte of uncompressed sheet XML. Measured across workbooks
+#: from a thousand cells to two hundred thousand formulas, where the cost per
+#: byte stays near enough constant to be worth quoting: what an analysis
+#: really costs tracks how much formula there is to read, and that is what the
+#: sheet parts weigh. A file of mostly values is faster than this says, which
+#: is the right direction for a warning to be wrong in.
+SECONDS_PER_SHEET_MB = 0.5
+#: Below this the estimate is noise and nobody was going to wait anyway.
+WORTH_MENTIONING_SECONDS = 5.0
+
+_SHEET_PART_RE = re.compile(r"xl/worksheets/sheet\d+\.xml")
+
+
+def sheet_bytes(data: bytes) -> int:
+    """Uncompressed weight of the sheet parts, without unpacking one.
+
+    The zip central directory carries each entry's real size, so this costs a
+    read of the index — microseconds on a file that takes minutes to analyse.
+    That is the whole point: an estimate nobody waits for.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return sum(
+                entry.file_size
+                for entry in zf.infolist()
+                if _SHEET_PART_RE.fullmatch(entry.filename)
+            )
+    except Exception:
+        return 0
+
+
 def inspect_workbook(data: bytes) -> dict[str, Any]:
     """What the file says about itself, before anything analyses it.
 
@@ -808,8 +839,11 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
     finally:
         owb.close()
     books = read_external_links(data)
+    weight = sheet_bytes(data)
     return {
         "bytes": len(data),
+        "sheetBytes": weight,
+        "estimatedSeconds": round(weight / 1_048_576 * SECONDS_PER_SHEET_MB, 1),
         "sheets": sheets,
         "declaredCells": sum(s["cells"] for s in sheets),
         "externalWorkbooks": [b.name for b in books.values()],
