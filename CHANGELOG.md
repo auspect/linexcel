@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-25
+
+### Fixed
+
+- **A comma where the engine writes a dot is no longer a divergence.** A
+  workbook saved by a French Excel stores `6,7 €`, linexcel recalculates
+  `6.7 €`, and the report used to show a red disagreement on a cell that is
+  right — the separator comes from the regional settings of the machine that
+  saved the file, and is written nowhere in it. Underneath were two
+  contradictory comparisons: the Python one returned "no difference" for
+  *every* pair of strings, so a recalculated `oui` over a stored `non` raised
+  no warning at all, while the viewer compared rendered text and called any
+  difference a disagreement. There is now one rule, with three answers —
+  `same`, `format` (the same value written with another locale's separators)
+  and `differ` — decided once and carried on the node as `cachedAgreement`.
+  German `1.234,5` and Swiss `1'234.5` grouping are read too; grouping is held
+  to groups of three digits, so `Salle 1 2` against `Salle 12` stays a
+  disagreement. Both readings are still shown side by side; only the verdict
+  changes, and the card names the case.
+- **A text result that genuinely differs is now reported.** It never was: the
+  old comparison ignored every pair of strings. Expect warnings on workbooks
+  that were silent before — they were silent wrongly.
+
+### Added
+
+- **A run that will be long says so before it starts.** Past a few seconds,
+  the estimate is printed and the two ways out are named:
+
+      16 MB of formulas: this should take about 10 seconds. --dry-run says
+      what is in the file without analysing it; -v shows progress.
+
+  It comes from the uncompressed weight of the sheet parts, which the zip
+  index already carries, so asking costs about a twentieth of a millisecond
+  and every run can afford to. An order of magnitude, not a stopwatch reading:
+  it knows nothing about the machine it runs on, and a workbook of mostly
+  values finishes faster than it says. Smaller files say nothing. `--dry-run`
+  states the estimate too, and `inspect_workbook()` returns it as
+  `estimatedSeconds` alongside the new `sheetBytes`.
+- `linexcel.analyzer.sheet_bytes()`: the uncompressed size of a workbook's
+  sheet parts, read from the zip index without unpacking one.
+
 ## [1.3.2] — 2026-08-23
 
 Housekeeping. Nothing an analysis does changes: the reports this version
