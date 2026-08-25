@@ -944,7 +944,7 @@ class TestSeparatorsAreNotADisagreement:
             graph(value="6.7 €", cachedValue="6,7 €", cachedAgreement="format")
         )
         assert EN["value_match_format"] in html
-        assert "up to number formatting" in EN["value_match_format"]
+        assert "different number separators" in EN["value_match_format"]
 
     def test_a_real_difference_is_still_loud(self):
         html = render_html(
@@ -962,3 +962,18 @@ class TestSeparatorsAreNotADisagreement:
 
         for language in LANGUAGES:
             assert UI_STRINGS[language]["value_match_format"], language
+
+
+def test_no_verdict_label_outgrows_the_badge_it_sits_in():
+    """Three verdicts share one line beside an icon; a sentence does not fit.
+
+    The first draft of the third one ran to 111 characters in German and
+    failed the lint before it failed the eye — both were telling the same
+    thing.
+    """
+    from linexcel.i18n import LANGUAGES, UI_STRINGS
+
+    for language in LANGUAGES:
+        strings = UI_STRINGS[language]
+        for key in ("value_match", "value_match_format", "value_mismatch"):
+            assert len(strings[key]) <= 60, f"{language}/{key}: {strings[key]}"
