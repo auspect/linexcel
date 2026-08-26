@@ -151,6 +151,7 @@ class TestSayingHowLongItWillTake:
         err = capsys.readouterr().err
         assert "200 MB of formulas" in err
         assert "about 2 minutes" in err
+        assert "a floor, not a promise" in err
 
     def test_it_goes_to_stderr_so_a_piped_report_stays_clean(
         self, workbook_path, monkeypatch, capsys
@@ -163,14 +164,14 @@ class TestSayingHowLongItWillTake:
         assert "should take" in captured.err
         assert "should take" not in captured.out
 
-    def test_it_names_the_two_ways_out(self, workbook_path, monkeypatch, capsys):
+    def test_it_names_the_ways_out(self, workbook_path, monkeypatch, capsys):
         """Someone told a run will be long wants to know what else they can do."""
         from linexcel import analyzer
 
         monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
         main(["analyze", str(workbook_path), "--no-html"])
         err = capsys.readouterr().err
-        assert "--dry-run" in err and "-v" in err
+        assert "--time-budget" in err and "-v" in err
 
     def test_the_dry_run_states_it_too(self, workbook_path, capsys):
         main(["analyze", str(workbook_path), "--dry-run"])

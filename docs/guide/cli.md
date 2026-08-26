@@ -54,8 +54,16 @@ ceilings: 64,000,000 cells and 400 nodes per sheet
 ```
 
 The last line is an estimate, derived from how much formula the file holds.
-It is an order of magnitude, not a stopwatch reading — a workbook of mostly
-values finishes faster than it says.
+Treat it as a floor rather than a promise: it counts how much formula there
+is, not how much those formulas depend on one another, and that is what
+actually costs. A workbook of running totals — every cell summing everything
+above it — can take many times what it says, because each step evaluation
+makes the engine walk the whole dependency graph.
+
+That case is bounded rather than left to run: past `--time-budget` seconds
+(300 by default) the step-by-step decomposition stops, cells keep their values
+and lose only their breakdown, and the report says so. `-v` shows which node
+it is on, so a long run is visibly advancing rather than apparently stuck.
 
 Everything there is read from the package headers, so it costs nothing.
 Declared sizes, not real ones — a sheet claiming 17 billion cells holds
@@ -96,6 +104,7 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 | `--refs-dir DIR` | Folder holding the workbooks this one links to, and the add-ins whose VBA it calls. Without it a cell reading another file is named, never resolved — see [Other workbooks](coverage.md#other-workbooks). |
 | `--screenshots DIR` | Render each sheet to a PNG and show it in the report. Needs LibreOffice and Poppler; see [Screenshots](context.md#screenshots). |
 | `-v`, `--verbose` | Progress while it runs, and per-phase timing, on stderr. |
+| `--time-budget SECONDS` | Ceiling on the step-by-step decomposition (default 300). Past it, cells keep their values and lose only their breakdown, and the report says so. |
 | `--dry-run` | Say what the file declares — sheets, declared size, linked workbooks, the ceilings that will apply — and stop without analysing it. |
 
 ## AI documentation

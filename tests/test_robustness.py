@@ -192,3 +192,109 @@ class TestTheTwoCeilings:
         warnings: list[str] = []
         load_cached_values(workbook({"A1": 1, "J40": 2}), warnings)
         assert warnings == []
+
+
+class TestTheDecompositionIsBoundedInTime:
+    """A count of evaluations cannot bound a run. Only a clock can.
+
+    `MAX_SCRATCH_EVALS` was meant to stop the step decomposition running away,
+    and `preload_steps` — added later to batch the calls — never took from it.
+    Worse, the count was the wrong unit: each evaluation asks the engine to
+    walk the dirty dependency graph, so on a workbook of running totals one
+    call costs O(graph) and four thousand of them outlast anybody's patience.
+    Someone waited three hours on an estimate of four minutes.
+    """
+
+    @staticmethod
+    def running_totals(rows: int = 300) -> bytes:
+        """Every cell sums everything above it, and one reference is dead."""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["Z1"] = "=Ghost!A1"
+        for r in range(1, rows + 1):
+            ws.cell(row=r, column=1, value=f"=SUM(A1:A{max(1, r - 1)}) + Z1")
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_a_ceiling_of_zero_still_produces_a_report(self):
+        rows_plus_the_dead_one = 301
+        result = analyze(self.running_totals(), filename="x.xlsx", step_seconds=0)
+        assert result.stats["totalFormulas"] == rows_plus_the_dead_one
+        assert len(result.nodes) > 1
+
+    def test_the_breakdown_is_what_gets_dropped(self):
+        """Not the analysis: the graph, the edges and the values are all there.
+
+        On a workbook the engine *can* compute, so that the difference the
+        ceiling makes is visible rather than hidden behind a dead reference.
+        """
+        book = workbook({"A1": 2, "A2": 3, "A3": "=(A1+A2)*2"})
+        cut = analyze(book, filename="x.xlsx", step_seconds=0)
+        whole = analyze(book, filename="x.xlsx")
+
+        assert len(cut.nodes) == len(whole.nodes)
+        assert len(cut.edges) == len(whole.edges)
+        # the value of the cell survives; only its decomposition does not
+        assert self.value_of(cut, "A3") == self.value_of(whole, "A3") == 10
+        cut_root = next(n["steps"] for n in cut.nodes if n.get("addr") == "A3")
+        # the root step keeps its value — it is the cell's own, and needs no
+        # scratch pass — while the sub-steps below it go
+        assert self.evaluated_steps(cut) < self.evaluated_steps(whole)
+        assert cut_root["evaluated"] is True
+
+    @staticmethod
+    def value_of(result, addr):
+        return next(n["value"] for n in result.nodes if n.get("addr") == addr)
+
+    @staticmethod
+    def evaluated_steps(result) -> int:
+        def walk(step):
+            if not step:
+                return 0
+            return bool(step.get("evaluated")) + sum(
+                walk(c) for c in step.get("children", [])
+            )
+
+        return sum(walk(n.get("steps")) for n in result.nodes)
+
+    def test_the_report_says_it_stopped_and_why(self):
+        result = analyze(self.running_totals(), filename="x.xlsx", step_seconds=0)
+        (warning,) = [w for w in result.warnings if "decomposition stopped" in w]
+        assert "--time-budget" in warning
+
+    def test_the_batch_path_takes_from_the_budget(self):
+        """The call it slipped past for two releases."""
+        from linexcel.analyzer import _Budget
+
+        budget = _Budget(10)
+        assert budget.take(4) is True
+        assert budget.left == 6
+        assert budget.take(20) is False
+        assert budget.spent == "calls"
+
+    def test_a_batch_too_big_is_refused_without_poisoning_the_rest(self):
+        """One node asking for more than is left must not starve the next."""
+        from linexcel.analyzer import _Budget
+
+        budget = _Budget(1)
+        assert budget.take(5) is False
+        assert budget.take(1) is True
+
+    def test_a_deadline_stops_the_decomposition_and_not_the_values(self):
+        """The distinction the zero-deadline test was written to hold."""
+        from linexcel.analyzer import _Budget
+
+        budget = _Budget(10_000, seconds=0)
+        assert budget.expired is True
+        assert budget.spent == "time"
+        # value recovery goes on: it is the answer, not the detail
+        assert budget.take() is True
+
+    def test_a_budget_with_room_says_nothing(self):
+        from linexcel.analyzer import _Budget
+
+        budget = _Budget(10, seconds=60)
+        assert budget.take(3) is True
+        assert budget.warning() is None

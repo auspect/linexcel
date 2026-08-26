@@ -240,6 +240,24 @@ def links_big_ref(d: Path) -> Built:
 # ──────────────────────────────────────────────
 
 
+def dense_chain_broken_ref(d: Path) -> Built:
+    """Running totals over a sheet holding one unresolvable reference.
+
+    The shape #65 predicted and a user hit: every cell sums everything above
+    it, so the dependency graph is dense, and one dead reference sends each
+    cell through the recovery path. Each step evaluation then costs the engine
+    a walk of that graph — quadratic, and quiet about it. Three hours on a
+    file whose estimate said four minutes.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "S"
+    ws["Z1"] = "=Ghost!A1"
+    for r in range(1, 601):
+        ws.cell(row=r, column=1, value=f"=SUM(A1:A{max(1, r - 1)}) + Z1")
+    return _save(wb, d / "main.xlsx"), None
+
+
 def main_not_a_workbook(d: Path) -> Built:
     path = d / "main.xlsx"
     path.write_text("this is a CSV someone renamed\n", encoding="utf-8")
@@ -348,6 +366,11 @@ SCENARIOS = [
         "main-declared-used-range",
         "a stray cell at XFD1048576",
         main_declared_used_range,
+    ),
+    Scenario(
+        "dense-chain-broken-ref",
+        "running totals plus one dead reference",
+        dense_chain_broken_ref,
     ),
     Scenario("main-deep-chain", "5,000 cells in one dependency chain", main_deep_chain),
     Scenario("main-many-sheets", "150 sheets, each reading the last", main_many_sheets),
