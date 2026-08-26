@@ -45,6 +45,7 @@ from linexcel.loader import (
     MAX_CELLS_PER_SHEET,
     MAX_DENSE_CELLS,
     CachedValues,
+    _stepped,
     declared_cells,
     load_cached_values,
 )
@@ -80,6 +81,14 @@ SMALL_RANGE_CELLS = 20_000
 MAX_NODES_PER_SHEET = 400
 MAX_STEPS_PER_FORMULA = 48
 MAX_SCRATCH_EVALS = 4_000
+#: Wall-clock ceiling on the step decomposition, in seconds. A count of
+#: evaluations cannot bound time: each one asks the engine to walk the dirty
+#: dependency graph, so on a workbook of cumulative sums — running totals, the
+#: most ordinary thing a spreadsheet does — one evaluation costs O(graph) and
+#: the count budget expires hours after anyone stopped waiting. This is the
+#: bound that holds whatever the file looks like. Past it, cells keep their
+#: values and lose only their step-by-step breakdown, and the report says so.
+DEFAULT_STEP_SECONDS = 300.0
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
 MAX_QUERY_CODE_CHARS = 6_000
@@ -136,14 +145,65 @@ class FormulaGroup:
 
 
 class _Budget:
-    def __init__(self, limit: int):
-        self.left = limit
+    """What the step decomposition is allowed to spend, in calls and in time.
 
-    def take(self) -> bool:
-        if self.left <= 0:
+    The count came first and is not enough on its own: it bounds how many
+    expressions are evaluated, not how long one takes, and a dense dependency
+    graph makes each one arbitrarily expensive. Both are checked, and either
+    running out ends the decomposition — not the analysis, which finishes with
+    values intact and a warning naming what it stopped doing.
+    """
+
+    def __init__(self, limit: int, seconds: float | None = None) -> None:
+        self.left = limit
+        self.seconds = seconds
+        self.deadline = None if seconds is None else time.monotonic() + seconds
+        #: Which of the two ran out, for the warning to be able to say.
+        self.spent: str | None = None
+
+    def take(self, count: int = 1) -> bool:
+        """Claim ``count`` evaluations, or refuse once the count is gone.
+
+        Deliberately not time-bounded. This is the path that *recovers values*
+        — the core of a report — and a clock that stopped it would trade the
+        answer for the speed of getting it. Only the decomposition, which
+        produces detail on top of an answer already found, honours the
+        deadline; a test that asserted values survive a zero deadline is what
+        caught the two being confused.
+        """
+        if self.left < count:
+            self.spent = self.spent or "calls"
             return False
-        self.left -= 1
+        self.left -= count
         return True
+
+    @property
+    def expired(self) -> bool:
+        """True once the decomposition has spent its wall-clock allowance."""
+        if self.deadline is None:
+            return False
+        if time.monotonic() > self.deadline:
+            self.spent = "time"
+            return True
+        return False
+
+    def warning(self) -> str | None:
+        """What to tell someone whose report is missing its decompositions."""
+        if self.spent is None:
+            return None
+        reason = (
+            f"{self.seconds:.0f}s spent on it"
+            if self.spent == "time"
+            else f"{MAX_SCRATCH_EVALS:,} evaluations"
+        )
+        return (
+            f"Step-by-step decomposition stopped after {reason}: the cells "
+            f"past that point keep their values and show no breakdown. This "
+            f"happens on workbooks whose formulas depend on each other in long "
+            f"chains — running totals, for instance — where each step costs "
+            f"the engine a walk of the whole graph. Raise it with "
+            f"--time-budget, or read the report as it is."
+        )
 
 
 class _ValueResolver:
@@ -368,7 +428,14 @@ class _ValueResolver:
         A step the engine cannot compute reads back as *not evaluated* rather
         than as an error: "#NULL!" under a step is the spreadsheet's own verdict
         on the formula, and the engine hitting its own limit is not that.
+
+        This is the one door into the scratch sheet that the decomposition
+        uses, and so the one place the wall-clock ceiling belongs. Gating the
+        batch alone left the slow path running, which bounded the fast half of
+        a runaway and none of the slow one.
         """
+        if self.budget.expired:
+            return None, False
         raw, ok = self._eval_raw(expr, sheet)
         if _is_uncomputed(raw):
             return None, False
@@ -439,6 +506,12 @@ class _ValueResolver:
             targets.append((SCRATCH_SHEET, 2, i + 1))
             valid.append(e)
         if not targets:
+            return
+        # Claim the batch before running it. This call was invisible to the
+        # budget: one evaluate_cells per node, each walking the dirty graph,
+        # is exactly the work the budget exists to bound — and skipping it is
+        # how a 4,000-evaluation ceiling turned into three hours.
+        if self.budget.expired or not self.budget.take(len(targets)):
             return
         try:
             results = self.engine.evaluate_cells(targets)
@@ -862,6 +935,7 @@ def analyze_workbook(
     *,
     verbose: bool = False,
     refs_dir: str | Path | None = None,
+    step_seconds: float | None = DEFAULT_STEP_SECONDS,
 ) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine.
 
@@ -907,7 +981,6 @@ def analyze_workbook(
     # dates and of what the user actually saw on screen
     _t = time.perf_counter()
     cached = load_cached_values(data, warnings, reporter)
-    _v("cached_values", _t)
 
     # --- 2. computation engine -------------------------------------------
     _t = time.perf_counter()
@@ -957,7 +1030,7 @@ def analyze_workbook(
     table_index = _build_table_index(data, engine, sheet_dims, engine_sheets)
     _v("tables", _t)
 
-    budget = _Budget(MAX_SCRATCH_EVALS)
+    budget = _Budget(MAX_SCRATCH_EVALS, step_seconds)
     resolver = _ValueResolver(
         engine,
         engine_sheets,
@@ -1042,7 +1115,6 @@ def analyze_workbook(
             _bar.step(f"sweeping {sheet}")
 
     # --- 4. formula nodes -------------------------------------------------
-    _v("extraction+grouping", _t)
     _t = time.perf_counter()
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -1233,7 +1305,14 @@ def analyze_workbook(
             resolve_rect_edges(rect, node_id, kind="name")
 
     # formula nodes + edges -------------------------------------------------
-    for node_id, grp in kept_groups:
+    # Reported one node at a time: this is where a dense workbook spends its
+    # minutes, and where a run that looks stuck actually is. A phase that
+    # prints only when it ends cannot tell anyone that.
+    for node_id, grp in _stepped(
+        reporter.phase("nodes+edges", total=len(kept_groups)),
+        kept_groups,
+        "building",
+    ):
         rep_r, rep_c = grp.rep
         formula = grp.formulas.get((rep_r, rep_c)) or next(iter(grp.formulas.values()))
         sheet = grp.sheet
@@ -1498,7 +1577,10 @@ def analyze_workbook(
         "nodes": list(nodes.values()),
         "edges": list(edges.values()),
     }
-    _v("nodes+edges+graph", _t)
+    exhausted = budget.warning()
+    if exhausted:
+        warnings.append(exhausted)
+    _v("graph", _t)
     if verbose:
         print(
             f"[linexcel] total: {time.perf_counter() - _t0:.1f}s | "

@@ -66,6 +66,7 @@ def analyze(
     *,
     verbose: bool = False,
     refs_dir: str | Path | None = None,
+    step_seconds: float | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -77,6 +78,12 @@ def analyze(
         Logical name (used for labels and VBA detection).
     verbose : bool, optional
         Print per-phase timing to stderr.
+    step_seconds : float, optional
+        Wall-clock ceiling on the step-by-step decomposition, in seconds
+        (default 300). Past it, cells keep their values and lose only their
+        breakdown, and a warning says so. ``None`` keeps the default; pass a
+        large number to let a dense workbook finish, or a small one to get a
+        report quickly.
     refs_dir : str | Path, optional
         Folder holding the workbooks this one links to, and the add-ins whose
         VBA it calls. Without it a cell reading ``'[Budget.xlsx]Annual'!B4`` is
@@ -87,8 +94,9 @@ def analyze(
     """
     data, name = _read_source(source, filename)
     try:
+        kwargs = {} if step_seconds is None else {"step_seconds": step_seconds}
         payload = analyze_workbook(
-            data, filename=name, verbose=verbose, refs_dir=refs_dir
+            data, filename=name, verbose=verbose, refs_dir=refs_dir, **kwargs
         )
     except Exception as exc:
         # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)

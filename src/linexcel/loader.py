@@ -231,8 +231,19 @@ def _stepped(phase_cm, items, verb: str):
     """
     with phase_cm as progress:
         for item in items:
-            progress.step(f"{verb} {getattr(item, 'title', item)}")
+            progress.step(f"{verb} {_label_of(item)}")
             yield item
+
+
+def _label_of(item) -> str:
+    """What to call one item on the progress line."""
+    title = getattr(item, "title", None)
+    if title is not None:
+        return str(title)
+    # (node id, group) pairs: the id is what a reader would recognise
+    if isinstance(item, tuple) and item:
+        return str(item[0])
+    return str(item)
 
 
 def _load_cached_values_openpyxl(

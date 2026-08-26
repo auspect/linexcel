@@ -76,6 +76,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze.add_argument(
+        "--time-budget",
+        type=float,
+        metavar="SECONDS",
+        help=(
+            "Ceiling on the step-by-step decomposition (default 300). Past it "
+            "cells keep their values and lose only their breakdown, and the "
+            "report says so. Raise it for a workbook of long formula chains; "
+            "0 skips the decomposition entirely."
+        ),
+    )
+    analyze.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -174,8 +185,10 @@ def _warn_if_long(workbook: Path) -> None:
         return
     print(
         f"{weight / 1_048_576:.0f} MB of formulas: this should take "
-        f"{_format_duration(seconds)}. --dry-run says what is in the file "
-        f"without analysing it; -v shows progress.",
+        f"{_format_duration(seconds)} — a floor, not a promise. It counts how "
+        f"much formula there is, not how much those formulas depend on each "
+        f"other, and a workbook of long chains takes far longer. -v shows "
+        f"progress; --time-budget caps the part that can run away.",
         file=sys.stderr,
     )
 
@@ -240,7 +253,10 @@ def _run_analyze(args: argparse.Namespace) -> int:
         )
 
     result = analyze_workbook(
-        args.workbook, verbose=args.verbose, refs_dir=args.refs_dir
+        args.workbook,
+        verbose=args.verbose,
+        refs_dir=args.refs_dir,
+        step_seconds=args.time_budget,
     )
 
     screenshots = None
