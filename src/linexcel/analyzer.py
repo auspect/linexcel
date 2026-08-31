@@ -1323,6 +1323,78 @@ def _process_vba(
     return vba_modules, vba_procs
 
 
+def _process_power_query(
+    data: bytes,
+    table_index: dict[str, list[dict[str, Any]]],
+    name_nodes: dict[str, str],
+    warnings: list[str],
+    builder: _GraphBuilder,
+) -> list[Query]:
+    """Extract Power Query queries and wire their source and load edges.
+
+    A range filled by a query has no formula above it, so without this the
+    graph shows where the data landed and nothing about where it came from.
+    """
+    queries = read_queries(data)
+    # Keyed on the exact name: M is case-sensitive, so folding here would let
+    # two queries that differ only in case collapse onto one node.
+    query_ids = {q.name: f"q:{q.name}" for q in queries}
+    tables_by_name = {
+        table["name"].casefold(): (sheet, table["ref"])
+        for sheet, entries in table_index.items()
+        for table in entries
+        if table.get("name") and table.get("ref")
+    }
+
+    for query in queries:
+        qid = query_ids[query.name]
+        builder.nodes[qid] = {
+            "id": qid,
+            "kind": "query",
+            "label": query.name,
+            "sheet": query.loaded_to[0].sheet if query.loaded_to else None,
+            "code": query.source[:MAX_QUERY_CODE_CHARS],
+            "loadedTo": [d.as_dict() for d in query.loaded_to],
+            "sources": [s.as_dict() for s in query.sources],
+        }
+    for query in queries:
+        qid = query_ids[query.name]
+        for source in query.sources:
+            if source.kind == "query":
+                upstream = query_ids.get(source.target)
+                if upstream is not None:
+                    builder.add_edge(upstream, qid, "query")
+                continue
+            if source.kind == "table":
+                # ``Excel.CurrentWorkbook`` reads a table or a defined name of
+                # this very file: that end of the link is in the graph already.
+                placed = tables_by_name.get(source.target.casefold())
+                if placed is not None:
+                    rect = parse_ref(placed[1], default_sheet=placed[0])
+                    if rect is not None:
+                        builder.resolve_rect_edges(rect, qid, kind="query")
+                        continue
+                named = name_nodes.get(source.target.upper())
+                if named is not None:
+                    builder.add_edge(named, qid, "query")
+                    continue
+            builder.add_edge(builder.query_source_node(source), qid, "query")
+        for destination in query.loaded_to:
+            rect = (
+                parse_ref(destination.ref, default_sheet=destination.sheet)
+                if destination.ref
+                else None
+            )
+            if rect is not None:
+                builder.add_edge(qid, builder.ensure_input_node(rect), "query-load")
+
+    query_warning = _query_warning(queries)
+    if query_warning:
+        warnings.append(query_warning)
+
+    return queries
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -1412,10 +1484,8 @@ def analyze_workbook(
         edges=edges,
     )
     ensure_opaque_node = builder.ensure_opaque_node
-    ensure_input_node = builder.ensure_input_node
     add_edge = builder.add_edge
     resolve_rect_edges = builder.resolve_rect_edges
-    query_source_node = builder.query_source_node
 
     # defined names -----------------------------------------------------------
     name_nodes: dict[str, str] = {}
@@ -1541,64 +1611,7 @@ def analyze_workbook(
     vba_modules, vba_procs = _process_vba(data, filename, refs_dir, warnings, builder)
 
     # --- 7. Power Query ------------------------------------------------------
-    # A range filled by a query has no formula above it, so without this the
-    # graph shows where the data landed and nothing about where it came from.
-    queries = read_queries(data)
-    # Keyed on the exact name: M is case-sensitive, so folding here would let
-    # two queries that differ only in case collapse onto one node.
-    query_ids = {q.name: f"q:{q.name}" for q in queries}
-    tables_by_name = {
-        table["name"].casefold(): (sheet, table["ref"])
-        for sheet, entries in table_index.items()
-        for table in entries
-        if table.get("name") and table.get("ref")
-    }
-
-    for query in queries:
-        qid = query_ids[query.name]
-        nodes[qid] = {
-            "id": qid,
-            "kind": "query",
-            "label": query.name,
-            "sheet": query.loaded_to[0].sheet if query.loaded_to else None,
-            "code": query.source[:MAX_QUERY_CODE_CHARS],
-            "loadedTo": [d.as_dict() for d in query.loaded_to],
-            "sources": [s.as_dict() for s in query.sources],
-        }
-    for query in queries:
-        qid = query_ids[query.name]
-        for source in query.sources:
-            if source.kind == "query":
-                upstream = query_ids.get(source.target)
-                if upstream is not None:
-                    add_edge(upstream, qid, "query")
-                continue
-            if source.kind == "table":
-                # ``Excel.CurrentWorkbook`` reads a table or a defined name of
-                # this very file: that end of the link is in the graph already.
-                placed = tables_by_name.get(source.target.casefold())
-                if placed is not None:
-                    rect = parse_ref(placed[1], default_sheet=placed[0])
-                    if rect is not None:
-                        resolve_rect_edges(rect, qid, kind="query")
-                        continue
-                named = name_nodes.get(source.target.upper())
-                if named is not None:
-                    add_edge(named, qid, "query")
-                    continue
-            add_edge(query_source_node(source), qid, "query")
-        for destination in query.loaded_to:
-            rect = (
-                parse_ref(destination.ref, default_sheet=destination.sheet)
-                if destination.ref
-                else None
-            )
-            if rect is not None:
-                add_edge(qid, ensure_input_node(rect), "query-load")
-
-    query_warning = _query_warning(queries)
-    if query_warning:
-        warnings.append(query_warning)
+    queries = _process_power_query(data, table_index, name_nodes, warnings, builder)
 
     if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
         warnings.append(

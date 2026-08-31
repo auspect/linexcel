@@ -2981,3 +2981,145 @@ class TestProcessVba:
         assert read_edges[0]["target"] == "vp:Module1.Main"
         opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
         assert len(opaque_ids) == 1
+
+
+class TestProcessPowerQuery:
+    """``_process_power_query`` replaces the Power Query section inline in
+    ``analyze_workbook``: it adds one node per query, wires edges from each
+    query's sources (other queries, workbook tables/names, or outside data)
+    and to where it is loaded, and appends the one-line warning that flags
+    sources read from outside the file.
+    """
+
+    @staticmethod
+    def _process(monkeypatch, *, queries, table_index=None, name_nodes=None):
+        from linexcel import analyzer
+        from linexcel.analyzer import _GraphBuilder, _process_power_query
+
+        monkeypatch.setattr(analyzer, "read_queries", lambda data: list(queries))
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index=table_index or {},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        warnings: list[str] = []
+        result = _process_power_query(
+            b"", table_index or {}, name_nodes or {}, warnings, builder
+        )
+        return result, builder, warnings
+
+    def test_creates_one_node_per_query(self, monkeypatch):
+        from linexcel.powerquery import Query
+
+        query = Query(name="Orders", source="let x = 1 in x")
+
+        queries, builder, _ = self._process(monkeypatch, queries=[query])
+
+        assert queries == [query]
+        assert builder.nodes["q:Orders"]["kind"] == "query"
+        assert builder.nodes["q:Orders"]["label"] == "Orders"
+
+    def test_query_source_links_to_upstream_query_node(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        upstream = Query(name="Base", source="1")
+        downstream = Query(
+            name="Derived",
+            source="Base",
+            sources=[QuerySource(kind="query", target="Base", function="")],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[upstream, downstream])
+
+        assert ("q:Base", "q:Derived", "query") in builder.edges
+
+    def test_table_source_resolves_through_table_index(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromTable",
+            source="Excel.CurrentWorkbook()",
+            sources=[QuerySource(kind="table", target="Tbl1", function="")],
+        )
+        table_index = {"Data": [{"name": "Tbl1", "ref": "A1:B2"}]}
+
+        _, builder, _ = self._process(
+            monkeypatch, queries=[query], table_index=table_index
+        )
+
+        query_edges = [e for e in builder.edges.values() if e["kind"] == "query"]
+        assert query_edges
+        assert query_edges[0]["target"] == "q:FromTable"
+
+    def test_table_source_falls_back_to_defined_name(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromName",
+            source="Excel.CurrentWorkbook()",
+            sources=[QuerySource(kind="table", target="MyName", function="")],
+        )
+
+        _, builder, _ = self._process(
+            monkeypatch,
+            queries=[query],
+            name_nodes={"MYNAME": "n:MyName"},
+        )
+
+        assert ("n:MyName", "q:FromName", "query") in builder.edges
+
+    def test_outside_source_becomes_opaque_node(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromWeb",
+            source='Web.Contents("https://example.com")',
+            sources=[
+                QuerySource(
+                    kind="web", target="https://example.com", function="Web.Contents"
+                )
+            ],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[query])
+
+        query_edges = [e for e in builder.edges.values() if e["kind"] == "query"]
+        assert len(query_edges) == 1
+        source_node = builder.nodes[query_edges[0]["source"]]
+        assert source_node["kind"] == "opaque"
+        assert source_node["sourceKind"] == "web"
+
+    def test_load_destination_wires_query_load_edge(self, monkeypatch):
+        from linexcel.powerquery import Destination, Query
+
+        query = Query(
+            name="Loaded",
+            source="1",
+            loaded_to=[Destination(sheet="Data", ref="A1:A1", table=None)],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[query])
+
+        load_edges = [e for e in builder.edges.values() if e["kind"] == "query-load"]
+        assert len(load_edges) == 1
+        assert load_edges[0]["source"] == "q:Loaded"
+
+    def test_warning_is_appended_when_queries_exist(self, monkeypatch):
+        from linexcel.powerquery import Query
+
+        _, _, warnings = self._process(
+            monkeypatch, queries=[Query(name="Q1", source="1")]
+        )
+
+        assert len(warnings) == 1
+        assert "Power Query" in warnings[0]
+
+    def test_no_warning_when_no_queries(self, monkeypatch):
+        _, _, warnings = self._process(monkeypatch, queries=[])
+
+        assert warnings == []
