@@ -3578,3 +3578,153 @@ class TestCacheReader:
         reader = self._reader()
 
         assert reader.uncomputed_warning() is None
+
+
+class _FakeStepEngine:
+    """Duck-typed engine for ``_StepEvaluator``: no formualizer needed.
+
+    ``evaluate_cell`` answers from the last formula ``set_formula`` wrote,
+    matching how ``_scratch_eval`` primes the sentinel then overwrites it —
+    good enough since a single ``eval_raw`` call only ever touches one cell
+    at a time. ``evaluate_cells`` (the batch path used by ``preload_steps``)
+    is configured separately since it answers several targets at once.
+    """
+
+    def __init__(self, results=None, batch_results=None):
+        self._results = results or {}
+        self._last_formula = None
+        self.set_formula_calls: list[tuple] = []
+        self.batch_calls: list[list] = []
+        self._batch_results = batch_results or []
+
+    def set_formula(self, sheet, row, col, formula):
+        self.set_formula_calls.append((sheet, row, col, formula))
+        self._last_formula = formula
+
+    def evaluate_cell(self, sheet, row, col):
+        from linexcel.analyzer import SCRATCH_SENTINEL
+
+        if self._last_formula == f'="{SCRATCH_SENTINEL}"':
+            return SCRATCH_SENTINEL
+        return self._results.get(self._last_formula, SCRATCH_SENTINEL)
+
+    def evaluate_cells(self, targets):
+        self.batch_calls.append(list(targets))
+        return self._batch_results
+
+
+class TestStepEvaluator:
+    """Locks the contract of ``_StepEvaluator``, extracted from
+    ``_ValueResolver`` so the scratch-sheet decomposition of a formula into
+    individually evaluated steps (with its dedup/budget/cache rules) can be
+    read and tested without a live formualizer engine.
+    """
+
+    def _evaluator(self, engine=None, scratch_ready=True, budget=None, substitute=None):
+        from linexcel.analyzer import _Budget, _StepEvaluator
+
+        return _StepEvaluator(
+            engine if engine is not None else _FakeStepEngine(),
+            scratch_ready,
+            budget if budget is not None else _Budget(10),
+            substitute if substitute is not None else (lambda expr: expr),
+        )
+
+    def test_eval_raw_short_circuits_when_scratch_not_ready(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, scratch_ready=False)
+
+        assert evaluator.eval_raw("=A1", "Sheet1") == (None, False)
+        assert engine.set_formula_calls == []
+
+    def test_eval_raw_short_circuits_when_budget_exhausted(self):
+        from linexcel.analyzer import _Budget
+
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, budget=_Budget(0))
+
+        assert evaluator.eval_raw("=A1", "Sheet1") == (None, False)
+        assert engine.set_formula_calls == []
+
+    def test_eval_raw_pops_a_preloaded_step_without_touching_the_engine(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine)
+        evaluator._step_cache["=A1+A2"] = (3, True)
+
+        assert evaluator.eval_raw("=A1+A2", "Sheet1") == (3, True)
+        assert engine.set_formula_calls == []
+        assert "=A1+A2" not in evaluator._step_cache
+
+    def test_eval_raw_evaluates_through_the_engine_and_substitutes_first(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=A1+A2", "Sheet1")
+        engine = _FakeStepEngine(results={qualified: 5})
+        calls: list[str] = []
+
+        def substitute(expr):
+            calls.append(expr)
+            return expr
+
+        evaluator = self._evaluator(engine=engine, substitute=substitute)
+
+        assert evaluator.eval_raw("=A1+A2", "Sheet1") == (5, True)
+        assert calls == ["=A1+A2"]
+
+    def test_eval_expr_turns_an_uncomputed_error_into_a_negative_reading(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=UNSUPPORTED()", "Sheet1")
+        engine = _FakeStepEngine(
+            results={qualified: {"type": "Error", "kind": "NImpl"}}
+        )
+        evaluator = self._evaluator(engine=engine)
+
+        assert evaluator.eval_expr("=UNSUPPORTED()", "Sheet1") == (None, False)
+
+    def test_eval_expr_returns_the_jsonable_value_on_success(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=A1", "Sheet1")
+        engine = _FakeStepEngine(results={qualified: 7})
+        evaluator = self._evaluator(engine=engine)
+
+        assert evaluator.eval_expr("=A1", "Sheet1") == (7, True)
+
+    def test_preload_steps_is_a_noop_when_scratch_not_ready(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, scratch_ready=False)
+
+        evaluator.preload_steps(["=A1"], "Sheet1", engine_alive=True)
+
+        assert engine.batch_calls == []
+        assert evaluator._step_cache == {}
+
+    def test_preload_steps_is_a_noop_when_the_engine_is_not_alive(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=A1"], "Sheet1", engine_alive=False)
+
+        assert engine.batch_calls == []
+        assert evaluator._step_cache == {}
+
+    def test_preload_steps_dedups_expressions_before_batching(self):
+        engine = _FakeStepEngine(batch_results=[10])
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=A1", "=A1", "=A1"], "Sheet1", engine_alive=True)
+
+        assert len(engine.batch_calls) == 1
+        assert len(engine.batch_calls[0]) == 1
+        assert evaluator._step_cache == {"=A1": (10, True)}
+
+    def test_preload_steps_caches_sentinel_results_as_not_evaluated(self):
+        from linexcel.analyzer import SCRATCH_SENTINEL
+
+        engine = _FakeStepEngine(batch_results=[SCRATCH_SENTINEL, 42])
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=BAD()", "=A1"], "Sheet1", engine_alive=True)
+
+        assert evaluator._step_cache == {"=BAD()": (None, False), "=A1": (42, True)}

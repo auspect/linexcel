@@ -23,6 +23,7 @@ import time
 import uuid
 import zipfile
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -367,6 +368,109 @@ class _CacheReader:
         )
 
 
+class _StepEvaluator:
+    """Scratch-sheet evaluation of individual step expressions, with a budget.
+
+    A step the engine cannot compute reads back as *not evaluated* rather
+    than as an error: an error under a step is the spreadsheet's own verdict
+    on the formula, and the engine hitting its own limit is not that.
+    """
+
+    def __init__(
+        self,
+        engine,
+        scratch_ready: bool,
+        budget: _Budget,
+        substitute_externals: Callable[[str], str],
+    ):
+        self.engine = engine
+        self.scratch_ready = scratch_ready
+        self.budget = budget
+        self._substitute_externals = substitute_externals
+        self._step_cache: dict[str, tuple[Any, bool]] = {}
+
+    def eval_raw(self, expr: str, sheet: str) -> tuple[Any, bool]:
+        """Scratch evaluation keeping the engine value as-is.
+
+        Errors come back as ``{"type": "Error", ...}``; they only become the
+        string the graph carries at the very end, because an error fed back
+        into the engine is what lets a guard downstream still fire.
+        """
+        if not self.scratch_ready or not self.budget.take():
+            return None, False
+        cached = self._step_cache.pop(expr, None)
+        if cached is not None:
+            return cached
+        # Keyed on the expression as written, evaluated on the one the engine
+        # can take: a link to another workbook becomes the value it stands for.
+        return _scratch_eval(self.engine, self._substitute_externals(expr), sheet)
+
+    def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
+        raw, ok = self.eval_raw(expr, sheet)
+        if _is_uncomputed(raw):
+            return None, False
+        return _jsonable(raw), ok
+
+    def preload_steps(self, exprs: list[str], sheet: str, engine_alive: bool) -> None:
+        """Batch-evaluate step expressions in one ``evaluate_cells`` call.
+
+        Each ``evaluate_cell`` on a large workbook recalculates the whole
+        dependency graph (~77 ms).  Batching N expressions into a single
+        ``evaluate_cells`` pays that cost once instead of N times.  When
+        ``engine_alive`` is False the engine state mutates during
+        decomposition (``_remember`` calls ``set_value``), so batching is
+        unsafe — the pre-computed values would be stale.  In that case the
+        cache stays empty and every expression falls back to
+        ``_scratch_eval`` one at a time, exactly as before.
+        """
+        self._step_cache.clear()
+        if not self.scratch_ready or not engine_alive or not exprs:
+            return
+        # ponytail: dedup preserves order — identical sub-expressions share
+        # one scratch cell and one cache entry; eval_raw pops on first hit
+        # so the second occurrence falls through to _scratch_eval, matching
+        # the old per-call behaviour.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for e in exprs:
+            if e not in seen:
+                seen.add(e)
+                unique.append(e)
+        targets: list[tuple[str, int, int]] = []
+        valid: list[str] = []
+        for i, e in enumerate(unique):
+            try:
+                qualified = qualify_sheet(self._substitute_externals(e), sheet)
+            except Exception:
+                continue
+            try:
+                # Primed with the sentinel first, exactly as ``_scratch_eval``
+                # does: an expression the engine will not take — a structured
+                # reference it cannot resolve, say — makes ``set_formula``
+                # no-op rather than raise, and the cell then still holds the
+                # step value *another node* left in that column. Reported as
+                # this step's own result, that is a value from elsewhere.
+                self.engine.set_formula(
+                    SCRATCH_SHEET, 2, i + 1, f'="{SCRATCH_SENTINEL}"'
+                )
+                self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, qualified)
+            except Exception:
+                continue
+            targets.append((SCRATCH_SHEET, 2, i + 1))
+            valid.append(e)
+        if not targets:
+            return
+        try:
+            results = self.engine.evaluate_cells(targets)
+        except Exception:
+            return  # a broken reference poisons the batch — fall back
+        for e, val in zip(valid, results):
+            if val is not None and val != SCRATCH_SENTINEL and not _is_uncomputed(val):
+                self._step_cache[e] = (_jsonable(val), True)
+            else:
+                self._step_cache[e] = (None, False)
+
+
 class _ValueResolver:
     """Single entry point for reading the value of a cell.
 
@@ -408,12 +512,14 @@ class _ValueResolver:
         self.sheet_dims = sheet_dims or {}
         self._external = _ExternalResolver(externals, refs_files, warnings)
         self._cache = _CacheReader(cached, warnings)
+        self._steps = _StepEvaluator(
+            engine, scratch_ready, budget, self.substitute_externals
+        )
         self._engine_alive = engine_alive
         self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
         self._resolving: set[tuple[str, int, int]] = set()
         self.n_recovered = 0
         self.n_unrecovered = 0
-        self._step_cache: dict[str, tuple[Any, bool]] = {}
 
     # -- public API --------------------------------------------------------
     def value(
@@ -482,92 +588,16 @@ class _ValueResolver:
         return self._cache.cached_value(sheet, row, col)
 
     def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
-        """Evaluate an expression in the scratch sheet, if budget allows.
+        """Evaluate an expression in the scratch sheet, if budget allows."""
+        return self._steps.eval_expr(expr, sheet)
 
-        A step the engine cannot compute reads back as *not evaluated* rather
-        than as an error: "#NULL!" under a step is the spreadsheet's own verdict
-        on the formula, and the engine hitting its own limit is not that.
-        """
-        raw, ok = self._eval_raw(expr, sheet)
-        if _is_uncomputed(raw):
-            return None, False
-        return _jsonable(raw), ok
+    def preload_steps(self, exprs: list[str], sheet: str) -> None:
+        """Batch-evaluate step expressions in one ``evaluate_cells`` call."""
+        self._steps.preload_steps(exprs, sheet, self._engine_alive)
 
     # -- internals ---------------------------------------------------------
     def _eval_raw(self, expr: str, sheet: str) -> tuple[Any, bool]:
-        """Scratch evaluation keeping the engine value as-is.
-
-        Errors come back as ``{"type": "Error", ...}``; they only become the
-        string the graph carries at the very end, because an error fed back
-        into the engine is what lets a guard downstream still fire.
-        """
-        if not self.scratch_ready or not self.budget.take():
-            return None, False
-        cached = self._step_cache.pop(expr, None)
-        if cached is not None:
-            return cached
-        # Keyed on the expression as written, evaluated on the one the engine
-        # can take: a link to another workbook becomes the value it stands for.
-        return _scratch_eval(self.engine, self.substitute_externals(expr), sheet)
-
-    def preload_steps(self, exprs: list[str], sheet: str) -> None:
-        """Batch-evaluate step expressions in one ``evaluate_cells`` call.
-
-        Each ``evaluate_cell`` on a large workbook recalculates the whole
-        dependency graph (~77 ms).  Batching N expressions into a single
-        ``evaluate_cells`` pays that cost once instead of N times.  When
-        ``engine_alive`` is False the engine state mutates during
-        decomposition (``_remember`` calls ``set_value``), so batching is
-        unsafe — the pre-computed values would be stale.  In that case the
-        cache stays empty and every expression falls back to
-        ``_scratch_eval`` one at a time, exactly as before.
-        """
-        self._step_cache.clear()
-        if not self.scratch_ready or not self._engine_alive or not exprs:
-            return
-        # ponytail: dedup preserves order — identical sub-expressions share
-        # one scratch cell and one cache entry; _eval_raw pops on first hit
-        # so the second occurrence falls through to _scratch_eval, matching
-        # the old per-call behaviour.
-        seen: set[str] = set()
-        unique: list[str] = []
-        for e in exprs:
-            if e not in seen:
-                seen.add(e)
-                unique.append(e)
-        targets: list[tuple[str, int, int]] = []
-        valid: list[str] = []
-        for i, e in enumerate(unique):
-            try:
-                qualified = qualify_sheet(self.substitute_externals(e), sheet)
-            except Exception:
-                continue
-            try:
-                # Primed with the sentinel first, exactly as ``_scratch_eval``
-                # does: an expression the engine will not take — a structured
-                # reference it cannot resolve, say — makes ``set_formula``
-                # no-op rather than raise, and the cell then still holds the
-                # step value *another node* left in that column. Reported as
-                # this step's own result, that is a value from elsewhere.
-                self.engine.set_formula(
-                    SCRATCH_SHEET, 2, i + 1, f'="{SCRATCH_SENTINEL}"'
-                )
-                self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, qualified)
-            except Exception:
-                continue
-            targets.append((SCRATCH_SHEET, 2, i + 1))
-            valid.append(e)
-        if not targets:
-            return
-        try:
-            results = self.engine.evaluate_cells(targets)
-        except Exception:
-            return  # a broken reference poisons the batch — fall back
-        for e, val in zip(valid, results):
-            if val is not None and val != SCRATCH_SENTINEL and not _is_uncomputed(val):
-                self._step_cache[e] = (_jsonable(val), True)
-            else:
-                self._step_cache[e] = (None, False)
+        return self._steps.eval_raw(expr, sheet)
 
     def _engine_read(
         self, sheet: str, row: int, col: int, formula: str | None
@@ -1790,8 +1820,9 @@ def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]
 
     The counter and ``_STEP_KINDS`` filter mirror ``_decompose`` exactly so
     the expressions batch-evaluated here are the same ones looked up later
-    in ``_eval_raw``.  Order is pre-order (parent before children) — it does
-    not match the post-order evaluation in ``_decompose`` but that is fine:
+    in ``_StepEvaluator.eval_raw``.  Order is pre-order (parent before
+    children) — it does not match the post-order evaluation in
+    ``_decompose`` but that is fine:
     the batch evaluates all at once and the cache is order-independent.
 
     ``skip_root`` leaves out the whole-formula expression, which the caller
