@@ -3123,3 +3123,88 @@ class TestProcessPowerQuery:
         _, _, warnings = self._process(monkeypatch, queries=[])
 
         assert warnings == []
+
+
+class TestProcessDefinedNames:
+    """``_process_defined_names`` replaces the defined-names section inline in
+    ``analyze_workbook``: it adds one ``name`` node per defined name, resolves
+    its display value (single cell via the resolver, range via a sample), and
+    wires precedent edges for every target rect through the ``_GraphBuilder``
+    it is handed.
+    """
+
+    @staticmethod
+    def _process(*, defined_names, resolver=None):
+        from linexcel.analyzer import _GraphBuilder, _process_defined_names
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=resolver or _FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        name_nodes = _process_defined_names(
+            defined_names, resolver or _FakeResolver(), builder
+        )
+        return name_nodes, builder
+
+    def test_single_cell_name_uses_resolver_describe(self):
+        from linexcel.refs import Rect
+
+        name_nodes, builder = self._process(
+            defined_names={"MyName": [Rect("Data", 1, 1, 1, 1)]}
+        )
+
+        assert name_nodes == {"MYNAME": "n:MyName"}
+        node = builder.nodes["n:MyName"]
+        assert node["kind"] == "name"
+        assert node["label"] == "MyName"
+        assert node["sheet"] == "Data"
+        assert node["targets"] == ["Data!A1"]
+        assert node["value"] == "Data!1,1"
+        assert node["valueSource"] == "engine"
+
+    def test_range_name_falls_back_to_first_sample_value(self):
+        from linexcel.refs import Rect
+
+        name_nodes, builder = self._process(
+            defined_names={"MyRange": [Rect("Data", 1, 1, 2, 2)]}
+        )
+
+        assert name_nodes == {"MYRANGE": "n:MyRange"}
+        node = builder.nodes["n:MyRange"]
+        assert "valueSource" not in node
+        assert node["value"] is not None
+
+    def test_name_without_targets_has_no_value(self):
+        name_nodes, builder = self._process(defined_names={"Empty": []})
+
+        assert name_nodes == {"EMPTY": "n:Empty"}
+        node = builder.nodes["n:Empty"]
+        assert node["sheet"] is None
+        assert node["targets"] == []
+        assert node["value"] is None
+
+    def test_target_rect_wires_a_precedent_edge_via_cell_owner(self):
+        from linexcel.analyzer import _GraphBuilder, _process_defined_names
+        from linexcel.refs import Rect
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=cell_owner,
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+
+        _process_defined_names(
+            {"MyName": [Rect("Data", 1, 1, 1, 1)]}, _FakeResolver(), builder
+        )
+
+        assert ("c:Data!A1", "n:MyName", "name") in builder.edges

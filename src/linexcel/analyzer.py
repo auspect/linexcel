@@ -1395,6 +1395,46 @@ def _process_power_query(
     return queries
 
 
+def _process_defined_names(
+    defined_names: dict[str, list[Rect]],
+    resolver: _ValueResolver,
+    builder: _GraphBuilder,
+) -> dict[str, str]:
+    """Creates a 'name' node per defined name and wires its precedent edges.
+
+    Returns the name -> node id map (uppercased keys) that the formula loop
+    uses to resolve an unqualified reference back to its defined name.
+    """
+    name_nodes: dict[str, str] = {}
+    for name, targets in defined_names.items():
+        node_id = f"n:{name}"
+        name_nodes[name.upper()] = node_id
+        value_fields: dict[str, Any] = {"value": None}
+        if targets:
+            first = targets[0]
+            if (
+                first.sheet is not None
+                and first.r1 == first.r2
+                and first.c1 == first.c2
+            ):
+                value_fields = resolver.describe(first.sheet, first.r1, first.c1)
+            else:
+                val_samples = _sample_range_values(resolver, first)
+                if val_samples:
+                    value_fields = {"value": val_samples[0]["value"]}
+        builder.nodes[node_id] = {
+            "id": node_id,
+            "kind": "name",
+            "label": name,
+            "sheet": targets[0].sheet if targets else None,
+            "targets": [t.to_a1() for t in targets],
+            **value_fields,
+        }
+        for rect in targets:
+            builder.resolve_rect_edges(rect, node_id, kind="name")
+    return name_nodes
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -1488,33 +1528,7 @@ def analyze_workbook(
     resolve_rect_edges = builder.resolve_rect_edges
 
     # defined names -----------------------------------------------------------
-    name_nodes: dict[str, str] = {}
-    for name, targets in defined_names.items():
-        node_id = f"n:{name}"
-        name_nodes[name.upper()] = node_id
-        value_fields: dict[str, Any] = {"value": None}
-        if targets:
-            first = targets[0]
-            if (
-                first.sheet is not None
-                and first.r1 == first.r2
-                and first.c1 == first.c2
-            ):
-                value_fields = resolver.describe(first.sheet, first.r1, first.c1)
-            else:
-                val_samples = _sample_range_values(resolver, first)
-                if val_samples:
-                    value_fields = {"value": val_samples[0]["value"]}
-        nodes[node_id] = {
-            "id": node_id,
-            "kind": "name",
-            "label": name,
-            "sheet": targets[0].sheet if targets else None,
-            "targets": [t.to_a1() for t in targets],
-            **value_fields,
-        }
-        for rect in targets:
-            resolve_rect_edges(rect, node_id, kind="name")
+    name_nodes = _process_defined_names(defined_names, resolver, builder)
 
     # formula nodes + edges -------------------------------------------------
     for node_id, grp in kept_groups:
