@@ -4,6 +4,7 @@ import io
 import json
 import re
 import struct
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
@@ -2626,3 +2627,1427 @@ class TestPromptsShipAsFiles:
         monkeypatch.setattr(aidoc, "_PROMPTS", tmp_path)
         with pytest.raises(RuntimeError, match="without its assets"):
             aidoc._prompts("node")
+
+
+class TestAnalyzeWorkbookHelpers:
+    """``analyze_workbook`` delegates to standalone helpers per phase.
+
+    These lock each helper's own contract, so a future split of the rest of
+    ``analyze_workbook`` (or of ``_ValueResolver``) has a harness that fails
+    close to the break instead of only through the full-graph assertions
+    elsewhere in this file.
+    """
+
+    @staticmethod
+    def _simple_workbook() -> bytes:
+        from openpyxl import Workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = 10
+        ws["A2"] = 20
+        ws["B1"] = "=A1*2"
+        ws["B2"] = "=A2*2"
+        wb.defined_names.add(DefinedName("Rate", attr_text="Data!$A$1"))
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_load_workbook_structure_reports_sheets_and_names(self):
+        from linexcel.analyzer import _load_workbook_structure
+
+        warnings: list[str] = []
+        sheet_dims, defined_names, externals, refs_files = _load_workbook_structure(
+            self._simple_workbook(), None, warnings
+        )
+        assert sheet_dims == {"Data": (2, 2)}
+        assert "Rate" in defined_names
+        assert externals == {}
+        assert refs_files == {}
+        assert warnings == []
+
+    def test_init_engine_evaluates_a_healthy_workbook(self):
+        from linexcel.analyzer import _init_engine, _load_workbook_structure
+
+        data = self._simple_workbook()
+        warnings: list[str] = []
+        sheet_dims, _, _, _ = _load_workbook_structure(data, None, warnings)
+        engine, engine_sheets, engine_alive, quarantined, scratch_ready = _init_engine(
+            data, sheet_dims, warnings
+        )
+        assert engine_sheets == {"Data"}
+        assert engine_alive is True
+        assert quarantined == {}
+        assert scratch_ready is True
+        assert warnings == []
+
+    def test_extract_formula_groups_groups_identical_formulas(self):
+        from linexcel.analyzer import (
+            _extract_formula_groups,
+            _init_engine,
+            _load_workbook_structure,
+        )
+        from linexcel.progress import Reporter
+
+        data = self._simple_workbook()
+        warnings: list[str] = []
+        sheet_dims, _, _, _ = _load_workbook_structure(data, None, warnings)
+        engine, engine_sheets, _, quarantined, _ = _init_engine(
+            data, sheet_dims, warnings
+        )
+        groups, cell_owner, formula_count, sheet_stats = _extract_formula_groups(
+            engine, sheet_dims, engine_sheets, quarantined, warnings, Reporter(False)
+        )
+        assert formula_count == 2
+        # B1 and B2 hold the same relative formula: one group, two cells.
+        assert len(groups) == 1
+        (group,) = groups.values()
+        assert sorted(group.cells) == [(1, 2), (2, 2)]
+        assert cell_owner == {}  # populated later, once groups are kept/dropped
+        assert sheet_stats == [
+            {"name": "Data", "rows": 2, "cols": 2, "formulaCells": 2}
+        ]
+
+    def test_finalize_formula_groups_assigns_node_ids_and_owners(self):
+        from linexcel.analyzer import FormulaGroup, _finalize_formula_groups
+
+        groups = {
+            ("Data", "R1"): FormulaGroup("Data", "R1", cells=[(1, 2)]),
+            ("Data", "R2"): FormulaGroup("Data", "R2", cells=[(2, 2), (3, 2)]),
+        }
+        cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
+        nodes: dict[str, dict] = {}
+        warnings: list[str] = []
+
+        kept = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
+
+        ids = {node_id for node_id, _ in kept}
+        assert ids == {"c:Data!B1", "g:Data!B2#2"}
+        assert cell_owner["Data"][(1, 2)] == "c:Data!B1"
+        assert cell_owner["Data"][(2, 2)] == "g:Data!B2#2"
+        assert cell_owner["Data"][(3, 2)] == "g:Data!B2#2"
+        assert nodes == {}  # nothing dropped: no misc node
+        assert warnings == []
+
+    def test_finalize_formula_groups_folds_overflow_into_misc_node(self):
+        from linexcel.analyzer import (
+            MAX_NODES_PER_SHEET,
+            FormulaGroup,
+            _finalize_formula_groups,
+        )
+
+        n = MAX_NODES_PER_SHEET + 5
+        groups = {
+            ("Data", f"R{i}"): FormulaGroup("Data", f"R{i}", cells=[(i, 1)])
+            for i in range(n)
+        }
+        cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
+        nodes: dict[str, dict] = {}
+        warnings: list[str] = []
+
+        kept = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
+
+        assert len(kept) == MAX_NODES_PER_SHEET
+        assert nodes["misc:Data"]["patterns"] == 5
+        assert nodes["misc:Data"]["count"] == 5
+        assert cell_owner["Data"][(0, 1)] != "misc:Data"  # kept: lowest reps first
+        assert cell_owner["Data"][(n - 1, 1)] == "misc:Data"  # dropped: overflow
+        assert len(warnings) == 1
+        assert "misc" in warnings[0]
+
+
+class _FakeResolver:
+    """Stands in for ``_ValueResolver`` in ``_GraphBuilder`` tests.
+
+    ``_GraphBuilder`` only ever calls a handful of ``_ValueResolver`` methods
+    (``value``, ``describe``, ``external_books``, ``external_value``) — this
+    fake covers exactly those, so the builder's own contract can be locked
+    without spinning up a real formualizer engine.
+    """
+
+    def value(self, sheet, row, col, formula=None):
+        return (f"{sheet}!{row},{col}", "engine", None)
+
+    def describe(self, sheet, row, col, formula=None):
+        value, source, _ = self.value(sheet, row, col, formula)
+        return {"value": value, "valueSource": source}
+
+    def external_books(self, formula):
+        return []
+
+    def external_value(self, ref):
+        return (None, None)
+
+
+class TestGraphBuilder:
+    """``_GraphBuilder`` replaces the closures ``analyze_workbook`` used to
+    define inline (``ensure_opaque_node``, ``ensure_input_node``,
+    ``add_edge``, ``resolve_rect_edges``) to build the graph's nodes/edges.
+    """
+
+    @staticmethod
+    def _builder(**overrides):
+        from linexcel.analyzer import _GraphBuilder
+
+        kwargs = {
+            "sheet_dims": {"Data": (5, 5)},
+            "cell_owner": defaultdict(dict),
+            "resolver": _FakeResolver(),
+            "table_index": {},
+            "kept_groups": [],
+            "nodes": {},
+            "edges": {},
+        }
+        kwargs.update(overrides)
+        return _GraphBuilder(**kwargs)
+
+    def test_ensure_input_node_is_stable_and_content_addressed(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder()
+        rect = Rect("Data", 1, 1, 2, 2)
+
+        first = builder.ensure_input_node(rect)
+        second = builder.ensure_input_node(rect)
+
+        assert first == second == "i:Data!A1:B2"
+        assert builder.nodes[first]["kind"] == "input"
+        assert builder.nodes[first]["count"] == 4
+
+    def test_ensure_input_node_opaque_label_bypasses_the_resolver(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder(resolver=None)  # would blow up if touched
+
+        node_id = builder.ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label="X")
+
+        assert node_id == "x:X"
+        assert builder.nodes[node_id]["kind"] == "opaque"
+
+    def test_add_edge_dedupes_and_upgrades_approx_to_exact(self):
+        builder = self._builder()
+
+        builder.add_edge("a", "b", "dep", approx=True)
+        builder.add_edge("a", "b", "dep", approx=True)
+        assert len(builder.edges) == 1
+        assert builder.edges[("a", "b", "dep")]["approx"] is True
+
+        builder.add_edge("a", "b", "dep", approx=False)
+        assert len(builder.edges) == 1  # still one edge, now exact
+        assert builder.edges[("a", "b", "dep")]["approx"] is False
+
+    def test_add_edge_ignores_self_loops(self):
+        builder = self._builder()
+        builder.add_edge("a", "a", "dep")
+        assert builder.edges == {}
+
+    def test_resolve_rect_edges_routes_through_cell_owner(self):
+        from linexcel.refs import Rect
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        builder = self._builder(cell_owner=cell_owner)
+
+        builder.resolve_rect_edges(Rect("Data", 1, 1, 1, 1), "target")
+
+        assert ("c:Data!A1", "target", "dep") in builder.edges
+
+    def test_resolve_rect_edges_on_unknown_sheet_becomes_opaque(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder()
+
+        builder.resolve_rect_edges(Rect("[1]Annual", 1, 1, 1, 1), "target")
+
+        opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
+        assert len(opaque_ids) == 1
+        assert (opaque_ids[0], "target", "dep") in builder.edges
+
+
+class TestProcessVba:
+    """``_process_vba`` replaces the VBA section inline in ``analyze_workbook``:
+    it extracts modules/procs (plus any add-in ones under ``refs_dir``), adds
+    one node per procedure, and wires call edges and cell-ref edges through
+    the ``_GraphBuilder`` it is handed.
+    """
+
+    @staticmethod
+    def _process(monkeypatch, *, procs, modules=None, refs_dir=None):
+        from linexcel import analyzer
+        from linexcel.analyzer import _GraphBuilder, _process_vba
+
+        modules = modules if modules is not None else {"Module1": "' code"}
+        monkeypatch.setattr(
+            analyzer, "extract_vba_modules", lambda *a, **k: dict(modules)
+        )
+        monkeypatch.setattr(analyzer, "analyze_vba", lambda mods: procs)
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        warnings: list[str] = []
+        vba_modules, vba_procs = _process_vba(
+            b"", "wb.xlsm", refs_dir, warnings, builder
+        )
+        return vba_modules, vba_procs, builder, warnings
+
+    def test_creates_one_node_per_procedure(self, monkeypatch):
+        from linexcel.vba import VbaProc
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="Sub Main()\nEnd Sub",
+        )
+
+        vba_modules, vba_procs, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        assert vba_modules == {"Module1": "' code"}
+        assert vba_procs == [proc]
+        assert builder.nodes["vp:Module1.Main"]["kind"] == "vba"
+        assert builder.nodes["vp:Module1.Main"]["proc"] == "Main"
+
+    def test_unqualified_call_resolves_within_same_module(self, monkeypatch):
+        from linexcel.vba import VbaProc
+
+        caller = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            calls=["Helper"],
+        )
+        callee = VbaProc(
+            module="Module1",
+            name="Helper",
+            kind="Sub",
+            line_start=7,
+            line_end=9,
+            code="",
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[caller, callee])
+
+        assert ("vp:Module1.Main", "vp:Module1.Helper", "call") in builder.edges
+
+    def test_cell_write_ref_reaches_the_target_sheet(self, monkeypatch):
+        from linexcel.vba import VbaProc, VbaRef
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            refs=[VbaRef(sheet="Data", ref="A1", access="write", line=2)],
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        write_edges = [e for e in builder.edges.values() if e["kind"] == "vba-write"]
+        assert len(write_edges) == 1
+        assert write_edges[0]["source"] == "vp:Module1.Main"
+
+    def test_unparseable_ref_becomes_an_opaque_read_edge(self, monkeypatch):
+        from linexcel.vba import VbaProc, VbaRef
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            refs=[VbaRef(sheet=None, ref="not_a_ref", access="read", line=2)],
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        read_edges = [e for e in builder.edges.values() if e["kind"] == "vba-read"]
+        assert len(read_edges) == 1
+        assert read_edges[0]["target"] == "vp:Module1.Main"
+        opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
+        assert len(opaque_ids) == 1
+
+
+class TestProcessPowerQuery:
+    """``_process_power_query`` replaces the Power Query section inline in
+    ``analyze_workbook``: it adds one node per query, wires edges from each
+    query's sources (other queries, workbook tables/names, or outside data)
+    and to where it is loaded, and appends the one-line warning that flags
+    sources read from outside the file.
+    """
+
+    @staticmethod
+    def _process(monkeypatch, *, queries, table_index=None, name_nodes=None):
+        from linexcel import analyzer
+        from linexcel.analyzer import _GraphBuilder, _process_power_query
+
+        monkeypatch.setattr(analyzer, "read_queries", lambda data: list(queries))
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index=table_index or {},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        warnings: list[str] = []
+        result = _process_power_query(
+            b"", table_index or {}, name_nodes or {}, warnings, builder
+        )
+        return result, builder, warnings
+
+    def test_creates_one_node_per_query(self, monkeypatch):
+        from linexcel.powerquery import Query
+
+        query = Query(name="Orders", source="let x = 1 in x")
+
+        queries, builder, _ = self._process(monkeypatch, queries=[query])
+
+        assert queries == [query]
+        assert builder.nodes["q:Orders"]["kind"] == "query"
+        assert builder.nodes["q:Orders"]["label"] == "Orders"
+
+    def test_query_source_links_to_upstream_query_node(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        upstream = Query(name="Base", source="1")
+        downstream = Query(
+            name="Derived",
+            source="Base",
+            sources=[QuerySource(kind="query", target="Base", function="")],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[upstream, downstream])
+
+        assert ("q:Base", "q:Derived", "query") in builder.edges
+
+    def test_table_source_resolves_through_table_index(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromTable",
+            source="Excel.CurrentWorkbook()",
+            sources=[QuerySource(kind="table", target="Tbl1", function="")],
+        )
+        table_index = {"Data": [{"name": "Tbl1", "ref": "A1:B2"}]}
+
+        _, builder, _ = self._process(
+            monkeypatch, queries=[query], table_index=table_index
+        )
+
+        query_edges = [e for e in builder.edges.values() if e["kind"] == "query"]
+        assert query_edges
+        assert query_edges[0]["target"] == "q:FromTable"
+
+    def test_table_source_falls_back_to_defined_name(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromName",
+            source="Excel.CurrentWorkbook()",
+            sources=[QuerySource(kind="table", target="MyName", function="")],
+        )
+
+        _, builder, _ = self._process(
+            monkeypatch,
+            queries=[query],
+            name_nodes={"MYNAME": "n:MyName"},
+        )
+
+        assert ("n:MyName", "q:FromName", "query") in builder.edges
+
+    def test_outside_source_becomes_opaque_node(self, monkeypatch):
+        from linexcel.powerquery import Query, QuerySource
+
+        query = Query(
+            name="FromWeb",
+            source='Web.Contents("https://example.com")',
+            sources=[
+                QuerySource(
+                    kind="web", target="https://example.com", function="Web.Contents"
+                )
+            ],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[query])
+
+        query_edges = [e for e in builder.edges.values() if e["kind"] == "query"]
+        assert len(query_edges) == 1
+        source_node = builder.nodes[query_edges[0]["source"]]
+        assert source_node["kind"] == "opaque"
+        assert source_node["sourceKind"] == "web"
+
+    def test_load_destination_wires_query_load_edge(self, monkeypatch):
+        from linexcel.powerquery import Destination, Query
+
+        query = Query(
+            name="Loaded",
+            source="1",
+            loaded_to=[Destination(sheet="Data", ref="A1:A1", table=None)],
+        )
+
+        _, builder, _ = self._process(monkeypatch, queries=[query])
+
+        load_edges = [e for e in builder.edges.values() if e["kind"] == "query-load"]
+        assert len(load_edges) == 1
+        assert load_edges[0]["source"] == "q:Loaded"
+
+    def test_warning_is_appended_when_queries_exist(self, monkeypatch):
+        from linexcel.powerquery import Query
+
+        _, _, warnings = self._process(
+            monkeypatch, queries=[Query(name="Q1", source="1")]
+        )
+
+        assert len(warnings) == 1
+        assert "Power Query" in warnings[0]
+
+    def test_no_warning_when_no_queries(self, monkeypatch):
+        _, _, warnings = self._process(monkeypatch, queries=[])
+
+        assert warnings == []
+
+
+class TestProcessDefinedNames:
+    """``_process_defined_names`` replaces the defined-names section inline in
+    ``analyze_workbook``: it adds one ``name`` node per defined name, resolves
+    its display value (single cell via the resolver, range via a sample), and
+    wires precedent edges for every target rect through the ``_GraphBuilder``
+    it is handed.
+    """
+
+    @staticmethod
+    def _process(*, defined_names, resolver=None):
+        from linexcel.analyzer import _GraphBuilder, _process_defined_names
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=resolver or _FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        name_nodes = _process_defined_names(
+            defined_names, resolver or _FakeResolver(), builder
+        )
+        return name_nodes, builder
+
+    def test_single_cell_name_uses_resolver_describe(self):
+        from linexcel.refs import Rect
+
+        name_nodes, builder = self._process(
+            defined_names={"MyName": [Rect("Data", 1, 1, 1, 1)]}
+        )
+
+        assert name_nodes == {"MYNAME": "n:MyName"}
+        node = builder.nodes["n:MyName"]
+        assert node["kind"] == "name"
+        assert node["label"] == "MyName"
+        assert node["sheet"] == "Data"
+        assert node["targets"] == ["Data!A1"]
+        assert node["value"] == "Data!1,1"
+        assert node["valueSource"] == "engine"
+
+    def test_range_name_falls_back_to_first_sample_value(self):
+        from linexcel.refs import Rect
+
+        name_nodes, builder = self._process(
+            defined_names={"MyRange": [Rect("Data", 1, 1, 2, 2)]}
+        )
+
+        assert name_nodes == {"MYRANGE": "n:MyRange"}
+        node = builder.nodes["n:MyRange"]
+        assert "valueSource" not in node
+        assert node["value"] is not None
+
+    def test_name_without_targets_has_no_value(self):
+        name_nodes, builder = self._process(defined_names={"Empty": []})
+
+        assert name_nodes == {"EMPTY": "n:Empty"}
+        node = builder.nodes["n:Empty"]
+        assert node["sheet"] is None
+        assert node["targets"] == []
+        assert node["value"] is None
+
+    def test_target_rect_wires_a_precedent_edge_via_cell_owner(self):
+        from linexcel.analyzer import _GraphBuilder, _process_defined_names
+        from linexcel.refs import Rect
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=cell_owner,
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+
+        _process_defined_names(
+            {"MyName": [Rect("Data", 1, 1, 1, 1)]}, _FakeResolver(), builder
+        )
+
+        assert ("c:Data!A1", "n:MyName", "name") in builder.edges
+
+
+class _FakeAssembleResolver:
+    """Stands in for ``_ValueResolver`` in ``_assemble_graph`` tests.
+
+    ``_assemble_graph`` only ever reads ``n_recovered``/``n_unrecovered``,
+    calls ``uncomputed_warning()`` and ``external_workbooks()`` — this fake
+    covers exactly that surface.
+    """
+
+    def __init__(
+        self, *, n_recovered=0, n_unrecovered=0, uncomputed=None, workbooks=None
+    ):
+        self.n_recovered = n_recovered
+        self.n_unrecovered = n_unrecovered
+        self._uncomputed = uncomputed
+        self._workbooks = workbooks or []
+
+    def uncomputed_warning(self):
+        return self._uncomputed
+
+    def external_workbooks(self):
+        return self._workbooks
+
+
+class TestAssembleGraph:
+    """``_assemble_graph`` replaces the tail of ``analyze_workbook``: it
+    appends the recovery/uncomputed/external warnings to the shared
+    ``warnings`` list, then assembles the final ``graph`` dict (meta/stats/
+    sheets/nodes/edges) from the already-computed pieces.
+    """
+
+    @staticmethod
+    def _assemble(*, warnings=None, resolver=None, **overrides):
+        from linexcel.analyzer import _assemble_graph
+
+        kwargs = {
+            "filename": "wb.xlsx",
+            "warnings": warnings if warnings is not None else [],
+            "engine_alive": True,
+            "resolver": resolver or _FakeAssembleResolver(),
+            "refs_dir": None,
+            "sheet_dims": {"Data": (5, 5)},
+            "sheet_stats": [],
+            "formula_count": 0,
+            "nodes": {},
+            "edges": {},
+            "kept_groups": [],
+            "vba_modules": {},
+            "vba_procs": [],
+            "defined_names": {},
+            "table_index": {},
+            "queries": [],
+        }
+        kwargs.update(overrides)
+        return _assemble_graph(**kwargs)
+
+    def test_no_warning_when_engine_alive(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=True,
+            resolver=_FakeAssembleResolver(n_recovered=3, n_unrecovered=1),
+        )
+        assert warnings == []
+
+    def test_recovery_warning_appended_when_engine_dead_and_cells_recovered(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=False,
+            resolver=_FakeAssembleResolver(n_recovered=3, n_unrecovered=1),
+        )
+        assert warnings == [
+            "Values recovered cell by cell: 3 recomputed, "
+            "1 left to the value stored in the file"
+        ]
+
+    def test_no_recovery_warning_when_engine_dead_but_nothing_recovered(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=False,
+            resolver=_FakeAssembleResolver(n_recovered=0, n_unrecovered=0),
+        )
+        assert warnings == []
+
+    def test_uncomputed_warning_appended(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            resolver=_FakeAssembleResolver(uncomputed="1 cell left uncomputed: X!A1"),
+        )
+        assert warnings == ["1 cell left uncomputed: X!A1"]
+
+    def test_external_warning_appended(self):
+        from linexcel.external import ExternalBook
+
+        warnings: list[str] = []
+        book = ExternalBook(key="1", target="Budget.xlsx", name="Budget.xlsx")
+        self._assemble(
+            warnings=warnings,
+            refs_dir=None,
+            resolver=_FakeAssembleResolver(workbooks=[book]),
+        )
+        assert len(warnings) == 1
+        assert "Budget.xlsx" in warnings[0]
+
+    def test_graph_meta_and_stats_shape(self):
+        from linexcel.analyzer import FormulaGroup
+
+        graph = self._assemble(
+            filename="report.xlsx",
+            sheet_dims={"Data": (5, 5), "Other": (2, 2)},
+            sheet_stats=[{"sheet": "Data", "formulas": 2}],
+            formula_count=2,
+            nodes={"c:Data!A1": {"id": "c:Data!A1"}},
+            edges={("a", "b", "precedes"): {"src": "a", "dst": "b"}},
+            kept_groups=[
+                ("Data", FormulaGroup("Data", "R1", cells=[(1, 1)])),
+                ("Data", FormulaGroup("Data", "R2", cells=[(2, 1), (3, 1)])),
+            ],
+            vba_modules={"Module1": "code"},
+            vba_procs=["proc1", "proc2"],
+            defined_names={"MyName": []},
+            table_index={"Data": [{"name": "T1"}]},
+            queries=[],
+        )
+
+        assert graph["meta"]["filename"] == "report.xlsx"
+        assert graph["meta"]["engine"] == "formualizer (Rust)"
+        stats = graph["meta"]["stats"]
+        assert stats["totalNodes"] == 1
+        assert stats["totalEdges"] == 1
+        assert stats["groupedPatterns"] == 1  # only the 2-cell group counts
+        assert stats["vbaModules"] == 1
+        assert stats["vbaProcs"] == 2
+        assert stats["definedNames"] == 1
+        assert stats["tables"] == 1
+        assert graph["sheets"] == ["Data", "Other"]
+        assert graph["nodes"] == [{"id": "c:Data!A1"}]
+        assert graph["edges"] == [{"src": "a", "dst": "b"}]
+
+    def test_external_workbook_stats_count_declared_vs_read(self):
+        from linexcel.external import ExternalBook
+
+        declared_only = ExternalBook(key="1", target="A.xlsx", name="A.xlsx")
+        read = ExternalBook(
+            key="2", target="B.xlsx", name="B.xlsx", path=Path("B.xlsx")
+        )
+        graph = self._assemble(
+            resolver=_FakeAssembleResolver(workbooks=[declared_only, read])
+        )
+
+        stats = graph["meta"]["stats"]
+        assert stats["externalWorkbooks"] == 2
+        assert stats["externalWorkbooksRead"] == 1
+
+
+class TestProcessFormulaNodes:
+    """``_process_formula_nodes`` replaces the last inline block of
+    ``analyze_workbook``: the loop that turns each kept ``FormulaGroup`` into
+    a graph node and wires its precedent edges (plain refs via
+    ``cell_owner``, unresolvable refs via a defined name or an opaque node).
+    """
+
+    @staticmethod
+    def _process(kept_groups, *, name_nodes=None, cell_owner=None):
+        from linexcel.analyzer import _GraphBuilder, _process_formula_nodes
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=cell_owner if cell_owner is not None else defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=kept_groups,
+            nodes={},
+            edges={},
+        )
+        _process_formula_nodes(
+            kept_groups, name_nodes or {}, {}, _FakeResolver(), {}, builder
+        )
+        return builder
+
+    def test_single_cell_formula_creates_a_cell_node(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=1"}
+        )
+        builder = self._process([("c:Data!A1", grp)])
+
+        node = builder.nodes["c:Data!A1"]
+        assert node["kind"] == "cell"
+        assert node["sheet"] == "Data"
+        assert node["addr"] == "A1"
+        assert node["formula"] == "=1"
+        assert node["count"] == 1
+        assert node["samples"] is None
+
+    def test_group_of_cells_creates_group_node_with_samples(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data",
+            r1c1="R1C1",
+            cells=[(1, 1), (1, 2)],
+            formulas={(1, 1): "=1", (1, 2): "=1"},
+        )
+        builder = self._process([("g:Data!A1", grp)])
+
+        node = builder.nodes["g:Data!A1"]
+        assert node["kind"] == "group"
+        assert node["count"] == 2
+        assert "x2" in node["label"]
+        assert node["samples"] is not None
+        assert len(node["samples"]) == 2
+
+    def test_plain_reference_wires_precedent_edge_via_cell_owner(self):
+        from linexcel.analyzer import FormulaGroup
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C2", cells=[(1, 2)], formulas={(1, 2): "=A1"}
+        )
+        builder = self._process([("c:Data!B1", grp)], cell_owner=cell_owner)
+
+        assert ("c:Data!A1", "c:Data!B1", "dep") in builder.edges
+
+    def test_bound_name_reference_wires_name_edge(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=MyName"}
+        )
+        builder = self._process([("c:Data!A1", grp)], name_nodes={"MYNAME": "n:MyName"})
+
+        assert ("n:MyName", "c:Data!A1", "name") in builder.edges
+
+    def test_unbound_name_reference_falls_back_to_opaque_node(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=MyName"}
+        )
+        builder = self._process([("c:Data!A1", grp)])
+
+        opaque_edges = [e for e in builder.edges.values() if e["kind"] == "dep"]
+        assert len(opaque_edges) == 1
+        source_node = builder.nodes[opaque_edges[0]["source"]]
+        assert source_node["kind"] == "opaque"
+        assert source_node["label"] == "MyName"
+
+
+class TestExternalResolver:
+    """Locks the contract of ``_ExternalResolver``, extracted from
+    ``_ValueResolver`` so the "other workbook" concern (declared links,
+    name-based lookup in a reference folder, substitution into an
+    expression) can be read and tested on its own.
+    """
+
+    def _book(self, name, values=None):
+        from linexcel.external import ExternalBook
+
+        return ExternalBook(
+            key=name, target=name, name=name, values=values or {}, path=Path(name)
+        )
+
+    def test_external_books_lists_declared_book_read_from_folder(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx")
+        resolver = _ExternalResolver({"1": book}, {}, [])
+
+        books = resolver.external_books("='[1]Annual'!B4")
+
+        assert books == [
+            {
+                "name": "Budget.xlsx",
+                "path": "Budget.xlsx",
+                "read": "folder",
+                "file": "Budget.xlsx",
+            }
+        ]
+
+    def test_external_books_marks_unresolved_book_as_none(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        resolver = _ExternalResolver({}, {}, [])
+
+        books = resolver.external_books("='[1]Annual'!B4")
+
+        assert books == [{"name": "[1]", "read": "none"}]
+
+    def test_external_value_reads_cell_from_book_values(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import parse_external_refs
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        resolver = _ExternalResolver({"1": book}, {}, [])
+        (ref,) = parse_external_refs("='[1]Annual'!B4")
+
+        assert resolver.external_value(ref) == (42, "external")
+
+    def test_external_value_returns_none_for_unresolved_book(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import parse_external_refs
+
+        resolver = _ExternalResolver({}, {}, [])
+        (ref,) = parse_external_refs("='[1]Annual'!B4")
+
+        assert resolver.external_value(ref) == (None, None)
+
+    def test_book_for_reads_named_book_from_refs_files_once(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        calls: list[Path] = []
+
+        def fake_read(path):
+            calls.append(path)
+            return book.values
+
+        import linexcel.analyzer as analyzer_module
+
+        original = analyzer_module.read_workbook_values
+        analyzer_module.read_workbook_values = fake_read
+        try:
+            path = Path("Budget.xlsx")
+            resolver = _ExternalResolver({}, {"budget.xlsx": path}, [])
+            from linexcel.external import ExternalRef
+
+            ref = ExternalRef(
+                text="[Budget.xlsx]Annual!B4",
+                book="Budget.xlsx",
+                sheet="Annual",
+                cell="B4",
+            )
+
+            first = resolver.book_for(ref)
+            second = resolver.book_for(ref)
+        finally:
+            analyzer_module.read_workbook_values = original
+
+        assert first is second
+        assert calls == [path]
+        assert first.values == book.values
+
+    def test_book_for_warns_when_named_book_cannot_be_read(self):
+        import linexcel.analyzer as analyzer_module
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import ExternalRef
+
+        def fake_read(path):
+            raise OSError("boom")
+
+        original = analyzer_module.read_workbook_values
+        analyzer_module.read_workbook_values = fake_read
+        try:
+            warnings: list[str] = []
+            resolver = _ExternalResolver(
+                {}, {"budget.xlsx": Path("Budget.xlsx")}, warnings
+            )
+            ref = ExternalRef(
+                text="[Budget.xlsx]Annual!B4",
+                book="Budget.xlsx",
+                sheet="Annual",
+                cell="B4",
+            )
+
+            book = resolver.book_for(ref)
+        finally:
+            analyzer_module.read_workbook_values = original
+
+        assert book is not None
+        assert book.path is None
+        assert any("Budget.xlsx" in w for w in warnings)
+
+    def test_substitute_externals_replaces_resolved_reference_with_literal(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        resolver = _ExternalResolver({"1": book}, {}, [])
+
+        expr = resolver.substitute_externals("='[1]Annual'!B4 + 1")
+
+        assert expr == "=42 + 1"
+
+    def test_substitute_externals_leaves_unresolved_reference_untouched(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        resolver = _ExternalResolver({}, {}, [])
+
+        expr = resolver.substitute_externals("='[1]Annual'!B4 + 1")
+
+        assert expr == "='[1]Annual'!B4 + 1"
+
+    def test_external_workbooks_includes_declared_and_named_books(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import ExternalRef
+
+        declared = self._book("Budget.xlsx")
+        resolver = _ExternalResolver({"1": declared}, {}, [])
+        ref = ExternalRef(
+            text="[Forecast.xlsx]Sheet1!A1",
+            book="Forecast.xlsx",
+            sheet="Sheet1",
+            cell="A1",
+        )
+        resolver.book_for(ref)
+
+        names = {b.name for b in resolver.external_workbooks()}
+        assert names == {"Budget.xlsx", "Forecast.xlsx"}
+
+
+class TestCacheReader:
+    """Locks the contract of ``_CacheReader``, extracted from
+    ``_ValueResolver`` so the "what does the file's own cache say" concern
+    (cached value formatting, mismatch warnings, uncomputed-cell tracking)
+    can be read and tested without a live formualizer engine.
+    """
+
+    def _reader(self, values=None, date_cells=None, epoch_1904=False, warnings=None):
+        from linexcel.analyzer import _CacheReader
+        from linexcel.loader import CachedValues
+
+        cached = CachedValues(values or {}, date_cells or set(), epoch_1904)
+        return _CacheReader(cached, warnings if warnings is not None else [])
+
+    def test_cached_value_formats_midnight_datetime_as_bare_date(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.datetime(2024, 1, 5)})
+
+        assert reader.cached_value("Sheet1", 1, 1) == "2024-01-05"
+
+    def test_cached_value_formats_non_midnight_datetime_with_time(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.datetime(2024, 1, 5, 13, 30)})
+
+        assert reader.cached_value("Sheet1", 1, 1) == "2024-01-05 13:30:00"
+
+    def test_cached_value_returns_none_for_none_sheet(self):
+        reader = self._reader({("Sheet1", 1, 1): 42})
+
+        assert reader.cached_value(None, 1, 1) is None
+
+    def test_cached_value_returns_plain_value_untouched(self):
+        reader = self._reader({("Sheet1", 1, 1): 42})
+
+        assert reader.cached_value("Sheet1", 1, 1) == 42
+
+    def test_from_cache_returns_none_triple_when_absent(self):
+        reader = self._reader()
+
+        assert reader.from_cache("Sheet1", 1, 1) == (None, None, None)
+
+    def test_from_cache_returns_file_reading_with_date_text(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.date(2024, 1, 5)})
+
+        value, source, date_text = reader.from_cache("Sheet1", 1, 1)
+
+        assert (value, source, date_text) == ("2024-01-05", "file", "2024-01-05")
+
+    def test_date_text_uses_date_text_of_for_non_numeric_raw(self):
+        import datetime
+
+        reader = self._reader()
+
+        assert reader.date_text("Sheet1", 1, 1, datetime.date(2024, 1, 5)) == (
+            "2024-01-05"
+        )
+
+    def test_date_text_converts_serial_when_cell_marked_as_date(self):
+        reader = self._reader(date_cells={("Sheet1", 1, 1)}, epoch_1904=False)
+
+        assert reader.date_text("Sheet1", 1, 1, 45292) == "2024-01-01"
+
+    def test_date_text_returns_none_when_cell_not_marked_as_date(self):
+        reader = self._reader()
+
+        assert reader.date_text("Sheet1", 1, 1, 45292) is None
+
+    def test_check_mismatch_appends_warning_when_values_differ(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 10}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert len(warnings) == 1
+        assert "Sheet1!A1" in warnings[0]
+
+    def test_check_mismatch_is_silent_when_readings_agree(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 5}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert warnings == []
+
+    def test_check_mismatch_warns_only_once_per_cell(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 10}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert len(warnings) == 1
+
+    def test_note_uncomputed_dedups_and_uncomputed_warning_reports_it(self):
+        reader = self._reader()
+
+        reader.note_uncomputed("Sheet1", 2, 1)
+        reader.note_uncomputed("Sheet1", 2, 1)
+
+        warning = reader.uncomputed_warning()
+        assert warning is not None
+        assert "1 cell(s)" in warning
+        assert "Sheet1!A2" in warning
+
+    def test_uncomputed_warning_is_none_when_nothing_recorded(self):
+        reader = self._reader()
+
+        assert reader.uncomputed_warning() is None
+
+
+class _FakeStepEngine:
+    """Duck-typed engine for ``_StepEvaluator``: no formualizer needed.
+
+    ``evaluate_cell`` answers from the last formula ``set_formula`` wrote,
+    matching how ``_scratch_eval`` primes the sentinel then overwrites it —
+    good enough since a single ``eval_raw`` call only ever touches one cell
+    at a time. ``evaluate_cells`` (the batch path used by ``preload_steps``)
+    is configured separately since it answers several targets at once.
+    """
+
+    def __init__(self, results=None, batch_results=None):
+        self._results = results or {}
+        self._last_formula = None
+        self.set_formula_calls: list[tuple] = []
+        self.batch_calls: list[list] = []
+        self._batch_results = batch_results or []
+
+    def set_formula(self, sheet, row, col, formula):
+        self.set_formula_calls.append((sheet, row, col, formula))
+        self._last_formula = formula
+
+    def evaluate_cell(self, sheet, row, col):
+        from linexcel.analyzer import SCRATCH_SENTINEL
+
+        if self._last_formula == f'="{SCRATCH_SENTINEL}"':
+            return SCRATCH_SENTINEL
+        return self._results.get(self._last_formula, SCRATCH_SENTINEL)
+
+    def evaluate_cells(self, targets):
+        self.batch_calls.append(list(targets))
+        return self._batch_results
+
+
+class TestStepEvaluator:
+    """Locks the contract of ``_StepEvaluator``, extracted from
+    ``_ValueResolver`` so the scratch-sheet decomposition of a formula into
+    individually evaluated steps (with its dedup/budget/cache rules) can be
+    read and tested without a live formualizer engine.
+    """
+
+    def _evaluator(self, engine=None, scratch_ready=True, budget=None, substitute=None):
+        from linexcel.analyzer import _Budget, _StepEvaluator
+
+        return _StepEvaluator(
+            engine if engine is not None else _FakeStepEngine(),
+            scratch_ready,
+            budget if budget is not None else _Budget(10),
+            substitute if substitute is not None else (lambda expr: expr),
+        )
+
+    def test_eval_raw_short_circuits_when_scratch_not_ready(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, scratch_ready=False)
+
+        assert evaluator.eval_raw("=A1", "Sheet1") == (None, False)
+        assert engine.set_formula_calls == []
+
+    def test_eval_raw_short_circuits_when_budget_exhausted(self):
+        from linexcel.analyzer import _Budget
+
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, budget=_Budget(0))
+
+        assert evaluator.eval_raw("=A1", "Sheet1") == (None, False)
+        assert engine.set_formula_calls == []
+
+    def test_eval_raw_pops_a_preloaded_step_without_touching_the_engine(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine)
+        evaluator._step_cache["=A1+A2"] = (3, True)
+
+        assert evaluator.eval_raw("=A1+A2", "Sheet1") == (3, True)
+        assert engine.set_formula_calls == []
+        assert "=A1+A2" not in evaluator._step_cache
+
+    def test_eval_raw_evaluates_through_the_engine_and_substitutes_first(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=A1+A2", "Sheet1")
+        engine = _FakeStepEngine(results={qualified: 5})
+        calls: list[str] = []
+
+        def substitute(expr):
+            calls.append(expr)
+            return expr
+
+        evaluator = self._evaluator(engine=engine, substitute=substitute)
+
+        assert evaluator.eval_raw("=A1+A2", "Sheet1") == (5, True)
+        assert calls == ["=A1+A2"]
+
+    def test_eval_expr_turns_an_uncomputed_error_into_a_negative_reading(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=UNSUPPORTED()", "Sheet1")
+        engine = _FakeStepEngine(
+            results={qualified: {"type": "Error", "kind": "NImpl"}}
+        )
+        evaluator = self._evaluator(engine=engine)
+
+        assert evaluator.eval_expr("=UNSUPPORTED()", "Sheet1") == (None, False)
+
+    def test_eval_expr_returns_the_jsonable_value_on_success(self):
+        from linexcel.rewrite import qualify_sheet
+
+        qualified = qualify_sheet("=A1", "Sheet1")
+        engine = _FakeStepEngine(results={qualified: 7})
+        evaluator = self._evaluator(engine=engine)
+
+        assert evaluator.eval_expr("=A1", "Sheet1") == (7, True)
+
+    def test_preload_steps_is_a_noop_when_scratch_not_ready(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine, scratch_ready=False)
+
+        evaluator.preload_steps(["=A1"], "Sheet1", engine_alive=True)
+
+        assert engine.batch_calls == []
+        assert evaluator._step_cache == {}
+
+    def test_preload_steps_is_a_noop_when_the_engine_is_not_alive(self):
+        engine = _FakeStepEngine()
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=A1"], "Sheet1", engine_alive=False)
+
+        assert engine.batch_calls == []
+        assert evaluator._step_cache == {}
+
+    def test_preload_steps_dedups_expressions_before_batching(self):
+        engine = _FakeStepEngine(batch_results=[10])
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=A1", "=A1", "=A1"], "Sheet1", engine_alive=True)
+
+        assert len(engine.batch_calls) == 1
+        assert len(engine.batch_calls[0]) == 1
+        assert evaluator._step_cache == {"=A1": (10, True)}
+
+    def test_preload_steps_caches_sentinel_results_as_not_evaluated(self):
+        from linexcel.analyzer import SCRATCH_SENTINEL
+
+        engine = _FakeStepEngine(batch_results=[SCRATCH_SENTINEL, 42])
+        evaluator = self._evaluator(engine=engine)
+
+        evaluator.preload_steps(["=BAD()", "=A1"], "Sheet1", engine_alive=True)
+
+        assert evaluator._step_cache == {"=BAD()": (None, False), "=A1": (42, True)}
+
+
+class _FakeRecoveryEngine:
+    """Duck-typed engine for ``_RecoveryResolver``: no formualizer needed.
+
+    Values, formulas and per-cell recalculation results are looked up in
+    three independent maps keyed by ``(sheet, row, col)``, matching the
+    three different engine calls ``_RecoveryResolver`` makes.
+    """
+
+    def __init__(
+        self, values=None, formulas=None, evaluated=None, raises_on_evaluate=False
+    ):
+        self._values = values or {}
+        self._formulas = formulas or {}
+        self._evaluated = evaluated or {}
+        self._raises_on_evaluate = raises_on_evaluate
+        self.set_value_calls: list[tuple] = []
+
+    def get_value(self, sheet, row, col):
+        return self._values.get((sheet, row, col))
+
+    def get_formula(self, sheet, row, col):
+        return self._formulas.get((sheet, row, col))
+
+    def evaluate_cell(self, sheet, row, col):
+        if self._raises_on_evaluate:
+            raise RuntimeError("boom")
+        return self._evaluated.get((sheet, row, col))
+
+    def set_value(self, sheet, row, col, value):
+        self.set_value_calls.append((sheet, row, col, value))
+
+
+class TestRecoveryResolver:
+    """Locks the contract of ``_RecoveryResolver``, extracted from
+    ``_ValueResolver`` so the per-cell recovery of values ``evaluate_all``
+    could not compute (memoization, engine-alive fallback, precedent chain)
+    can be read and tested without a live formualizer engine.
+    """
+
+    def _recovery(
+        self,
+        engine=None,
+        engine_sheets=None,
+        sheet_dims=None,
+        budget=None,
+        eval_formula=None,
+        engine_alive=True,
+    ):
+        from linexcel.analyzer import _Budget, _RecoveryResolver
+
+        return _RecoveryResolver(
+            engine if engine is not None else _FakeRecoveryEngine(),
+            engine_sheets if engine_sheets is not None else {"Sheet1"},
+            sheet_dims if sheet_dims is not None else {"Sheet1": (10, 10)},
+            budget if budget is not None else _Budget(10),
+            eval_formula
+            if eval_formula is not None
+            else (lambda sheet, expr, depth: (None, None)),
+            engine_alive,
+        )
+
+    def test_formula_at_returns_none_on_engine_error(self):
+        class _Raising:
+            def get_formula(self, sheet, row, col):
+                raise RuntimeError("boom")
+
+        recovery = self._recovery(engine=_Raising())
+
+        assert recovery.formula_at("Sheet1", 1, 1) is None
+
+    def test_engine_read_returns_a_memoized_value_without_touching_the_engine(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 99})
+        recovery = self._recovery(engine=engine)
+        recovery._resolved[("Sheet1", 1, 1)] = (42, "engine")
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (42, "engine")
+
+    def test_engine_read_returns_the_engine_value_when_present(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 7})
+        recovery = self._recovery(engine=engine)
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (7, "engine")
+
+    def test_engine_read_returns_none_without_a_formula(self):
+        recovery = self._recovery()
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (None, None)
+
+    def test_recover_returns_the_recalculated_engine_value(self):
+        # A value the engine's own per-cell recalculation reproduces is
+        # returned as-is, without going through ``remember`` — memoizing and
+        # counting recovery is only needed for the scratch-sheet fallback.
+        engine = _FakeRecoveryEngine(evaluated={("Sheet1", 1, 1): 5})
+        recovery = self._recovery(engine=engine)
+
+        assert recovery.recover("Sheet1", 1, 1, "=A1") == (5, "engine")
+        assert recovery.n_recovered == 0
+
+    def test_recover_falls_back_to_eval_formula_when_evaluate_cell_raises(self):
+        engine = _FakeRecoveryEngine(raises_on_evaluate=True)
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (9, "fallback")
+        )
+
+        assert recovery.recover("Sheet1", 1, 1, "=A1") == (9, "fallback")
+        assert recovery.engine_alive is False
+
+    def test_remember_feeds_a_recovered_value_back_when_the_engine_is_dead(self):
+        engine = _FakeRecoveryEngine()
+        recovery = self._recovery(engine=engine, engine_alive=False)
+
+        recovery.remember("Sheet1", 1, 1, (11, "fallback"))
+
+        assert recovery.n_recovered == 1
+        assert engine.set_value_calls == [("Sheet1", 1, 1, 11)]
+
+    def test_remember_counts_an_unrecovered_cell_without_writing_back(self):
+        engine = _FakeRecoveryEngine()
+        recovery = self._recovery(engine=engine, engine_alive=False)
+
+        recovery.remember("Sheet1", 1, 1, (None, None))
+
+        assert recovery.n_unrecovered == 1
+        assert engine.set_value_calls == []
+
+    def test_resolve_chain_skips_a_cell_already_being_resolved(self):
+        recovery = self._recovery()
+        recovery._resolving.add(("Sheet1", 1, 1))
+        calls = []
+        recovery._eval_formula = lambda *a: calls.append(a) or (None, None)
+
+        recovery.resolve_chain("Sheet1", 1, 1, 0)
+
+        assert calls == []
+
+    def test_resolve_chain_skips_a_constant_cell(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 3})
+        recovery = self._recovery(engine=engine)
+        calls = []
+        recovery._eval_formula = lambda *a: calls.append(a) or (None, None)
+
+        recovery.resolve_chain("Sheet1", 1, 1, 0)
+
+        assert calls == []
+
+    def test_resolve_chain_recovers_a_formula_cell_and_memoizes_it(self):
+        engine = _FakeRecoveryEngine(formulas={("Sheet1", 2, 1): "=A1"})
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (4, "engine")
+        )
+
+        recovery.resolve_chain("Sheet1", 2, 1, 0)
+
+        assert recovery._resolved[("Sheet1", 2, 1)] == (4, "engine")
+
+    def test_resolve_precedents_walks_the_referenced_cell(self):
+        engine = _FakeRecoveryEngine(formulas={("Sheet1", 1, 1): "=X"})
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (2, "engine")
+        )
+
+        recovery.resolve_precedents("Sheet1", "=A1", 0)
+
+        assert recovery._resolved.get(("Sheet1", 1, 1)) == (2, "engine")
