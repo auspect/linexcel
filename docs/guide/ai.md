@@ -91,7 +91,7 @@ black formulas, conditional formatting, charts, the shape of a layout — and a
 model looking at the picture is the only way to put them into words.
 
 ```python
-shots = result.save_screenshots("shots/")            # LibreOffice renders them
+shots = result.save_screenshots("shots/")  # LibreOffice renders them
 seen = result.describe_screenshots(shots, base_url=..., model="<a vision model>")
 result.save_html("out.html", screenshots=shots, screenshot_docs=seen)
 ```

@@ -70,10 +70,10 @@ so it is opt-in and independent of `--ai-docs`.
 from linexcel import analyze
 
 result = analyze("workbook.xlsx")
-result                        # interactive graph in marimo / Jupyter
+result  # interactive graph in marimo / Jupyter
 result.save_html("out.html")  # standalone offline HTML viewer
-result.stats                  # {totalFormulas, totalNodes, ...}
-result.warnings               # list[str]
+result.stats  # {totalFormulas, totalNodes, ...}
+result.warnings  # list[str]
 ```
 
 Everything above is local and needs no key. AI documentation is optional, and
@@ -82,7 +82,9 @@ you choose the provider — nothing is sent anywhere until you name one:
 ```python
 # A local runtime keeps the workbook on your machine and costs nothing
 docs = result.document(base_url="http://localhost:11434/v1", model="qwen3.8")
-overview = result.document_workbook(base_url="http://localhost:11434/v1", model="qwen3.8")
+overview = result.document_workbook(
+    base_url="http://localhost:11434/v1", model="qwen3.8"
+)
 result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 

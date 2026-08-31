@@ -46,7 +46,7 @@ Same two arguments every time; only the URL and the model name change.
     docs = result.document(
         base_url="https://openrouter.ai/api/v1",
         model="<vendor>/<model>",
-        api_key="...",              # or set LINEXCEL_AI_API_KEY
+        api_key="...",  # or set LINEXCEL_AI_API_KEY
     )
     ```
 
@@ -91,7 +91,7 @@ export LINEXCEL_AI_MODEL=qwen3.8
 ```
 
 ```python
-docs = result.document()   # configured entirely by the environment
+docs = result.document()  # configured entirely by the environment
 ```
 
 !!! note "A model must always be named"
