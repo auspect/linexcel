@@ -2756,3 +2756,110 @@ class TestAnalyzeWorkbookHelpers:
         assert cell_owner["Data"][(n - 1, 1)] == "misc:Data"  # dropped: overflow
         assert len(warnings) == 1
         assert "misc" in warnings[0]
+
+
+class _FakeResolver:
+    """Stands in for ``_ValueResolver`` in ``_GraphBuilder`` tests.
+
+    ``_GraphBuilder`` only ever calls a handful of ``_ValueResolver`` methods
+    (``value``, ``describe``, ``external_books``, ``external_value``) — this
+    fake covers exactly those, so the builder's own contract can be locked
+    without spinning up a real formualizer engine.
+    """
+
+    def value(self, sheet, row, col, formula=None):
+        return (f"{sheet}!{row},{col}", "engine", None)
+
+    def describe(self, sheet, row, col, formula=None):
+        value, source, _ = self.value(sheet, row, col, formula)
+        return {"value": value, "valueSource": source}
+
+    def external_books(self, formula):
+        return []
+
+    def external_value(self, ref):
+        return (None, None)
+
+
+class TestGraphBuilder:
+    """``_GraphBuilder`` replaces the closures ``analyze_workbook`` used to
+    define inline (``ensure_opaque_node``, ``ensure_input_node``,
+    ``add_edge``, ``resolve_rect_edges``) to build the graph's nodes/edges.
+    """
+
+    @staticmethod
+    def _builder(**overrides):
+        from linexcel.analyzer import _GraphBuilder
+
+        kwargs = {
+            "sheet_dims": {"Data": (5, 5)},
+            "cell_owner": defaultdict(dict),
+            "resolver": _FakeResolver(),
+            "table_index": {},
+            "kept_groups": [],
+            "nodes": {},
+            "edges": {},
+        }
+        kwargs.update(overrides)
+        return _GraphBuilder(**kwargs)
+
+    def test_ensure_input_node_is_stable_and_content_addressed(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder()
+        rect = Rect("Data", 1, 1, 2, 2)
+
+        first = builder.ensure_input_node(rect)
+        second = builder.ensure_input_node(rect)
+
+        assert first == second == "i:Data!A1:B2"
+        assert builder.nodes[first]["kind"] == "input"
+        assert builder.nodes[first]["count"] == 4
+
+    def test_ensure_input_node_opaque_label_bypasses_the_resolver(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder(resolver=None)  # would blow up if touched
+
+        node_id = builder.ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label="X")
+
+        assert node_id == "x:X"
+        assert builder.nodes[node_id]["kind"] == "opaque"
+
+    def test_add_edge_dedupes_and_upgrades_approx_to_exact(self):
+        builder = self._builder()
+
+        builder.add_edge("a", "b", "dep", approx=True)
+        builder.add_edge("a", "b", "dep", approx=True)
+        assert len(builder.edges) == 1
+        assert builder.edges[("a", "b", "dep")]["approx"] is True
+
+        builder.add_edge("a", "b", "dep", approx=False)
+        assert len(builder.edges) == 1  # still one edge, now exact
+        assert builder.edges[("a", "b", "dep")]["approx"] is False
+
+    def test_add_edge_ignores_self_loops(self):
+        builder = self._builder()
+        builder.add_edge("a", "a", "dep")
+        assert builder.edges == {}
+
+    def test_resolve_rect_edges_routes_through_cell_owner(self):
+        from linexcel.refs import Rect
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        builder = self._builder(cell_owner=cell_owner)
+
+        builder.resolve_rect_edges(Rect("Data", 1, 1, 1, 1), "target")
+
+        assert ("c:Data!A1", "target", "dep") in builder.edges
+
+    def test_resolve_rect_edges_on_unknown_sheet_becomes_opaque(self):
+        from linexcel.refs import Rect
+
+        builder = self._builder()
+
+        builder.resolve_rect_edges(Rect("[1]Annual", 1, 1, 1, 1), "target")
+
+        opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
+        assert len(opaque_ids) == 1
+        assert (opaque_ids[0], "target", "dep") in builder.edges
