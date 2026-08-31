@@ -238,7 +238,7 @@ Sélection de la cellule `B10` contenant la formule composite d'Indice de Rentab
 #### Preuve 4 : Démonstration de Résilience sur Classeur Hostile (`/tmp/agy-adversarial.xlsx`)
 Test d'un classeur contenant des références cassées vers des feuilles inexistantes (`=IFERROR(NonExistentSheet!Z99, 42)` et `=MissingSheet!B4`).
 
-![Récupération résiliente sur classeur adversarial](imgs/agy_demo_overview.jpg)
+![Récupération résiliente sur classeur adversarial](imgs/agy_adversarial_recovery.jpg)
 
 *Journal de résilience obtenu :*
 ```text
