@@ -3464,3 +3464,117 @@ class TestExternalResolver:
 
         names = {b.name for b in resolver.external_workbooks()}
         assert names == {"Budget.xlsx", "Forecast.xlsx"}
+
+
+class TestCacheReader:
+    """Locks the contract of ``_CacheReader``, extracted from
+    ``_ValueResolver`` so the "what does the file's own cache say" concern
+    (cached value formatting, mismatch warnings, uncomputed-cell tracking)
+    can be read and tested without a live formualizer engine.
+    """
+
+    def _reader(self, values=None, date_cells=None, epoch_1904=False, warnings=None):
+        from linexcel.analyzer import _CacheReader
+        from linexcel.loader import CachedValues
+
+        cached = CachedValues(values or {}, date_cells or set(), epoch_1904)
+        return _CacheReader(cached, warnings if warnings is not None else [])
+
+    def test_cached_value_formats_midnight_datetime_as_bare_date(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.datetime(2024, 1, 5)})
+
+        assert reader.cached_value("Sheet1", 1, 1) == "2024-01-05"
+
+    def test_cached_value_formats_non_midnight_datetime_with_time(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.datetime(2024, 1, 5, 13, 30)})
+
+        assert reader.cached_value("Sheet1", 1, 1) == "2024-01-05 13:30:00"
+
+    def test_cached_value_returns_none_for_none_sheet(self):
+        reader = self._reader({("Sheet1", 1, 1): 42})
+
+        assert reader.cached_value(None, 1, 1) is None
+
+    def test_cached_value_returns_plain_value_untouched(self):
+        reader = self._reader({("Sheet1", 1, 1): 42})
+
+        assert reader.cached_value("Sheet1", 1, 1) == 42
+
+    def test_from_cache_returns_none_triple_when_absent(self):
+        reader = self._reader()
+
+        assert reader.from_cache("Sheet1", 1, 1) == (None, None, None)
+
+    def test_from_cache_returns_file_reading_with_date_text(self):
+        import datetime
+
+        reader = self._reader({("Sheet1", 1, 1): datetime.date(2024, 1, 5)})
+
+        value, source, date_text = reader.from_cache("Sheet1", 1, 1)
+
+        assert (value, source, date_text) == ("2024-01-05", "file", "2024-01-05")
+
+    def test_date_text_uses_date_text_of_for_non_numeric_raw(self):
+        import datetime
+
+        reader = self._reader()
+
+        assert reader.date_text("Sheet1", 1, 1, datetime.date(2024, 1, 5)) == (
+            "2024-01-05"
+        )
+
+    def test_date_text_converts_serial_when_cell_marked_as_date(self):
+        reader = self._reader(date_cells={("Sheet1", 1, 1)}, epoch_1904=False)
+
+        assert reader.date_text("Sheet1", 1, 1, 45292) == "2024-01-01"
+
+    def test_date_text_returns_none_when_cell_not_marked_as_date(self):
+        reader = self._reader()
+
+        assert reader.date_text("Sheet1", 1, 1, 45292) is None
+
+    def test_check_mismatch_appends_warning_when_values_differ(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 10}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert len(warnings) == 1
+        assert "Sheet1!A1" in warnings[0]
+
+    def test_check_mismatch_is_silent_when_readings_agree(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 5}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert warnings == []
+
+    def test_check_mismatch_warns_only_once_per_cell(self):
+        warnings: list[str] = []
+        reader = self._reader({("Sheet1", 1, 1): 10}, warnings=warnings)
+
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+        reader.check_mismatch("Sheet1", 1, 1, 5, None)
+
+        assert len(warnings) == 1
+
+    def test_note_uncomputed_dedups_and_uncomputed_warning_reports_it(self):
+        reader = self._reader()
+
+        reader.note_uncomputed("Sheet1", 2, 1)
+        reader.note_uncomputed("Sheet1", 2, 1)
+
+        warning = reader.uncomputed_warning()
+        assert warning is not None
+        assert "1 cell(s)" in warning
+        assert "Sheet1!A2" in warning
+
+    def test_uncomputed_warning_is_none_when_nothing_recorded(self):
+        reader = self._reader()
+
+        assert reader.uncomputed_warning() is None

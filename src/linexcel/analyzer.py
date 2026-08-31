@@ -271,6 +271,102 @@ class _ExternalResolver:
         return book
 
 
+class _CacheReader:
+    """Reads the values cached in the file's XML and flags divergences.
+
+    Isolated from ``_ValueResolver`` because it only ever touches the cache
+    (``cached``) and the shared ``warnings`` list — never the engine, the
+    budget, or the recovery/decomposition state that the rest of the resolver
+    is built around.
+    """
+
+    def __init__(self, cached: CachedValues, warnings: list[str]):
+        self.cached = cached
+        self.warnings = warnings
+        self._compared: set[tuple[str, int, int]] = set()
+        self._n_mismatches = 0
+        self._uncomputed: list[str] = []
+
+    def cached_value(self, sheet: str | None, row: int, col: int) -> Any:
+        if sheet is None:
+            return None
+        raw = self.cached.get(sheet, row, col)
+        # dates stay dates in the graph: a midnight datetime serializes as the
+        # bare ``YYYY-MM-DD`` so it compares cleanly against ``valueDate``
+        if isinstance(raw, datetime.datetime):
+            if raw.time() == datetime.time.min:
+                return raw.date().isoformat()
+            return raw.isoformat(sep=" ")
+        if isinstance(raw, datetime.date):
+            return raw.isoformat()
+        return _jsonable(raw)
+
+    def from_cache(
+        self, sheet: str, row: int, col: int
+    ) -> tuple[Any, str | None, str | None]:
+        raw = self.cached.get(sheet, row, col)
+        if raw is None:
+            return None, None, None
+        date_text = _date_text_of(raw)
+        return _jsonable(raw), "file", date_text
+
+    def date_text(self, sheet: str, row: int, col: int, raw: Any) -> str | None:
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return _date_text_of(raw)
+        cached = self.cached.get(sheet, row, col)
+        is_date = isinstance(cached, (datetime.datetime, datetime.date))
+        if not is_date and not self.cached.is_date(sheet, row, col):
+            return None
+        return serial_to_date_text(raw, self.cached.epoch_1904)
+
+    def check_mismatch(
+        self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
+    ) -> None:
+        key = (sheet, row, col)
+        if key in self._compared:
+            return
+        self._compared.add(key)
+        cached = self.cached.get(sheet, row, col)
+        if cached is None or readings_agree(raw, cached, date_text) != "differ":
+            return
+        self._n_mismatches += 1
+        if self._n_mismatches > MAX_VALUE_WARNINGS:
+            if self._n_mismatches == MAX_VALUE_WARNINGS + 1:
+                self.warnings.append(
+                    "More recalculated values differ from the file "
+                    f"(only the first {MAX_VALUE_WARNINGS} are listed)"
+                )
+            return
+        self.warnings.append(
+            f"{sheet}!{a1(row, col)}: recalculated {_fmt_value(raw)} "
+            f"differs from file value {_fmt_value(cached)}"
+        )
+
+    def note_uncomputed(self, sheet: str, row: int, col: int) -> None:
+        """Record a cell the engine could not compute, once."""
+        label = f"{sheet}!{a1(row, col)}"
+        if label not in self._uncomputed:
+            self._uncomputed.append(label)
+
+    def uncomputed_warning(self) -> str | None:
+        """One line naming the cells left to the value stored in the file.
+
+        Silence would be the wrong report here: those cells show a figure the
+        panel attributes to the file, and nothing else would say that linexcel
+        met a formula it cannot evaluate.
+        """
+        if not self._uncomputed:
+            return None
+        listed = ", ".join(self._uncomputed[:MAX_UNCOMPUTED_LISTED])
+        rest = len(self._uncomputed) - MAX_UNCOMPUTED_LISTED
+        if rest > 0:
+            listed += f", and {rest} more"
+        return (
+            f"{len(self._uncomputed)} cell(s) could not be computed by the engine "
+            f"and keep the value stored in the file: {listed}"
+        )
+
+
 class _ValueResolver:
     """Single entry point for reading the value of a cell.
 
@@ -311,12 +407,10 @@ class _ValueResolver:
         self.scratch_ready = scratch_ready
         self.sheet_dims = sheet_dims or {}
         self._external = _ExternalResolver(externals, refs_files, warnings)
+        self._cache = _CacheReader(cached, warnings)
         self._engine_alive = engine_alive
-        self._compared: set[tuple[str, int, int]] = set()
-        self._n_mismatches = 0
         self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
         self._resolving: set[tuple[str, int, int]] = set()
-        self._uncomputed: list[str] = []
         self.n_recovered = 0
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
@@ -329,7 +423,7 @@ class _ValueResolver:
         if sheet is None:
             return None, None, None
         if sheet not in self.engine_sheets:
-            return self._from_cache(sheet, row, col)
+            return self._cache.from_cache(sheet, row, col)
         if formula is None:
             formula = self._formula_at(sheet, row, col)
         # A volatile formula answers differently every time it is computed, so
@@ -338,16 +432,16 @@ class _ValueResolver:
         # divergence blames the file for the calendar. The stored value is kept
         # and labelled as the only reading there is.
         if formula and _is_volatile(formula):
-            value, _source, date_text = self._from_cache(sheet, row, col)
+            value, _source, date_text = self._cache.from_cache(sheet, row, col)
             return value, "volatile", date_text
         raw, source = self._engine_read(sheet, row, col, formula)
         if _is_uncomputed(raw):
-            self._note_uncomputed(sheet, row, col)
+            self._cache.note_uncomputed(sheet, row, col)
             raw = None
         if raw is None:
-            return self._from_cache(sheet, row, col)
-        date_text = self._date_text(sheet, row, col, raw)
-        self._check_mismatch(sheet, row, col, raw, date_text)
+            return self._cache.from_cache(sheet, row, col)
+        date_text = self._cache.date_text(sheet, row, col, raw)
+        self._cache.check_mismatch(sheet, row, col, raw, date_text)
         return _jsonable(raw), source, date_text
 
     def describe(
@@ -385,18 +479,7 @@ class _ValueResolver:
         return self._external.substitute_externals(expr)
 
     def cached_value(self, sheet: str | None, row: int, col: int) -> Any:
-        if sheet is None:
-            return None
-        raw = self.cached.get(sheet, row, col)
-        # dates stay dates in the graph: a midnight datetime serializes as the
-        # bare ``YYYY-MM-DD`` so it compares cleanly against ``valueDate``
-        if isinstance(raw, datetime.datetime):
-            if raw.time() == datetime.time.min:
-                return raw.date().isoformat()
-            return raw.isoformat(sep=" ")
-        if isinstance(raw, datetime.date):
-            return raw.isoformat()
-        return _jsonable(raw)
+        return self._cache.cached_value(sheet, row, col)
 
     def eval_expr(self, expr: str, sheet: str) -> tuple[Any, bool]:
         """Evaluate an expression in the scratch sheet, if budget allows.
@@ -630,53 +713,6 @@ class _ValueResolver:
         except Exception:
             return None
 
-    def _from_cache(
-        self, sheet: str, row: int, col: int
-    ) -> tuple[Any, str | None, str | None]:
-        raw = self.cached.get(sheet, row, col)
-        if raw is None:
-            return None, None, None
-        date_text = _date_text_of(raw)
-        return _jsonable(raw), "file", date_text
-
-    def _date_text(self, sheet: str, row: int, col: int, raw: Any) -> str | None:
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            return _date_text_of(raw)
-        cached = self.cached.get(sheet, row, col)
-        is_date = isinstance(cached, (datetime.datetime, datetime.date))
-        if not is_date and not self.cached.is_date(sheet, row, col):
-            return None
-        return serial_to_date_text(raw, self.cached.epoch_1904)
-
-    def _check_mismatch(
-        self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
-    ) -> None:
-        key = (sheet, row, col)
-        if key in self._compared:
-            return
-        self._compared.add(key)
-        cached = self.cached.get(sheet, row, col)
-        if cached is None or readings_agree(raw, cached, date_text) != "differ":
-            return
-        self._n_mismatches += 1
-        if self._n_mismatches > MAX_VALUE_WARNINGS:
-            if self._n_mismatches == MAX_VALUE_WARNINGS + 1:
-                self.warnings.append(
-                    "More recalculated values differ from the file "
-                    f"(only the first {MAX_VALUE_WARNINGS} are listed)"
-                )
-            return
-        self.warnings.append(
-            f"{sheet}!{a1(row, col)}: recalculated {_fmt_value(raw)} "
-            f"differs from file value {_fmt_value(cached)}"
-        )
-
-    def _note_uncomputed(self, sheet: str, row: int, col: int) -> None:
-        """Record a cell the engine could not compute, once."""
-        label = f"{sheet}!{a1(row, col)}"
-        if label not in self._uncomputed:
-            self._uncomputed.append(label)
-
     def uncomputed_warning(self) -> str | None:
         """One line naming the cells left to the value stored in the file.
 
@@ -684,16 +720,7 @@ class _ValueResolver:
         panel attributes to the file, and nothing else would say that linexcel
         met a formula it cannot evaluate.
         """
-        if not self._uncomputed:
-            return None
-        listed = ", ".join(self._uncomputed[:MAX_UNCOMPUTED_LISTED])
-        rest = len(self._uncomputed) - MAX_UNCOMPUTED_LISTED
-        if rest > 0:
-            listed += f", and {rest} more"
-        return (
-            f"{len(self._uncomputed)} cell(s) could not be computed by the engine "
-            f"and keep the value stored in the file: {listed}"
-        )
+        return self._cache.uncomputed_warning()
 
 
 def _external_warning(
