@@ -4,6 +4,7 @@ import io
 import json
 import re
 import struct
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 
@@ -2708,3 +2709,50 @@ class TestAnalyzeWorkbookHelpers:
         assert sheet_stats == [
             {"name": "Data", "rows": 2, "cols": 2, "formulaCells": 2}
         ]
+
+    def test_finalize_formula_groups_assigns_node_ids_and_owners(self):
+        from linexcel.analyzer import FormulaGroup, _finalize_formula_groups
+
+        groups = {
+            ("Data", "R1"): FormulaGroup("Data", "R1", cells=[(1, 2)]),
+            ("Data", "R2"): FormulaGroup("Data", "R2", cells=[(2, 2), (3, 2)]),
+        }
+        cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
+        nodes: dict[str, dict] = {}
+        warnings: list[str] = []
+
+        kept = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
+
+        ids = {node_id for node_id, _ in kept}
+        assert ids == {"c:Data!B1", "g:Data!B2#2"}
+        assert cell_owner["Data"][(1, 2)] == "c:Data!B1"
+        assert cell_owner["Data"][(2, 2)] == "g:Data!B2#2"
+        assert cell_owner["Data"][(3, 2)] == "g:Data!B2#2"
+        assert nodes == {}  # nothing dropped: no misc node
+        assert warnings == []
+
+    def test_finalize_formula_groups_folds_overflow_into_misc_node(self):
+        from linexcel.analyzer import (
+            MAX_NODES_PER_SHEET,
+            FormulaGroup,
+            _finalize_formula_groups,
+        )
+
+        n = MAX_NODES_PER_SHEET + 5
+        groups = {
+            ("Data", f"R{i}"): FormulaGroup("Data", f"R{i}", cells=[(i, 1)])
+            for i in range(n)
+        }
+        cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
+        nodes: dict[str, dict] = {}
+        warnings: list[str] = []
+
+        kept = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
+
+        assert len(kept) == MAX_NODES_PER_SHEET
+        assert nodes["misc:Data"]["patterns"] == 5
+        assert nodes["misc:Data"]["count"] == 5
+        assert cell_owner["Data"][(0, 1)] != "misc:Data"  # kept: lowest reps first
+        assert cell_owner["Data"][(n - 1, 1)] == "misc:Data"  # dropped: overflow
+        assert len(warnings) == 1
+        assert "misc" in warnings[0]

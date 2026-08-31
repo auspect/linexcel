@@ -1036,6 +1036,59 @@ def _extract_formula_groups(
     return groups, cell_owner, formula_count, sheet_stats
 
 
+def _finalize_formula_groups(
+    groups: dict[tuple[str, str], FormulaGroup],
+    cell_owner: dict[str, dict[tuple[int, int], str]],
+    nodes: dict[str, dict[str, Any]],
+    warnings: list[str],
+) -> list[tuple[str, FormulaGroup]]:
+    """Assign a node id to each formula group, capping nodes per sheet.
+
+    The busiest patterns on a sheet each keep their own node; the rest are
+    folded into one ``misc`` node so a sheet with thousands of distinct
+    formulas does not turn into thousands of graph nodes. ``cell_owner`` is
+    updated in place so later edge-resolution finds the right node for every
+    cell, kept or dropped.
+    """
+    per_sheet_groups: dict[str, list[FormulaGroup]] = defaultdict(list)
+    for grp in groups.values():
+        per_sheet_groups[grp.sheet].append(grp)
+
+    kept_groups: list[tuple[str, FormulaGroup]] = []
+    for sheet, sheet_groups in per_sheet_groups.items():
+        sheet_groups.sort(key=lambda g: (-len(g.cells), g.rep))
+        kept = sheet_groups[:MAX_NODES_PER_SHEET]
+        dropped = sheet_groups[MAX_NODES_PER_SHEET:]
+        for grp in kept:
+            rep_r, rep_c = grp.rep
+            if len(grp.cells) == 1:
+                node_id = f"c:{sheet}!{a1(rep_r, rep_c)}"
+            else:
+                node_id = f"g:{sheet}!{a1(rep_r, rep_c)}#{len(grp.cells)}"
+            kept_groups.append((node_id, grp))
+            for cell in grp.cells:
+                cell_owner[sheet][cell] = node_id
+        if dropped:
+            n_cells = sum(len(g.cells) for g in dropped)
+            misc_id = f"misc:{sheet}"
+            nodes[misc_id] = {
+                "id": misc_id,
+                "kind": "misc",
+                "sheet": sheet,
+                "label": f"{len(dropped)} other patterns ({n_cells} cells)",
+                "count": n_cells,
+                "patterns": len(dropped),
+            }
+            warnings.append(
+                f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
+                f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
+            )
+            for grp in dropped:
+                for cell in grp.cells:
+                    cell_owner[sheet][cell] = misc_id
+    return kept_groups
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -1111,42 +1164,7 @@ def analyze_workbook(
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-    per_sheet_groups: dict[str, list[FormulaGroup]] = defaultdict(list)
-    for grp in groups.values():
-        per_sheet_groups[grp.sheet].append(grp)
-
-    kept_groups: list[tuple[str, FormulaGroup]] = []
-    for sheet, sheet_groups in per_sheet_groups.items():
-        sheet_groups.sort(key=lambda g: (-len(g.cells), g.rep))
-        kept = sheet_groups[:MAX_NODES_PER_SHEET]
-        dropped = sheet_groups[MAX_NODES_PER_SHEET:]
-        for grp in kept:
-            rep_r, rep_c = grp.rep
-            if len(grp.cells) == 1:
-                node_id = f"c:{sheet}!{a1(rep_r, rep_c)}"
-            else:
-                node_id = f"g:{sheet}!{a1(rep_r, rep_c)}#{len(grp.cells)}"
-            kept_groups.append((node_id, grp))
-            for cell in grp.cells:
-                cell_owner[sheet][cell] = node_id
-        if dropped:
-            n_cells = sum(len(g.cells) for g in dropped)
-            misc_id = f"misc:{sheet}"
-            nodes[misc_id] = {
-                "id": misc_id,
-                "kind": "misc",
-                "sheet": sheet,
-                "label": f"{len(dropped)} other patterns ({n_cells} cells)",
-                "count": n_cells,
-                "patterns": len(dropped),
-            }
-            warnings.append(
-                f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
-                f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
-            )
-            for grp in dropped:
-                for cell in grp.cells:
-                    cell_owner[sheet][cell] = misc_id
+    kept_groups = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
 
     ast_cache: dict[str, Any] = {}
     input_nodes: dict[str, str] = {}  # full A1 key -> node id
