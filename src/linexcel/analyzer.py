@@ -471,6 +471,160 @@ class _StepEvaluator:
                 self._step_cache[e] = (None, False)
 
 
+class _RecoveryResolver:
+    """Per-cell recovery of values ``evaluate_all`` could not compute.
+
+    The engine is all-or-nothing: one cell pointing at a missing sheet makes
+    ``evaluate_all`` raise, and from then on every formula cell reads back as
+    ``None``. Each read then falls back, in order: the memoized recovery, the
+    engine's own per-cell recalculation, and finally an isolated
+    re-evaluation of the formula in the scratch sheet (with the IFERROR/IFNA
+    fallback branch when the guarded expression itself cannot be computed).
+
+    A scratch evaluation only sees constants: a reference to another
+    *formula* cell reads back as blank. Recovery therefore resolves the
+    precedents of a formula first, deepest one first, and feeds each
+    recovered value back into the engine as a constant so the next
+    evaluation — direct reference or range — reads a number instead of a
+    formula it cannot compute.
+    """
+
+    def __init__(
+        self,
+        engine,
+        engine_sheets: set[str],
+        sheet_dims: dict[str, tuple[int, int]],
+        budget: _Budget,
+        eval_formula: Callable[[str, str, int], tuple[Any, str | None]],
+        engine_alive: bool = True,
+    ):
+        self.engine = engine
+        self.engine_sheets = engine_sheets
+        self.sheet_dims = sheet_dims
+        self.budget = budget
+        self._eval_formula = eval_formula
+        self.engine_alive = engine_alive
+        self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
+        self._resolving: set[tuple[str, int, int]] = set()
+        self.n_recovered = 0
+        self.n_unrecovered = 0
+
+    def formula_at(self, sheet: str, row: int, col: int) -> str | None:
+        try:
+            return self.engine.get_formula(sheet, row, col)
+        except Exception:
+            return None
+
+    def engine_read(
+        self, sheet: str, row: int, col: int, formula: str | None
+    ) -> tuple[Any, str | None]:
+        memo = self._resolved.get((sheet, row, col))
+        if memo is not None:
+            return memo
+        try:
+            raw = self.engine.get_value(sheet, row, col)
+        except Exception:
+            raw = None
+        if raw is not None:
+            return raw, "engine"
+        if formula is None:
+            formula = self.formula_at(sheet, row, col)
+        if not formula:
+            return None, None
+        return self.recover(sheet, row, col, formula)
+
+    def recover(
+        self, sheet: str, row: int, col: int, formula: str
+    ) -> tuple[Any, str | None]:
+        uncomputed = None
+        if self.engine_alive:
+            try:
+                raw = self.engine.evaluate_cell(sheet, row, col)
+                if raw is not None:
+                    if _is_uncomputed(raw):
+                        uncomputed = raw
+                    else:
+                        return raw, "engine"
+            except Exception:
+                # The first failure poisons the engine for good: every later
+                # whole-graph evaluation would raise the same way.
+                self.engine_alive = False
+        expr = formula if formula.startswith("=") else "=" + formula
+        result = self._eval_formula(sheet, expr, 0)
+        if result[0] is None and uncomputed is not None:
+            result = uncomputed, None
+        return self.remember(sheet, row, col, result)
+
+    def resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
+        """Recover every formula cell the expression reads, deepest first."""
+        if depth >= MAX_CHAIN_DEPTH:
+            return
+        try:
+            ast_dict = fz.parse(expr).to_dict()
+        except Exception:
+            return
+        for ref in _collect_ref_strings(ast_dict):
+            detail = parse_ref_detailed(ref, default_sheet=sheet)
+            if detail is None or detail.rect.sheet not in self.engine_sheets:
+                continue
+            rect = detail.rect
+            dims = self.sheet_dims.get(rect.sheet or "")
+            if dims is not None:
+                clipped = rect.clipped(*dims)
+                if clipped is None:
+                    continue
+                rect = clipped
+            if rect.ncells > MAX_CHAIN_RANGE_CELLS or rect.sheet is None:
+                continue
+            for r in range(rect.r1, rect.r2 + 1):
+                for c in range(rect.c1, rect.c2 + 1):
+                    self.resolve_chain(rect.sheet, r, c, depth + 1)
+
+    def resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> None:
+        key = (sheet, row, col)
+        # ``_resolving`` breaks the self-referencing formula (=B1+B2 in B2):
+        # the cell stays unresolved and reads as blank, as it did before.
+        if key in self._resolved or key in self._resolving:
+            return
+        if depth >= MAX_CHAIN_DEPTH or self.budget.left <= 0:
+            return
+        try:
+            if self.engine.get_value(sheet, row, col) is not None:
+                return  # constant: the engine already resolves it on its own
+        except Exception:
+            pass
+        formula = self.formula_at(sheet, row, col)
+        if not formula:
+            return
+        expr = formula if formula.startswith("=") else "=" + formula
+        self._resolving.add(key)
+        try:
+            result = self._eval_formula(sheet, expr, depth)
+        finally:
+            self._resolving.discard(key)
+        self.remember(sheet, row, col, result)
+
+    def remember(
+        self, sheet: str, row: int, col: int, result: tuple[Any, str | None]
+    ) -> tuple[Any, str | None]:
+        """Memoize a recovered value and feed it back into the engine."""
+        self._resolved[(sheet, row, col)] = result
+        raw, _source = result
+        if raw is None or _is_uncomputed(raw):
+            self.n_unrecovered += 1
+            return result
+        self.n_recovered += 1
+        if not self.engine_alive:
+            # Only ever done on the engine rebuilt after a failed global
+            # evaluation, which holds no computed value anyway. It drops the
+            # formula of the cell, hence the memo read first in ``engine_read``.
+            try:
+                self.engine.set_value(sheet, row, col, raw)
+            except Exception:
+                pass
+        return result
+
+
 class _ValueResolver:
     """Single entry point for reading the value of a cell.
 
@@ -515,11 +669,22 @@ class _ValueResolver:
         self._steps = _StepEvaluator(
             engine, scratch_ready, budget, self.substitute_externals
         )
-        self._engine_alive = engine_alive
-        self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
-        self._resolving: set[tuple[str, int, int]] = set()
-        self.n_recovered = 0
-        self.n_unrecovered = 0
+        self._recovery = _RecoveryResolver(
+            engine,
+            engine_sheets,
+            self.sheet_dims,
+            budget,
+            self._eval_formula,
+            engine_alive,
+        )
+
+    @property
+    def n_recovered(self) -> int:
+        return self._recovery.n_recovered
+
+    @property
+    def n_unrecovered(self) -> int:
+        return self._recovery.n_unrecovered
 
     # -- public API --------------------------------------------------------
     def value(
@@ -531,7 +696,7 @@ class _ValueResolver:
         if sheet not in self.engine_sheets:
             return self._cache.from_cache(sheet, row, col)
         if formula is None:
-            formula = self._formula_at(sheet, row, col)
+            formula = self._recovery.formula_at(sheet, row, col)
         # A volatile formula answers differently every time it is computed, so
         # recomputing it says nothing about the workbook: `=TODAY()` recalculated
         # today cannot agree with a file saved last week, and reporting that as a
@@ -540,7 +705,7 @@ class _ValueResolver:
         if formula and _is_volatile(formula):
             value, _source, date_text = self._cache.from_cache(sheet, row, col)
             return value, "volatile", date_text
-        raw, source = self._engine_read(sheet, row, col, formula)
+        raw, source = self._recovery.engine_read(sheet, row, col, formula)
         if _is_uncomputed(raw):
             self._cache.note_uncomputed(sheet, row, col)
             raw = None
@@ -593,51 +758,11 @@ class _ValueResolver:
 
     def preload_steps(self, exprs: list[str], sheet: str) -> None:
         """Batch-evaluate step expressions in one ``evaluate_cells`` call."""
-        self._steps.preload_steps(exprs, sheet, self._engine_alive)
+        self._steps.preload_steps(exprs, sheet, self._recovery.engine_alive)
 
     # -- internals ---------------------------------------------------------
     def _eval_raw(self, expr: str, sheet: str) -> tuple[Any, bool]:
         return self._steps.eval_raw(expr, sheet)
-
-    def _engine_read(
-        self, sheet: str, row: int, col: int, formula: str | None
-    ) -> tuple[Any, str | None]:
-        memo = self._resolved.get((sheet, row, col))
-        if memo is not None:
-            return memo
-        try:
-            raw = self.engine.get_value(sheet, row, col)
-        except Exception:
-            raw = None
-        if raw is not None:
-            return raw, "engine"
-        if formula is None:
-            formula = self._formula_at(sheet, row, col)
-        if not formula:
-            return None, None
-        return self._recover(sheet, row, col, formula)
-
-    def _recover(
-        self, sheet: str, row: int, col: int, formula: str
-    ) -> tuple[Any, str | None]:
-        uncomputed = None
-        if self._engine_alive:
-            try:
-                raw = self.engine.evaluate_cell(sheet, row, col)
-                if raw is not None:
-                    if _is_uncomputed(raw):
-                        uncomputed = raw
-                    else:
-                        return raw, "engine"
-            except Exception:
-                # The first failure poisons the engine for good: every later
-                # whole-graph evaluation would raise the same way.
-                self._engine_alive = False
-        expr = formula if formula.startswith("=") else "=" + formula
-        result = self._eval_formula(sheet, expr, 0)
-        if result[0] is None and uncomputed is not None:
-            result = uncomputed, None
-        return self._remember(sheet, row, col, result)
 
     def _eval_formula(
         self, sheet: str, expr: str, depth: int
@@ -648,8 +773,8 @@ class _ValueResolver:
         result: the IFERROR/IFNA fallback branch is then tried, exactly as it is
         when the evaluation itself does not come back.
         """
-        if not self._engine_alive:
-            self._resolve_precedents(sheet, expr, depth)
+        if not self._recovery.engine_alive:
+            self._recovery.resolve_precedents(sheet, expr, depth)
         # A value that came out of another workbook is not the engine's own
         # reading of this file, and the card has to be able to say so.
         computed = "external" if parse_external_refs(expr) else "engine"
@@ -667,81 +792,6 @@ class _ValueResolver:
         if uncomputed is not None:
             return uncomputed, None
         return None, None
-
-    def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
-        """Recover every formula cell the expression reads, deepest first."""
-        if depth >= MAX_CHAIN_DEPTH:
-            return
-        try:
-            ast_dict = fz.parse(expr).to_dict()
-        except Exception:
-            return
-        for ref in _collect_ref_strings(ast_dict):
-            detail = parse_ref_detailed(ref, default_sheet=sheet)
-            if detail is None or detail.rect.sheet not in self.engine_sheets:
-                continue
-            rect = detail.rect
-            dims = self.sheet_dims.get(rect.sheet or "")
-            if dims is not None:
-                clipped = rect.clipped(*dims)
-                if clipped is None:
-                    continue
-                rect = clipped
-            if rect.ncells > MAX_CHAIN_RANGE_CELLS or rect.sheet is None:
-                continue
-            for r in range(rect.r1, rect.r2 + 1):
-                for c in range(rect.c1, rect.c2 + 1):
-                    self._resolve_chain(rect.sheet, r, c, depth + 1)
-
-    def _resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> None:
-        key = (sheet, row, col)
-        # ``_resolving`` breaks the self-referencing formula (=B1+B2 in B2):
-        # the cell stays unresolved and reads as blank, as it did before.
-        if key in self._resolved or key in self._resolving:
-            return
-        if depth >= MAX_CHAIN_DEPTH or self.budget.left <= 0:
-            return
-        try:
-            if self.engine.get_value(sheet, row, col) is not None:
-                return  # constant: the engine already resolves it on its own
-        except Exception:
-            pass
-        formula = self._formula_at(sheet, row, col)
-        if not formula:
-            return
-        expr = formula if formula.startswith("=") else "=" + formula
-        self._resolving.add(key)
-        try:
-            result = self._eval_formula(sheet, expr, depth)
-        finally:
-            self._resolving.discard(key)
-        self._remember(sheet, row, col, result)
-
-    def _remember(
-        self, sheet: str, row: int, col: int, result: tuple[Any, str | None]
-    ) -> tuple[Any, str | None]:
-        """Memoize a recovered value and feed it back into the engine."""
-        self._resolved[(sheet, row, col)] = result
-        raw, _source = result
-        if raw is None or _is_uncomputed(raw):
-            self.n_unrecovered += 1
-            return result
-        self.n_recovered += 1
-        if not self._engine_alive:
-            # Only ever done on the engine rebuilt after a failed global
-            # evaluation, which holds no computed value anyway. It drops the
-            # formula of the cell, hence the memo read first in ``_engine_read``.
-            try:
-                self.engine.set_value(sheet, row, col, raw)
-            except Exception:
-                pass
-        return result
-
-    def _formula_at(self, sheet: str, row: int, col: int) -> str | None:
-        try:
-            return self.engine.get_formula(sheet, row, col)
-        except Exception:
-            return None
 
     def uncomputed_warning(self) -> str | None:
         """One line naming the cells left to the value stored in the file.

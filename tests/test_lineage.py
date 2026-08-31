@@ -3728,3 +3728,169 @@ class TestStepEvaluator:
         evaluator.preload_steps(["=BAD()", "=A1"], "Sheet1", engine_alive=True)
 
         assert evaluator._step_cache == {"=BAD()": (None, False), "=A1": (42, True)}
+
+
+class _FakeRecoveryEngine:
+    """Duck-typed engine for ``_RecoveryResolver``: no formualizer needed.
+
+    Values, formulas and per-cell recalculation results are looked up in
+    three independent maps keyed by ``(sheet, row, col)``, matching the
+    three different engine calls ``_RecoveryResolver`` makes.
+    """
+
+    def __init__(
+        self, values=None, formulas=None, evaluated=None, raises_on_evaluate=False
+    ):
+        self._values = values or {}
+        self._formulas = formulas or {}
+        self._evaluated = evaluated or {}
+        self._raises_on_evaluate = raises_on_evaluate
+        self.set_value_calls: list[tuple] = []
+
+    def get_value(self, sheet, row, col):
+        return self._values.get((sheet, row, col))
+
+    def get_formula(self, sheet, row, col):
+        return self._formulas.get((sheet, row, col))
+
+    def evaluate_cell(self, sheet, row, col):
+        if self._raises_on_evaluate:
+            raise RuntimeError("boom")
+        return self._evaluated.get((sheet, row, col))
+
+    def set_value(self, sheet, row, col, value):
+        self.set_value_calls.append((sheet, row, col, value))
+
+
+class TestRecoveryResolver:
+    """Locks the contract of ``_RecoveryResolver``, extracted from
+    ``_ValueResolver`` so the per-cell recovery of values ``evaluate_all``
+    could not compute (memoization, engine-alive fallback, precedent chain)
+    can be read and tested without a live formualizer engine.
+    """
+
+    def _recovery(
+        self,
+        engine=None,
+        engine_sheets=None,
+        sheet_dims=None,
+        budget=None,
+        eval_formula=None,
+        engine_alive=True,
+    ):
+        from linexcel.analyzer import _Budget, _RecoveryResolver
+
+        return _RecoveryResolver(
+            engine if engine is not None else _FakeRecoveryEngine(),
+            engine_sheets if engine_sheets is not None else {"Sheet1"},
+            sheet_dims if sheet_dims is not None else {"Sheet1": (10, 10)},
+            budget if budget is not None else _Budget(10),
+            eval_formula
+            if eval_formula is not None
+            else (lambda sheet, expr, depth: (None, None)),
+            engine_alive,
+        )
+
+    def test_formula_at_returns_none_on_engine_error(self):
+        class _Raising:
+            def get_formula(self, sheet, row, col):
+                raise RuntimeError("boom")
+
+        recovery = self._recovery(engine=_Raising())
+
+        assert recovery.formula_at("Sheet1", 1, 1) is None
+
+    def test_engine_read_returns_a_memoized_value_without_touching_the_engine(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 99})
+        recovery = self._recovery(engine=engine)
+        recovery._resolved[("Sheet1", 1, 1)] = (42, "engine")
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (42, "engine")
+
+    def test_engine_read_returns_the_engine_value_when_present(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 7})
+        recovery = self._recovery(engine=engine)
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (7, "engine")
+
+    def test_engine_read_returns_none_without_a_formula(self):
+        recovery = self._recovery()
+
+        assert recovery.engine_read("Sheet1", 1, 1, None) == (None, None)
+
+    def test_recover_returns_the_recalculated_engine_value(self):
+        # A value the engine's own per-cell recalculation reproduces is
+        # returned as-is, without going through ``remember`` — memoizing and
+        # counting recovery is only needed for the scratch-sheet fallback.
+        engine = _FakeRecoveryEngine(evaluated={("Sheet1", 1, 1): 5})
+        recovery = self._recovery(engine=engine)
+
+        assert recovery.recover("Sheet1", 1, 1, "=A1") == (5, "engine")
+        assert recovery.n_recovered == 0
+
+    def test_recover_falls_back_to_eval_formula_when_evaluate_cell_raises(self):
+        engine = _FakeRecoveryEngine(raises_on_evaluate=True)
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (9, "fallback")
+        )
+
+        assert recovery.recover("Sheet1", 1, 1, "=A1") == (9, "fallback")
+        assert recovery.engine_alive is False
+
+    def test_remember_feeds_a_recovered_value_back_when_the_engine_is_dead(self):
+        engine = _FakeRecoveryEngine()
+        recovery = self._recovery(engine=engine, engine_alive=False)
+
+        recovery.remember("Sheet1", 1, 1, (11, "fallback"))
+
+        assert recovery.n_recovered == 1
+        assert engine.set_value_calls == [("Sheet1", 1, 1, 11)]
+
+    def test_remember_counts_an_unrecovered_cell_without_writing_back(self):
+        engine = _FakeRecoveryEngine()
+        recovery = self._recovery(engine=engine, engine_alive=False)
+
+        recovery.remember("Sheet1", 1, 1, (None, None))
+
+        assert recovery.n_unrecovered == 1
+        assert engine.set_value_calls == []
+
+    def test_resolve_chain_skips_a_cell_already_being_resolved(self):
+        recovery = self._recovery()
+        recovery._resolving.add(("Sheet1", 1, 1))
+        calls = []
+        recovery._eval_formula = lambda *a: calls.append(a) or (None, None)
+
+        recovery.resolve_chain("Sheet1", 1, 1, 0)
+
+        assert calls == []
+
+    def test_resolve_chain_skips_a_constant_cell(self):
+        engine = _FakeRecoveryEngine(values={("Sheet1", 1, 1): 3})
+        recovery = self._recovery(engine=engine)
+        calls = []
+        recovery._eval_formula = lambda *a: calls.append(a) or (None, None)
+
+        recovery.resolve_chain("Sheet1", 1, 1, 0)
+
+        assert calls == []
+
+    def test_resolve_chain_recovers_a_formula_cell_and_memoizes_it(self):
+        engine = _FakeRecoveryEngine(formulas={("Sheet1", 2, 1): "=A1"})
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (4, "engine")
+        )
+
+        recovery.resolve_chain("Sheet1", 2, 1, 0)
+
+        assert recovery._resolved[("Sheet1", 2, 1)] == (4, "engine")
+
+    def test_resolve_precedents_walks_the_referenced_cell(self):
+        engine = _FakeRecoveryEngine(formulas={("Sheet1", 1, 1): "=X"})
+        recovery = self._recovery(
+            engine=engine, eval_formula=lambda sheet, expr, depth: (2, "engine")
+        )
+
+        recovery.resolve_precedents("Sheet1", "=A1", 0)
+
+        assert recovery._resolved.get(("Sheet1", 1, 1)) == (2, "engine")
