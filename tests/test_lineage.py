@@ -3210,6 +3210,163 @@ class TestProcessDefinedNames:
         assert ("c:Data!A1", "n:MyName", "name") in builder.edges
 
 
+class _FakeAssembleResolver:
+    """Stands in for ``_ValueResolver`` in ``_assemble_graph`` tests.
+
+    ``_assemble_graph`` only ever reads ``n_recovered``/``n_unrecovered``,
+    calls ``uncomputed_warning()`` and ``external_workbooks()`` — this fake
+    covers exactly that surface.
+    """
+
+    def __init__(
+        self, *, n_recovered=0, n_unrecovered=0, uncomputed=None, workbooks=None
+    ):
+        self.n_recovered = n_recovered
+        self.n_unrecovered = n_unrecovered
+        self._uncomputed = uncomputed
+        self._workbooks = workbooks or []
+
+    def uncomputed_warning(self):
+        return self._uncomputed
+
+    def external_workbooks(self):
+        return self._workbooks
+
+
+class TestAssembleGraph:
+    """``_assemble_graph`` replaces the tail of ``analyze_workbook``: it
+    appends the recovery/uncomputed/external warnings to the shared
+    ``warnings`` list, then assembles the final ``graph`` dict (meta/stats/
+    sheets/nodes/edges) from the already-computed pieces.
+    """
+
+    @staticmethod
+    def _assemble(*, warnings=None, resolver=None, **overrides):
+        from linexcel.analyzer import _assemble_graph
+
+        kwargs = {
+            "filename": "wb.xlsx",
+            "warnings": warnings if warnings is not None else [],
+            "engine_alive": True,
+            "resolver": resolver or _FakeAssembleResolver(),
+            "refs_dir": None,
+            "sheet_dims": {"Data": (5, 5)},
+            "sheet_stats": [],
+            "formula_count": 0,
+            "nodes": {},
+            "edges": {},
+            "kept_groups": [],
+            "vba_modules": {},
+            "vba_procs": [],
+            "defined_names": {},
+            "table_index": {},
+            "queries": [],
+        }
+        kwargs.update(overrides)
+        return _assemble_graph(**kwargs)
+
+    def test_no_warning_when_engine_alive(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=True,
+            resolver=_FakeAssembleResolver(n_recovered=3, n_unrecovered=1),
+        )
+        assert warnings == []
+
+    def test_recovery_warning_appended_when_engine_dead_and_cells_recovered(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=False,
+            resolver=_FakeAssembleResolver(n_recovered=3, n_unrecovered=1),
+        )
+        assert warnings == [
+            "Values recovered cell by cell: 3 recomputed, "
+            "1 left to the value stored in the file"
+        ]
+
+    def test_no_recovery_warning_when_engine_dead_but_nothing_recovered(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            engine_alive=False,
+            resolver=_FakeAssembleResolver(n_recovered=0, n_unrecovered=0),
+        )
+        assert warnings == []
+
+    def test_uncomputed_warning_appended(self):
+        warnings: list[str] = []
+        self._assemble(
+            warnings=warnings,
+            resolver=_FakeAssembleResolver(uncomputed="1 cell left uncomputed: X!A1"),
+        )
+        assert warnings == ["1 cell left uncomputed: X!A1"]
+
+    def test_external_warning_appended(self):
+        from linexcel.external import ExternalBook
+
+        warnings: list[str] = []
+        book = ExternalBook(key="1", target="Budget.xlsx", name="Budget.xlsx")
+        self._assemble(
+            warnings=warnings,
+            refs_dir=None,
+            resolver=_FakeAssembleResolver(workbooks=[book]),
+        )
+        assert len(warnings) == 1
+        assert "Budget.xlsx" in warnings[0]
+
+    def test_graph_meta_and_stats_shape(self):
+        from linexcel.analyzer import FormulaGroup
+
+        graph = self._assemble(
+            filename="report.xlsx",
+            sheet_dims={"Data": (5, 5), "Other": (2, 2)},
+            sheet_stats=[{"sheet": "Data", "formulas": 2}],
+            formula_count=2,
+            nodes={"c:Data!A1": {"id": "c:Data!A1"}},
+            edges={("a", "b", "precedes"): {"src": "a", "dst": "b"}},
+            kept_groups=[
+                ("Data", FormulaGroup("Data", "R1", cells=[(1, 1)])),
+                ("Data", FormulaGroup("Data", "R2", cells=[(2, 1), (3, 1)])),
+            ],
+            vba_modules={"Module1": "code"},
+            vba_procs=["proc1", "proc2"],
+            defined_names={"MyName": []},
+            table_index={"Data": [{"name": "T1"}]},
+            queries=[],
+        )
+
+        assert graph["meta"]["filename"] == "report.xlsx"
+        assert graph["meta"]["engine"] == "formualizer (Rust)"
+        stats = graph["meta"]["stats"]
+        assert stats["totalNodes"] == 1
+        assert stats["totalEdges"] == 1
+        assert stats["groupedPatterns"] == 1  # only the 2-cell group counts
+        assert stats["vbaModules"] == 1
+        assert stats["vbaProcs"] == 2
+        assert stats["definedNames"] == 1
+        assert stats["tables"] == 1
+        assert graph["sheets"] == ["Data", "Other"]
+        assert graph["nodes"] == [{"id": "c:Data!A1"}]
+        assert graph["edges"] == [{"src": "a", "dst": "b"}]
+
+    def test_external_workbook_stats_count_declared_vs_read(self):
+        from linexcel.external import ExternalBook
+
+        declared_only = ExternalBook(key="1", target="A.xlsx", name="A.xlsx")
+        read = ExternalBook(
+            key="2", target="B.xlsx", name="B.xlsx", path=Path("B.xlsx")
+        )
+        graph = self._assemble(
+            resolver=_FakeAssembleResolver(workbooks=[declared_only, read])
+        )
+
+        stats = graph["meta"]["stats"]
+        assert stats["externalWorkbooks"] == 2
+        assert stats["externalWorkbooksRead"] == 1
+
+
 class TestProcessFormulaNodes:
     """``_process_formula_nodes`` replaces the last inline block of
     ``analyze_workbook``: the loop that turns each kept ``FormulaGroup`` into

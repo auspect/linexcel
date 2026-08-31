@@ -1685,6 +1685,76 @@ def _process_defined_names(
     return name_nodes
 
 
+def _assemble_graph(
+    *,
+    filename: str,
+    warnings: list[str],
+    engine_alive: bool,
+    resolver: _ValueResolver,
+    refs_dir: str | Path | None,
+    sheet_dims: dict[str, tuple[int, int]],
+    sheet_stats: list[dict[str, Any]],
+    formula_count: int,
+    nodes: dict[str, dict[str, Any]],
+    edges: dict[tuple[str, str, str], dict[str, Any]],
+    kept_groups: list[tuple[str, FormulaGroup]],
+    vba_modules: dict[str, str],
+    vba_procs: list[VbaProc],
+    defined_names: dict[str, list[Rect]],
+    table_index: dict[str, list[dict[str, Any]]],
+    queries: list[Query],
+) -> dict[str, Any]:
+    """Appends the recovery/uncomputed/external warnings and builds the graph dict.
+
+    The three warnings depend on the resolver's final tally (cells recovered
+    cell by cell, cells left uncomputed, external workbooks not fully read),
+    which is only known once every node has been resolved — so this runs
+    last, after every other phase of ``analyze_workbook``.
+    """
+    if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
+        warnings.append(
+            f"Values recovered cell by cell: {resolver.n_recovered} recomputed, "
+            f"{resolver.n_unrecovered} left to the value stored in the file"
+        )
+    uncomputed = resolver.uncomputed_warning()
+    if uncomputed:
+        warnings.append(uncomputed)
+    external_warning = _external_warning(resolver.external_workbooks(), refs_dir)
+    if external_warning:
+        warnings.append(external_warning)
+
+    return {
+        "meta": {
+            "filename": filename,
+            "analyzedAt": datetime.datetime.now(datetime.UTC).isoformat(),
+            "engine": "formualizer (Rust)",
+            "warnings": warnings,
+            "stats": {
+                "sheets": sheet_stats,
+                "totalFormulas": formula_count,
+                "totalNodes": len(nodes),
+                "totalEdges": len(edges),
+                "groupedPatterns": sum(1 for _, g in kept_groups if len(g.cells) > 1),
+                "vbaModules": len(vba_modules),
+                "vbaProcs": len(vba_procs),
+                "definedNames": len(defined_names),
+                "tables": sum(len(t) for t in table_index.values()),
+                "externalWorkbooks": len(
+                    {b.name for b in resolver.external_workbooks() if b.name}
+                ),
+                "externalWorkbooksRead": len(
+                    {b.name for b in resolver.external_workbooks() if b.resolved}
+                ),
+                "queries": len(queries),
+                "queriesLoaded": sum(1 for q in queries if q.loaded),
+            },
+        },
+        "sheets": list(sheet_dims.keys()),
+        "nodes": list(nodes.values()),
+        "edges": list(edges.values()),
+    }
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -1786,48 +1856,24 @@ def analyze_workbook(
     # --- 7. Power Query ------------------------------------------------------
     queries = _process_power_query(data, table_index, name_nodes, warnings, builder)
 
-    if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
-        warnings.append(
-            f"Values recovered cell by cell: {resolver.n_recovered} recomputed, "
-            f"{resolver.n_unrecovered} left to the value stored in the file"
-        )
-    uncomputed = resolver.uncomputed_warning()
-    if uncomputed:
-        warnings.append(uncomputed)
-    external_warning = _external_warning(resolver.external_workbooks(), refs_dir)
-    if external_warning:
-        warnings.append(external_warning)
-
-    graph = {
-        "meta": {
-            "filename": filename,
-            "analyzedAt": datetime.datetime.now(datetime.UTC).isoformat(),
-            "engine": "formualizer (Rust)",
-            "warnings": warnings,
-            "stats": {
-                "sheets": sheet_stats,
-                "totalFormulas": formula_count,
-                "totalNodes": len(nodes),
-                "totalEdges": len(edges),
-                "groupedPatterns": sum(1 for _, g in kept_groups if len(g.cells) > 1),
-                "vbaModules": len(vba_modules),
-                "vbaProcs": len(vba_procs),
-                "definedNames": len(defined_names),
-                "tables": sum(len(t) for t in table_index.values()),
-                "externalWorkbooks": len(
-                    {b.name for b in resolver.external_workbooks() if b.name}
-                ),
-                "externalWorkbooksRead": len(
-                    {b.name for b in resolver.external_workbooks() if b.resolved}
-                ),
-                "queries": len(queries),
-                "queriesLoaded": sum(1 for q in queries if q.loaded),
-            },
-        },
-        "sheets": list(sheet_dims.keys()),
-        "nodes": list(nodes.values()),
-        "edges": list(edges.values()),
-    }
+    graph = _assemble_graph(
+        filename=filename,
+        warnings=warnings,
+        engine_alive=engine_alive,
+        resolver=resolver,
+        refs_dir=refs_dir,
+        sheet_dims=sheet_dims,
+        sheet_stats=sheet_stats,
+        formula_count=formula_count,
+        nodes=nodes,
+        edges=edges,
+        kept_groups=kept_groups,
+        vba_modules=vba_modules,
+        vba_procs=vba_procs,
+        defined_names=defined_names,
+        table_index=table_index,
+        queries=queries,
+    )
     _v("nodes+edges+graph", _t)
     if verbose:
         print(
