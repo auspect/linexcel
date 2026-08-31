@@ -40,18 +40,17 @@ class ProbeResult:
     symptom: str
     none_values: int | None = None
     nodes: int | None = None
-    extras: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
-def _last_linexcel_frame(tb: str) -> str:
+def _last_linexcel_frame() -> str:
     """Dernière frame du package linexcel dans la traceback = phase fautive."""
     phase = "?"
-    for line in traceback.format_tb(sys.exc_info()[2]):
-        if "linexcel" in line:
-            # extrait le nom de fonction
-            part = line.strip().rsplit(",", 1)[-1].strip()
-            phase = part.removeprefix("in ")
-    return phase or "?"
+    for entry in traceback.format_tb(sys.exc_info()[2]):
+        header = entry.splitlines()[0]
+        if "linexcel" in header:
+            phase = header.rsplit(",", 1)[-1].strip().removeprefix("in ")
+    return phase
 
 
 def _count_none_values(result: linexcel.LineageResult) -> tuple[int, int]:
@@ -85,21 +84,20 @@ def probe_one(path: Path, timeout: int) -> ProbeResult:
         res.symptom = f"analyse > {timeout}s (possible boucle infinie)"
     except Exception as exc:
         res.outcome = "EXCEPTION"
-        tb_text = traceback.format_exc()
-        res.phase = _last_linexcel_frame(tb_text)
+        res.phase = _last_linexcel_frame()
         message = str(exc).replace("\n", " ")[:160]
         res.symptom = f"{type(exc).__name__}: {message}"
     else:
         res.none_values, res.nodes = _count_none_values(result)
-        stats = getattr(result, "stats", None)
-        if stats:
-            res.extras.append(f"stats={stats}")
+        res.warnings = list(result.warnings)
         if res.nodes and res.none_values == res.nodes:
             res.symptom = "toutes les valeurs None (graphe empoisonné)"
         elif res.none_values:
             res.symptom = f"{res.none_values}/{res.nodes} valeurs cellule None"
         else:
             res.symptom = "analyse complète"
+        if res.warnings:
+            res.symptom += f" ; {len(res.warnings)} warning(s)"
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
@@ -133,6 +131,18 @@ def write_report(results: list[ProbeResult], report: Path, fixtures_dir: Path) -
     lines.append(
         f"- analyses propres : **{len(results) - len(crashes) - len(poisoned)}**"
     )
+    lines += [
+        "",
+        "## Warnings remontés par l'analyse",
+        "",
+    ]
+    for r in results:
+        if r.warnings:
+            lines.append(f"- `{r.fixture}` :")
+            for warning in r.warnings:
+                lines.append(f"  - {warning}")
+    if not any(r.warnings for r in results):
+        lines.append("- aucun")
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

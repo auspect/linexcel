@@ -11,6 +11,10 @@ Cas hostiles couverts (cf. ADVERSARIAL_SPEC.md, axe A) :
 - dates système 1904 (workbookPr date1904="1")
 - refs cassées =NOSHEET!A1, =IFERROR(NOSHEET!A1,-1), =SUM(...) sur formules,
   cycles auto-référents, formules croisées multi-feuilles
+- enrichissements : chaîne de dépendances > MAX_CHAIN_DEPTH, refs externes
+  [Budget.xlsx] sans refs_dir, formules volatiles (TODAY/NOW), feuilles au
+  nom unicode avec espaces, noms définis pointant vers une feuille absente,
+  zip tronqué et fichier non-zip à extension .xlsx (frontière publique)
 
 Usage :
     uv run python tools/gen_fixtures.py [--rows N] [--cols N] [--sheets N]
@@ -256,6 +260,58 @@ def make_vba_base(rows: int, cols: int, sheets: int) -> Workbook:
     return wb
 
 
+def make_chaine_profonde(rows: int, cols: int, sheets: int) -> Workbook:
+    """Chaîne de dépendances plus profonde que MAX_CHAIN_DEPTH (24)."""
+    wb = _fresh_wb()
+    ws = wb.create_sheet("Chaine")
+    depth = max(rows, 60)
+    ws["A1"] = 1
+    for r in range(2, depth + 1):
+        ws.cell(row=r, column=1).value = f"=A{r - 1}+1"
+    ws["B1"] = f"=A{depth}*2"  # consommateur en bout de chaîne
+    return wb
+
+
+def make_refs_externes(rows: int, cols: int, sheets: int) -> Workbook:
+    wb = make_realiste(max(rows, 6), max(cols, 4), max(sheets, 1))
+    ws = wb[wb.sheetnames[0]]
+    ws["J1"] = "='[Budget.xlsx]Annual'!B4"
+    ws["J2"] = "='[Budget.xlsx]Annual'!B4*2+A2"
+    return wb
+
+
+def make_volatiles(rows: int, cols: int, sheets: int) -> Workbook:
+    wb = make_realiste(max(rows, 6), max(cols, 4), max(sheets, 1))
+    ws = wb[wb.sheetnames[0]]
+    ws["K1"] = "=TODAY()"  # pas de clock -> 25569 (1970) attendu
+    ws["K2"] = "=NOW()"
+    ws["K3"] = "=K1+365"
+    return wb
+
+
+def make_feuilles_unicode(rows: int, cols: int, sheets: int) -> Workbook:
+    wb = _fresh_wb()
+    ws1 = wb.create_sheet("Données 2026")
+    ws2 = wb.create_sheet("Synthèse été")
+    for r in range(1, max(rows, 8) + 1):
+        ws1.cell(row=r, column=1).value = r
+    ws2["A1"] = "=SUM('Données 2026'!A1:A8)"
+    ws2["A2"] = "='Données 2026'!A3*2"
+    return wb
+
+
+def make_noms_definis_casses(rows: int, cols: int, sheets: int) -> Workbook:
+    from openpyxl.workbook.defined_name import DefinedName
+
+    wb = make_realiste(max(rows, 6), max(cols, 4), max(sheets, 1))
+    wb.defined_names["TauxOK"] = DefinedName("TauxOK", attr_text="S1!$B$2")
+    wb.defined_names["TauxKO"] = DefinedName("TauxKO", attr_text="NOSHEET!$A$1")
+    ws = wb[wb.sheetnames[0]]
+    ws["L1"] = "=TauxOK*2"
+    ws["L2"] = "=TauxKO*2"
+    return wb
+
+
 # (nom fichier, builder, post-traitement)
 FIXTURES: list[tuple[str, Callable[[int, int, int], Workbook], str]] = [
     ("realiste.xlsx", make_realiste, "xlsx"),
@@ -265,10 +321,17 @@ FIXTURES: list[tuple[str, Callable[[int, int, int], Workbook], str]] = [
     ("sum_sur_formules.xlsx", make_sum_sur_formules, "xlsx"),
     ("cycles.xlsx", make_cycles, "xlsx"),
     ("dates_1904.xlsx", make_dates_1904, "xlsx"),
+    ("chaine_profonde.xlsx", make_chaine_profonde, "xlsx"),
+    ("refs_externes.xlsx", make_refs_externes, "xlsx"),
+    ("volatiles.xlsx", make_volatiles, "xlsx"),
+    ("feuilles_unicode.xlsx", make_feuilles_unicode, "xlsx"),
+    ("noms_definis_casses.xlsx", make_noms_definis_casses, "xlsx"),
     ("confidentialite.xlsx", make_confidentiel, "confidentiel"),
     ("macros_inoffensives.xlsm", make_vba_base, "vba_sain"),
     ("macro_hostile_corrompue.xlsm", make_vba_base, "vba_corrompu"),
     ("macro_security_block.xlsm", make_vba_base, "vba_stripe"),
+    ("fichier_tronque.xlsx", make_realiste, "tronque"),
+    ("pas_un_zip.xlsx", make_realiste, "brut"),
 ]
 
 
@@ -292,6 +355,12 @@ def generate(
             path.write_bytes(_to_xlsm(data, vba_bin[: len(vba_bin) // 3]))
         elif kind == "vba_stripe":
             path.write_bytes(_to_xlsm(data, None))
+        elif kind == "tronque":
+            # zip coupé au milieu du flux : BadZipFile côté loader
+            path.write_bytes(data[: len(data) // 2])
+        elif kind == "brut":
+            # extension .xlsx mais contenu quelconque (CSV renommé, par ex.)
+            path.write_bytes(b"col1;col2\n1;2\n3;4\n")
         written.append(path)
     return written
 
@@ -309,7 +378,11 @@ def main() -> None:
     only = set(args.only.split(",")) if args.only else None
     written = generate(args.out, args.rows, args.cols, args.sheets, only)
     for path in written:
-        print(f"  {path.relative_to(ROOT)} ({path.stat().st_size} o)")
+        try:
+            shown = path.relative_to(ROOT)
+        except ValueError:  # --out hors du dépôt
+            shown = path
+        print(f"  {shown} ({path.stat().st_size} o)")
     print(f"{len(written)} fixtures générées dans {args.out}")
 
 
