@@ -3303,3 +3303,164 @@ class TestProcessFormulaNodes:
         source_node = builder.nodes[opaque_edges[0]["source"]]
         assert source_node["kind"] == "opaque"
         assert source_node["label"] == "MyName"
+
+
+class TestExternalResolver:
+    """Locks the contract of ``_ExternalResolver``, extracted from
+    ``_ValueResolver`` so the "other workbook" concern (declared links,
+    name-based lookup in a reference folder, substitution into an
+    expression) can be read and tested on its own.
+    """
+
+    def _book(self, name, values=None):
+        from linexcel.external import ExternalBook
+
+        return ExternalBook(
+            key=name, target=name, name=name, values=values or {}, path=Path(name)
+        )
+
+    def test_external_books_lists_declared_book_read_from_folder(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx")
+        resolver = _ExternalResolver({"1": book}, {}, [])
+
+        books = resolver.external_books("='[1]Annual'!B4")
+
+        assert books == [
+            {
+                "name": "Budget.xlsx",
+                "path": "Budget.xlsx",
+                "read": "folder",
+                "file": "Budget.xlsx",
+            }
+        ]
+
+    def test_external_books_marks_unresolved_book_as_none(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        resolver = _ExternalResolver({}, {}, [])
+
+        books = resolver.external_books("='[1]Annual'!B4")
+
+        assert books == [{"name": "[1]", "read": "none"}]
+
+    def test_external_value_reads_cell_from_book_values(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import parse_external_refs
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        resolver = _ExternalResolver({"1": book}, {}, [])
+        (ref,) = parse_external_refs("='[1]Annual'!B4")
+
+        assert resolver.external_value(ref) == (42, "external")
+
+    def test_external_value_returns_none_for_unresolved_book(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import parse_external_refs
+
+        resolver = _ExternalResolver({}, {}, [])
+        (ref,) = parse_external_refs("='[1]Annual'!B4")
+
+        assert resolver.external_value(ref) == (None, None)
+
+    def test_book_for_reads_named_book_from_refs_files_once(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        calls: list[Path] = []
+
+        def fake_read(path):
+            calls.append(path)
+            return book.values
+
+        import linexcel.analyzer as analyzer_module
+
+        original = analyzer_module.read_workbook_values
+        analyzer_module.read_workbook_values = fake_read
+        try:
+            path = Path("Budget.xlsx")
+            resolver = _ExternalResolver({}, {"budget.xlsx": path}, [])
+            from linexcel.external import ExternalRef
+
+            ref = ExternalRef(
+                text="[Budget.xlsx]Annual!B4",
+                book="Budget.xlsx",
+                sheet="Annual",
+                cell="B4",
+            )
+
+            first = resolver.book_for(ref)
+            second = resolver.book_for(ref)
+        finally:
+            analyzer_module.read_workbook_values = original
+
+        assert first is second
+        assert calls == [path]
+        assert first.values == book.values
+
+    def test_book_for_warns_when_named_book_cannot_be_read(self):
+        import linexcel.analyzer as analyzer_module
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import ExternalRef
+
+        def fake_read(path):
+            raise OSError("boom")
+
+        original = analyzer_module.read_workbook_values
+        analyzer_module.read_workbook_values = fake_read
+        try:
+            warnings: list[str] = []
+            resolver = _ExternalResolver(
+                {}, {"budget.xlsx": Path("Budget.xlsx")}, warnings
+            )
+            ref = ExternalRef(
+                text="[Budget.xlsx]Annual!B4",
+                book="Budget.xlsx",
+                sheet="Annual",
+                cell="B4",
+            )
+
+            book = resolver.book_for(ref)
+        finally:
+            analyzer_module.read_workbook_values = original
+
+        assert book is not None
+        assert book.path is None
+        assert any("Budget.xlsx" in w for w in warnings)
+
+    def test_substitute_externals_replaces_resolved_reference_with_literal(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        book = self._book("Budget.xlsx", values={("Annual", 4, 2): 42})
+        resolver = _ExternalResolver({"1": book}, {}, [])
+
+        expr = resolver.substitute_externals("='[1]Annual'!B4 + 1")
+
+        assert expr == "=42 + 1"
+
+    def test_substitute_externals_leaves_unresolved_reference_untouched(self):
+        from linexcel.analyzer import _ExternalResolver
+
+        resolver = _ExternalResolver({}, {}, [])
+
+        expr = resolver.substitute_externals("='[1]Annual'!B4 + 1")
+
+        assert expr == "='[1]Annual'!B4 + 1"
+
+    def test_external_workbooks_includes_declared_and_named_books(self):
+        from linexcel.analyzer import _ExternalResolver
+        from linexcel.external import ExternalRef
+
+        declared = self._book("Budget.xlsx")
+        resolver = _ExternalResolver({"1": declared}, {}, [])
+        ref = ExternalRef(
+            text="[Forecast.xlsx]Sheet1!A1",
+            book="Forecast.xlsx",
+            sheet="Sheet1",
+            cell="A1",
+        )
+        resolver.book_for(ref)
+
+        names = {b.name for b in resolver.external_workbooks()}
+        assert names == {"Budget.xlsx", "Forecast.xlsx"}

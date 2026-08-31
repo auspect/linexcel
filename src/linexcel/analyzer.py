@@ -146,6 +146,131 @@ class _Budget:
         return True
 
 
+class _ExternalResolver:
+    """Reads and caches values from workbooks referenced from outside the file.
+
+    A file that registered its external links refers to them by index —
+    ``[1]`` — and those are known up front (``externals``). A file that did
+    not spells the name out, ``[Budget FY26.xlsx]``, and then the reference
+    folder (``refs_files``) is the only place to look; such a workbook is
+    read once, on first use, and remembered in ``_named_books``.
+    """
+
+    def __init__(
+        self,
+        externals: dict[str, ExternalBook] | None,
+        refs_files: dict[str, Path] | None,
+        warnings: list[str],
+    ):
+        self.externals = externals or {}
+        self.refs_files = refs_files or {}
+        self.warnings = warnings
+        self._declared_by_name = {
+            book.name.lower(): book for book in self.externals.values() if book.name
+        }
+        self._named_books: dict[str, ExternalBook] = {}
+
+    def external_books(self, formula: str | None) -> list[dict[str, Any]]:
+        """The other workbooks a formula reads, and how far each one was read.
+
+        Named even when unreadable: "this cell depends on Budget FY26.xlsx,
+        which linexcel was not given" is the answer a reader needs, and it is
+        one a grey ``[1]`` node never gave.
+        """
+        if not formula:
+            return []
+        seen: dict[str, dict[str, Any]] = {}
+        for ref in parse_external_refs(formula):
+            book = self.book_for(ref)
+            name = book.name if book else _external_name(ref)
+            if name in seen:
+                continue
+            entry: dict[str, Any] = {"name": name}
+            if book is not None and book.target:
+                entry["path"] = book.target
+            elif ref.directory:
+                entry["path"] = ref.directory + name
+            if book is not None and book.resolved:
+                entry["read"] = "folder"
+                entry["file"] = str(book.path)
+            elif book is not None and book.cached:
+                entry["read"] = "cache"
+            else:
+                entry["read"] = "none"
+            seen[name] = entry
+        return list(seen.values())
+
+    def external_value(self, ref: ExternalRef) -> tuple[Any, str | None]:
+        """``(value, source)`` for one external reference, or ``(None, None)``."""
+        book = self.book_for(ref)
+        position = _a1_position(ref.cell)
+        if book is None or position is None:
+            return None, None
+        return book.value(ref.sheet, *position)
+
+    def external_workbooks(self) -> list[ExternalBook]:
+        """Every workbook seen, whether the file declared the link or not."""
+        return list(self.externals.values()) + list(self._named_books.values())
+
+    def substitute_externals(self, expr: str) -> str:
+        """Replace external references by the values they resolve to.
+
+        The engine cannot follow a link to another workbook — nothing in the
+        file it loaded points there — so the reference is turned into the
+        literal it stands for before the expression is evaluated. A reference
+        that resolves to nothing is left alone: the evaluation then fails the
+        way it did before, which is the honest outcome.
+        """
+        refs = parse_external_refs(expr)
+        if not refs:
+            return expr
+        for ref in refs:
+            book = self.book_for(ref)
+            if book is None:
+                continue
+            position = _a1_position(ref.cell)
+            if position is None:
+                continue
+            value, source = book.value(ref.sheet, *position)
+            if source is None:
+                continue
+            expr = expr.replace(ref.text, _as_literal(value))
+        return expr
+
+    def book_for(self, ref: ExternalRef) -> ExternalBook | None:
+        """The workbook a reference points at, read on first use.
+
+        A file that registered its links refers to them by index — ``[1]`` —
+        and those are known up front. A file that did not spells the name out,
+        ``[Budget FY26.xlsx]``, and then the reference folder is the only place
+        to look; the workbook is read once and remembered.
+        """
+        declared = self.externals.get(ref.book) or self._declared_by_name.get(
+            ref.book.lower()
+        )
+        if declared is not None:
+            return declared
+        if ref.book.isdigit():
+            return None  # an index whose link part the file does not carry
+        key = ref.book.lower()
+        book = self._named_books.get(key)
+        if book is None:
+            book = ExternalBook(
+                key=ref.book, target=ref.directory + ref.book, name=ref.book
+            )
+            path = self.refs_files.get(key)
+            if path is not None:
+                try:
+                    book.values = read_workbook_values(path)
+                    book.path = path
+                except Exception as exc:
+                    self.warnings.append(
+                        f"External workbook '{ref.book}' could not be read: {exc}"
+                    )
+            self._named_books[key] = book
+        return book
+
+
 class _ValueResolver:
     """Single entry point for reading the value of a cell.
 
@@ -185,12 +310,7 @@ class _ValueResolver:
         self.budget = budget
         self.scratch_ready = scratch_ready
         self.sheet_dims = sheet_dims or {}
-        self.externals = externals or {}
-        self.refs_files = refs_files or {}
-        self._declared_by_name = {
-            book.name.lower(): book for book in self.externals.values() if book.name
-        }
-        self._named_books: dict[str, ExternalBook] = {}
+        self._external = _ExternalResolver(externals, refs_files, warnings)
         self._engine_alive = engine_alive
         self._compared: set[tuple[str, int, int]] = set()
         self._n_mismatches = 0
@@ -249,104 +369,20 @@ class _ValueResolver:
         return fields
 
     def external_books(self, formula: str | None) -> list[dict[str, Any]]:
-        """The other workbooks a formula reads, and how far each one was read.
-
-        Named even when unreadable: "this cell depends on Budget FY26.xlsx,
-        which linexcel was not given" is the answer a reader needs, and it is
-        one a grey ``[1]`` node never gave.
-        """
-        if not formula:
-            return []
-        seen: dict[str, dict[str, Any]] = {}
-        for ref in parse_external_refs(formula):
-            book = self._book_for(ref)
-            name = book.name if book else _external_name(ref)
-            if name in seen:
-                continue
-            entry: dict[str, Any] = {"name": name}
-            if book is not None and book.target:
-                entry["path"] = book.target
-            elif ref.directory:
-                entry["path"] = ref.directory + name
-            if book is not None and book.resolved:
-                entry["read"] = "folder"
-                entry["file"] = str(book.path)
-            elif book is not None and book.cached:
-                entry["read"] = "cache"
-            else:
-                entry["read"] = "none"
-            seen[name] = entry
-        return list(seen.values())
+        """The other workbooks a formula reads, and how far each one was read."""
+        return self._external.external_books(formula)
 
     def external_value(self, ref: ExternalRef) -> tuple[Any, str | None]:
         """``(value, source)`` for one external reference, or ``(None, None)``."""
-        book = self._book_for(ref)
-        position = _a1_position(ref.cell)
-        if book is None or position is None:
-            return None, None
-        return book.value(ref.sheet, *position)
+        return self._external.external_value(ref)
 
     def external_workbooks(self) -> list[ExternalBook]:
         """Every workbook seen, whether the file declared the link or not."""
-        return list(self.externals.values()) + list(self._named_books.values())
+        return self._external.external_workbooks()
 
     def substitute_externals(self, expr: str) -> str:
-        """Replace external references by the values they resolve to.
-
-        The engine cannot follow a link to another workbook — nothing in the
-        file it loaded points there — so the reference is turned into the
-        literal it stands for before the expression is evaluated. A reference
-        that resolves to nothing is left alone: the evaluation then fails the
-        way it did before, which is the honest outcome.
-        """
-        refs = parse_external_refs(expr)
-        if not refs:
-            return expr
-        for ref in refs:
-            book = self._book_for(ref)
-            if book is None:
-                continue
-            position = _a1_position(ref.cell)
-            if position is None:
-                continue
-            value, source = book.value(ref.sheet, *position)
-            if source is None:
-                continue
-            expr = expr.replace(ref.text, _as_literal(value))
-        return expr
-
-    def _book_for(self, ref: ExternalRef) -> ExternalBook | None:
-        """The workbook a reference points at, read on first use.
-
-        A file that registered its links refers to them by index — ``[1]`` —
-        and those are known up front. A file that did not spells the name out,
-        ``[Budget FY26.xlsx]``, and then the reference folder is the only place
-        to look; the workbook is read once and remembered.
-        """
-        declared = self.externals.get(ref.book) or self._declared_by_name.get(
-            ref.book.lower()
-        )
-        if declared is not None:
-            return declared
-        if ref.book.isdigit():
-            return None  # an index whose link part the file does not carry
-        key = ref.book.lower()
-        book = self._named_books.get(key)
-        if book is None:
-            book = ExternalBook(
-                key=ref.book, target=ref.directory + ref.book, name=ref.book
-            )
-            path = self.refs_files.get(key)
-            if path is not None:
-                try:
-                    book.values = read_workbook_values(path)
-                    book.path = path
-                except Exception as exc:
-                    self.warnings.append(
-                        f"External workbook '{ref.book}' could not be read: {exc}"
-                    )
-            self._named_books[key] = book
-        return book
+        """Replace external references by the values they resolve to."""
+        return self._external.substitute_externals(expr)
 
     def cached_value(self, sheet: str | None, row: int, col: int) -> Any:
         if sheet is None:
