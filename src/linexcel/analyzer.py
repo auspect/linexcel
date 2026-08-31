@@ -856,31 +856,22 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
     }
 
 
-def analyze_workbook(
-    data: bytes,
-    filename: str = "workbook.xlsx",
-    *,
-    verbose: bool = False,
-    refs_dir: str | Path | None = None,
-) -> dict[str, Any]:
-    """Full analysis: returns the JSON-serializable graph and the engine.
+def _load_workbook_structure(
+    data: bytes, refs_dir: str | Path | None, warnings: list[str]
+) -> tuple[
+    dict[str, tuple[int, int]],
+    dict[str, list[Rect]],
+    dict[str, ExternalBook],
+    dict[str, Path],
+]:
+    """Sheet dimensions, defined names, external links, and the folder's workbooks.
 
-    ``refs_dir`` is a folder holding the workbooks this one links to. Without
-    it, a cell reading ``'[1]Annual'!B4`` is named and left unresolved — the
-    engine has nothing to follow. With it, the referenced file is read and the
-    reference is evaluated as the value it stands for; the report says, per
-    workbook, whether it was read from that folder, from the cache Excel left
-    in the file, or not at all.
+    Read via openpyxl in read-only mode: cheap even on a large file, and the
+    only source for defined names and for sheet sizes the engine itself does
+    not need. External links are always parsed and named; they are only
+    *read*, into ``refs_files``, when the caller points ``refs_dir`` at the
+    folder holding them.
     """
-    warnings: list[str] = []
-    _t0 = time.perf_counter()
-    reporter = Reporter(verbose)
-
-    def _v(label: str, t: float) -> None:
-        reporter.note(f"{label}: {time.perf_counter() - t:.1f}s")
-
-    # --- 1. structure -----------------------------------------------------
-    _t = time.perf_counter()
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
     try:
         sheet_dims: dict[str, tuple[int, int]] = {}
@@ -893,24 +884,32 @@ def analyze_workbook(
     finally:
         owb.close()
 
-    # Workbooks this one links to. Always named; read for real only when the
-    # caller points at a folder holding them.
     externals = read_external_links(data)
     refs_files: dict[str, Path] = {}
     if refs_dir is not None:
         refs_files = find_workbooks(Path(refs_dir))
         if externals:
             resolve_books(externals, Path(refs_dir), warnings)
-    _v("structure", _t)
+    return sheet_dims, defined_names, externals, refs_files
 
-    # values the file itself carries: last resort, and the only source of
-    # dates and of what the user actually saw on screen
-    _t = time.perf_counter()
-    cached = load_cached_values(data, warnings, reporter)
-    _v("cached_values", _t)
 
-    # --- 2. computation engine -------------------------------------------
-    _t = time.perf_counter()
+def _init_engine(
+    data: bytes,
+    sheet_dims: dict[str, tuple[int, int]],
+    warnings: list[str],
+) -> tuple[Any, set[str], bool, dict[tuple[str, int, int], str], bool]:
+    """The Rust engine, evaluated — recovering from an all-or-nothing failure.
+
+    ``evaluate_all`` gives up on the *first* reference it cannot resolve, so a
+    single formula pointing at another workbook costs every other cell in the
+    file its computed value. When that happens, the offending cells are
+    quarantined (their formula set aside) and evaluation is retried; only if
+    that retry also fails does the caller fall back to per-cell recovery.
+
+    Returns the engine, its sheet names, whether the global evaluation left it
+    usable, the quarantined cells (formula text keyed by cell), and whether a
+    scratch sheet for step-by-step decomposition is available.
+    """
     engine = fz.Workbook.from_bytes(data)
     engine_sheets = set(engine.sheet_names)
     engine_alive = True
@@ -922,11 +921,6 @@ def analyze_workbook(
         # then reports no formula at all, which would leave the graph empty.
         # Rebuilding from the bytes gives the formulas back.
         engine = fz.Workbook.from_bytes(data)
-        # evaluate_all is all-or-nothing, and it gives up on the *first*
-        # reference it cannot resolve — so a single formula pointing at another
-        # workbook costs every other cell in the file its computed value. Set
-        # those few cells aside and the pass usually completes, leaving only
-        # them to the slower per-cell recovery.
         quarantined = _quarantine_unresolvable(engine, sheet_dims, engine_sheets)
         retried = False
         if quarantined:
@@ -949,30 +943,28 @@ def analyze_workbook(
             quarantined = {}
 
     scratch_ready = _ensure_scratch(engine)
-    _v("engine_init+evaluate_all", _t)
+    return engine, engine_sheets, engine_alive, quarantined, scratch_ready
 
-    # Tables: declared ones from the package parts, static ones from a small
-    # window the engine already holds. A per-cell lookup enriching the nodes.
-    _t = time.perf_counter()
-    table_index = _build_table_index(data, engine, sheet_dims, engine_sheets)
-    _v("tables", _t)
 
-    budget = _Budget(MAX_SCRATCH_EVALS)
-    resolver = _ValueResolver(
-        engine,
-        engine_sheets,
-        cached,
-        warnings,
-        budget,
-        scratch_ready,
-        engine_alive=engine_alive,
-        sheet_dims=sheet_dims,
-        externals=externals,
-        refs_files=refs_files,
-    )
+def _extract_formula_groups(
+    engine: Any,
+    sheet_dims: dict[str, tuple[int, int]],
+    engine_sheets: set[str],
+    quarantined: dict[tuple[str, int, int], str],
+    warnings: list[str],
+    reporter: Reporter,
+) -> tuple[
+    dict[tuple[str, str], FormulaGroup],
+    dict[str, dict[tuple[int, int], str]],
+    int,
+    list[dict[str, Any]],
+]:
+    """Sweep every sheet, grouping cells that share the same R1C1 formula.
 
-    # --- 3. extraction + grouping ----------------------------------------
-    _t = time.perf_counter()
+    A column of 50,000 copied formulas becomes one :class:`FormulaGroup`
+    rather than 50,000 nodes; ``cell_owner`` maps each cell back to the group
+    (or, later, the "misc" node) that will represent it in the graph.
+    """
     groups: dict[tuple[str, str], FormulaGroup] = {}
     cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
     formula_count = 0
@@ -1040,6 +1032,78 @@ def analyze_workbook(
                 }
             )
             _bar.step(f"sweeping {sheet}")
+
+    return groups, cell_owner, formula_count, sheet_stats
+
+
+def analyze_workbook(
+    data: bytes,
+    filename: str = "workbook.xlsx",
+    *,
+    verbose: bool = False,
+    refs_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Full analysis: returns the JSON-serializable graph and the engine.
+
+    ``refs_dir`` is a folder holding the workbooks this one links to. Without
+    it, a cell reading ``'[1]Annual'!B4`` is named and left unresolved — the
+    engine has nothing to follow. With it, the referenced file is read and the
+    reference is evaluated as the value it stands for; the report says, per
+    workbook, whether it was read from that folder, from the cache Excel left
+    in the file, or not at all.
+    """
+    warnings: list[str] = []
+    _t0 = time.perf_counter()
+    reporter = Reporter(verbose)
+
+    def _v(label: str, t: float) -> None:
+        reporter.note(f"{label}: {time.perf_counter() - t:.1f}s")
+
+    # --- 1. structure -----------------------------------------------------
+    _t = time.perf_counter()
+    sheet_dims, defined_names, externals, refs_files = _load_workbook_structure(
+        data, refs_dir, warnings
+    )
+    _v("structure", _t)
+
+    # values the file itself carries: last resort, and the only source of
+    # dates and of what the user actually saw on screen
+    _t = time.perf_counter()
+    cached = load_cached_values(data, warnings, reporter)
+    _v("cached_values", _t)
+
+    # --- 2. computation engine -------------------------------------------
+    _t = time.perf_counter()
+    engine, engine_sheets, engine_alive, quarantined, scratch_ready = _init_engine(
+        data, sheet_dims, warnings
+    )
+    _v("engine_init+evaluate_all", _t)
+
+    # Tables: declared ones from the package parts, static ones from a small
+    # window the engine already holds. A per-cell lookup enriching the nodes.
+    _t = time.perf_counter()
+    table_index = _build_table_index(data, engine, sheet_dims, engine_sheets)
+    _v("tables", _t)
+
+    budget = _Budget(MAX_SCRATCH_EVALS)
+    resolver = _ValueResolver(
+        engine,
+        engine_sheets,
+        cached,
+        warnings,
+        budget,
+        scratch_ready,
+        engine_alive=engine_alive,
+        sheet_dims=sheet_dims,
+        externals=externals,
+        refs_files=refs_files,
+    )
+
+    # --- 3. extraction + grouping ----------------------------------------
+    _t = time.perf_counter()
+    groups, cell_owner, formula_count, sheet_stats = _extract_formula_groups(
+        engine, sheet_dims, engine_sheets, quarantined, warnings, reporter
+    )
 
     # --- 4. formula nodes -------------------------------------------------
     _v("extraction+grouping", _t)

@@ -2626,3 +2626,85 @@ class TestPromptsShipAsFiles:
         monkeypatch.setattr(aidoc, "_PROMPTS", tmp_path)
         with pytest.raises(RuntimeError, match="without its assets"):
             aidoc._prompts("node")
+
+
+class TestAnalyzeWorkbookHelpers:
+    """``analyze_workbook`` delegates to standalone helpers per phase.
+
+    These lock each helper's own contract, so a future split of the rest of
+    ``analyze_workbook`` (or of ``_ValueResolver``) has a harness that fails
+    close to the break instead of only through the full-graph assertions
+    elsewhere in this file.
+    """
+
+    @staticmethod
+    def _simple_workbook() -> bytes:
+        from openpyxl import Workbook
+        from openpyxl.workbook.defined_name import DefinedName
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = 10
+        ws["A2"] = 20
+        ws["B1"] = "=A1*2"
+        ws["B2"] = "=A2*2"
+        wb.defined_names.add(DefinedName("Rate", attr_text="Data!$A$1"))
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_load_workbook_structure_reports_sheets_and_names(self):
+        from linexcel.analyzer import _load_workbook_structure
+
+        warnings: list[str] = []
+        sheet_dims, defined_names, externals, refs_files = _load_workbook_structure(
+            self._simple_workbook(), None, warnings
+        )
+        assert sheet_dims == {"Data": (2, 2)}
+        assert "Rate" in defined_names
+        assert externals == {}
+        assert refs_files == {}
+        assert warnings == []
+
+    def test_init_engine_evaluates_a_healthy_workbook(self):
+        from linexcel.analyzer import _init_engine, _load_workbook_structure
+
+        data = self._simple_workbook()
+        warnings: list[str] = []
+        sheet_dims, _, _, _ = _load_workbook_structure(data, None, warnings)
+        engine, engine_sheets, engine_alive, quarantined, scratch_ready = _init_engine(
+            data, sheet_dims, warnings
+        )
+        assert engine_sheets == {"Data"}
+        assert engine_alive is True
+        assert quarantined == {}
+        assert scratch_ready is True
+        assert warnings == []
+
+    def test_extract_formula_groups_groups_identical_formulas(self):
+        from linexcel.analyzer import (
+            _extract_formula_groups,
+            _init_engine,
+            _load_workbook_structure,
+        )
+        from linexcel.progress import Reporter
+
+        data = self._simple_workbook()
+        warnings: list[str] = []
+        sheet_dims, _, _, _ = _load_workbook_structure(data, None, warnings)
+        engine, engine_sheets, _, quarantined, _ = _init_engine(
+            data, sheet_dims, warnings
+        )
+        groups, cell_owner, formula_count, sheet_stats = _extract_formula_groups(
+            engine, sheet_dims, engine_sheets, quarantined, warnings, Reporter(False)
+        )
+        assert formula_count == 2
+        # B1 and B2 hold the same relative formula: one group, two cells.
+        assert len(groups) == 1
+        (group,) = groups.values()
+        assert sorted(group.cells) == [(1, 2), (2, 2)]
+        assert cell_owner == {}  # populated later, once groups are kept/dropped
+        assert sheet_stats == [
+            {"name": "Data", "rows": 2, "cols": 2, "formulaCells": 2}
+        ]
