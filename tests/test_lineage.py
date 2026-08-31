@@ -2863,3 +2863,121 @@ class TestGraphBuilder:
         opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
         assert len(opaque_ids) == 1
         assert (opaque_ids[0], "target", "dep") in builder.edges
+
+
+class TestProcessVba:
+    """``_process_vba`` replaces the VBA section inline in ``analyze_workbook``:
+    it extracts modules/procs (plus any add-in ones under ``refs_dir``), adds
+    one node per procedure, and wires call edges and cell-ref edges through
+    the ``_GraphBuilder`` it is handed.
+    """
+
+    @staticmethod
+    def _process(monkeypatch, *, procs, modules=None, refs_dir=None):
+        from linexcel import analyzer
+        from linexcel.analyzer import _GraphBuilder, _process_vba
+
+        modules = modules if modules is not None else {"Module1": "' code"}
+        monkeypatch.setattr(
+            analyzer, "extract_vba_modules", lambda *a, **k: dict(modules)
+        )
+        monkeypatch.setattr(analyzer, "analyze_vba", lambda mods: procs)
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=[],
+            nodes={},
+            edges={},
+        )
+        warnings: list[str] = []
+        vba_modules, vba_procs = _process_vba(
+            b"", "wb.xlsm", refs_dir, warnings, builder
+        )
+        return vba_modules, vba_procs, builder, warnings
+
+    def test_creates_one_node_per_procedure(self, monkeypatch):
+        from linexcel.vba import VbaProc
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="Sub Main()\nEnd Sub",
+        )
+
+        vba_modules, vba_procs, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        assert vba_modules == {"Module1": "' code"}
+        assert vba_procs == [proc]
+        assert builder.nodes["vp:Module1.Main"]["kind"] == "vba"
+        assert builder.nodes["vp:Module1.Main"]["proc"] == "Main"
+
+    def test_unqualified_call_resolves_within_same_module(self, monkeypatch):
+        from linexcel.vba import VbaProc
+
+        caller = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            calls=["Helper"],
+        )
+        callee = VbaProc(
+            module="Module1",
+            name="Helper",
+            kind="Sub",
+            line_start=7,
+            line_end=9,
+            code="",
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[caller, callee])
+
+        assert ("vp:Module1.Main", "vp:Module1.Helper", "call") in builder.edges
+
+    def test_cell_write_ref_reaches_the_target_sheet(self, monkeypatch):
+        from linexcel.vba import VbaProc, VbaRef
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            refs=[VbaRef(sheet="Data", ref="A1", access="write", line=2)],
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        write_edges = [e for e in builder.edges.values() if e["kind"] == "vba-write"]
+        assert len(write_edges) == 1
+        assert write_edges[0]["source"] == "vp:Module1.Main"
+
+    def test_unparseable_ref_becomes_an_opaque_read_edge(self, monkeypatch):
+        from linexcel.vba import VbaProc, VbaRef
+
+        proc = VbaProc(
+            module="Module1",
+            name="Main",
+            kind="Sub",
+            line_start=1,
+            line_end=5,
+            code="",
+            refs=[VbaRef(sheet=None, ref="not_a_ref", access="read", line=2)],
+        )
+
+        _, _, builder, _ = self._process(monkeypatch, procs=[proc])
+
+        read_edges = [e for e in builder.edges.values() if e["kind"] == "vba-read"]
+        assert len(read_edges) == 1
+        assert read_edges[0]["target"] == "vp:Module1.Main"
+        opaque_ids = [n for n in builder.nodes if n.startswith("x:")]
+        assert len(opaque_ids) == 1
