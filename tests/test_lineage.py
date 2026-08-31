@@ -3208,3 +3208,98 @@ class TestProcessDefinedNames:
         )
 
         assert ("c:Data!A1", "n:MyName", "name") in builder.edges
+
+
+class TestProcessFormulaNodes:
+    """``_process_formula_nodes`` replaces the last inline block of
+    ``analyze_workbook``: the loop that turns each kept ``FormulaGroup`` into
+    a graph node and wires its precedent edges (plain refs via
+    ``cell_owner``, unresolvable refs via a defined name or an opaque node).
+    """
+
+    @staticmethod
+    def _process(kept_groups, *, name_nodes=None, cell_owner=None):
+        from linexcel.analyzer import _GraphBuilder, _process_formula_nodes
+
+        builder = _GraphBuilder(
+            sheet_dims={"Data": (5, 5)},
+            cell_owner=cell_owner if cell_owner is not None else defaultdict(dict),
+            resolver=_FakeResolver(),
+            table_index={},
+            kept_groups=kept_groups,
+            nodes={},
+            edges={},
+        )
+        _process_formula_nodes(
+            kept_groups, name_nodes or {}, {}, _FakeResolver(), {}, builder
+        )
+        return builder
+
+    def test_single_cell_formula_creates_a_cell_node(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=1"}
+        )
+        builder = self._process([("c:Data!A1", grp)])
+
+        node = builder.nodes["c:Data!A1"]
+        assert node["kind"] == "cell"
+        assert node["sheet"] == "Data"
+        assert node["addr"] == "A1"
+        assert node["formula"] == "=1"
+        assert node["count"] == 1
+        assert node["samples"] is None
+
+    def test_group_of_cells_creates_group_node_with_samples(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data",
+            r1c1="R1C1",
+            cells=[(1, 1), (1, 2)],
+            formulas={(1, 1): "=1", (1, 2): "=1"},
+        )
+        builder = self._process([("g:Data!A1", grp)])
+
+        node = builder.nodes["g:Data!A1"]
+        assert node["kind"] == "group"
+        assert node["count"] == 2
+        assert "x2" in node["label"]
+        assert node["samples"] is not None
+        assert len(node["samples"]) == 2
+
+    def test_plain_reference_wires_precedent_edge_via_cell_owner(self):
+        from linexcel.analyzer import FormulaGroup
+
+        cell_owner = defaultdict(dict, {"Data": {(1, 1): "c:Data!A1"}})
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C2", cells=[(1, 2)], formulas={(1, 2): "=A1"}
+        )
+        builder = self._process([("c:Data!B1", grp)], cell_owner=cell_owner)
+
+        assert ("c:Data!A1", "c:Data!B1", "dep") in builder.edges
+
+    def test_bound_name_reference_wires_name_edge(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=MyName"}
+        )
+        builder = self._process([("c:Data!A1", grp)], name_nodes={"MYNAME": "n:MyName"})
+
+        assert ("n:MyName", "c:Data!A1", "name") in builder.edges
+
+    def test_unbound_name_reference_falls_back_to_opaque_node(self):
+        from linexcel.analyzer import FormulaGroup
+
+        grp = FormulaGroup(
+            sheet="Data", r1c1="R1C1", cells=[(1, 1)], formulas={(1, 1): "=MyName"}
+        )
+        builder = self._process([("c:Data!A1", grp)])
+
+        opaque_edges = [e for e in builder.edges.values() if e["kind"] == "dep"]
+        assert len(opaque_edges) == 1
+        source_node = builder.nodes[opaque_edges[0]["source"]]
+        assert source_node["kind"] == "opaque"
+        assert source_node["label"] == "MyName"

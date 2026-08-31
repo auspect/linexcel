@@ -1395,6 +1395,113 @@ def _process_power_query(
     return queries
 
 
+def _process_formula_nodes(
+    kept_groups: list[tuple[str, FormulaGroup]],
+    name_nodes: dict[str, str],
+    defined_names: dict[str, list[Rect]],
+    resolver: _ValueResolver,
+    table_index: dict[str, list[dict[str, Any]]],
+    builder: _GraphBuilder,
+) -> None:
+    """Builds a node (+ precedent edges) for every kept formula group.
+
+    Mutates ``builder.nodes``/``builder.edges`` in place via the builder's
+    own methods; nothing is returned. ``ast_cache`` is local — parsed ASTs
+    are reused across cells sharing the same canonical formula, but nothing
+    outside this loop needs them afterwards.
+    """
+    ast_cache: dict[str, Any] = {}
+    for node_id, grp in kept_groups:
+        rep_r, rep_c = grp.rep
+        formula = grp.formulas.get((rep_r, rep_c)) or next(iter(grp.formulas.values()))
+        sheet = grp.sheet
+        is_group = len(grp.cells) > 1
+        try:
+            ast = ast_cache.get(formula)
+            if ast is None:
+                ast = ast_cache[formula] = fz.parse(
+                    formula if formula.startswith("=") else "=" + formula
+                )
+            ast_dict = ast.to_dict()
+        except Exception:
+            ast, ast_dict = None, None
+
+        refs = _collect_ref_strings(ast_dict) if ast_dict else []
+        rmin, cmin, rmax, cmax = grp.bbox
+        agg_rects: list[Rect] = []
+        for ref in refs:
+            detail = parse_ref_detailed(ref, default_sheet=sheet)
+            if detail is None:
+                up = ref.upper()
+                if up in name_nodes:
+                    builder.add_edge(name_nodes[up], node_id, "name")
+                else:
+                    builder.add_edge(builder.ensure_opaque_node(ref), node_id, "dep")
+                continue
+            rect = (
+                stretch_ref(detail, rep_r, rep_c, (rmin, rmax), (cmin, cmax))
+                if is_group
+                else detail.rect
+            )
+            agg_rects.append(rect)
+
+        for rect in _merge_rects(agg_rects):
+            builder.resolve_rect_edges(rect, node_id)
+
+        value_fields = resolver.describe(sheet, rep_r, rep_c, formula)
+        samples = None
+        if is_group:
+            samples = [
+                {
+                    "addr": a1(r, c),
+                    **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
+                }
+                for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
+            ]
+
+        steps = None
+        # A volatile cell is shown as *not* recalculated, so decomposing it
+        # would contradict its own card: every step under `=TODAY()+7` would
+        # carry a figure computed from today's clock.
+        if ast_dict is not None and value_fields.get("valueSource") != "volatile":
+            # The root step is the formula itself: when the engine computed the
+            # cell, its value is that step's value and needs no scratch pass.
+            root_value = (
+                value_fields["value"]
+                if value_fields.get("valueSource") == "engine"
+                else None
+            )
+            step_exprs = _collect_step_exprs(ast_dict, skip_root=root_value is not None)
+            if step_exprs:
+                resolver.preload_steps(step_exprs, sheet)
+            steps = _decompose(
+                ast_dict, sheet, resolver, defined_names, root_value=root_value
+            )
+
+        node: dict[str, Any] = {
+            "id": node_id,
+            "kind": "group" if is_group else "cell",
+            "sheet": sheet,
+            "addr": a1(rep_r, rep_c),
+            "label": (
+                f"{sheet}!{a1(rep_r, rep_c)}"
+                + (f" x{len(grp.cells)}" if is_group else "")
+            ),
+            "formula": formula if formula.startswith("=") else "=" + formula,
+            "r1c1": grp.r1c1,
+            "count": len(grp.cells),
+            "bbox": _bbox_a1(grp),
+            **value_fields,
+            "samples": samples,
+            "steps": steps,
+        }
+        books = resolver.external_books(formula)
+        if books:
+            node["externalBooks"] = books
+        _enrich_with_table(node, table_index, sheet, rep_r, rep_c)
+        builder.nodes[node_id] = node
+
+
 def _process_defined_names(
     defined_names: dict[str, list[Rect]],
     resolver: _ValueResolver,
@@ -1512,8 +1619,6 @@ def analyze_workbook(
 
     kept_groups = _finalize_formula_groups(groups, cell_owner, nodes, warnings)
 
-    ast_cache: dict[str, Any] = {}
-
     builder = _GraphBuilder(
         sheet_dims=sheet_dims,
         cell_owner=cell_owner,
@@ -1523,103 +1628,14 @@ def analyze_workbook(
         nodes=nodes,
         edges=edges,
     )
-    ensure_opaque_node = builder.ensure_opaque_node
-    add_edge = builder.add_edge
-    resolve_rect_edges = builder.resolve_rect_edges
 
     # defined names -----------------------------------------------------------
     name_nodes = _process_defined_names(defined_names, resolver, builder)
 
     # formula nodes + edges -------------------------------------------------
-    for node_id, grp in kept_groups:
-        rep_r, rep_c = grp.rep
-        formula = grp.formulas.get((rep_r, rep_c)) or next(iter(grp.formulas.values()))
-        sheet = grp.sheet
-        is_group = len(grp.cells) > 1
-        try:
-            ast = ast_cache.get(formula)
-            if ast is None:
-                ast = ast_cache[formula] = fz.parse(
-                    formula if formula.startswith("=") else "=" + formula
-                )
-            ast_dict = ast.to_dict()
-        except Exception:
-            ast, ast_dict = None, None
-
-        refs = _collect_ref_strings(ast_dict) if ast_dict else []
-        rmin, cmin, rmax, cmax = grp.bbox
-        agg_rects: list[Rect] = []
-        for ref in refs:
-            detail = parse_ref_detailed(ref, default_sheet=sheet)
-            if detail is None:
-                up = ref.upper()
-                if up in name_nodes:
-                    add_edge(name_nodes[up], node_id, "name")
-                else:
-                    add_edge(ensure_opaque_node(ref), node_id, "dep")
-                continue
-            rect = (
-                stretch_ref(detail, rep_r, rep_c, (rmin, rmax), (cmin, cmax))
-                if is_group
-                else detail.rect
-            )
-            agg_rects.append(rect)
-
-        for rect in _merge_rects(agg_rects):
-            resolve_rect_edges(rect, node_id)
-
-        value_fields = resolver.describe(sheet, rep_r, rep_c, formula)
-        samples = None
-        if is_group:
-            samples = [
-                {
-                    "addr": a1(r, c),
-                    **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
-                }
-                for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
-            ]
-
-        steps = None
-        # A volatile cell is shown as *not* recalculated, so decomposing it
-        # would contradict its own card: every step under `=TODAY()+7` would
-        # carry a figure computed from today's clock.
-        if ast_dict is not None and value_fields.get("valueSource") != "volatile":
-            # The root step is the formula itself: when the engine computed the
-            # cell, its value is that step's value and needs no scratch pass.
-            root_value = (
-                value_fields["value"]
-                if value_fields.get("valueSource") == "engine"
-                else None
-            )
-            step_exprs = _collect_step_exprs(ast_dict, skip_root=root_value is not None)
-            if step_exprs:
-                resolver.preload_steps(step_exprs, sheet)
-            steps = _decompose(
-                ast_dict, sheet, resolver, defined_names, root_value=root_value
-            )
-
-        node: dict[str, Any] = {
-            "id": node_id,
-            "kind": "group" if is_group else "cell",
-            "sheet": sheet,
-            "addr": a1(rep_r, rep_c),
-            "label": (
-                f"{sheet}!{a1(rep_r, rep_c)}"
-                + (f" x{len(grp.cells)}" if is_group else "")
-            ),
-            "formula": formula if formula.startswith("=") else "=" + formula,
-            "r1c1": grp.r1c1,
-            "count": len(grp.cells),
-            "bbox": _bbox_a1(grp),
-            **value_fields,
-            "samples": samples,
-            "steps": steps,
-        }
-        books = resolver.external_books(formula)
-        if books:
-            node["externalBooks"] = books
-        _enrich_with_table(node, table_index, sheet, rep_r, rep_c)
-        nodes[node_id] = node
+    _process_formula_nodes(
+        kept_groups, name_nodes, defined_names, resolver, table_index, builder
+    )
 
     # --- 6. VBA --------------------------------------------------------------
     vba_modules, vba_procs = _process_vba(data, filename, refs_dir, warnings, builder)
