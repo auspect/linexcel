@@ -15,19 +15,16 @@ Steps:
 from __future__ import annotations
 
 import datetime
-import io
 import re
 import sys
 import time
 import uuid
-import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import formualizer as fz
-from openpyxl import load_workbook
 
 from linexcel.decompose import (
     SCRATCH_SENTINEL,
@@ -48,14 +45,7 @@ from linexcel.external import (
     read_workbook_values,
     resolve_books,
 )
-from linexcel.loader import (
-    MAX_CELLS_PER_SHEET,
-    MAX_DENSE_CELLS,
-    CachedValues,
-    _stepped,
-    declared_cells,
-    load_cached_values,
-)
+from linexcel.loader import MAX_CELLS_PER_SHEET, CachedValues, _stepped, load_cached_values
 from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.progress import Reporter
 from linexcel.refs import (
@@ -66,12 +56,12 @@ from linexcel.refs import (
     stretch_ref,
 )
 from linexcel.rewrite import canonical_r1c1, qualify_sheet
-from linexcel.tables import (
-    _build_table_index,
-    _collect_defined_names,
-    _enrich_with_table,
-    _force_dimensions,
+from linexcel.structure import (
+    MAX_NODES_PER_SHEET,
+    inspect_workbook,  # noqa: F401  (re-exported: public API)
+    read_structure,
 )
+from linexcel.tables import _build_table_index, _enrich_with_table
 from linexcel.values import (
     EXCEL_EPOCH_1900,
     EXCEL_ERRORS,
@@ -91,7 +81,6 @@ SCAN_CHUNK_ROWS = 20_000
 #: a time would materialize 327 million of them in one go.
 SCAN_CHUNK_CELLS = 1_000_000
 SMALL_RANGE_CELLS = 20_000
-MAX_NODES_PER_SHEET = 400
 MAX_SCRATCH_EVALS = 4_000
 #: Wall-clock ceiling on the step decomposition, in seconds. A count of
 #: evaluations cannot bound time: each one asks the engine to walk the dirty
@@ -854,87 +843,6 @@ def a1(row: int, col: int) -> str:
     return f"{num_to_col(col)}{row}"
 
 
-#: Seconds per megabyte of uncompressed sheet XML. Measured across workbooks
-#: from a thousand cells to two hundred thousand formulas, where the cost per
-#: byte stays near enough constant to be worth quoting: what an analysis
-#: really costs tracks how much formula there is to read, and that is what the
-#: sheet parts weigh. A file of mostly values is faster than this says, which
-#: is the right direction for a warning to be wrong in.
-SECONDS_PER_SHEET_MB = 0.5
-#: Below this the estimate is noise and nobody was going to wait anyway.
-WORTH_MENTIONING_SECONDS = 5.0
-
-_SHEET_PART_RE = re.compile(r"xl/worksheets/sheet\d+\.xml")
-
-
-def sheet_bytes(data: bytes) -> int:
-    """Uncompressed weight of the sheet parts, without unpacking one.
-
-    The zip central directory carries each entry's real size, so this costs a
-    read of the index — microseconds on a file that takes minutes to analyse.
-    That is the whole point: an estimate nobody waits for.
-    """
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            return sum(
-                entry.file_size
-                for entry in zf.infolist()
-                if _SHEET_PART_RE.fullmatch(entry.filename)
-            )
-    except Exception:
-        return 0
-
-
-def inspect_workbook(data: bytes) -> dict[str, Any]:
-    """What the file says about itself, before anything analyses it.
-
-    Everything here is read from the package headers — sheet dimensions and
-    external link declarations — so it costs milliseconds on a file that would
-    take minutes to analyse. That is the point: it answers "is this going to
-    be long, and will anything be left out?" *before* someone commits to
-    finding out the slow way.
-
-    Declared sizes, not real ones. A sheet claiming 17 billion cells holds
-    nothing of the sort, and saying so is exactly the warning worth having.
-    """
-    owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
-    try:
-        sheets = []
-        for ws in owb.worksheets:
-            max_row, max_col = ws.max_row, ws.max_column
-            if not max_row or not max_col:
-                max_row, max_col = _force_dimensions(ws)
-            rows, cols = max_row or 1, max_col or 1
-            sheets.append(
-                {
-                    "name": ws.title,
-                    "rows": rows,
-                    "cols": cols,
-                    "cells": rows * cols,
-                    "state": ws.sheet_state,
-                    "truncated": rows * cols > MAX_CELLS_PER_SHEET,
-                }
-            )
-    finally:
-        owb.close()
-    books = read_external_links(data)
-    weight = sheet_bytes(data)
-    return {
-        "bytes": len(data),
-        "sheetBytes": weight,
-        "estimatedSeconds": round(weight / 1_048_576 * SECONDS_PER_SHEET_MB, 1),
-        "sheets": sheets,
-        "declaredCells": sum(s["cells"] for s in sheets),
-        "externalWorkbooks": [b.name for b in books.values()],
-        "densePathRefused": declared_cells(data) > MAX_DENSE_CELLS,
-        "ceilings": {
-            "cellsPerSheet": MAX_CELLS_PER_SHEET,
-            "nodesPerSheet": MAX_NODES_PER_SHEET,
-            "denseCells": MAX_DENSE_CELLS,
-        },
-    }
-
-
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -961,17 +869,9 @@ def analyze_workbook(
 
     # --- 1. structure -----------------------------------------------------
     _t = time.perf_counter()
-    owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
-    try:
-        sheet_dims: dict[str, tuple[int, int]] = {}
-        for ws in owb.worksheets:
-            max_row, max_col = ws.max_row, ws.max_column
-            if not max_row or not max_col:
-                max_row, max_col = _force_dimensions(ws)
-            sheet_dims[ws.title] = (max_row or 1, max_col or 1)
-        defined_names = _collect_defined_names(owb)
-    finally:
-        owb.close()
+    structure = read_structure(data)
+    sheet_dims = structure.sheet_dims
+    defined_names = structure.defined_names
 
     # Workbooks this one links to. Always named; read for real only when the
     # caller points at a folder holding them.

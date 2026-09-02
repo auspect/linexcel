@@ -170,7 +170,7 @@ def _warn_if_long(workbook: Path) -> None:
     millisecond. Silence under a few seconds: a heads-up on every small file
     would be noise, and noise is what people learn to skip.
     """
-    from linexcel.analyzer import (
+    from linexcel.structure import (
         SECONDS_PER_SHEET_MB,
         WORTH_MENTIONING_SECONDS,
         sheet_bytes,
@@ -234,7 +234,7 @@ def _report_dry_run(workbook: Path, facts: dict) -> None:
 
 def _run_analyze(args: argparse.Namespace) -> int:
     from linexcel import analyze as analyze_workbook
-    from linexcel.analyzer import inspect_workbook
+    from linexcel.structure import inspect_workbook
 
     if args.dry_run:
         _report_dry_run(args.workbook, inspect_workbook(args.workbook.read_bytes()))
