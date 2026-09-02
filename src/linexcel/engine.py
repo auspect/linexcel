@@ -93,7 +93,9 @@ def boot_engine(
             quarantined = {}
 
     scratch_ready = _ensure_scratch(engine)
-    return EngineSession(engine, engine_sheets, engine_alive, quarantined, scratch_ready)
+    return EngineSession(
+        engine, engine_sheets, engine_alive, quarantined, scratch_ready
+    )
 
 
 def _quarantine_unresolvable(

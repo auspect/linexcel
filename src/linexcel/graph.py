@@ -242,9 +242,7 @@ class GraphBuilder:
             }
             if rect.ncells == 1 and rect.sheet is not None:
                 node.update(self.resolver.describe(rect.sheet, rect.r1, rect.c1))
-                _enrich_with_table(
-                    node, self.table_index, rect.sheet, rect.r1, rect.c1
-                )
+                _enrich_with_table(node, self.table_index, rect.sheet, rect.r1, rect.c1)
             self.nodes[node_id] = node
         self.input_nodes[label] = node_id
         return node_id
@@ -439,7 +437,10 @@ class GraphBuilder:
                 if step_exprs:
                     self.resolver.preload_steps(step_exprs, sheet)
                 steps = _decompose(
-                    ast_dict, sheet, self.resolver, self.defined_names,
+                    ast_dict,
+                    sheet,
+                    self.resolver,
+                    self.defined_names,
                     root_value=root_value,
                 )
 
