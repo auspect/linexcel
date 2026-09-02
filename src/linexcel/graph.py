@@ -13,12 +13,13 @@ infrastructure (``add_edge``, ``ensure_opaque_node``, ``ensure_input_node``,
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 import formualizer as fz
 
 from linexcel.decompose import _collect_step_exprs, _decompose
-from linexcel.external import parse_external_refs
+from linexcel.external import macro_files, parse_external_refs
 from linexcel.loader import _stepped
 from linexcel.refs import Rect, a1, parse_ref_detailed, stretch_ref
 from linexcel.resolver import _collect_ref_strings, _external_name, _ValueResolver
@@ -26,9 +27,11 @@ from linexcel.structure import MAX_NODES_PER_SHEET
 from linexcel.sweep import FormulaGroup
 from linexcel.tables import _enrich_with_table
 from linexcel.values import _jsonable
+from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
 SMALL_RANGE_CELLS = 20_000
 MAX_VALUE_SAMPLE = 5
+MAX_VBA_CODE_CHARS = 6_000
 
 
 def _merge_rects(rects: list[Rect]) -> list[Rect]:
@@ -65,6 +68,31 @@ def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
     last = len(ordered) - 1
     picks = sorted({round(i * last / (n - 1)) for i in range(n)})
     return [ordered[i] for i in picks]
+
+
+def _resolve_call(
+    callee: str,
+    caller_module: str,
+    proc_ids: dict[str, str],
+    procs_by_name: dict[str, list[str]],
+) -> str | None:
+    """Resolve a VBA call to a procedure node id.
+
+    A callee already qualified with its module (``Module1.Taux``) resolves
+    directly. VBA looks an unqualified name up in the calling module first,
+    then in the other modules; a name declared by several other modules stays
+    unresolved rather than pointing at an arbitrary one. All lookups are
+    case-insensitive, as the language is.
+    """
+    if "." in callee:
+        return proc_ids.get(callee.lower())
+    same_module = f"{caller_module}.{callee}".lower()
+    if same_module in proc_ids:
+        return proc_ids[same_module]
+    candidates = procs_by_name.get(callee.lower(), [])
+    if len(candidates) == 1:
+        return proc_ids[candidates[0]]
+    return None
 
 
 def _sample_range_values(resolver: _ValueResolver, rect: Rect) -> list:
@@ -409,3 +437,96 @@ class GraphBuilder:
                 node["externalBooks"] = books
             _enrich_with_table(node, self.table_index, sheet, rep_r, rep_c)
             self.nodes[node_id] = node
+
+    def build_vba(
+        self, data: bytes, filename: str, refs_dir: str | Path | None
+    ) -> None:
+        """Nodes for every VBA procedure, wired by call and by cell access."""
+        self.vba_modules = extract_vba_modules(data, filename, self.warnings)
+        self.vba_procs: list[VbaProc] = (
+            analyze_vba(self.vba_modules) if self.vba_modules else []
+        )
+        # Code a workbook calls often does not live in it: an .xlam add-in
+        # holds the functions, and the workbook only names them. Given the
+        # folder, that code is read too, and each module says which file it
+        # came from.
+        if refs_dir is not None:
+            for addin in macro_files(Path(refs_dir)):
+                extra = extract_vba_modules(
+                    addin.read_bytes(), addin.name, self.warnings
+                )
+                if not extra:
+                    continue
+                origin = {f"{addin.name}:{name}": code for name, code in extra.items()}
+                self.vba_modules.update(origin)
+                self.vba_procs.extend(analyze_vba(origin))
+        # Node ids keep the declared spelling, but both lookups are keyed on
+        # the lowercased name: VBA is case-insensitive, so Module1.Taux and
+        # module1.TAUX designate the same procedure. proc_ids resolves a
+        # qualified name, procs_by_name the unqualified ones _find_calls
+        # reports.
+        proc_ids: dict[str, str] = {}
+        procs_by_name: dict[str, list[str]] = defaultdict(list)
+        for proc in self.vba_procs:
+            qualified = f"{proc.module}.{proc.name}"
+            pid = f"vp:{qualified}"
+            proc_ids[qualified.lower()] = pid
+            procs_by_name[proc.name.lower()].append(qualified.lower())
+            self.nodes[pid] = {
+                "id": pid,
+                "kind": "vba",
+                "label": f"{proc.module}.{proc.name}",
+                "sheet": None,
+                "module": proc.module,
+                "proc": proc.name,
+                "procKind": proc.kind,
+                "lines": [proc.line_start, proc.line_end],
+                "code": proc.code[:MAX_VBA_CODE_CHARS],
+            }
+        for proc in self.vba_procs:
+            pid = proc_ids[f"{proc.module}.{proc.name}".lower()]
+            for callee in proc.calls:
+                target = _resolve_call(callee, proc.module, proc_ids, procs_by_name)
+                if target is not None:
+                    self.add_edge(pid, target, "call")
+            for ref in proc.refs:
+                detail = parse_ref_detailed(ref.ref, default_sheet=ref.sheet)
+                if detail is None or detail.rect.sheet is None:
+                    opaque_id = self.ensure_input_node(
+                        Rect(None, 1, 1, 1, 1),
+                        opaque_label=f"VBA:{ref.sheet or '?'}!{ref.ref}",
+                    )
+                    if ref.access == "write":
+                        self.add_edge(pid, opaque_id, "vba-write")
+                    else:
+                        self.add_edge(opaque_id, pid, "vba-read")
+                    continue
+                if ref.access == "write":
+                    self._resolve_vba_write(detail.rect, pid)
+                else:
+                    self.resolve_rect_edges(detail.rect, pid, kind="vba-read")
+
+    def _resolve_vba_write(self, rect: Rect, pid: str) -> None:
+        """A VBA write feeds the target cells: edge proc → target."""
+        sheet = rect.sheet
+        if sheet not in self.sheet_dims:
+            opaque = self.ensure_input_node(rect, opaque_label=rect.to_a1())
+            self.add_edge(pid, opaque, "vba-write")
+            return
+        clipped = rect.clipped(*self.sheet_dims[sheet]) or rect
+        owners = self.cell_owner.get(sheet, {})
+        seen: set[str] = set()
+        has_plain = False
+        if clipped.ncells <= SMALL_RANGE_CELLS:
+            for r in range(clipped.r1, clipped.r2 + 1):
+                for c in range(clipped.c1, clipped.c2 + 1):
+                    owner = owners.get((r, c))
+                    if owner is None:
+                        has_plain = True
+                    elif owner not in seen:
+                        seen.add(owner)
+                        self.add_edge(pid, owner, "vba-write")
+        else:
+            has_plain = True
+        if has_plain:
+            self.add_edge(pid, self.ensure_input_node(clipped), "vba-write")

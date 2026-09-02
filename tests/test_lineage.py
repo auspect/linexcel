@@ -1560,7 +1560,7 @@ class TestVbaGraph:
     @staticmethod
     def _graph(workbook: bytes, monkeypatch, modules: dict[str, str]) -> dict:
         monkeypatch.setattr(
-            "linexcel.analyzer.extract_vba_modules",
+            "linexcel.graph.extract_vba_modules",
             lambda data, filename, warnings=None: dict(modules),
         )
         return analyze_workbook(workbook, "macro.xlsm")["graph"]

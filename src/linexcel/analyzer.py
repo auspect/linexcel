@@ -198,70 +198,9 @@ def analyze_workbook(
     builder.build_formula_nodes()
 
     # --- 6. VBA --------------------------------------------------------------
-    vba_modules = extract_vba_modules(data, filename, warnings)
-    vba_procs: list[VbaProc] = analyze_vba(vba_modules) if vba_modules else []
-    # Code a workbook calls often does not live in it: an .xlam add-in holds
-    # the functions, and the workbook only names them. Given the folder, that
-    # code is read too, and each module says which file it came from.
-    if refs_dir is not None:
-        for addin in macro_files(Path(refs_dir)):
-            extra = extract_vba_modules(addin.read_bytes(), addin.name, warnings)
-            if not extra:
-                continue
-            origin = {f"{addin.name}:{name}": code for name, code in extra.items()}
-            vba_modules.update(origin)
-            vba_procs.extend(analyze_vba(origin))
-    # Node ids keep the declared spelling, but both lookups are keyed on the
-    # lowercased name: VBA is case-insensitive, so Module1.Taux and
-    # module1.TAUX designate the same procedure. proc_ids resolves a qualified
-    # name, procs_by_name the unqualified ones _find_calls reports.
-    proc_ids: dict[str, str] = {}
-    procs_by_name: dict[str, list[str]] = defaultdict(list)
-    for proc in vba_procs:
-        qualified = f"{proc.module}.{proc.name}"
-        pid = f"vp:{qualified}"
-        proc_ids[qualified.lower()] = pid
-        procs_by_name[proc.name.lower()].append(qualified.lower())
-        nodes[pid] = {
-            "id": pid,
-            "kind": "vba",
-            "label": f"{proc.module}.{proc.name}",
-            "sheet": None,
-            "module": proc.module,
-            "proc": proc.name,
-            "procKind": proc.kind,
-            "lines": [proc.line_start, proc.line_end],
-            "code": proc.code[:MAX_VBA_CODE_CHARS],
-        }
-    for proc in vba_procs:
-        pid = proc_ids[f"{proc.module}.{proc.name}".lower()]
-        for callee in proc.calls:
-            target = _resolve_call(callee, proc.module, proc_ids, procs_by_name)
-            if target is not None:
-                add_edge(pid, target, "call")
-        for ref in proc.refs:
-            detail = parse_ref_detailed(ref.ref, default_sheet=ref.sheet)
-            if detail is None or detail.rect.sheet is None:
-                opaque_id = ensure_input_node(
-                    Rect(None, 1, 1, 1, 1),
-                    opaque_label=f"VBA:{ref.sheet or '?'}!{ref.ref}",
-                )
-                if ref.access == "write":
-                    add_edge(pid, opaque_id, "vba-write")
-                else:
-                    add_edge(opaque_id, pid, "vba-read")
-                continue
-            if ref.access == "write":
-                _resolve_vba_write(
-                    detail.rect,
-                    pid,
-                    sheet_dims,
-                    cell_owner,
-                    add_edge,
-                    ensure_input_node,
-                )
-            else:
-                resolve_rect_edges(detail.rect, pid, kind="vba-read")
+    builder.build_vba(data, filename, refs_dir)
+    vba_modules = builder.vba_modules
+    vba_procs = builder.vba_procs
 
     # --- 7. Power Query ------------------------------------------------------
     # A range filled by a query has no formula above it, so without this the
@@ -384,61 +323,3 @@ def analyze_workbook(
             file=sys.stderr,
         )
     return {"graph": graph, "engine": engine, "analysisId": uuid.uuid4().hex[:16]}
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _resolve_call(
-    callee: str,
-    caller_module: str,
-    proc_ids: dict[str, str],
-    procs_by_name: dict[str, list[str]],
-) -> str | None:
-    """Resolve a VBA call to a procedure node id.
-
-    A callee already qualified with its module (``Module1.Taux``) resolves
-    directly. VBA looks an unqualified name up in the calling module first,
-    then in the other modules; a name declared by several other modules stays
-    unresolved rather than pointing at an arbitrary one. All lookups are
-    case-insensitive, as the language is.
-    """
-    if "." in callee:
-        return proc_ids.get(callee.lower())
-    same_module = f"{caller_module}.{callee}".lower()
-    if same_module in proc_ids:
-        return proc_ids[same_module]
-    candidates = procs_by_name.get(callee.lower(), [])
-    if len(candidates) == 1:
-        return proc_ids[candidates[0]]
-    return None
-
-
-def _resolve_vba_write(
-    rect: Rect, pid: str, sheet_dims, cell_owner, add_edge, ensure_input_node
-) -> None:
-    """A VBA write feeds the target cells: edge proc → target."""
-    sheet = rect.sheet
-    if sheet not in sheet_dims:
-        opaque = ensure_input_node(rect, opaque_label=rect.to_a1())
-        add_edge(pid, opaque, "vba-write")
-        return
-    clipped = rect.clipped(*sheet_dims[sheet]) or rect
-    owners = cell_owner.get(sheet, {})
-    seen: set[str] = set()
-    has_plain = False
-    if clipped.ncells <= SMALL_RANGE_CELLS:
-        for r in range(clipped.r1, clipped.r2 + 1):
-            for c in range(clipped.c1, clipped.c2 + 1):
-                owner = owners.get((r, c))
-                if owner is None:
-                    has_plain = True
-                elif owner not in seen:
-                    seen.add(owner)
-                    add_edge(pid, owner, "vba-write")
-    else:
-        has_plain = True
-    if has_plain:
-        add_edge(pid, ensure_input_node(clipped), "vba-write")
