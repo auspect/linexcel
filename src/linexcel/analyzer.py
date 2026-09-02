@@ -1,15 +1,8 @@
-"""Builds the lineage graph of an Excel workbook.
-
-Steps:
-1. structure (sheets, dimensions, defined names) via openpyxl read-only;
-2. formulas + computed values via the Rust engine formualizer;
-3. grouping of stretched formulas by R1C1 canonicalization —
-   a column of 50,000 copied formulas becomes ONE node;
-4. resolution of precedents (cells, ranges, names, other sheets);
-5. decomposition of each composite formula into individually evaluated steps
-   in a scratch sheet of the engine;
-6. lineage of extracted VBA code (oletools);
-7. Power Query — the queries that fill a range no formula writes to.
+"""Orchestrates the phases that build the lineage graph of an Excel workbook:
+structure → external links → cached values → engine boot → tables →
+resolver → formula sweep → graph nodes/edges (names, formulas, VBA, Power
+Query) → assembly. Each phase is a leaf module; this file only sequences
+them and assembles the result.
 """
 
 from __future__ import annotations
@@ -53,11 +46,8 @@ def analyze_workbook(
     """Full analysis: returns the JSON-serializable graph and the engine.
 
     ``refs_dir`` is a folder holding the workbooks this one links to. Without
-    it, a cell reading ``'[1]Annual'!B4`` is named and left unresolved — the
-    engine has nothing to follow. With it, the referenced file is read and the
-    reference is evaluated as the value it stands for; the report says, per
-    workbook, whether it was read from that folder, from the cache Excel left
-    in the file, or not at all.
+    it, a cell reading ``'[1]Annual'!B4`` is left unresolved; with it, the
+    reference is read and evaluated.
     """
     warnings: list[str] = []
     _t0 = time.perf_counter()

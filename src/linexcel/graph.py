@@ -530,34 +530,11 @@ class GraphBuilder:
                         self.add_edge(opaque_id, pid, "vba-read")
                     continue
                 if ref.access == "write":
-                    self._resolve_vba_write(detail.rect, pid)
+                    self.resolve_rect_edges(
+                        detail.rect, pid, kind="vba-write", write=True
+                    )
                 else:
                     self.resolve_rect_edges(detail.rect, pid, kind="vba-read")
-
-    def _resolve_vba_write(self, rect: Rect, pid: str) -> None:
-        """A VBA write feeds the target cells: edge proc → target."""
-        sheet = rect.sheet
-        if sheet not in self.sheet_dims:
-            opaque = self.ensure_input_node(rect, opaque_label=rect.to_a1())
-            self.add_edge(pid, opaque, "vba-write")
-            return
-        clipped = rect.clipped(*self.sheet_dims[sheet]) or rect
-        owners = self.cell_owner.get(sheet, {})
-        seen: set[str] = set()
-        has_plain = False
-        if clipped.ncells <= SMALL_RANGE_CELLS:
-            for r in range(clipped.r1, clipped.r2 + 1):
-                for c in range(clipped.c1, clipped.c2 + 1):
-                    owner = owners.get((r, c))
-                    if owner is None:
-                        has_plain = True
-                    elif owner not in seen:
-                        seen.add(owner)
-                        self.add_edge(pid, owner, "vba-write")
-        else:
-            has_plain = True
-        if has_plain:
-            self.add_edge(pid, self.ensure_input_node(clipped), "vba-write")
 
     def build_queries(self, queries: list[Query]) -> None:
         """A node per Power Query query, wired to its sources and loads."""
