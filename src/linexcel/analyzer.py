@@ -207,33 +207,8 @@ def analyze_workbook(
     resolve_rect_edges = builder.resolve_rect_edges
 
     # defined names -----------------------------------------------------------
-    name_nodes: dict[str, str] = {}
-    for name, targets in defined_names.items():
-        node_id = f"n:{name}"
-        name_nodes[name.upper()] = node_id
-        value_fields: dict[str, Any] = {"value": None}
-        if targets:
-            first = targets[0]
-            if (
-                first.sheet is not None
-                and first.r1 == first.r2
-                and first.c1 == first.c2
-            ):
-                value_fields = resolver.describe(first.sheet, first.r1, first.c1)
-            else:
-                val_samples = _sample_range_values(resolver, first)
-                if val_samples:
-                    value_fields = {"value": val_samples[0]["value"]}
-        nodes[node_id] = {
-            "id": node_id,
-            "kind": "name",
-            "label": name,
-            "sheet": targets[0].sheet if targets else None,
-            "targets": [t.to_a1() for t in targets],
-            **value_fields,
-        }
-        for rect in targets:
-            resolve_rect_edges(rect, node_id, kind="name")
+    builder.build_names()
+    name_nodes = builder.name_nodes
 
     # formula nodes + edges -------------------------------------------------
     # Reported one node at a time: this is where a dense workbook spends its
@@ -561,26 +536,6 @@ def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
     last = len(ordered) - 1
     picks = sorted({round(i * last / (n - 1)) for i in range(n)})
     return [ordered[i] for i in picks]
-
-
-def _sample_range_values(resolver: _ValueResolver, rect: Rect) -> list:
-    if rect.sheet is None:
-        return []
-    out = []
-    for r in range(rect.r1, min(rect.r2, rect.r1 + MAX_VALUE_SAMPLE - 1) + 1):
-        for c in range(rect.c1, min(rect.c2, rect.c1 + MAX_VALUE_SAMPLE - 1) + 1):
-            if len(out) >= MAX_VALUE_SAMPLE:
-                return out
-            value, source, date_text = resolver.value(rect.sheet, r, c)
-            out.append(
-                {
-                    "addr": a1(r, c),
-                    "value": value,
-                    "source": source,
-                    "date": date_text,
-                }
-            )
-    return out
 
 
 def _resolve_call(

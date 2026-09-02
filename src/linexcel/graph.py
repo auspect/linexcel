@@ -231,3 +231,34 @@ class GraphBuilder:
             self.add_edge(
                 self.ensure_input_node(clipped), target_id, kind, approx=True
             )
+
+    def build_names(self) -> None:
+        """A node per defined name, wired to whatever it points at."""
+        for name, targets in self.defined_names.items():
+            node_id = f"n:{name}"
+            self.name_nodes[name.upper()] = node_id
+            value_fields: dict[str, Any] = {"value": None}
+            if targets:
+                first = targets[0]
+                if (
+                    first.sheet is not None
+                    and first.r1 == first.r2
+                    and first.c1 == first.c2
+                ):
+                    value_fields = self.resolver.describe(
+                        first.sheet, first.r1, first.c1
+                    )
+                else:
+                    val_samples = _sample_range_values(self.resolver, first)
+                    if val_samples:
+                        value_fields = {"value": val_samples[0]["value"]}
+            self.nodes[node_id] = {
+                "id": node_id,
+                "kind": "name",
+                "label": name,
+                "sheet": targets[0].sheet if targets else None,
+                "targets": [t.to_a1() for t in targets],
+                **value_fields,
+            }
+            for rect in targets:
+                self.resolve_rect_edges(rect, node_id, kind="name")
