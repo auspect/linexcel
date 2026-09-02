@@ -2569,18 +2569,18 @@ class TestScanCeiling:
 
     def test_the_last_chunk_is_clipped_to_the_ceiling_not_dropped(self, monkeypatch):
         """Dropping it stopped a 4,000,000-cell budget at 3,600,000."""
-        from linexcel import analyzer, engine
+        from linexcel import engine, sweep
 
-        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
         graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
         # 30 cells of budget over 3 columns: rows 1-10, two formulas each
         assert graph["meta"]["stats"]["totalFormulas"] == 20
 
     def test_the_warning_names_the_first_row_left_out(self, monkeypatch):
-        from linexcel import analyzer, engine
+        from linexcel import engine, sweep
 
-        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
         graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
         (warning,) = graph["meta"]["warnings"]

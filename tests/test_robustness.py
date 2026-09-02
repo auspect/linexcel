@@ -186,9 +186,9 @@ class TestTheTwoCeilings:
         self, monkeypatch
     ):
         """Shrinking the sweep budget must not make the fast path complain."""
-        from linexcel import analyzer
+        from linexcel import sweep
 
-        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         warnings: list[str] = []
         load_cached_values(workbook({"A1": 1, "J40": 2}), warnings)
         assert warnings == []
