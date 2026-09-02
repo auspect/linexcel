@@ -265,17 +265,43 @@ class GraphBuilder:
         elif not approx:
             e["approx"] = False
 
-    def resolve_rect_edges(self, rect: Rect, target_id: str, kind: str = "dep") -> None:
-        """Create precedent → target edges for a referenced range."""
+    def resolve_rect_edges(
+        self, rect: Rect, node_id: str, kind: str = "dep", *, write: bool = False
+    ) -> None:
+        """Wire a referenced range to ``node_id``.
+
+        A formula, a name or a query *reads* a range: edges run precedent →
+        ``node_id``. A VBA write *feeds* the range instead — direction
+        reverses, an out-of-bounds range still gets an edge to the address as
+        given (a macro can write past the sheet's current extent, unlike a
+        read which then has nothing to point at), and a huge range is not
+        split against the group boxes it happens to overlap: one aggregate
+        edge to the range's input node says "this got written" without
+        pretending to know which formulas actually depend on which part.
+        """
+
+        def edge(other: str, approx: bool = False) -> None:
+            if write:
+                self.add_edge(node_id, other, kind, approx=approx)
+            else:
+                self.add_edge(other, node_id, kind, approx=approx)
+
         sheet = rect.sheet
         if sheet not in self.sheet_dims:
             # A sheet this file does not have: another workbook, most often —
             # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
-            self.add_edge(self.ensure_opaque_node(rect.to_a1()), target_id, kind)
+            opaque = (
+                self.ensure_input_node(rect, opaque_label=rect.to_a1())
+                if write
+                else self.ensure_opaque_node(rect.to_a1())
+            )
+            edge(opaque)
             return
         clipped = rect.clipped(*self.sheet_dims[sheet])
         if clipped is None:
-            return
+            if not write:
+                return
+            clipped = rect
         owners = self.cell_owner.get(sheet, {})
         if clipped.ncells <= SMALL_RANGE_CELLS:
             seen: set[str] = set()
@@ -287,20 +313,20 @@ class GraphBuilder:
                         has_plain = True
                     elif owner not in seen:
                         seen.add(owner)
-                        self.add_edge(owner, target_id, kind)
+                        edge(owner)
             if has_plain:
-                self.add_edge(self.ensure_input_node(clipped), target_id, kind)
+                edge(self.ensure_input_node(clipped))
+        elif write:
+            edge(self.ensure_input_node(clipped))
         else:
             # Huge range: approximate intersection with node bounding boxes.
-            for node_id, grp in self.kept_groups:
+            for other_id, grp in self.kept_groups:
                 if grp.sheet != sheet:
                     continue
                 r1, c1, r2, c2 = grp.bbox
                 if clipped.intersects(Rect(sheet, r1, c1, r2, c2)):
-                    self.add_edge(node_id, target_id, kind, approx=True)
-            self.add_edge(
-                self.ensure_input_node(clipped), target_id, kind, approx=True
-            )
+                    edge(other_id, approx=True)
+            edge(self.ensure_input_node(clipped), approx=True)
 
     def build_names(self) -> None:
         """A node per defined name, wired to whatever it points at."""

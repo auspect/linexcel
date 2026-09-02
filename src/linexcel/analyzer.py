@@ -21,14 +21,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from linexcel.decompose import (
-    _render_expr,  # noqa: F401  (re-exported: tests import it from analyzer)
-)
 from linexcel.engine import boot_engine
 from linexcel.external import find_workbooks, read_external_links, resolve_books
 from linexcel.graph import GraphBuilder
 from linexcel.loader import load_cached_values
-from linexcel.powerquery import Query, read_queries
+from linexcel.powerquery import query_warning, read_queries
 from linexcel.progress import Reporter
 from linexcel.resolver import (
     DEFAULT_STEP_SECONDS,
@@ -43,45 +40,6 @@ from linexcel.structure import (
 )
 from linexcel.sweep import sweep_sheets
 from linexcel.tables import _build_table_index
-
-#: How many query sources one warning line names before it says "and more".
-MAX_QUERY_SOURCES_SHOWN = 6
-
-
-def _query_warning(queries: list[Query]) -> str | None:
-    """One line for the queries that feed the workbook from outside it.
-
-    A query whose source is a file, a URL or a server is a dependency of the
-    same nature as a link to another workbook: the values it produced are in
-    the file, what produced them is not. The graph shows the query and names
-    its source; nobody should read that as the source having been checked.
-    """
-    if not queries:
-        return None
-    loaded = sum(1 for query in queries if query.loaded)
-    if len(queries) == 1:
-        head = "1 Power Query query feeds this workbook" + (
-            ", loaded onto a sheet."
-            if loaded
-            else ", loaded nowhere (connection only)."
-        )
-    else:
-        head = (
-            f"{len(queries)} Power Query queries feed this workbook, "
-            f"{loaded} of them loaded onto a sheet."
-        )
-    parts = [head]
-    outside = sorted(
-        {source.target for query in queries for source in query.outside_sources()}
-    )
-    if outside:
-        shown = ", ".join(outside[:MAX_QUERY_SOURCES_SHOWN])
-        if len(outside) > MAX_QUERY_SOURCES_SHOWN:
-            shown += f", … (+{len(outside) - MAX_QUERY_SOURCES_SHOWN})"
-        parts.append(
-            f"Their data comes from outside the file and was not read: {shown}."
-        )
-    return " ".join(parts)
 
 
 def analyze_workbook(
@@ -159,40 +117,40 @@ def analyze_workbook(
         refs_files=refs_files,
     )
 
-    # --- 3. extraction + grouping ----------------------------------------
-    sweep = sweep_sheets(engine, sheet_dims, engine_sheets, quarantined, warnings, reporter)
+    # --- 3. extraction + grouping ------------------------------------------
+    sweep = sweep_sheets(
+        engine, sheet_dims, engine_sheets, quarantined, warnings, reporter
+    )
     groups = sweep.groups
     formula_count = sweep.formula_count
     sheet_stats = sweep.sheet_stats
 
-    # --- 4. formula nodes -------------------------------------------------
+    # --- 4. nodes + edges: names, formulas, VBA, Power Query ---------------
     _t = time.perf_counter()
-    builder = GraphBuilder(resolver, sheet_dims, table_index, defined_names, warnings, reporter)
+    builder = GraphBuilder(
+        resolver, sheet_dims, table_index, defined_names, warnings, reporter
+    )
     builder.select_nodes(groups)
     nodes = builder.nodes
     edges = builder.edges
     kept_groups = builder.kept_groups
-
-    # defined names -----------------------------------------------------------
     builder.build_names()
-
-    # formula nodes + edges -------------------------------------------------
     builder.build_formula_nodes()
 
-    # --- 6. VBA --------------------------------------------------------------
+    # --- 5. VBA (oletools) ---------------------------------------------------
     builder.build_vba(data, filename, refs_dir)
     vba_modules = builder.vba_modules
     vba_procs = builder.vba_procs
 
-    # --- 7. Power Query ------------------------------------------------------
+    # --- 6. Power Query -------------------------------------------------------
     # A range filled by a query has no formula above it, so without this the
     # graph shows where the data landed and nothing about where it came from.
     queries = read_queries(data)
     builder.build_queries(queries)
 
-    query_warning = _query_warning(queries)
-    if query_warning:
-        warnings.append(query_warning)
+    pq_warning = query_warning(queries)
+    if pq_warning:
+        warnings.append(pq_warning)
 
     if not engine_alive and resolver.n_recovered + resolver.n_unrecovered:
         warnings.append(
