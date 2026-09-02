@@ -22,11 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import formualizer as fz
-
 from linexcel.decompose import (
-    _collect_step_exprs,
-    _decompose,
     _render_expr,  # noqa: F401  (re-exported: tests import it from analyzer)
 )
 from linexcel.engine import boot_engine
@@ -36,27 +32,15 @@ from linexcel.external import (
     read_external_links,
     resolve_books,
 )
-from linexcel.graph import (
-    MAX_VALUE_SAMPLE,
-    SMALL_RANGE_CELLS,
-    GraphBuilder,
-    _sample_range_values,
-)
-from linexcel.loader import _stepped, load_cached_values
+from linexcel.graph import SMALL_RANGE_CELLS, GraphBuilder
+from linexcel.loader import load_cached_values
 from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.progress import Reporter
-from linexcel.refs import (
-    Rect,
-    a1,
-    parse_ref,
-    parse_ref_detailed,
-    stretch_ref,
-)
+from linexcel.refs import Rect, parse_ref, parse_ref_detailed
 from linexcel.resolver import (
     DEFAULT_STEP_SECONDS,
     MAX_SCRATCH_EVALS,
     _Budget,
-    _collect_ref_strings,
     _external_warning,
     _ValueResolver,
 )
@@ -64,8 +48,8 @@ from linexcel.structure import (
     inspect_workbook,  # noqa: F401  (re-exported: public API)
     read_structure,
 )
-from linexcel.sweep import FormulaGroup, sweep_sheets
-from linexcel.tables import _build_table_index, _enrich_with_table
+from linexcel.sweep import sweep_sheets
+from linexcel.tables import _build_table_index
 from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
 MAX_VBA_CODE_CHARS = 6_000
@@ -211,102 +195,7 @@ def analyze_workbook(
     name_nodes = builder.name_nodes
 
     # formula nodes + edges -------------------------------------------------
-    # Reported one node at a time: this is where a dense workbook spends its
-    # minutes, and where a run that looks stuck actually is. A phase that
-    # prints only when it ends cannot tell anyone that.
-    for node_id, grp in _stepped(
-        reporter.phase("nodes+edges", total=len(kept_groups)),
-        kept_groups,
-        "building",
-    ):
-        rep_r, rep_c = grp.rep
-        formula = grp.formulas.get((rep_r, rep_c)) or next(iter(grp.formulas.values()))
-        sheet = grp.sheet
-        is_group = len(grp.cells) > 1
-        try:
-            ast = ast_cache.get(formula)
-            if ast is None:
-                ast = ast_cache[formula] = fz.parse(
-                    formula if formula.startswith("=") else "=" + formula
-                )
-            ast_dict = ast.to_dict()
-        except Exception:
-            ast, ast_dict = None, None
-
-        refs = _collect_ref_strings(ast_dict) if ast_dict else []
-        rmin, cmin, rmax, cmax = grp.bbox
-        agg_rects: list[Rect] = []
-        for ref in refs:
-            detail = parse_ref_detailed(ref, default_sheet=sheet)
-            if detail is None:
-                up = ref.upper()
-                if up in name_nodes:
-                    add_edge(name_nodes[up], node_id, "name")
-                else:
-                    add_edge(ensure_opaque_node(ref), node_id, "dep")
-                continue
-            rect = (
-                stretch_ref(detail, rep_r, rep_c, (rmin, rmax), (cmin, cmax))
-                if is_group
-                else detail.rect
-            )
-            agg_rects.append(rect)
-
-        for rect in _merge_rects(agg_rects):
-            resolve_rect_edges(rect, node_id)
-
-        value_fields = resolver.describe(sheet, rep_r, rep_c, formula)
-        samples = None
-        if is_group:
-            samples = [
-                {
-                    "addr": a1(r, c),
-                    **resolver.describe(sheet, r, c, grp.formulas.get((r, c))),
-                }
-                for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
-            ]
-
-        steps = None
-        # A volatile cell is shown as *not* recalculated, so decomposing it
-        # would contradict its own card: every step under `=TODAY()+7` would
-        # carry a figure computed from today's clock.
-        if ast_dict is not None and value_fields.get("valueSource") != "volatile":
-            # The root step is the formula itself: when the engine computed the
-            # cell, its value is that step's value and needs no scratch pass.
-            root_value = (
-                value_fields["value"]
-                if value_fields.get("valueSource") == "engine"
-                else None
-            )
-            step_exprs = _collect_step_exprs(ast_dict, skip_root=root_value is not None)
-            if step_exprs:
-                resolver.preload_steps(step_exprs, sheet)
-            steps = _decompose(
-                ast_dict, sheet, resolver, defined_names, root_value=root_value
-            )
-
-        node: dict[str, Any] = {
-            "id": node_id,
-            "kind": "group" if is_group else "cell",
-            "sheet": sheet,
-            "addr": a1(rep_r, rep_c),
-            "label": (
-                f"{sheet}!{a1(rep_r, rep_c)}"
-                + (f" x{len(grp.cells)}" if is_group else "")
-            ),
-            "formula": formula if formula.startswith("=") else "=" + formula,
-            "r1c1": grp.r1c1,
-            "count": len(grp.cells),
-            "bbox": _bbox_a1(grp),
-            **value_fields,
-            "samples": samples,
-            "steps": steps,
-        }
-        books = resolver.external_books(formula)
-        if books:
-            node["externalBooks"] = books
-        _enrich_with_table(node, table_index, sheet, rep_r, rep_c)
-        nodes[node_id] = node
+    builder.build_formula_nodes()
 
     # --- 6. VBA --------------------------------------------------------------
     vba_modules = extract_vba_modules(data, filename, warnings)
@@ -500,42 +389,6 @@ def analyze_workbook(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _merge_rects(rects: list[Rect]) -> list[Rect]:
-    seen: set[tuple] = set()
-    out = []
-    for r in rects:
-        key = (r.sheet, r.r1, r.c1, r.r2, r.c2)
-        if key not in seen:
-            seen.add(key)
-            out.append(r)
-    return out
-
-
-def _bbox_a1(grp: FormulaGroup) -> str:
-    r1, c1, r2, c2 = grp.bbox
-    if (r1, c1) == (r2, c2):
-        return a1(r1, c1)
-    return f"{a1(r1, c1)}:{a1(r2, c2)}"
-
-
-def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
-    """``n`` cells spread evenly over a group, in reading order.
-
-    The head of a stretch is made of near-identical neighbours: sampling
-    ``B2, C2, B3`` out of 400,000 cells says nothing about the far end, which
-    is exactly where a pattern that broke — a hard-coded cell dropped into the
-    middle of a column — shows up. First and last are always included.
-    """
-    ordered = sorted(cells)
-    if n < 2:
-        return ordered[: max(n, 0)]
-    if len(ordered) <= n:
-        return ordered
-    last = len(ordered) - 1
-    picks = sorted({round(i * last / (n - 1)) for i in range(n)})
-    return [ordered[i] for i in picks]
 
 
 def _resolve_call(
