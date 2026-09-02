@@ -37,6 +37,7 @@ from linexcel.external import (
     read_external_links,
     resolve_books,
 )
+from linexcel.graph import GraphBuilder
 from linexcel.loader import _stepped, load_cached_values
 from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.progress import Reporter
@@ -190,52 +191,17 @@ def analyze_workbook(
     groups = sweep.groups
     formula_count = sweep.formula_count
     sheet_stats = sweep.sheet_stats
-    cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
 
     # --- 4. formula nodes -------------------------------------------------
     _t = time.perf_counter()
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: dict[tuple[str, str, str], dict[str, Any]] = {}
-
-    per_sheet_groups: dict[str, list[FormulaGroup]] = defaultdict(list)
-    for grp in groups.values():
-        per_sheet_groups[grp.sheet].append(grp)
-
-    kept_groups: list[tuple[str, FormulaGroup]] = []
-    for sheet, sheet_groups in per_sheet_groups.items():
-        sheet_groups.sort(key=lambda g: (-len(g.cells), g.rep))
-        kept = sheet_groups[:MAX_NODES_PER_SHEET]
-        dropped = sheet_groups[MAX_NODES_PER_SHEET:]
-        for grp in kept:
-            rep_r, rep_c = grp.rep
-            if len(grp.cells) == 1:
-                node_id = f"c:{sheet}!{a1(rep_r, rep_c)}"
-            else:
-                node_id = f"g:{sheet}!{a1(rep_r, rep_c)}#{len(grp.cells)}"
-            kept_groups.append((node_id, grp))
-            for cell in grp.cells:
-                cell_owner[sheet][cell] = node_id
-        if dropped:
-            n_cells = sum(len(g.cells) for g in dropped)
-            misc_id = f"misc:{sheet}"
-            nodes[misc_id] = {
-                "id": misc_id,
-                "kind": "misc",
-                "sheet": sheet,
-                "label": f"{len(dropped)} other patterns ({n_cells} cells)",
-                "count": n_cells,
-                "patterns": len(dropped),
-            }
-            warnings.append(
-                f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
-                f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
-            )
-            for grp in dropped:
-                for cell in grp.cells:
-                    cell_owner[sheet][cell] = misc_id
-
-    ast_cache: dict[str, Any] = {}
-    input_nodes: dict[str, str] = {}  # full A1 key -> node id
+    builder = GraphBuilder(resolver, sheet_dims, table_index, defined_names, warnings, reporter)
+    builder.select_nodes(groups)
+    nodes = builder.nodes
+    edges = builder.edges
+    input_nodes = builder.input_nodes
+    cell_owner = builder.cell_owner
+    ast_cache = builder.ast_cache
+    kept_groups = builder.kept_groups
 
     def ensure_opaque_node(ref: str) -> str:
         """A reference the graph cannot follow, named as precisely as it can be.
