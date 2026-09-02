@@ -266,7 +266,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_the_batch_path_takes_from_the_budget(self):
         """The call it slipped past for two releases."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10)
         assert budget.take(4) is True
@@ -276,7 +276,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_a_batch_too_big_is_refused_without_poisoning_the_rest(self):
         """One node asking for more than is left must not starve the next."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(1)
         assert budget.take(5) is False
@@ -284,7 +284,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_a_deadline_stops_the_decomposition_and_not_the_values(self):
         """The distinction the zero-deadline test was written to hold."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10_000, seconds=0)
         assert budget.expired is True
@@ -293,7 +293,7 @@ class TestTheDecompositionIsBoundedInTime:
         assert budget.take() is True
 
     def test_a_budget_with_room_says_nothing(self):
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10, seconds=60)
         assert budget.take(3) is True

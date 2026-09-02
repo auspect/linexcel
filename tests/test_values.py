@@ -9,15 +9,10 @@ import formualizer as fz
 import pytest
 from openpyxl import Workbook
 
-from linexcel.analyzer import (
-    _Budget,
-    _is_volatile,
-    _spread_cells,
-    _ValueResolver,
-    analyze_workbook,
-)
+from linexcel.analyzer import _spread_cells, analyze_workbook
 from linexcel.decompose import SCRATCH_SENTINEL, _collect_step_exprs, _render_expr
 from linexcel.loader import CachedValues, load_cached_values
+from linexcel.resolver import _Budget, _is_volatile, _ValueResolver
 from linexcel.values import serial_to_date_text
 
 SHEET = "S"

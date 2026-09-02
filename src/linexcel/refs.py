@@ -60,6 +60,10 @@ def num_to_col(n: int) -> str:
     return out
 
 
+def a1(row: int, col: int) -> str:
+    return f"{num_to_col(col)}{row}"
+
+
 @dataclass(frozen=True)
 class Rect:
     """Cell rectangle (inclusive bounds), with optional sheet."""

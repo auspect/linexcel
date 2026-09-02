@@ -23,8 +23,8 @@ from linexcel.rewrite import qualify_sheet
 from linexcel.values import _jsonable
 
 if TYPE_CHECKING:  # type annotations only; never executed, so no import cycle
-    from linexcel.analyzer import _ValueResolver
     from linexcel.refs import Rect
+    from linexcel.resolver import _ValueResolver
 
 SCRATCH_SHEET = "__lineage_scratch__"
 # Written into the scratch cell before each guarded evaluation: when the engine
