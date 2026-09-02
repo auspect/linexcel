@@ -15,10 +15,36 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from linexcel.refs import a1
-from linexcel.resolver import _ValueResolver
+from linexcel.external import parse_external_refs
+from linexcel.refs import Rect, a1
+from linexcel.resolver import _external_name, _ValueResolver
 from linexcel.structure import MAX_NODES_PER_SHEET
 from linexcel.sweep import FormulaGroup
+from linexcel.tables import _enrich_with_table
+from linexcel.values import _jsonable
+
+SMALL_RANGE_CELLS = 20_000
+MAX_VALUE_SAMPLE = 5
+
+
+def _sample_range_values(resolver: _ValueResolver, rect: Rect) -> list:
+    if rect.sheet is None:
+        return []
+    out = []
+    for r in range(rect.r1, min(rect.r2, rect.r1 + MAX_VALUE_SAMPLE - 1) + 1):
+        for c in range(rect.c1, min(rect.c2, rect.c1 + MAX_VALUE_SAMPLE - 1) + 1):
+            if len(out) >= MAX_VALUE_SAMPLE:
+                return out
+            value, source, date_text = resolver.value(rect.sheet, r, c)
+            out.append(
+                {
+                    "addr": a1(r, c),
+                    "value": value,
+                    "source": source,
+                    "date": date_text,
+                }
+            )
+    return out
 
 
 class GraphBuilder:
@@ -85,3 +111,123 @@ class GraphBuilder:
                 for grp in dropped:
                     for cell in grp.cells:
                         self.cell_owner[sheet][cell] = misc_id
+
+    def ensure_opaque_node(self, ref: str) -> str:
+        """A reference the graph cannot follow, named as precisely as it can be.
+
+        An external reference is one of those, but it is not opaque to the
+        *reader*: the file says which workbook it points at, and the node
+        carries that — with the value, when the workbook could be read.
+        """
+        external = parse_external_refs(ref)
+        if not external:
+            return self.ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label=ref)
+        first = external[0]
+        books = self.resolver.external_books(ref)
+        name = books[0]["name"] if books else _external_name(first)
+        label = f"[{name}]{first.sheet}!{first.cell}" if first.sheet else f"[{name}]"
+        node_id = self.input_nodes.get(label)
+        if node_id:
+            return node_id
+        node_id = f"x:{label}"
+        node: dict[str, Any] = {
+            "id": node_id,
+            "kind": "opaque",
+            "label": label,
+            "sheet": None,
+            "ref": ref,
+            "externalBooks": books,
+        }
+        value, source = self.resolver.external_value(first)
+        if source is not None:
+            node["value"] = _jsonable(value)
+            node["valueSource"] = source
+        self.nodes[node_id] = node
+        self.input_nodes[label] = node_id
+        return node_id
+
+    def ensure_input_node(self, rect: Rect, opaque_label: str | None = None) -> str:
+        label = opaque_label or rect.to_a1()
+        node_id = self.input_nodes.get(label)
+        if node_id:
+            return node_id
+        if opaque_label is not None:
+            node_id = f"x:{opaque_label}"
+            self.nodes[node_id] = {
+                "id": node_id,
+                "kind": "opaque",
+                "label": opaque_label,
+                "sheet": None,
+            }
+        else:
+            node_id = f"i:{label}"
+            node: dict[str, Any] = {
+                "id": node_id,
+                "kind": "input",
+                "label": label,
+                "sheet": rect.sheet,
+                "addr": label.split("!")[-1],
+                "count": rect.ncells,
+                "values": _sample_range_values(self.resolver, rect),
+            }
+            if rect.ncells == 1 and rect.sheet is not None:
+                node.update(self.resolver.describe(rect.sheet, rect.r1, rect.c1))
+                _enrich_with_table(
+                    node, self.table_index, rect.sheet, rect.r1, rect.c1
+                )
+            self.nodes[node_id] = node
+        self.input_nodes[label] = node_id
+        return node_id
+
+    def add_edge(self, src: str, dst: str, kind: str, approx: bool = False) -> None:
+        if src == dst:
+            return
+        key = (src, dst, kind)
+        e = self.edges.get(key)
+        if e is None:
+            self.edges[key] = {
+                "id": f"e{len(self.edges)}",
+                "source": src,
+                "target": dst,
+                "kind": kind,
+                "approx": approx,
+            }
+        elif not approx:
+            e["approx"] = False
+
+    def resolve_rect_edges(self, rect: Rect, target_id: str, kind: str = "dep") -> None:
+        """Create precedent → target edges for a referenced range."""
+        sheet = rect.sheet
+        if sheet not in self.sheet_dims:
+            # A sheet this file does not have: another workbook, most often —
+            # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
+            self.add_edge(self.ensure_opaque_node(rect.to_a1()), target_id, kind)
+            return
+        clipped = rect.clipped(*self.sheet_dims[sheet])
+        if clipped is None:
+            return
+        owners = self.cell_owner.get(sheet, {})
+        if clipped.ncells <= SMALL_RANGE_CELLS:
+            seen: set[str] = set()
+            has_plain = False
+            for r in range(clipped.r1, clipped.r2 + 1):
+                for c in range(clipped.c1, clipped.c2 + 1):
+                    owner = owners.get((r, c))
+                    if owner is None:
+                        has_plain = True
+                    elif owner not in seen:
+                        seen.add(owner)
+                        self.add_edge(owner, target_id, kind)
+            if has_plain:
+                self.add_edge(self.ensure_input_node(clipped), target_id, kind)
+        else:
+            # Huge range: approximate intersection with node bounding boxes.
+            for node_id, grp in self.kept_groups:
+                if grp.sheet != sheet:
+                    continue
+                r1, c1, r2, c2 = grp.bbox
+                if clipped.intersects(Rect(sheet, r1, c1, r2, c2)):
+                    self.add_edge(node_id, target_id, kind, approx=True)
+            self.add_edge(
+                self.ensure_input_node(clipped), target_id, kind, approx=True
+            )

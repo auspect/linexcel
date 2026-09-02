@@ -33,11 +33,15 @@ from linexcel.engine import boot_engine
 from linexcel.external import (
     find_workbooks,
     macro_files,
-    parse_external_refs,
     read_external_links,
     resolve_books,
 )
-from linexcel.graph import GraphBuilder
+from linexcel.graph import (
+    MAX_VALUE_SAMPLE,
+    SMALL_RANGE_CELLS,
+    GraphBuilder,
+    _sample_range_values,
+)
 from linexcel.loader import _stepped, load_cached_values
 from linexcel.powerquery import Query, QuerySource, read_queries
 from linexcel.progress import Reporter
@@ -53,22 +57,17 @@ from linexcel.resolver import (
     MAX_SCRATCH_EVALS,
     _Budget,
     _collect_ref_strings,
-    _external_name,
     _external_warning,
     _ValueResolver,
 )
 from linexcel.structure import (
-    MAX_NODES_PER_SHEET,
     inspect_workbook,  # noqa: F401  (re-exported: public API)
     read_structure,
 )
 from linexcel.sweep import FormulaGroup, sweep_sheets
 from linexcel.tables import _build_table_index, _enrich_with_table
-from linexcel.values import _jsonable
 from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
-SMALL_RANGE_CELLS = 20_000
-MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
 MAX_QUERY_CODE_CHARS = 6_000
 #: How many query sources one warning line names before it says "and more".
@@ -202,122 +201,10 @@ def analyze_workbook(
     cell_owner = builder.cell_owner
     ast_cache = builder.ast_cache
     kept_groups = builder.kept_groups
-
-    def ensure_opaque_node(ref: str) -> str:
-        """A reference the graph cannot follow, named as precisely as it can be.
-
-        An external reference is one of those, but it is not opaque to the
-        *reader*: the file says which workbook it points at, and the node
-        carries that — with the value, when the workbook could be read.
-        """
-        external = parse_external_refs(ref)
-        if not external:
-            return ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label=ref)
-        first = external[0]
-        books = resolver.external_books(ref)
-        name = books[0]["name"] if books else _external_name(first)
-        label = f"[{name}]{first.sheet}!{first.cell}" if first.sheet else f"[{name}]"
-        node_id = input_nodes.get(label)
-        if node_id:
-            return node_id
-        node_id = f"x:{label}"
-        node: dict[str, Any] = {
-            "id": node_id,
-            "kind": "opaque",
-            "label": label,
-            "sheet": None,
-            "ref": ref,
-            "externalBooks": books,
-        }
-        value, source = resolver.external_value(first)
-        if source is not None:
-            node["value"] = _jsonable(value)
-            node["valueSource"] = source
-        nodes[node_id] = node
-        input_nodes[label] = node_id
-        return node_id
-
-    def ensure_input_node(rect: Rect, opaque_label: str | None = None) -> str:
-        label = opaque_label or rect.to_a1()
-        node_id = input_nodes.get(label)
-        if node_id:
-            return node_id
-        if opaque_label is not None:
-            node_id = f"x:{opaque_label}"
-            nodes[node_id] = {
-                "id": node_id,
-                "kind": "opaque",
-                "label": opaque_label,
-                "sheet": None,
-            }
-        else:
-            node_id = f"i:{label}"
-            node: dict[str, Any] = {
-                "id": node_id,
-                "kind": "input",
-                "label": label,
-                "sheet": rect.sheet,
-                "addr": label.split("!")[-1],
-                "count": rect.ncells,
-                "values": _sample_range_values(resolver, rect),
-            }
-            if rect.ncells == 1 and rect.sheet is not None:
-                node.update(resolver.describe(rect.sheet, rect.r1, rect.c1))
-                _enrich_with_table(node, table_index, rect.sheet, rect.r1, rect.c1)
-            nodes[node_id] = node
-        input_nodes[label] = node_id
-        return node_id
-
-    def add_edge(src: str, dst: str, kind: str, approx: bool = False) -> None:
-        if src == dst:
-            return
-        key = (src, dst, kind)
-        e = edges.get(key)
-        if e is None:
-            edges[key] = {
-                "id": f"e{len(edges)}",
-                "source": src,
-                "target": dst,
-                "kind": kind,
-                "approx": approx,
-            }
-        elif not approx:
-            e["approx"] = False
-
-    def resolve_rect_edges(rect: Rect, target_id: str, kind: str = "dep") -> None:
-        """Create precedent → target edges for a referenced range."""
-        sheet = rect.sheet
-        if sheet not in sheet_dims:
-            # A sheet this file does not have: another workbook, most often —
-            # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
-            add_edge(ensure_opaque_node(rect.to_a1()), target_id, kind)
-            return
-        clipped = rect.clipped(*sheet_dims[sheet])
-        if clipped is None:
-            return
-        owners = cell_owner.get(sheet, {})
-        if clipped.ncells <= SMALL_RANGE_CELLS:
-            seen: set[str] = set()
-            has_plain = False
-            for r in range(clipped.r1, clipped.r2 + 1):
-                for c in range(clipped.c1, clipped.c2 + 1):
-                    owner = owners.get((r, c))
-                    if owner is None:
-                        has_plain = True
-                    elif owner not in seen:
-                        seen.add(owner)
-                        add_edge(owner, target_id, kind)
-            if has_plain:
-                add_edge(ensure_input_node(clipped), target_id, kind)
-        else:
-            # Huge range: approximate intersection with node bounding boxes.
-            for node_id, grp in kept_groups:
-                if grp.sheet != sheet:
-                    continue
-                r1, c1, r2, c2 = grp.bbox
-                if clipped.intersects(Rect(sheet, r1, c1, r2, c2)):
-                    add_edge(node_id, target_id, kind, approx=True)
-            add_edge(ensure_input_node(clipped), target_id, kind, approx=True)
+    ensure_opaque_node = builder.ensure_opaque_node
+    ensure_input_node = builder.ensure_input_node
+    add_edge = builder.add_edge
+    resolve_rect_edges = builder.resolve_rect_edges
 
     # defined names -----------------------------------------------------------
     name_nodes: dict[str, str] = {}
