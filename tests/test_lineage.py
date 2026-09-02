@@ -1152,7 +1152,7 @@ class TestUnresolvableCellsAreIsolated:
 
     def test_an_error_literal_is_not_mistaken_for_a_sheet(self):
         """`#REF!` looks like a sheet qualifier but guards evaluate around it."""
-        from linexcel.analyzer import _is_unresolvable
+        from linexcel.engine import _is_unresolvable
 
         assert not _is_unresolvable('=IFERROR(#REF!, "handled")', {"Data"})
         assert not _is_unresolvable("=Data!A1", {"Data"})
@@ -1168,7 +1168,7 @@ class TestUnresolvableCellsAreIsolated:
         """
         from openpyxl import Workbook
 
-        from linexcel.analyzer import _is_unresolvable
+        from linexcel.engine import _is_unresolvable
 
         assert not _is_unresolvable("=IFERROR(NOSHEET!A1, 456)", {"S"})
         assert not _is_unresolvable("=IFNA(Gone!A1, 0)", {"S"})
@@ -2569,19 +2569,19 @@ class TestScanCeiling:
 
     def test_the_last_chunk_is_clipped_to_the_ceiling_not_dropped(self, monkeypatch):
         """Dropping it stopped a 4,000,000-cell budget at 3,600,000."""
-        from linexcel import analyzer
+        from linexcel import analyzer, engine
 
         monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
-        monkeypatch.setattr(analyzer, "SCAN_CHUNK_ROWS", 100)
+        monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
         graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
         # 30 cells of budget over 3 columns: rows 1-10, two formulas each
         assert graph["meta"]["stats"]["totalFormulas"] == 20
 
     def test_the_warning_names_the_first_row_left_out(self, monkeypatch):
-        from linexcel import analyzer
+        from linexcel import analyzer, engine
 
         monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
-        monkeypatch.setattr(analyzer, "SCAN_CHUNK_ROWS", 100)
+        monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
         graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
         (warning,) = graph["meta"]["warnings"]
         assert "scanned to row 10 of 30" in warning
@@ -2589,7 +2589,7 @@ class TestScanCeiling:
 
     def test_a_wide_sheet_is_chunked_by_cells_rather_than_rows(self):
         """A 20,000-row chunk of a 16,384-column sheet is 327M strings."""
-        from linexcel.analyzer import SCAN_CHUNK_CELLS, SCAN_CHUNK_ROWS, _chunk_rows
+        from linexcel.engine import SCAN_CHUNK_CELLS, SCAN_CHUNK_ROWS, _chunk_rows
 
         assert _chunk_rows(3) == SCAN_CHUNK_ROWS
         assert _chunk_rows(16_384) == SCAN_CHUNK_CELLS // 16_384
