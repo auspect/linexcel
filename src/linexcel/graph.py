@@ -21,7 +21,8 @@ import formualizer as fz
 from linexcel.decompose import _collect_step_exprs, _decompose
 from linexcel.external import macro_files, parse_external_refs
 from linexcel.loader import _stepped
-from linexcel.refs import Rect, a1, parse_ref_detailed, stretch_ref
+from linexcel.powerquery import Query, QuerySource
+from linexcel.refs import Rect, a1, parse_ref, parse_ref_detailed, stretch_ref
 from linexcel.resolver import _collect_ref_strings, _external_name, _ValueResolver
 from linexcel.structure import MAX_NODES_PER_SHEET
 from linexcel.sweep import FormulaGroup
@@ -32,6 +33,7 @@ from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 SMALL_RANGE_CELLS = 20_000
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
+MAX_QUERY_CODE_CHARS = 6_000
 
 
 def _merge_rects(rects: list[Rect]) -> list[Rect]:
@@ -530,3 +532,67 @@ class GraphBuilder:
             has_plain = True
         if has_plain:
             self.add_edge(pid, self.ensure_input_node(clipped), "vba-write")
+
+    def build_queries(self, queries: list[Query]) -> None:
+        """A node per Power Query query, wired to its sources and loads."""
+        # Keyed on the exact name: M is case-sensitive, so folding here would
+        # let two queries that differ only in case collapse onto one node.
+        query_ids = {q.name: f"q:{q.name}" for q in queries}
+        tables_by_name = {
+            table["name"].casefold(): (sheet, table["ref"])
+            for sheet, entries in self.table_index.items()
+            for table in entries
+            if table.get("name") and table.get("ref")
+        }
+
+        for query in queries:
+            qid = query_ids[query.name]
+            self.nodes[qid] = {
+                "id": qid,
+                "kind": "query",
+                "label": query.name,
+                "sheet": query.loaded_to[0].sheet if query.loaded_to else None,
+                "code": query.source[:MAX_QUERY_CODE_CHARS],
+                "loadedTo": [d.as_dict() for d in query.loaded_to],
+                "sources": [s.as_dict() for s in query.sources],
+            }
+        for query in queries:
+            qid = query_ids[query.name]
+            for source in query.sources:
+                if source.kind == "query":
+                    upstream = query_ids.get(source.target)
+                    if upstream is not None:
+                        self.add_edge(upstream, qid, "query")
+                    continue
+                if source.kind == "table":
+                    # ``Excel.CurrentWorkbook`` reads a table or a defined
+                    # name of this very file: that end of the link is in the
+                    # graph already.
+                    placed = tables_by_name.get(source.target.casefold())
+                    if placed is not None:
+                        rect = parse_ref(placed[1], default_sheet=placed[0])
+                        if rect is not None:
+                            self.resolve_rect_edges(rect, qid, kind="query")
+                            continue
+                    named = self.name_nodes.get(source.target.upper())
+                    if named is not None:
+                        self.add_edge(named, qid, "query")
+                        continue
+                self.add_edge(self._query_source_node(source), qid, "query")
+            for destination in query.loaded_to:
+                rect = (
+                    parse_ref(destination.ref, default_sheet=destination.sheet)
+                    if destination.ref
+                    else None
+                )
+                if rect is not None:
+                    self.add_edge(qid, self.ensure_input_node(rect), "query-load")
+
+    def _query_source_node(self, source: QuerySource) -> str:
+        """A node for something a query reads that is not in this workbook."""
+        node_id = self.ensure_input_node(
+            Rect(None, 1, 1, 1, 1), opaque_label=source.target
+        )
+        self.nodes[node_id].setdefault("sourceKind", source.kind)
+        self.nodes[node_id].setdefault("function", source.function)
+        return node_id

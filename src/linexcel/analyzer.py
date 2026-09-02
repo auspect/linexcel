@@ -18,7 +18,6 @@ import datetime
 import sys
 import time
 import uuid
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -26,17 +25,11 @@ from linexcel.decompose import (
     _render_expr,  # noqa: F401  (re-exported: tests import it from analyzer)
 )
 from linexcel.engine import boot_engine
-from linexcel.external import (
-    find_workbooks,
-    macro_files,
-    read_external_links,
-    resolve_books,
-)
-from linexcel.graph import SMALL_RANGE_CELLS, GraphBuilder
+from linexcel.external import find_workbooks, read_external_links, resolve_books
+from linexcel.graph import GraphBuilder
 from linexcel.loader import load_cached_values
-from linexcel.powerquery import Query, QuerySource, read_queries
+from linexcel.powerquery import Query, read_queries
 from linexcel.progress import Reporter
-from linexcel.refs import Rect, parse_ref, parse_ref_detailed
 from linexcel.resolver import (
     DEFAULT_STEP_SECONDS,
     MAX_SCRATCH_EVALS,
@@ -50,10 +43,7 @@ from linexcel.structure import (
 )
 from linexcel.sweep import sweep_sheets
 from linexcel.tables import _build_table_index
-from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
 
-MAX_VBA_CODE_CHARS = 6_000
-MAX_QUERY_CODE_CHARS = 6_000
 #: How many query sources one warning line names before it says "and more".
 MAX_QUERY_SOURCES_SHOWN = 6
 
@@ -181,18 +171,10 @@ def analyze_workbook(
     builder.select_nodes(groups)
     nodes = builder.nodes
     edges = builder.edges
-    input_nodes = builder.input_nodes
-    cell_owner = builder.cell_owner
-    ast_cache = builder.ast_cache
     kept_groups = builder.kept_groups
-    ensure_opaque_node = builder.ensure_opaque_node
-    ensure_input_node = builder.ensure_input_node
-    add_edge = builder.add_edge
-    resolve_rect_edges = builder.resolve_rect_edges
 
     # defined names -----------------------------------------------------------
     builder.build_names()
-    name_nodes = builder.name_nodes
 
     # formula nodes + edges -------------------------------------------------
     builder.build_formula_nodes()
@@ -206,64 +188,7 @@ def analyze_workbook(
     # A range filled by a query has no formula above it, so without this the
     # graph shows where the data landed and nothing about where it came from.
     queries = read_queries(data)
-    # Keyed on the exact name: M is case-sensitive, so folding here would let
-    # two queries that differ only in case collapse onto one node.
-    query_ids = {q.name: f"q:{q.name}" for q in queries}
-    tables_by_name = {
-        table["name"].casefold(): (sheet, table["ref"])
-        for sheet, entries in table_index.items()
-        for table in entries
-        if table.get("name") and table.get("ref")
-    }
-
-    def query_source_node(source: QuerySource) -> str:
-        """A node for something a query reads that is not in this workbook."""
-        node_id = ensure_input_node(Rect(None, 1, 1, 1, 1), opaque_label=source.target)
-        nodes[node_id].setdefault("sourceKind", source.kind)
-        nodes[node_id].setdefault("function", source.function)
-        return node_id
-
-    for query in queries:
-        qid = query_ids[query.name]
-        nodes[qid] = {
-            "id": qid,
-            "kind": "query",
-            "label": query.name,
-            "sheet": query.loaded_to[0].sheet if query.loaded_to else None,
-            "code": query.source[:MAX_QUERY_CODE_CHARS],
-            "loadedTo": [d.as_dict() for d in query.loaded_to],
-            "sources": [s.as_dict() for s in query.sources],
-        }
-    for query in queries:
-        qid = query_ids[query.name]
-        for source in query.sources:
-            if source.kind == "query":
-                upstream = query_ids.get(source.target)
-                if upstream is not None:
-                    add_edge(upstream, qid, "query")
-                continue
-            if source.kind == "table":
-                # ``Excel.CurrentWorkbook`` reads a table or a defined name of
-                # this very file: that end of the link is in the graph already.
-                placed = tables_by_name.get(source.target.casefold())
-                if placed is not None:
-                    rect = parse_ref(placed[1], default_sheet=placed[0])
-                    if rect is not None:
-                        resolve_rect_edges(rect, qid, kind="query")
-                        continue
-                named = name_nodes.get(source.target.upper())
-                if named is not None:
-                    add_edge(named, qid, "query")
-                    continue
-            add_edge(query_source_node(source), qid, "query")
-        for destination in query.loaded_to:
-            rect = (
-                parse_ref(destination.ref, default_sheet=destination.sheet)
-                if destination.ref
-                else None
-            )
-            if rect is not None:
-                add_edge(qid, ensure_input_node(rect), "query-load")
+    builder.build_queries(queries)
 
     query_warning = _query_warning(queries)
     if query_warning:
