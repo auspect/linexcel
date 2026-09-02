@@ -16,13 +16,13 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel import analyze
-from linexcel.analyzer import (
+from linexcel.external import read_workbook_values
+from linexcel.loader import (
     MAX_CELLS_PER_SHEET,
     MAX_DENSE_CELLS,
     declared_cells,
     load_cached_values,
 )
-from linexcel.external import read_workbook_values
 
 
 def workbook(cells: dict[str, object], sheet: str = "S") -> bytes:

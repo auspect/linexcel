@@ -13,7 +13,8 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel import analyze
-from linexcel.analyzer import inspect_workbook, load_cached_values
+from linexcel.analyzer import inspect_workbook
+from linexcel.loader import load_cached_values
 from linexcel.progress import Reporter
 
 

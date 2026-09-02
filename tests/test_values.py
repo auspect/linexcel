@@ -10,18 +10,15 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel.analyzer import (
-    SCRATCH_SENTINEL,
-    CachedValues,
     _Budget,
-    _collect_step_exprs,
     _is_volatile,
-    _render_expr,
     _spread_cells,
     _ValueResolver,
     analyze_workbook,
-    load_cached_values,
-    serial_to_date_text,
 )
+from linexcel.decompose import SCRATCH_SENTINEL, _collect_step_exprs, _render_expr
+from linexcel.loader import CachedValues, load_cached_values
+from linexcel.values import serial_to_date_text
 
 SHEET = "S"
 
