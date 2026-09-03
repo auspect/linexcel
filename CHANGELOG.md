@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`analyzer.py` is now a thin orchestrator.** The 1882-line monolith was
+  split mechanically into focused modules — `structure`, `engine`, `resolver`,
+  `sweep`, `graph` (a `GraphBuilder` that owns all node/edge state) — and
+  `analyze_workbook` now sequences the phases and assembles the result.
+  `analyzer.py` is down to ~200 lines. Behaviour and output are unchanged:
+  the same 586 public tests pass, the public API (`analyze_workbook`,
+  `inspect_workbook`, `LineageResult`) is untouched, and the graph snapshot is
+  byte-identical before/after. Internals were retargeted in tests and CLI to
+  their new modules; no business module imports `analyzer`.
+- Internal helper `a1(row, col)` moved into `refs.py` alongside `num_to_col`.
+
 ## [1.4.0] — 2026-08-25
 
 ### Fixed

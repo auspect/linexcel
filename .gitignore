@@ -42,3 +42,8 @@ validation_screenshots/
 site/
 
 graph.json
+
+# Refactor planning notes (local-only, reference /tmp paths + agent tooling)
+REFACTOR_PLAN.md
+REFACTOR_PROGRESS.md
+KIMI_REVIEW.md
