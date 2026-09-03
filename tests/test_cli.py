@@ -128,12 +128,12 @@ class TestSayingHowLongItWillTake:
     """
 
     def test_the_index_gives_the_weight_without_unpacking_anything(self, workbook_path):
-        from linexcel.analyzer import sheet_bytes
+        from linexcel.structure import sheet_bytes
 
         assert sheet_bytes(workbook_path.read_bytes()) > 0
 
     def test_something_that_is_not_a_package_weighs_nothing(self):
-        from linexcel.analyzer import sheet_bytes
+        from linexcel.structure import sheet_bytes
 
         assert sheet_bytes(b"not a zip") == 0
 
@@ -144,9 +144,9 @@ class TestSayingHowLongItWillTake:
     def test_a_large_one_says_how_long_before_it_starts(
         self, workbook_path, monkeypatch, capsys
     ):
-        from linexcel import analyzer
+        from linexcel import structure
 
-        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
         main(["analyze", str(workbook_path), "--no-html"])
         err = capsys.readouterr().err
         assert "200 MB of formulas" in err
@@ -156,9 +156,9 @@ class TestSayingHowLongItWillTake:
     def test_it_goes_to_stderr_so_a_piped_report_stays_clean(
         self, workbook_path, monkeypatch, capsys
     ):
-        from linexcel import analyzer
+        from linexcel import structure
 
-        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
         main(["analyze", str(workbook_path), "--no-html", "--json", "-"])
         captured = capsys.readouterr()
         assert "should take" in captured.err
@@ -166,9 +166,9 @@ class TestSayingHowLongItWillTake:
 
     def test_it_names_the_ways_out(self, workbook_path, monkeypatch, capsys):
         """Someone told a run will be long wants to know what else they can do."""
-        from linexcel import analyzer
+        from linexcel import structure
 
-        monkeypatch.setattr(analyzer, "sheet_bytes", lambda data: 200 * 1_048_576)
+        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
         main(["analyze", str(workbook_path), "--no-html"])
         err = capsys.readouterr().err
         assert "--time-budget" in err and "-v" in err

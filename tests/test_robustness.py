@@ -16,13 +16,13 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel import analyze
-from linexcel.analyzer import (
+from linexcel.external import read_workbook_values
+from linexcel.loader import (
     MAX_CELLS_PER_SHEET,
     MAX_DENSE_CELLS,
     declared_cells,
     load_cached_values,
 )
-from linexcel.external import read_workbook_values
 
 
 def workbook(cells: dict[str, object], sheet: str = "S") -> bytes:
@@ -186,9 +186,9 @@ class TestTheTwoCeilings:
         self, monkeypatch
     ):
         """Shrinking the sweep budget must not make the fast path complain."""
-        from linexcel import analyzer
+        from linexcel import sweep
 
-        monkeypatch.setattr(analyzer, "MAX_CELLS_PER_SHEET", 30)
+        monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         warnings: list[str] = []
         load_cached_values(workbook({"A1": 1, "J40": 2}), warnings)
         assert warnings == []
@@ -266,7 +266,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_the_batch_path_takes_from_the_budget(self):
         """The call it slipped past for two releases."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10)
         assert budget.take(4) is True
@@ -276,7 +276,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_a_batch_too_big_is_refused_without_poisoning_the_rest(self):
         """One node asking for more than is left must not starve the next."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(1)
         assert budget.take(5) is False
@@ -284,7 +284,7 @@ class TestTheDecompositionIsBoundedInTime:
 
     def test_a_deadline_stops_the_decomposition_and_not_the_values(self):
         """The distinction the zero-deadline test was written to hold."""
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10_000, seconds=0)
         assert budget.expired is True
@@ -293,7 +293,7 @@ class TestTheDecompositionIsBoundedInTime:
         assert budget.take() is True
 
     def test_a_budget_with_room_says_nothing(self):
-        from linexcel.analyzer import _Budget
+        from linexcel.resolver import _Budget
 
         budget = _Budget(10, seconds=60)
         assert budget.take(3) is True

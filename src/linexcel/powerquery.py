@@ -39,6 +39,8 @@ SECTION_PART = "Formulas/Section1.m"
 #: Ceiling on the mashup package, so a corrupt length field cannot ask for a
 #: gigabyte of memory on a file that only claims to hold one.
 MAX_MASHUP_BYTES = 32 * 1024 * 1024
+#: How many query sources one warning line names before it says "and more".
+MAX_QUERY_SOURCES_SHOWN = 6
 
 #: M functions that name a source outside the workbook, and what kind of thing
 #: they read. Only the ones that take the target as their first string argument
@@ -153,6 +155,42 @@ def read_queries(data: bytes) -> list[Query]:
         )
         for name, body in members.items()
     ]
+
+
+def query_warning(queries: list[Query]) -> str | None:
+    """One line for the queries that feed the workbook from outside it.
+
+    A query whose source is a file, a URL or a server is a dependency of the
+    same nature as a link to another workbook: the values it produced are in
+    the file, what produced them is not. The graph shows the query and names
+    its source; nobody should read that as the source having been checked.
+    """
+    if not queries:
+        return None
+    loaded = sum(1 for query in queries if query.loaded)
+    if len(queries) == 1:
+        head = "1 Power Query query feeds this workbook" + (
+            ", loaded onto a sheet."
+            if loaded
+            else ", loaded nowhere (connection only)."
+        )
+    else:
+        head = (
+            f"{len(queries)} Power Query queries feed this workbook, "
+            f"{loaded} of them loaded onto a sheet."
+        )
+    parts = [head]
+    outside = sorted(
+        {source.target for query in queries for source in query.outside_sources()}
+    )
+    if outside:
+        shown = ", ".join(outside[:MAX_QUERY_SOURCES_SHOWN])
+        if len(outside) > MAX_QUERY_SOURCES_SHOWN:
+            shown += f", … (+{len(outside) - MAX_QUERY_SOURCES_SHOWN})"
+        parts.append(
+            f"Their data comes from outside the file and was not read: {shown}."
+        )
+    return " ".join(parts)
 
 
 def read_section(data: bytes) -> str | None:
