@@ -216,9 +216,7 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
                         continue
                     row = int(cell.group(2))
                     col = col_to_num(cell.group(1).decode("ascii"))
-                    out[(name, row, col)] = value.group(1).decode(
-                        "utf-8", "replace"
-                    )
+                    out[(name, row, col)] = value.group(1).decode("utf-8", "replace")
     except Exception:
         # A workbook calamine reads but this best-effort scan cannot is left
         # as calamine read it, rather than reported as not stored.
