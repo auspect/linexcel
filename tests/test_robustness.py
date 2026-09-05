@@ -11,6 +11,7 @@ subprocess, and reports timings; this is the part that belongs in CI.
 """
 
 import io
+import zipfile
 
 import pytest
 from openpyxl import Workbook
@@ -298,3 +299,76 @@ class TestTheDecompositionIsBoundedInTime:
         budget = _Budget(10, seconds=60)
         assert budget.take(3) is True
         assert budget.warning() is None
+
+
+_SHEET_HEAD = (
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    '<dimension ref="A1:J10" /><sheetData>'
+)
+_SHEET_TAIL = "</sheetData></worksheet>"
+
+
+def workbook_with_cached_error(
+    error_cell, formula: str = "1/0", sheet: str = "S"
+) -> bytes:
+    """A workbook holding one formula cell whose cached value is an error.
+
+    openpyxl never writes caches, and calamine silently drops cached errors —
+    so this file is built by hand: exactly the shape Excel writes for a cell
+    that errored when the workbook was last saved, ``<c t="e"><f>…</f>
+    <v>#DIV/0!</v></c>``.
+    """
+    addr_r, addr_c = error_cell[0], int(error_cell[1:])
+    cell = (
+        f'<c r="{error_cell}" t="e"><f>{formula}</f><v>#DIV/0!</v></c>'
+        f'<c r="{chr(ord(addr_r) + 1)}{addr_c}"><f>7*7</f><v>49</v></c>'
+    )
+    sheet_xml = _SHEET_HEAD + f'<row r="{addr_c}">{cell}</row>' + _SHEET_TAIL
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+            'content-types"><Default Extension="rels" ContentType="application/'
+            'vnd.openxmlformats-package.relationships+xml"/><Default '
+            'Extension="xml" ContentType="application/xml"/><Override '
+            'PartName="/xl/workbook.xml" ContentType="application/vnd.'
+            'openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/worksheets/sheet1.xml" ContentType='
+            '"application/vnd.openxmlformats-officedocument.spreadsheetml.'
+            'worksheet+xml"/></Types>',
+        )
+        zf.writestr(
+            "_rels/.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+            '2006/relationships"><Relationship Id="rId1" Type="http://schemas.'
+            'openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="xl/workbook.xml"/></Relationships>',
+        )
+        zf.writestr(
+            "xl/workbook.xml",
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/'
+            '2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/'
+            '2006/relationships"><sheets><sheet name="S" sheetId="1" '
+            'r:id="rId1"/></sheets></workbook>',
+        )
+        zf.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+            '2006/relationships"><Relationship Id="rId1" Type="http://schemas.'
+            'openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+            'Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buf.getvalue()
+
+
+def test_cached_formula_error_is_read_not_dropped():
+    """A formula whose cached value is an error must not read as 'Not stored'."""
+    data = workbook_with_cached_error("A1")
+    warnings: list[str] = []
+    values = load_cached_values(data, warnings)
+    # calamine drops the cell; the error reader gives it back as a stored value.
+    assert values.get("S", 1, 1) == "#DIV/0!"
+    # the sibling non-error formula is unaffected
+    assert values.get("S", 1, 2) == 49

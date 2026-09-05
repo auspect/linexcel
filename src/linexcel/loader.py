@@ -173,6 +173,59 @@ def load_cached_values(
         return _load_cached_values_openpyxl(data, reporter)
 
 
+#: A cached formula error, ``<c r="A1" t="e"><f>…</f><v>#DIV/0!</v></c>``. The
+#: ``<c …>…</c>`` element never nests another ``<c>``, so ``.*?</c>`` is safe.
+_ERROR_CELL_RE = re.compile(
+    rb'<c(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"[^>]*>(.*?)</c>', re.S
+)
+#: ``<sheet name="S" r:id="rId1"/>`` — maps a displayed sheet to its r:id.
+_SHEET_NAME_RE = re.compile(r'<sheet[^>]*?name="([^"]+)"[^>]*?r:id="([^"]+)"')
+#: ``<Relationship Id="rId1" … Target="worksheets/sheet1.xml"/>`` — the r:id
+#: to the zip part (relative to xl/) that actually holds the sheet's cells.
+_REL_TARGET_RE = re.compile(r'<Relationship[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"')
+
+
+def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
+    """Cached formula errors calamine drops, keyed by (sheet, row, col).
+
+    python-calamine returns no type for a formula cell whose cached value is
+    an error (``<c t="e"><v>#DIV/0!</v></c>``), so those cells are absent from
+    ``to_python`` and would read back as *not stored* even though the file
+    carries a real value. openpyxl reads them fine; this is the calamine side
+    paying that difference back. ``#SPILL!`` is not here — calamine refuses a
+    value it does not know and the loader falls back to openpyxl.
+    """
+    out: dict[tuple[str, int, int], str] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            wb_xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
+            rels = zf.read("xl/_rels/workbook.xml.rels").decode("utf-8", "ignore")
+            targets = dict(_REL_TARGET_RE.findall(rels))
+            for name, rid in _SHEET_NAME_RE.findall(wb_xml):
+                target = targets.get(rid, "")
+                zpath = "xl/" + target.lstrip("/")
+                if not zpath.endswith(".xml"):
+                    continue
+                try:
+                    sheet_xml = zf.read(zpath)
+                except KeyError:
+                    continue
+                for cell in _ERROR_CELL_RE.finditer(sheet_xml):
+                    value = re.search(rb"<v>([^<]*)</v>", cell.group(3))
+                    if value is None or not value.group(1):
+                        continue
+                    row = int(cell.group(2))
+                    col = col_to_num(cell.group(1).decode("ascii"))
+                    out[(name, row, col)] = value.group(1).decode(
+                        "utf-8", "replace"
+                    )
+    except Exception:
+        # A workbook calamine reads but this best-effort scan cannot is left
+        # as calamine read it, rather than reported as not stored.
+        pass
+    return out
+
+
 def _load_cached_values_calamine(
     data: bytes, reporter: Reporter | None = None
 ) -> CachedValues:
@@ -219,6 +272,10 @@ def _load_cached_values_calamine(
                         v = datetime.datetime(v.year, v.month, v.day)
                         date_cells.add(key)
                     values[key] = v
+        # calamine omits cached formula errors entirely; give them back so the
+        # report reads "div by zero" rather than "not stored".
+        for key, error in _error_cached_values(data).items():
+            values.setdefault(key, error)
     return CachedValues(values, date_cells, epoch_1904)
 
 
