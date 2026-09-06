@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linexcel — proposition d'interface</title>
+<style>
+  /* ------------------------------------------------------------------
+     Proposition d'interface — linexcel
+     Principes :
+       1. Une seule teinte d'accent. Le reste est une échelle de gris
+          chauds ; le vert/ambre ne parlent que pour les verdicts.
+       2. Des filets de 1 px et de l'espace, pas des cartes dans des
+          cartes.
+       3. Deux voix typographiques : sans pour l'interface, mono à
+          chiffres tabulaires pour tout ce qui est donnée.
+       4. La navigation devient un rail latéral : la barre du haut ne
+          porte plus que l'identité et la recherche.
+  ------------------------------------------------------------------ */
+  :root {
+    --bg:      #fafaf8;
+    --surface: #ffffff;
+    --ink:     #1c1b19;
+    --ink-2:   #57554f;
+    --muted:   #8a877e;
+    --hair:    #e7e5df;
+    --line:    #d4d2ca;
+    --accent:  #1c1b19;            /* l'action principale est l'encre */
+    --ok:      #14663f;
+    --ok-bg:   #eef6f1;
+    --warn:    #9a3b12;
+    --warn-bg: #fbeee7;
+    --code-bg: #f3f2ee;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ======================= barre supérieure ======================= */
+  header {
+    height: 52px;
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--hair);
+  }
+  .brand {
+    font-family: var(--mono);
+    font-weight: 700; font-size: 14px; letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .brand .mark {
+    width: 18px; height: 18px; border-radius: 4px;
+    background: var(--ink); color: var(--surface);
+    display: grid; place-items: center;
+    font-size: 10px; font-weight: 700;
+  }
+  .doc { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .doc .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc .stats {
+    color: var(--muted); font-size: 12px; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .doc .stats b { color: var(--ink-2); font-weight: 600; }
+  header .spacer { flex: 1; }
+  .search {
+    display: flex; align-items: center; gap: 7px;
+    width: 260px; padding: 5px 10px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--muted);
+  }
+  .search input {
+    border: none; outline: none; background: none; font: inherit;
+    color: var(--ink); width: 100%;
+  }
+  .search kbd {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    border: 1px solid var(--hair); border-radius: 4px; padding: 1px 5px;
+    background: var(--surface);
+  }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 6px;
+    display: grid; place-items: center; color: var(--ink-2);
+  }
+  .icon-btn:hover { background: var(--code-bg); color: var(--ink); }
+
+  /* =========================== coquille =========================== */
+  .shell { display: flex; height: calc(100% - 52px); }
+
+  /* ------------------------- rail latéral ------------------------- */
+  nav.rail {
+    width: 224px; flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--hair);
+    padding: 14px 10px;
+    display: flex; flex-direction: column; gap: 22px;
+    overflow-y: auto;
+  }
+  .rail-label {
+    font-size: 10px; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+    padding: 0 8px; margin-bottom: 6px;
+  }
+  .rail-item {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 6px 8px; border-radius: 6px;
+    color: var(--ink-2); font-weight: 500;
+  }
+  .rail-item:hover { background: var(--code-bg); color: var(--ink); }
+  .rail-item[aria-current="page"] {
+    background: var(--ink); color: var(--surface);
+  }
+  .rail-item .count {
+    margin-left: auto; font-size: 11px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .rail-item[aria-current="page"] .count { color: #b9b6ae; }
+  .rail-item svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+  .filter {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; padding: 4px 8px; border-radius: 6px;
+    color: var(--ink-2); text-align: left;
+  }
+  .filter:hover { background: var(--code-bg); }
+  .filter .dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+  .filter .n { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .filter.off { opacity: .38; }
+
+  .rail-foot { margin-top: auto; padding: 8px; border-top: 1px solid var(--hair); }
+  .rail-foot .row {
+    display: flex; justify-content: space-between; align-items: center;
+    color: var(--muted); font-size: 11px; padding: 3px 0;
+  }
+  .switch {
+    width: 28px; height: 16px; border-radius: 99px; background: var(--line);
+    position: relative; transition: background .15s;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 12px; height: 12px; border-radius: 50%; background: #fff;
+    transition: transform .15s;
+  }
+  .switch[aria-checked="true"] { background: var(--ink); }
+  .switch[aria-checked="true"]::after { transform: translateX(12px); }
+
+  /* --------------------------- canevas --------------------------- */
+  main { flex: 1; position: relative; min-width: 0; background: var(--bg); }
+  .canvas-head {
+    position: absolute; top: 14px; left: 18px; z-index: 2;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .canvas-title { font-size: 12px; color: var(--muted); }
+  .canvas-title b { color: var(--ink); font-weight: 600; }
+  .seg {
+    display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+    overflow: hidden; background: var(--surface);
+  }
+  .seg button { padding: 4px 8px; font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--hair); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+
+  .legend {
+    position: absolute; left: 18px; bottom: 14px; z-index: 2;
+    display: flex; gap: 14px; align-items: center;
+    font-size: 11px; color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--hair); border-radius: 6px;
+    padding: 6px 12px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 9px; height: 9px; border-radius: 3px; }
+
+  .graph-wrap { position: absolute; inset: 0; }
+  .graph-wrap svg { width: 100%; height: 100%; display: block; }
+  .edge { stroke: var(--line); stroke-width: 1; fill: none; }
+  .edge-flow { stroke-dasharray: 3 5; }
+  .node { cursor: pointer; }
+  .node rect { stroke: var(--line); stroke-width: 1; fill: var(--surface); rx: 6; }
+  .node .swatch { width: 8px; height: 8px; rx: 2; }
+  .node text { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+  .node .sub { font-size: 9.5px; fill: var(--muted); font-family: var(--sans); }
+  .node.sel rect { stroke: var(--ink); stroke-width: 1.6; }
+  .node.warn rect { stroke: var(--warn); }
+
+  /* ------------------------- inspecteur -------------------------- */
+  aside.inspector {
+    width: 340px; flex-shrink: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--hair);
+    overflow-y: auto;
+    padding: 18px 18px 40px;
+  }
+  .insp-eyebrow {
+    font-size: 10px; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+  }
+  .insp-addr {
+    font-family: var(--mono); font-size: 16px; font-weight: 700;
+    word-break: break-all; margin-bottom: 12px;
+  }
+  .verdict {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); }
+  .verdict.warn { background: var(--warn-bg); color: var(--warn); }
+  .verdict svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  .kv {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair);
+    margin-bottom: 18px;
+  }
+  .kv > div { padding: 9px 0; min-width: 0; }
+  .kv > div + div { border-left: 1px solid var(--hair); padding-left: 12px; }
+  .kv .k {
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 2px;
+  }
+  .kv .v {
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }
+
+  .insp-h {
+    font-size: 10px; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 18px 0 7px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .insp-h::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+
+  .formula {
+    font-family: var(--mono); font-size: 12px; line-height: 1.55;
+    background: var(--code-bg); border-radius: 6px;
+    padding: 9px 11px; white-space: pre-wrap; word-break: break-all;
+  }
+  .tok-fn  { color: #6d28d9; }
+  .tok-ref { color: #1d4ed8; }
+  .tok-num { color: #9a3b12; }
+
+  .dep {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 6px 4px; border-radius: 6px;
+  }
+  .dep:hover { background: var(--code-bg); }
+  .dep .dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .dep .a { font-family: var(--mono); font-size: 12px; }
+  .dep .v { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .ai-note {
+    border-left: 2px solid var(--line);
+    padding: 2px 0 2px 12px;
+    color: var(--ink-2); font-size: 12.5px;
+  }
+  .ai-note .tag {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 4px;
+  }
+
+  /* ------------------------ autres vues -------------------------- */
+  .view { display: none; height: 100%; }
+  .view.active { display: block; }
+  #view-graph.active { display: flex; }
+  .pane { padding: 28px 32px; max-width: 880px; }
+  .pane h2 { font-size: 17px; font-weight: 650; margin-bottom: 4px; }
+  .pane .lede { color: var(--ink-2); margin-bottom: 24px; }
+
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--hair); border-left: 1px solid var(--hair);
+    margin-bottom: 28px;
+  }
+  .stat {
+    border-right: 1px solid var(--hair); border-bottom: 1px solid var(--hair);
+    padding: 14px 16px; background: var(--surface);
+  }
+  .stat .k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .stat .v { font-family: var(--mono); font-size: 22px; font-weight: 650; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .stat .d { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  table.flat { width: 100%; border-collapse: collapse; background: var(--surface); }
+  table.flat th, table.flat td {
+    text-align: left; padding: 8px 12px;
+    border-bottom: 1px solid var(--hair);
+  }
+  table.flat thead th {
+    font-size: 10px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  table.flat td.num, table.flat th.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 1px 8px; border-radius: 99px;
+  }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.neutral { background: var(--code-bg); color: var(--ink-2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><span class="mark">lx</span>linexcel</div>
+  <div class="doc">
+    <span class="name">validation_demo.xlsx</span>
+    <span class="stats num"><b>3</b> feuilles · <b>148</b> formules · <b>12</b> groupes · <b>1</b> écart</span>
+  </div>
+  <div class="spacer"></div>
+  <label class="search">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    <input type="search" placeholder="Cellule, plage, nom…" aria-label="Rechercher">
+    <kbd>/</kbd>
+  </label>
+  <button class="icon-btn" title="Basculer le thème" aria-label="Basculer le thème">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3.4" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  </button>
+</header>
+
+<div class="shell">
+
+  <!-- ============================ rail ============================ -->
+  <nav class="rail" aria-label="Navigation principale">
+    <div>
+      <div class="rail-label">Vues</div>
+      <button class="rail-item" aria-current="page" data-view="view-graph">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="3.5" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="12.5" cy="3.5" r="2" stroke="currentColor" stroke-width="1.3"/><circle cx="12.5" cy="12.5" r="2" stroke="currentColor" stroke-width="1.3"/><path d="M5.3 7 10.7 4.2M5.3 9l5.4 2.8" stroke="currentColor" stroke-width="1.3"/></svg>
+        Graphe <span class="count">160</span>
+      </button>
+      <button class="rail-item" aria-current="false" data-view="view-overview">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>
+        Vue d'ensemble
+      </button>
+      <button class="rail-item" aria-current="false" data-view="view-sheets">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2" width="11" height="12" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 6h11M7 6v8" stroke="currentColor" stroke-width="1.3"/></svg>
+        Feuilles <span class="count">3</span>
+      </button>
+      <button class="rail-item" aria-current="false" data-view="view-shots">
+        <svg viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="5.5" cy="6.5" r="1.2" fill="currentColor"/><path d="m4 12 3.5-3.5 2 2L12 8l2 2.5" stroke="currentColor" stroke-width="1.3"/></svg>
+        Captures <span class="count">3</span>
+      </button>
+    </div>
+
+    <div>
+      <div class="rail-label">Types de nœuds</div>
+      <button class="filter"><span class="dot" style="background:#2a78d6"></span>Formules <span class="n">148</span></button>
+      <button class="filter"><span class="dot" style="background:#1baf7a"></span>Constantes <span class="n">96</span></button>
+      <button class="filter"><span class="dot" style="background:#eda100"></span>Noms définis <span class="n">4</span></button>
+      <button class="filter off"><span class="dot" style="background:#eb6834"></span>Liens externes <span class="n">1</span></button>
+      <button class="filter off"><span class="dot" style="background:#898781"></span>VBA <span class="n">2</span></button>
+    </div>
+
+    <div>
+      <div class="rail-label">Mise en page</div>
+      <div class="seg" role="group" aria-label="Algorithme de mise en page" style="margin:0 8px">
+        <button aria-pressed="true">Hiérarchie</button>
+        <button aria-pressed="false">Force</button>
+        <button aria-pressed="false">Concentrique</button>
+      </div>
+    </div>
+
+    <div class="rail-foot">
+      <div class="row"><span>Écarts seulement</span><button class="switch" role="switch" aria-checked="false" aria-label="N'afficher que les écarts"></button></div>
+      <div class="row"><span>Mode sombre</span><button class="switch" role="switch" aria-checked="false" aria-label="Mode sombre"></button></div>
+    </div>
+  </nav>
+
+  <!-- ========================== graphe =========================== -->
+  <section class="view active" id="view-graph" style="flex:1; display:flex; min-width:0;">
+    <main>
+      <div class="canvas-head">
+        <span class="canvas-title"><b>Graphe de dépendances</b> · 160 nœuds · 212 arêtes</span>
+      </div>
+      <div class="graph-wrap">
+        <svg viewBox="0 0 760 560" role="img" aria-label="Graphe de dépendances du classeur">
+          <!-- arêtes -->
+          <path class="edge" d="M180 120 C 260 120, 280 90, 350 88"/>
+          <path class="edge" d="M180 150 C 260 150, 280 230, 350 232"/>
+          <path class="edge" d="M470 88 C 540 88, 545 130, 600 138"/>
+          <path class="edge" d="M470 232 C 530 232, 545 165, 600 152"/>
+          <path class="edge edge-flow" d="M200 330 C 300 330, 380 260, 440 240"/>
+          <path class="edge edge-flow" d="M200 380 C 320 380, 420 300, 470 246"/>
+
+          <!-- nœud : constante -->
+          <g class="node | js-node" data-cell="Params!B2" transform="translate(60,105)">
+            <rect width="120" height="44" rx="6"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#1baf7a"/>
+            <text x="24" y="18">Params!B2</text>
+            <text class="sub" x="24" y="33">Taux TVA · 0,20</text>
+          </g>
+          <!-- nœud : constante 2 -->
+          <g class="node js-node" data-cell="Params!B3" transform="translate(60,165)">
+            <rect width="120" height="44" rx="6"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#1baf7a"/>
+            <text x="24" y="18">Params!B3</text>
+            <text class="sub" x="24" y="33">Remise · 0,05</text>
+          </g>
+          <!-- nœud : formule -->
+          <g class="node js-node" data-cell="Sales!D2:D41" transform="translate(350,66)">
+            <rect width="120" height="44" rx="6"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#2a78d6"/>
+            <text x="24" y="18">Sales!D2:D41</text>
+            <text class="sub" x="24" y="33">groupe ×40 · HT</text>
+          </g>
+          <!-- nœud : formule 2 -->
+          <g class="node js-node" data-cell="Sales!E2:E41" transform="translate(350,210)">
+            <rect width="120" height="44" rx="6"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#2a78d6"/>
+            <text x="24" y="18">Sales!E2:E41</text>
+            <text class="sub" x="24" y="33">groupe ×40 · TTC</text>
+          </g>
+          <!-- nœud sélectionné : summary -->
+          <g class="node sel js-node" data-cell="Summary!B4" transform="translate(600,122)">
+            <rect width="128" height="52" rx="6"/>
+            <rect class="swatch" x="10" y="12" width="8" height="8" rx="2" fill="#2a78d6"/>
+            <text x="24" y="21">Summary!B4</text>
+            <text class="sub" x="24" y="37">CA total TTC</text>
+          </g>
+          <!-- nœud externe -->
+          <g class="node warn js-node" data-cell="[Budget FY26.xlsx]Annual!B4" transform="translate(60,300)">
+            <rect width="150" height="44" rx="6" stroke-dasharray="4 3"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#eb6834"/>
+            <text x="24" y="18">[Budget FY26]Annual!B4</text>
+            <text class="sub" x="24" y="33">externe · non résolu</text>
+          </g>
+          <!-- nœud vba -->
+          <g class="node js-node" data-cell="VBA · Recalc_All" transform="translate(60,372)">
+            <rect width="130" height="44" rx="6"/>
+            <rect class="swatch" x="10" y="10" width="8" height="8" rx="2" fill="#898781"/>
+            <text x="24" y="18">Recalc_All</text>
+            <text class="sub" x="24" y="33">macro VBA</text>
+          </g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><span class="dot" style="background:#2a78d6"></span>Formule</span>
+        <span><span class="dot" style="background:#1baf7a"></span>Constante</span>
+        <span><span class="dot" style="background:#eda100"></span>Nom défini</span>
+        <span><span class="dot" style="background:#eb6834"></span>Externe</span>
+        <span><span class="dot" style="background:#898781"></span>VBA</span>
+      </div>
+    </main>
+
+    <!-- ======================== inspecteur ======================== -->
+    <aside class="inspector" aria-label="Détail de la sélection">
+      <div class="insp-eyebrow">Cellule · formule</div>
+      <div class="insp-addr" id="insp-addr">Summary!B4</div>
+
+      <div class="verdict ok" id="insp-verdict">
+        <svg viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3.2 3.2L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="insp-verdict-text">Excel et linexcel sont d'accord</span>
+      </div>
+
+      <div class="kv">
+        <div>
+          <div class="k">Valeur Excel</div>
+          <div class="v num" id="insp-vx">1 284 930,00</div>
+        </div>
+        <div>
+          <div class="k">Recalcul linexcel</div>
+          <div class="v num" id="insp-vl">1 284 930,00</div>
+        </div>
+      </div>
+
+      <div class="insp-h">Formule</div>
+      <div class="formula" id="insp-formula">=<span class="tok-fn">SUM</span>(<span class="tok-ref">Sales!E2:E41</span>) * (<span class="tok-num">1</span> - <span class="tok-ref">Params!B3</span>)</div>
+
+      <div class="insp-h">Dépend de</div>
+      <div id="insp-deps">
+        <button class="dep"><span class="dot" style="background:#2a78d6"></span><span class="a">Sales!E2:E41</span><span class="v num">1 352 557,89</span></button>
+        <button class="dep"><span class="dot" style="background:#1baf7a"></span><span class="a">Params!B3</span><span class="v num">0,05</span></button>
+      </div>
+
+      <div class="insp-h">Documentation IA</div>
+      <div class="ai-note">
+        <span class="tag">Généré · qwen3.8</span>
+        <p id="insp-ai">Chiffre d'affaires total TTC après remise globale. Agrège la colonne TTC des ventes (groupe de 40 lignes) puis applique le taux de remise défini dans Params.</p>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ======================== vue d'ensemble ====================== -->
+  <section class="view" id="view-overview">
+    <div class="pane">
+      <h2>Vue d'ensemble</h2>
+      <p class="lede">validation_demo.xlsx — analysé le 06/09/2026 en 1,8 s, sans réseau.</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Formules</div><div class="v">148</div><div class="d">12 groupes étirés</div></div>
+        <div class="stat"><div class="k">Cellules vérifiées</div><div class="v">203</div><div class="d">échantillon complet</div></div>
+        <div class="stat"><div class="k">Accords</div><div class="v" style="color:var(--ok)">202</div><div class="d">99,5 % du classeur</div></div>
+        <div class="stat"><div class="k">Écarts</div><div class="v" style="color:var(--warn)">1</div><div class="d">Summary!B7</div></div>
+        <div class="stat"><div class="k">Noms définis</div><div class="v">4</div><div class="d">dont 1 inutilisé</div></div>
+        <div class="stat"><div class="k">Liens externes</div><div class="v">1</div><div class="d">Budget FY26.xlsx · non résolu</div></div>
+        <div class="stat"><div class="k">Macros VBA</div><div class="v">2</div><div class="d">Recalc_All, Archive</div></div>
+        <div class="stat"><div class="k">Profondeur max</div><div class="v">6</div><div class="d">niveaux de dépendance</div></div>
+      </div>
+      <div class="insp-h" style="margin-top:0">Écart détecté</div>
+      <table class="flat">
+        <thead><tr><th>Cellule</th><th class="num">Valeur Excel</th><th class="num">Recalcul</th><th>Cause probable</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="font-family:var(--mono)">Summary!B7</td>
+            <td class="num">48 210,00</td>
+            <td class="num">48 192,35</td>
+            <td>Arrondi figé — valeur saisie en dur par-dessus la formule</td>
+            <td><span class="pill warn">écart</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========================== feuilles ========================== -->
+  <section class="view" id="view-sheets">
+    <div class="pane">
+      <h2>Feuilles</h2>
+      <p class="lede">3 feuilles, dont aucune masquée.</p>
+      <table class="flat">
+        <thead><tr><th>Feuille</th><th class="num">Formules</th><th class="num">Constantes</th><th class="num">Vérifiées</th><th>Statut</th></tr></thead>
+        <tbody>
+          <tr><td style="font-weight:600">Params</td><td class="num">0</td><td class="num">6</td><td class="num">6</td><td><span class="pill ok">conforme</span></td></tr>
+          <tr><td style="font-weight:600">Sales</td><td class="num">80</td><td class="num">120</td><td class="num">160</td><td><span class="pill ok">conforme</span></td></tr>
+          <tr><td style="font-weight:600">Summary</td><td class="num">68</td><td class="num">2</td><td class="num">37</td><td><span class="pill warn">1 écart</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========================== captures ========================== -->
+  <section class="view" id="view-shots">
+    <div class="pane">
+      <h2>Captures</h2>
+      <p class="lede">Rendu LibreOffice des feuilles, utilisé pour la lecture multimodale.</p>
+      <table class="flat">
+        <thead><tr><th>Fichier</th><th>Feuille</th><th class="num">Dimensions</th><th>Relecture IA</th></tr></thead>
+        <tbody>
+          <tr><td style="font-family:var(--mono)">validation_demo-Params.png</td><td>Params</td><td class="num">1612 × 880</td><td><span class="pill neutral">non demandée</span></td></tr>
+          <tr><td style="font-family:var(--mono)">validation_demo-Sales.png</td><td>Sales</td><td class="num">1612 × 1240</td><td><span class="pill ok">effectuée</span></td></tr>
+          <tr><td style="font-family:var(--mono)">validation_demo-Summary.png</td><td>Summary</td><td class="num">1612 × 720</td><td><span class="pill ok">effectuée</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // Bascule des vues depuis le rail latéral.
+  const items = document.querySelectorAll('.rail-item');
+  items.forEach(btn => btn.addEventListener('click', () => {
+    items.forEach(b => b.setAttribute('aria-current', 'false'));
+    btn.setAttribute('aria-current', 'page');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById(btn.dataset.view).classList.add('active');
+  }));
+
+  // Interrupteurs du bas de rail.
+  document.querySelectorAll('.switch').forEach(sw => sw.addEventListener('click', () => {
+    sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+  }));
+
+  // Filtres de types de nœuds.
+  document.querySelectorAll('.filter').forEach(f => f.addEventListener('click', () => f.classList.toggle('off')));
+
+  // Sélection d'un nœud -> inspecteur (jeu de données de démonstration).
+  const DATA = {
+    'Summary!B4': {
+      verdict: ['ok', "Excel et linexcel sont d'accord"],
+      vx: '1 284 930,00', vl: '1 284 930,00',
+      formula: '=SUM(Sales!E2:E41) * (1 - Params!B3)',
+      deps: [['#2a78d6', 'Sales!E2:E41', '1 352 557,89'], ['#1baf7a', 'Params!B3', '0,05']],
+      ai: "Chiffre d'affaires total TTC après remise globale. Agrège la colonne TTC des ventes (groupe de 40 lignes) puis applique le taux de remise défini dans Params."
+    },
+    'Sales!D2:D41': {
+      verdict: ['ok', "Excel et linexcel sont d'accord"],
+      vx: '1 070 775,00', vl: '1 070 775,00',
+      formula: '=B2 * C2   (étiré sur 40 lignes)',
+      deps: [['#1baf7a', 'Sales!B2:B41', '—'], ['#1baf7a', 'Sales!C2:C41', '—']],
+      ai: "Montant hors taxe ligne à ligne : quantité × prix unitaire. Groupe étiré de 40 formules partageant le même motif R1C1."
+    },
+    'Sales!E2:E41': {
+      verdict: ['ok', "Excel et linexcel sont d'accord"],
+      vx: '1 352 557,89', vl: '1 352 557,89',
+      formula: '=D2 * (1 + Params!B2)   (étiré sur 40 lignes)',
+      deps: [['#2a78d6', 'Sales!D2:D41', '1 070 775,00'], ['#1baf7a', 'Params!B2', '0,20']],
+      ai: "Montant TTC : applique le taux de TVA de Params au montant HT de la même ligne."
+    },
+    'Params!B2': {
+      verdict: ['ok', 'Constante — rien à recalculer'],
+      vx: '0,20', vl: '0,20',
+      formula: '(constante saisie)',
+      deps: [],
+      ai: "Taux de TVA appliqué à l'ensemble des lignes de vente."
+    },
+    'Params!B3': {
+      verdict: ['ok', 'Constante — rien à recalculer'],
+      vx: '0,05', vl: '0,05',
+      formula: '(constante saisie)',
+      deps: [],
+      ai: "Remise globale appliquée au chiffre d'affaires total dans Summary!B4."
+    },
+    '[Budget FY26.xlsx]Annual!B4': {
+      verdict: ['warn', 'Référence externe non résolue'],
+      vx: '—', vl: '—',
+      formula: "='[Budget FY26.xlsx]Annual'!B4",
+      deps: [],
+      ai: "Le classeur déclare une dépendance vers Budget FY26.xlsx, absent du dossier --refs-dir : la référence est nommée mais pas lue."
+    },
+    'VBA · Recalc_All': {
+      verdict: ['ok', 'Macro recensée'],
+      vx: '—', vl: '—',
+      formula: 'Sub Recalc_All() : Application.CalculateFullRebuild',
+      deps: [],
+      ai: "Macro de recalcul complet. Elle ne modifie aucune valeur mais invalide le cache de calcul."
+    }
+  };
+  const $ = id => document.getElementById(id);
+  document.querySelectorAll('.js-node').forEach(g => g.addEventListener('click', () => {
+    document.querySelectorAll('.js-node').forEach(n => n.classList.remove('sel'));
+    g.classList.add('sel');
+    const key = g.dataset.cell, d = DATA[key];
+    if (!d) return;
+    $('insp-addr').textContent = key;
+    const v = $('insp-verdict');
+    v.className = 'verdict ' + d.verdict[0];
+    $('insp-verdict-text').textContent = d.verdict[1];
+    $('insp-vx').textContent = d.vx;
+    $('insp-vl').textContent = d.vl;
+    $('insp-formula').textContent = d.formula;
+    $('insp-deps').innerHTML = d.deps.map(([c, a, val]) =>
+      `<button class="dep"><span class="dot" style="background:${c}"></span><span class="a">${a}</span><span class="v num">${val}</span></button>`
+    ).join('') || '<p style="color:var(--muted);font-size:12px">Aucune dépendance.</p>';
+    $('insp-ai').textContent = d.ai;
+  }));
+</script>
+</body>
+</html>
