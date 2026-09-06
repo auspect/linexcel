@@ -134,7 +134,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Other (aggregated)",
         "kind_opaque": "External reference",
         "placeholder_title": "Select a node",
-        "graph_empty": "No formulas were found in this workbook, so there is no lineage graph to display.",
+        "graph_empty": (
+            "No formulas were found in this workbook, so there is no lineage "
+            "graph to display."
+        ),
         "placeholder_desc": (
             "Select a node in the graph to inspect its formula, computed "
             "value, step-by-step evaluation, and AI-generated documentation."
@@ -262,7 +265,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Autre (agrégé)",
         "kind_opaque": "Référence externe",
         "placeholder_title": "Sélectionner un nœud",
-        "graph_empty": "Aucune formule trouvée dans ce classeur : il n'y a donc aucun graphe de lignage à afficher.",
+        "graph_empty": (
+            "Aucune formule trouvée dans ce classeur : il n'y a donc aucun graphe de"
+            "lignage à afficher."
+        ),
         "placeholder_desc": (
             "Sélectionnez un nœud dans le graphe pour afficher sa formule, sa "
             "valeur calculée, sa décomposition pas à pas et sa documentation IA."
@@ -390,7 +396,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Otros (agregados)",
         "kind_opaque": "Referencia externa",
         "placeholder_title": "Seleccione un nodo",
-        "graph_empty": "No se encontraron fórmulas en este libro; por tanto, no hay gráfico de linaje que mostrar.",
+        "graph_empty": (
+            "No se encontraron fórmulas en este libro; por tanto, no hay gráfico de"
+            "linaje que mostrar."
+        ),
         "placeholder_desc": (
             "Seleccione un nodo del grafo para consultar su fórmula, su valor "
             "calculado, su evaluación paso a paso y su documentación generada "
@@ -520,7 +529,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Sonstige (aggregiert)",
         "kind_opaque": "Externer Bezug",
         "placeholder_title": "Knoten auswählen",
-        "graph_empty": "In dieser Arbeitsmappe wurden keine Formeln gefunden — daher ist kein Abhängigkeitsgraph anzuzeigen.",
+        "graph_empty": (
+            "In dieser Arbeitsmappe wurden keine Formeln gefunden — daher ist kein"
+            "Abhängigkeitsgraph anzuzeigen."
+        ),
         "placeholder_desc": (
             "Wählen Sie einen Knoten im Graphen aus, um seine Formel, seinen "
             "berechneten Wert, seine schrittweise Auswertung und seine "
@@ -650,7 +662,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Altro (aggregato)",
         "kind_opaque": "Riferimento esterno",
         "placeholder_title": "Seleziona un nodo",
-        "graph_empty": "Nessuna formula trovata in questa cartella di lavoro: non c'è alcun grafico di derivazione da mostrare.",
+        "graph_empty": (
+            "Nessuna formula trovata in questa cartella di lavoro: non c'è "
+            "alcun grafico di derivazione da mostrare."
+        ),
         "placeholder_desc": (
             "Seleziona un nodo nel grafo per consultarne la formula, il valore "
             "calcolato, la valutazione passo passo e la documentazione "
@@ -778,7 +793,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Outros (agregados)",
         "kind_opaque": "Referência externa",
         "placeholder_title": "Selecione um nó",
-        "graph_empty": "Nenhuma fórmula foi encontrada neste livro; portanto, não há gráfico de linhagem para exibir.",
+        "graph_empty": (
+            "Nenhuma fórmula foi encontrada neste livro; portanto, não há gráfico de"
+            "linhagem para exibir."
+        ),
         "placeholder_desc": (
             "Selecione um nó no grafo para consultar a sua fórmula, o valor "
             "calculado, a avaliação passo a passo e a documentação gerada por "
@@ -908,7 +926,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "Overig (samengevoegd)",
         "kind_opaque": "Externe verwijzing",
         "placeholder_title": "Selecteer een knoop",
-        "graph_empty": "Geen formules gevonden in deze werkmap, dus er is geen afstammingsgrafiek om weer te geven.",
+        "graph_empty": (
+            "Geen formules gevonden in deze werkmap, dus er is geen "
+            "afstammingsgrafiek om weer te geven."
+        ),
         "placeholder_desc": (
             "Selecteer een knoop in de graaf om de formule, de berekende "
             "waarde, de stapsgewijze evaluatie en de door AI gegenereerde "
@@ -1032,7 +1053,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_misc": "その他（集約）",
         "kind_opaque": "外部参照",
         "placeholder_title": "ノードを選択してください",
-        "graph_empty": "このブックに数式が見つからなかったため、表示する系統グラフはありません。",
+        "graph_empty": (
+            "このブックに数式が見つからなかったため、表示する系統"
+            "グラフはありません。"
+        ),
         "placeholder_desc": (
             "グラフ内のノードを選択すると、数式、計算結果、ステップごとの"
             "評価、AI が生成したドキュメントを確認できます。"
