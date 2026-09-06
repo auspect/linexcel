@@ -102,9 +102,6 @@
     font: inherit; max-width: 200px;
   }
   .lin-tools select:disabled { cursor: default; opacity: .5; }
-  .lin-tools button[aria-pressed="true"] {
-    background: var(--ink); color: var(--surface); border-color: var(--ink);
-  }
   .lin-icon { min-width: 2rem; text-align: center; }
   .lin-theme {
     display: inline-flex; align-items: center; justify-content: center;
@@ -514,6 +511,9 @@
     .lin-rail .lin-tabs { flex-direction: row; }
     .lin-rail-label { margin-bottom: 0; }
     .lin-kinds { flex-direction: row; }
+    /* One line per filter: the strip scrolls horizontally instead of
+       wrapping labels three deep. */
+    .lin-rail .lin-kind { white-space: nowrap; }
     .lin-seg { margin: 0; }
   }
   /* The two readings stop being readable side by side once the panel is a
@@ -1417,6 +1417,8 @@
             if (off) node.addClass('kind-off'); else node.removeClass('kind-off');
           });
         });
+        // The selection may have just left the canvas with its kind.
+        clearSel(cy);
         var visible = cy.elements(':visible');
         visible.layout(layoutOpts(getLayout(), hasFcose)).run();
         cy.fit(visible, 40);
