@@ -778,9 +778,12 @@ def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # below render the Markdown deterministically. Malformed JSON costs the
 # tables, never the prose.
 
-_TABLE_BLOCK_RE = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL)
+_TABLE_BLOCK_RE = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(r"\{\{(T\d+)\}\}")
-_NUMERIC_CELL_RE = re.compile(r"[-−+]?\d[\d\s.,]*%?")
+# A quantity: optional sign, digits with optional thousands spacing, at most
+# one decimal separator, optional %. Version strings ("1.2.3") and dates
+# ("2024-01-01") deliberately fail, so they keep left alignment.
+_NUMERIC_CELL_RE = re.compile(r"[-−+]?\d[\d\s]*([.,]\d+)?%?")
 
 
 def _md_cell(value: Any) -> str:
@@ -823,20 +826,20 @@ def render_markdown_table(
 def _insert_tables(text: str) -> str:
     """Swap ``{{Tn}}`` placeholders for code-rendered Markdown tables.
 
-    The structured payload travels in a trailing ```json_tables fenced
-    block; the block itself is removed from the returned text. Unparseable
-    or incomplete payloads degrade to prose — a placeholder whose table is
-    missing is dropped, never left as raw braces in the output.
+    The structured payload travels in trailing ```json_tables fenced
+    blocks; the blocks themselves are removed from the returned text.
+    Unparseable or incomplete payloads degrade to prose — a placeholder
+    whose table is missing is dropped, never left as raw braces in the
+    output, and neither is a placeholder that arrived with no block at all.
     """
-    match = _TABLE_BLOCK_RE.search(text)
-    if match is None:
-        return text.strip()
     tables: dict[str, str] = {}
-    try:
-        payload = json.loads(match.group(1))
-    except (ValueError, TypeError):
-        payload = None
-    if isinstance(payload, list):
+    for match in _TABLE_BLOCK_RE.finditer(text):
+        try:
+            payload = json.loads(match.group(1))
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, list):
+            continue
         for entry in payload:
             if not isinstance(entry, dict):
                 continue
@@ -854,7 +857,7 @@ def _insert_tables(text: str) -> str:
                 tables[tid] = render_markdown_table(
                     cols, rows, caption=caption if isinstance(caption, str) else None
                 )
-    text = text[: match.start()] + text[match.end() :]
+    text = _TABLE_BLOCK_RE.sub("", text)
     text = _PLACEHOLDER_RE.sub(lambda m: tables.get(m.group(1), ""), text)
     # A dropped placeholder leaves a blank run behind; collapse it.
     return re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -912,6 +915,8 @@ def document_workbook(
         raise AiDocError(f"AI documentation failed: {exc}") from exc
     if usage is not None:
         usage.add(call_usage)
+    if not text or not text.strip():
+        return "(AI returned empty response)"
     return _insert_tables(text)
 
 

@@ -1,4 +1,13 @@
-# One-shot: build a wide workbook (~180 lineage nodes) to stress the viewer.
+#!/usr/bin/env python3
+"""Build a wide workbook (~140 lineage nodes) to stress the viewer.
+
+Many stretched groups across 12 data sheets, cross-sheet summaries and a
+chaining top sheet: enough to trigger the viewer's wide-graph defaults
+(flow layout, label level-of-detail) without needing a real-world file.
+
+    uv run python scripts/make_dense_demo.py     # writes dense_check.xlsx
+"""
+
 from openpyxl import Workbook
 from openpyxl.workbook.defined_name import DefinedName
 

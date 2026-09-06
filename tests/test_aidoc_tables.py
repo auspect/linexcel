@@ -82,7 +82,45 @@ class TestInsertTables:
     def test_text_without_a_block_is_returned_stripped(self):
         assert _insert_tables("  plain markdown\n") == "plain markdown"
 
+    def test_placeholder_without_any_block_is_stripped(self):
+        # The model followed the placeholder rule but forgot the payload:
+        # the raw braces must not leak into the rendered document.
+        out = _insert_tables("Prose.\n\n{{T1}}\n\nMore.")
+        assert "{{T1}}" not in out
+        assert "Prose." in out and "More." in out
+
+    def test_multiple_blocks_are_all_consumed(self):
+        one = json.dumps([{"id": "T1", "columns": ["A"], "rows": [[1]]}])
+        two = json.dumps([{"id": "T2", "columns": ["B"], "rows": [[2]]}])
+        text = (
+            "{{T1}}\n```json_tables\n" + one + "\n```\n"
+            "middle\n{{T2}}\n```json_tables\n" + two + "\n```"
+        )
+        out = _insert_tables(text)
+        assert "```" not in out
+        assert "| A |" in out and "| B |" in out
+        assert "middle" in out
+
+    def test_block_tag_is_case_insensitive(self):
+        payload = json.dumps([{"id": "T1", "columns": ["A"], "rows": [[1]]}])
+        out = _insert_tables("{{T1}}\n```JSON_TABLES\n" + payload + "\n```")
+        assert "| A |" in out and "```" not in out
+
     def test_entries_with_wrong_shape_are_skipped(self):
         payload = [{"id": "T1", "columns": "oops", "rows": []}, "junk", 42]
         text = "Hi.\n```json_tables\n" + json.dumps(payload) + "\n```"
         assert _insert_tables(text) == "Hi."
+
+
+class TestNumericAlignment:
+    def test_version_strings_are_not_quantities(self):
+        md = render_markdown_table(["Dep"], [["1.2.3"], ["2.0.1"]])
+        assert "|---|" in md  # left-aligned, not right
+
+    def test_dates_are_not_quantities(self):
+        md = render_markdown_table(["Day"], [["2024-01-01"]])
+        assert "|---|" in md
+
+    def test_grouped_and_decimal_numbers_are_quantities(self):
+        md = render_markdown_table(["Amount"], [["1 000"], ["1 234,56"]])
+        assert "|---:|" in md

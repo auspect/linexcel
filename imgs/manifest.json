@@ -2,7 +2,7 @@
   "captured": "2026-09-06",
   "sources": {
     "src/linexcel/viewer.py": "5cc57330cf1cc08c8192222163922169e79f197babd8dc33a249e39d447c80fa",
-    "src/linexcel/assets/viewer.html": "a62024d9a4289421b3843ed395e80a30d2bdd0c7b2bc33fbd9eae650c27ee11b",
+    "src/linexcel/assets/viewer.html": "1123d6fe46c72e2920648950ba27a6686266cea58bcd0aafc4486a056236ccd9",
     "src/linexcel/i18n.py": "37430c3e88989888897bb13cc10652bedb20f77c3f43cbeef5dfdefa3e545036"
   },
   "images": {
