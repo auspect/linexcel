@@ -759,6 +759,10 @@
   };
   var byId = {};
   GRAPH.nodes.forEach(function (n) { byId[n.id] = n; });
+  // The one live Cytoscape instance, exposed module-scope so the document
+  // keydown handler (Escape clears the selection/panel) can reach it without
+  // threading a closure through every caller.
+  var activeCy = null;
   // Sheet filter state: ALL_SHEETS mirrors the sentinel option value rendered
   // server-side, CUR_SHEET is what the graph is currently narrowed to.
   var ALL_SHEETS = '__all__';
@@ -908,6 +912,7 @@
       pixelRatio: big ? 1 : 'auto', textureOnViewport: big, hideEdgesOnViewport: big,
       style: buildStyle(big), layout: layoutOpts(initial, hasFcose)
     });
+    activeCy = cy;
 
     cy.on('tap', 'node', function (ev) { select(cy, ev.target.id()); });
     cy.on('tap', function (ev) { if (ev.target === cy) clearSel(cy); });
@@ -933,6 +938,7 @@
     cy.on('select unselect', syncLabelLod);
     cy.one('layoutstop', syncLabelLod);
     renderPlaceholder();
+    setupEscapeDismiss();
 
     document.getElementById('lin-fit').onclick = function () {
       cy.animate({ fit: { padding: 40 }, duration: 250 });
@@ -1517,6 +1523,17 @@
     cy.elements().removeClass('dimmed hl'); cy.nodes(':selected').unselect();
     dimExternal(cy);
     renderPlaceholder();
+  }
+  // Escape dismisses the selection and its detail panel — the keyboard
+  // counterpart of the panel's ✕ — from anywhere in the document. The search
+  // box owns Escape (it resets the query there), so it is left untouched.
+  function setupEscapeDismiss() {
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || !activeCy) return;
+      var t = e.target;
+      if (t && (t.id === 'lin-search' || (t.tagName === 'INPUT' && t.type === 'search'))) return;
+      if (activeCy.nodes(':selected').length) { clearSel(activeCy); e.preventDefault(); }
+    });
   }
 
   // Nothing selected. On a narrow viewport the panel overlays the graph, so
