@@ -79,9 +79,15 @@
     display: flex; align-items: center; gap: .5rem; flex-wrap: nowrap;
     justify-content: flex-end; margin-left: auto; min-width: 0;
   }
+  /* The graph tools float over the canvas, top right, instead of crowding
+     the header: the header keeps identity and search, the canvas keeps
+     what only makes sense above a graph. */
   .lin-tools {
+    position: absolute; top: .6rem; right: .6rem; z-index: 5;
     display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
-    justify-content: flex-end; flex: 1 1 auto; min-width: 0;
+    justify-content: flex-end;
+    background: var(--legend-bg); border: 1px solid var(--hair);
+    border-radius: 8px; padding: .3rem;
   }
   .lin-tools[hidden] { display: none; }
   .lin-group { display: inline-flex; gap: .2rem; }
@@ -108,6 +114,56 @@
   .lin-theme .lin-ico-sun { display: none; }
   .lin-root[data-theme="dark"] .lin-theme .lin-ico-moon { display: none; }
   .lin-root[data-theme="dark"] .lin-theme .lin-ico-sun { display: block; }
+
+  /* --- brand mark: the package signs its report ------------------ */
+  .lin-brand {
+    display: flex; align-items: center; gap: .45rem;
+    font-family: ui-monospace, monospace; font-weight: 700;
+  }
+  .lin-brand-mark {
+    width: 20px; height: 20px; border-radius: 5px;
+    background: var(--ink); color: var(--surface);
+    display: grid; place-items: center; font-size: .68rem;
+  }
+  .lin-brand-word { font-size: .92rem; letter-spacing: -.01em; }
+
+  /* --- shell + left rail: views, node-type filters, layout ------- */
+  .lin-shell { flex: 1; display: flex; min-height: 0; }
+  .lin-rail {
+    width: 224px; flex-shrink: 0; overflow-y: auto;
+    background: var(--surface); border-right: 1px solid var(--hair);
+    padding: .8rem .6rem; display: flex; flex-direction: column; gap: 1.1rem;
+  }
+  .lin-rail-label {
+    font-size: .64rem; font-weight: 600; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted);
+    padding: 0 .5rem; margin-bottom: .35rem;
+  }
+  .lin-rail .lin-tabs { flex-direction: column; align-items: stretch; gap: .15rem; }
+  .lin-rail .lin-tab { text-align: left; display: flex; align-items: center; gap: .5rem; }
+  .lin-kinds { display: flex; flex-direction: column; gap: .1rem; }
+  .lin-kind {
+    display: flex; align-items: center; gap: .5rem; width: 100%;
+    padding: .28rem .5rem; border: none; border-radius: 6px; background: none;
+    color: var(--ink2); cursor: pointer; font: inherit; text-align: left;
+  }
+  .lin-kind:hover { background: var(--hair); color: var(--ink); }
+  .lin-kind-n {
+    margin-left: auto; font-size: .72rem; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .lin-kind[aria-pressed="false"] { opacity: .4; }
+  .lin-seg {
+    display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
+    overflow: hidden; background: var(--surface2); margin: 0 .5rem;
+    align-self: flex-start;
+  }
+  .lin-seg button {
+    padding: .28rem .55rem; border: none; background: none;
+    color: var(--ink2); cursor: pointer; font: inherit; font-size: .8rem;
+  }
+  .lin-seg button + button { border-left: 1px solid var(--hair); }
+  .lin-seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
 
   /* --- search: a control, not a bare input ----------------------------- */
   .lin-search {
@@ -448,6 +504,17 @@
       border-bottom: 1px solid var(--hair);
     }
     .lin-search input { width: 9rem; }
+    /* The rail stops being a column and becomes a strip under the header. */
+    .lin-shell { flex-direction: column; }
+    .lin-rail {
+      width: auto; flex-direction: row; align-items: center; gap: .9rem;
+      border-right: none; border-bottom: 1px solid var(--hair);
+      overflow-x: auto; overflow-y: hidden; padding: .5rem .6rem;
+    }
+    .lin-rail .lin-tabs { flex-direction: row; }
+    .lin-rail-label { margin-bottom: 0; }
+    .lin-kinds { flex-direction: row; }
+    .lin-seg { margin: 0; }
   }
   /* The two readings stop being readable side by side once the panel is a
      narrow overlay: stack them and move the divider between the rows. */
@@ -463,47 +530,27 @@
 
 <div class="lin-root" data-theme="light">
   <header class="lin-bar">
+    <div class="lin-brand" aria-hidden="true">
+      <span class="lin-brand-mark">lx</span><span class="lin-brand-word">linexcel</span>
+    </div>
     <div class="lin-id">
       <h1>__TITLE__</h1>
       <span class="stat" id="lin-stats"></span>
     </div>
-    <div class="lin-tabs" role="tablist" id="lin-tablist">
-      <button type="button" id="lin-tab-graph" class="lin-tab" role="tab"
-        aria-selected="true" aria-controls="lin-graph-main" tabindex="0">Graph</button>
-      <button type="button" id="lin-tab-overview" class="lin-tab" role="tab"
-        aria-selected="false" aria-controls="lin-overview-main" tabindex="-1" hidden>Workbook overview</button>
-      <button type="button" id="lin-tab-sheets" class="lin-tab" role="tab"
-        aria-selected="false" aria-controls="lin-sheets-main" tabindex="-1" hidden>Sheets</button>
-      <button type="button" id="lin-tab-screenshots" class="lin-tab" role="tab"
-        aria-selected="false" aria-controls="lin-screenshots-main" tabindex="-1" hidden>Visual preview</button>
-    </div>
     <div class="lin-bar-right">
-      <div class="lin-tools" id="lin-tools">
-        <div class="lin-search" id="lin-searchbox">
+      <div class="lin-search" id="lin-searchbox">
+        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
+          <path d="M10.6 10.6 L14.2 14.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+        </svg>
+        <input id="lin-search" type="search" autocomplete="off" spellcheck="false" />
+        <button type="button" id="lin-search-clear" class="lin-search-clear" hidden>
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-            <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
-            <path d="M10.6 10.6 L14.2 14.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+            <path d="M4.2 4.2 L11.8 11.8 M11.8 4.2 L4.2 11.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
           </svg>
-          <input id="lin-search" type="search" autocomplete="off" spellcheck="false" />
-          <button type="button" id="lin-search-clear" class="lin-search-clear" hidden>
-            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-              <path d="M4.2 4.2 L11.8 11.8 M11.8 4.2 L4.2 11.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-            </svg>
-          </button>
-        </div>
-        <span class="lin-search-status" id="lin-search-status" role="status" aria-live="polite" hidden></span>
-        <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
-        <div class="lin-group">
-          <button type="button" id="lin-lay-dagre" aria-pressed="false">Flow</button>
-          <button type="button" id="lin-lay-fcose" aria-pressed="true">Organic</button>
-        </div>
-        <div class="lin-group">
-          <button type="button" id="lin-zoom-in" class="lin-icon">+</button>
-          <button type="button" id="lin-zoom-out" class="lin-icon">−</button>
-          <button type="button" id="lin-fit">Fit</button>
-          <button type="button" id="lin-fit-sel" hidden>Fit Selection</button>
-        </div>
+        </button>
       </div>
+      <span class="lin-search-status" id="lin-search-status" role="status" aria-live="polite" hidden></span>
       <button type="button" id="lin-theme" class="lin-theme" aria-pressed="false">
         <svg class="lin-ico-moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <path d="M13.4 10.1A5.8 5.8 0 0 1 5.9 2.6 6 6 0 1 0 13.4 10.1Z" fill="currentColor"></path>
@@ -515,25 +562,62 @@
       </button>
     </div>
   </header>
-  <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
-    <div class="lin-cy" id="lin-cy">
-      <div class="lin-legend" id="lin-legend"></div>
+  <div class="lin-shell">
+    <nav class="lin-rail">
+      <div>
+        <div class="lin-rail-label" id="lin-rail-views">Views</div>
+        <div class="lin-tabs" role="tablist" id="lin-tablist">
+          <button type="button" id="lin-tab-graph" class="lin-tab" role="tab"
+            aria-selected="true" aria-controls="lin-graph-main" tabindex="0">Graph</button>
+          <button type="button" id="lin-tab-overview" class="lin-tab" role="tab"
+            aria-selected="false" aria-controls="lin-overview-main" tabindex="-1" hidden>Workbook overview</button>
+          <button type="button" id="lin-tab-sheets" class="lin-tab" role="tab"
+            aria-selected="false" aria-controls="lin-sheets-main" tabindex="-1" hidden>Sheets</button>
+          <button type="button" id="lin-tab-screenshots" class="lin-tab" role="tab"
+            aria-selected="false" aria-controls="lin-screenshots-main" tabindex="-1" hidden>Visual preview</button>
+        </div>
+      </div>
+      <div>
+        <div class="lin-rail-label" id="lin-rail-kinds-label">Node types</div>
+        <div class="lin-kinds" id="lin-rail-kinds"></div>
+      </div>
+      <div>
+        <div class="lin-rail-label" id="lin-rail-layout-label">Layout</div>
+        <div class="lin-seg">
+          <button type="button" id="lin-lay-dagre" aria-pressed="false">Flow</button>
+          <button type="button" id="lin-lay-fcose" aria-pressed="true">Organic</button>
+        </div>
+      </div>
+    </nav>
+    <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
+      <div class="lin-cy" id="lin-cy">
+        <div class="lin-tools" id="lin-tools">
+          <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
+          <div class="lin-group">
+            <button type="button" id="lin-zoom-in" class="lin-icon">+</button>
+            <button type="button" id="lin-zoom-out" class="lin-icon">−</button>
+            <button type="button" id="lin-fit">Fit</button>
+            <button type="button" id="lin-fit-sel" hidden>Fit Selection</button>
+          </div>
+        </div>
+        <div class="lin-legend" id="lin-legend"></div>
+      </div>
+      <aside class="lin-panel lin-empty" id="lin-panel" role="region" tabindex="-1"></aside>
     </div>
-    <aside class="lin-panel lin-empty" id="lin-panel" role="region" tabindex="-1"></aside>
-  </div>
-  <div class="lin-main hidden" id="lin-overview-main" role="tabpanel" aria-labelledby="lin-tab-overview">
-    <article class="lin-overview"><div class="lin-overview-inner" id="lin-overview"></div></article>
-  </div>
-  <div class="lin-main hidden" id="lin-sheets-main" role="tabpanel" aria-labelledby="lin-tab-sheets">
-    <div class="lin-sheets-wrap">
-      <aside id="lin-sheets-sidebar"></aside>
-      <article class="lin-sheet-body">
-        <div id="lin-sheet-details" class="lin-overview-inner"></div>
-      </article>
+    <div class="lin-main hidden" id="lin-overview-main" role="tabpanel" aria-labelledby="lin-tab-overview">
+      <article class="lin-overview"><div class="lin-overview-inner" id="lin-overview"></div></article>
     </div>
-  </div>
-  <div class="lin-main hidden" id="lin-screenshots-main" role="tabpanel" aria-labelledby="lin-tab-screenshots">
-    <article class="lin-overview"><div class="lin-overview-inner" id="lin-screenshots"></div></article>
+    <div class="lin-main hidden" id="lin-sheets-main" role="tabpanel" aria-labelledby="lin-tab-sheets">
+      <div class="lin-sheets-wrap">
+        <aside id="lin-sheets-sidebar"></aside>
+        <article class="lin-sheet-body">
+          <div id="lin-sheet-details" class="lin-overview-inner"></div>
+        </article>
+      </div>
+    </div>
+    <div class="lin-main hidden" id="lin-screenshots-main" role="tabpanel" aria-labelledby="lin-tab-screenshots">
+      <article class="lin-overview"><div class="lin-overview-inner" id="lin-screenshots"></div></article>
+    </div>
   </div>
 </div>
 
@@ -714,6 +798,9 @@
     document.getElementById('lin-tab-overview').textContent = _t('overview');
     document.getElementById('lin-tab-sheets').textContent = _t('sheets_tab');
     document.getElementById('lin-tab-screenshots').textContent = _t('visual');
+    document.getElementById('lin-rail-views').textContent = _t('rail_views');
+    document.getElementById('lin-rail-kinds-label').textContent = _t('rail_kinds');
+    document.getElementById('lin-rail-layout-label').textContent = _t('rail_layout');
     var search = document.getElementById('lin-search');
     search.placeholder = _t('search');
     search.setAttribute('aria-label', _t('search_label'));
@@ -921,6 +1008,7 @@
     });
     searchClear.onclick = function () { restoreGraph(); search.focus(); };
     buildLegend();
+    buildKindFilters(cy, layoutOpts, function () { return curLayout; }, hasFcose);
     setupScreenshots();
   }
 
@@ -1277,6 +1365,8 @@
       { selector: 'node.far', style: { 'text-opacity': 0 } },
       { selector: 'node:selected', style: { 'border-width': 3.5,
         'border-color': t.ink, color: t.ink, 'font-size': 11, 'text-opacity': 1 } },
+      // A kind switched off in the rail leaves the layout entirely.
+      { selector: '.kind-off', style: { 'display': 'none' } },
       { selector: '.dimmed', style: { opacity: 0.12 } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
@@ -1299,6 +1389,39 @@
       span.appendChild(sw);
       span.appendChild(document.createTextNode(_t(KIND[k].labelKey)));
       el.appendChild(span);
+    });
+  }
+
+  // The rail's node-type filters: one toggle per kind present, with its
+  // count. Off kinds leave the canvas *and* the layout (display: none), so
+  // what remains re-flows instead of leaving holes.
+  function buildKindFilters(cy, layoutOpts, getLayout, hasFcose) {
+    var counts = {};
+    GRAPH.nodes.forEach(function (n) { counts[n.kind] = (counts[n.kind] || 0) + 1; });
+    var host = document.getElementById('lin-rail-kinds');
+    Object.keys(KIND).forEach(function (k) {
+      if (!counts[k]) return;
+      var btn = el('button', 'lin-kind');
+      btn.type = 'button';
+      btn.setAttribute('aria-pressed', 'true');
+      var sw = el('span', 'lin-sw lin-sw-' + (KIND[k].sw || 'box'));
+      sw.style.background = KIND[k].color;
+      btn.appendChild(sw);
+      btn.appendChild(document.createTextNode(_t(KIND[k].labelKey)));
+      btn.appendChild(el('span', 'lin-kind-n', counts[k].toLocaleString(LANG)));
+      btn.onclick = function () {
+        var off = btn.getAttribute('aria-pressed') === 'true';
+        btn.setAttribute('aria-pressed', off ? 'false' : 'true');
+        cy.batch(function () {
+          cy.nodes('.' + k).forEach(function (node) {
+            if (off) node.addClass('kind-off'); else node.removeClass('kind-off');
+          });
+        });
+        var visible = cy.elements(':visible');
+        visible.layout(layoutOpts(getLayout(), hasFcose)).run();
+        cy.fit(visible, 40);
+      };
+      host.appendChild(btn);
     });
   }
 

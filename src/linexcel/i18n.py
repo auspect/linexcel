@@ -139,6 +139,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "value, step-by-step evaluation, and AI-generated documentation."
         ),
         "sheets_tab": "Sheets",
+        "rail_views": "Views",
+        "rail_kinds": "Node types",
+        "rail_layout": "Layout",
         "all_sheets": "All sheets",
         "sheet_filter": "Sheet filter",
         "sheet_dims": "{rows} rows × {cols} columns",
@@ -263,6 +266,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "valeur calculée, sa décomposition pas à pas et sa documentation IA."
         ),
         "sheets_tab": "Feuilles",
+        "rail_views": "Vues",
+        "rail_kinds": "Types de nœuds",
+        "rail_layout": "Mise en page",
         "all_sheets": "Toutes les feuilles",
         "sheet_filter": "Filtre par feuille",
         "sheet_dims": "{rows} lignes × {cols} colonnes",
@@ -388,6 +394,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "por IA."
         ),
         "sheets_tab": "Hojas",
+        "rail_views": "Vistas",
+        "rail_kinds": "Tipos de nodo",
+        "rail_layout": "Disposición",
         "all_sheets": "Todas las hojas",
         "sheet_filter": "Filtro por hoja",
         "sheet_dims": "{rows} filas × {cols} columnas",
@@ -514,6 +523,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "KI-generierte Dokumentation anzuzeigen."
         ),
         "sheets_tab": "Blätter",
+        "rail_views": "Ansichten",
+        "rail_kinds": "Knotentypen",
+        "rail_layout": "Layout",
         "all_sheets": "Alle Blätter",
         "sheet_filter": "Blattfilter",
         "sheet_dims": "{rows} Zeilen × {cols} Spalten",
@@ -640,6 +652,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "generata dall'IA."
         ),
         "sheets_tab": "Fogli",
+        "rail_views": "Viste",
+        "rail_kinds": "Tipi di nodo",
+        "rail_layout": "Layout",
         "all_sheets": "Tutti i fogli",
         "sheet_filter": "Filtro per foglio",
         "sheet_dims": "{rows} righe × {cols} colonne",
@@ -764,6 +779,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "IA."
         ),
         "sheets_tab": "Folhas",
+        "rail_views": "Vistas",
+        "rail_kinds": "Tipos de nó",
+        "rail_layout": "Disposição",
         "all_sheets": "Todas as folhas",
         "sheet_filter": "Filtro por folha",
         "sheet_dims": "{rows} linhas × {cols} colunas",
@@ -890,6 +908,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "documentatie te bekijken."
         ),
         "sheets_tab": "Bladen",
+        "rail_views": "Weergaven",
+        "rail_kinds": "Knooppunttypes",
+        "rail_layout": "Indeling",
         "all_sheets": "Alle bladen",
         "sheet_filter": "Bladfilter",
         "sheet_dims": "{rows} rijen × {cols} kolommen",
@@ -1009,6 +1030,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "評価、AI が生成したドキュメントを確認できます。"
         ),
         "sheets_tab": "シート",
+        "rail_views": "ビュー",
+        "rail_kinds": "ノードの種類",
+        "rail_layout": "レイアウト",
         "all_sheets": "すべてのシート",
         "sheet_filter": "シートで絞り込み",
         "sheet_dims": "{rows} 行 × {cols} 列",
@@ -1123,6 +1147,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "以及 AI 生成的文档。"
         ),
         "sheets_tab": "工作表",
+        "rail_views": "视图",
+        "rail_kinds": "节点类型",
+        "rail_layout": "布局",
         "all_sheets": "所有工作表",
         "sheet_filter": "按工作表筛选",
         "sheet_dims": "{rows} 行 × {cols} 列",

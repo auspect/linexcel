@@ -91,20 +91,25 @@ class TestTopBarGroups:
         assert '<div class="lin-tabs" role="tablist" id="lin-tablist">' in html
         assert '<div class="lin-tools" id="lin-tools">' in html
 
-    def test_the_graph_tools_live_in_the_tools_group(self):
-        bar = render_html(demo_graph()).split('id="lin-tools"', 1)[1]
-        tools = bar.split("</header>", 1)[0]
+    def test_the_graph_tools_float_over_the_canvas(self):
+        """The toolbar holds only what makes sense above a graph; the search
+        stays in the header, the layout switch lives in the rail."""
+        html = render_html(demo_graph())
+        tools = html.split('id="lin-tools"', 1)[1].split('id="lin-legend"', 1)[0]
         for control in (
-            "lin-search",
             "lin-sheet-filter",
-            "lin-lay-dagre",
-            "lin-lay-fcose",
             "lin-zoom-in",
             "lin-zoom-out",
             "lin-fit",
             "lin-fit-sel",
         ):
             assert control in tools, control
+        header = html.split("</header>", 1)[0]
+        assert "lin-search" in header
+        assert "lin-sheet-filter" not in header
+        rail = html.split('class="lin-rail"', 1)[1].split('id="lin-graph-main"', 1)[0]
+        for control in ("lin-lay-dagre", "lin-lay-fcose", "lin-tablist"):
+            assert control in rail, control
 
     def test_the_tools_are_hidden_away_from_the_graph_tab(self):
         html = render_html(demo_graph())
@@ -118,6 +123,32 @@ class TestTopBarGroups:
         html = render_html(demo_graph())
         assert "fitSelBtn.hidden = cy.nodes(':selected').length === 0;" in html
         assert 'id="lin-fit-sel" hidden' in html
+
+
+class TestLeftRail:
+    def test_the_rail_groups_views_kinds_and_layout(self):
+        html = render_html(demo_graph())
+        assert '<nav class="lin-rail">' in html
+        for rid in (
+            "lin-rail-views",
+            "lin-rail-kinds-label",
+            "lin-rail-layout-label",
+            "lin-rail-kinds",
+        ):
+            assert f'id="{rid}"' in html, rid
+
+    def test_the_rail_labels_are_translated(self):
+        html = render_html(demo_graph(), language="fr")
+        assert "_t('rail_views')" in html
+        assert "_t('rail_kinds')" in html
+        assert "_t('rail_layout')" in html
+
+    def test_kind_filters_toggle_a_display_none_class(self):
+        html = render_html(demo_graph())
+        assert "function buildKindFilters(" in html
+        assert "buildKindFilters(cy, layoutOpts" in html
+        assert "{ selector: '.kind-off', style: { 'display': 'none' } }" in html
+        assert "node.addClass('kind-off'); else node.removeClass('kind-off');" in html
 
 
 class TestTablistSemantics:
@@ -213,13 +244,15 @@ class TestDarkTheme:
         assert "color-scheme: dark;" in html
 
     def test_the_toggle_lives_outside_the_graph_only_tools(self):
-        """It must stay reachable on the tabs where .lin-tools is hidden."""
+        """It must stay reachable on the tabs where .lin-tools is hidden:
+        the toggle sits in the header, the tools float over the graph canvas."""
         html = render_html(demo_graph())
         assert '<div class="lin-bar-right">' in html
-        between = html.split('id="lin-tools"', 1)[1].split('id="lin-theme"', 1)[0]
-        # The tools container has closed by the time the toggle appears, so the
-        # `hidden` that blanks .lin-tools on the other tabs cannot reach it.
-        assert between.count("</div>") == between.count("<div") + 1
+        header = html.split("</header>", 1)[0]
+        canvas = html.split("</header>", 1)[1]
+        assert 'id="lin-theme"' in header
+        assert 'id="lin-tools"' not in header
+        assert 'id="lin-tools"' in canvas
         assert "named('lin-theme', _t('theme_dark'));" in html
 
     def test_the_toggle_reports_its_state(self):
@@ -315,6 +348,9 @@ class TestNewInterfaceStrings:
         "hidden_columns",
         "merged_ranges",
         "comments",
+        "rail_views",
+        "rail_kinds",
+        "rail_layout",
     )
 
     def test_every_language_defines_them(self):
