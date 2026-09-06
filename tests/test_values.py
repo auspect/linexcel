@@ -444,6 +444,30 @@ class TestDates:
         assert cached.epoch_1904 is True
         assert _detect_epoch_1904(buf.getvalue()) is True
 
+    def test_error_cached_values_handles_attribute_ordering_and_leading_slashes(self):
+        from linexcel.loader import _parse_sheet_targets
+
+        wb_xml = (
+            '<workbook xmlns:r="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships">'
+            '<sheets><sheet r:id="rId1" name="Données" sheetId="1"/>'
+            '<sheet sheetId="2" name="Calculs" r:id="rId2"/></sheets></workbook>'
+        )
+        rels_xml = (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/'
+            'package/2006/relationships">'
+            '<Relationship Target="/xl/worksheets/sheet1.xml" Id="rId1" '
+            'Type="worksheet"/>'
+            '<Relationship Type="worksheet" Target="worksheets/sheet2.xml" '
+            'Id="rId2"/>'
+            "</Relationships>"
+        )
+        targets = _parse_sheet_targets(wb_xml, rels_xml)
+        assert targets == {
+            "Données": "xl/worksheets/sheet1.xml",
+            "Calculs": "xl/worksheets/sheet2.xml",
+        }
+
 
 class TestVolatileFormulas:
     """A volatile cell is reported as *not* recalculated, on purpose.
@@ -805,6 +829,15 @@ class TestProvenance:
         resolver = resolver_for({(SHEET, 1, 1): 6.0}, cached, warnings)
         assert resolver.value(SHEET, 1, 1)[0] == 6.0
         assert warnings == ["S!A1: recalculated 6.0 differs from file value 5.0"]
+
+        # Large floats differing only by floating-point roundoff (e.g. 4B sum)
+        warnings.clear()
+        cached_large = CachedValues({(SHEET, 1, 1): 4_171_793_037.02}, set(), False)
+        resolver = resolver_for(
+            {(SHEET, 1, 1): 4_171_793_037.020002}, cached_large, warnings
+        )
+        assert resolver.value(SHEET, 1, 1)[0] == 4_171_793_037.020002
+        assert warnings == []
 
     def test_file_value_is_used_when_the_engine_has_nothing(self):
         warnings: list[str] = []

@@ -178,11 +178,31 @@ def load_cached_values(
 _ERROR_CELL_RE = re.compile(
     rb'<c(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"[^>]*>(.*?)</c>', re.S
 )
-#: ``<sheet name="S" r:id="rId1"/>`` — maps a displayed sheet to its r:id.
-_SHEET_NAME_RE = re.compile(r'<sheet[^>]*?name="([^"]+)"[^>]*?r:id="([^"]+)"')
-#: ``<Relationship Id="rId1" … Target="worksheets/sheet1.xml"/>`` — the r:id
-#: to the zip part (relative to xl/) that actually holds the sheet's cells.
-_REL_TARGET_RE = re.compile(r'<Relationship[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"')
+
+
+def _parse_sheet_targets(wb_xml: str, rels_xml: str) -> dict[str, str]:
+    """Map sheet name to zip part path (e.g. 'xl/worksheets/sheet1.xml')."""
+    targets: dict[str, str] = {}
+    for rel in re.finditer(r"<Relationship\b([^>]+)>", rels_xml):
+        attr_text = rel.group(1)
+        id_m = re.search(r'\bId="([^"]+)"', attr_text)
+        target_m = re.search(r'\bTarget="([^"]+)"', attr_text)
+        if id_m and target_m:
+            target = target_m.group(1).lstrip("/")
+            if not target.startswith("xl/"):
+                target = f"xl/{target}"
+            targets[id_m.group(1)] = target
+
+    sheet_paths: dict[str, str] = {}
+    for sheet in re.finditer(r"<sheet\b([^>]+)>", wb_xml):
+        attr_text = sheet.group(1)
+        name_m = re.search(r'\bname="([^"]+)"', attr_text)
+        rid_m = re.search(r'\br:id="([^"]+)"', attr_text)
+        if name_m and rid_m:
+            rid = rid_m.group(1)
+            if rid in targets:
+                sheet_paths[name_m.group(1)] = targets[rid]
+    return sheet_paths
 
 
 def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
@@ -200,10 +220,7 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             wb_xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
             rels = zf.read("xl/_rels/workbook.xml.rels").decode("utf-8", "ignore")
-            targets = dict(_REL_TARGET_RE.findall(rels))
-            for name, rid in _SHEET_NAME_RE.findall(wb_xml):
-                target = targets.get(rid, "")
-                zpath = "xl/" + target.lstrip("/")
+            for name, zpath in _parse_sheet_targets(wb_xml, rels).items():
                 if not zpath.endswith(".xml"):
                     continue
                 try:

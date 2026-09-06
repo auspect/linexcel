@@ -14,6 +14,7 @@ them.
 from __future__ import annotations
 
 import datetime
+import math
 import re
 from typing import Any
 
@@ -125,7 +126,7 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     if isinstance(raw, bool) or isinstance(cached, bool):
         return False
     if isinstance(raw, (int, float)) and isinstance(cached, (int, float)):
-        return abs(float(raw) - float(cached)) > 1e-9
+        return not math.isclose(float(raw), float(cached), rel_tol=1e-9, abs_tol=1e-9)
     return False
 
 
@@ -215,7 +216,11 @@ def _separators_only(left: str, right: str) -> bool:
     if not left_numbers:
         return False  # no numbers at all: the strings simply differ
     return all(
-        _read_number(a.group()) & _read_number(b.group())
+        any(
+            math.isclose(a_val, b_val, rel_tol=1e-9, abs_tol=1e-9)
+            for a_val in _read_number(a.group())
+            for b_val in _read_number(b.group())
+        )
         for a, b in zip(left_numbers, right_numbers)
     )
 
@@ -236,6 +241,8 @@ def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str
     """
     if _values_differ(recalculated, stored, date_text):
         return "differ"
+    if isinstance(recalculated, (int, float)) and isinstance(stored, (int, float)):
+        return "same"
     left, right = _fmt_value(recalculated), _fmt_value(stored)
     if left == right:
         return "same"
