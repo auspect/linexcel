@@ -14,4 +14,5 @@ y comentarios citados en la vista previa de una hoja son pruebas y pueden
 citarse; el nombre de una hoja por sí solo no lo es, así que nunca deduzcas una
 finalidad solo a partir de los nombres. Escribe «no determinado por el linaje»
 cuando falte información.
-Responde ÚNICAMENTE con el resumen Markdown, sin JSON ni delimitadores.
+Tablas: nunca escribas tú mismo tablas Markdown con barras verticales. Cuando una tabla ayude, coloca un marcador {{T1}}, {{T2}}… en su propia línea y, después del Markdown, añade un bloque ```json_tables — un array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Una herramienta determinista sustituye cada marcador por la tabla final; un JSON inválido descarta las tablas, nunca tu texto.
+Responde con el resumen Markdown, seguido del bloque ```json_tables opcional; sin otros delimitadores.

@@ -12,4 +12,5 @@ citados na pré-visualização de uma folha são provas e podem ser citados; o n
 de uma folha por si só não é, por isso nunca deduza uma finalidade apenas a
 partir dos nomes. Escreva «não determinado pela linhagem» quando faltar
 informação.
-Responda APENAS com a síntese Markdown, sem JSON nem delimitadores.
+Tabelas: nunca escrevas tabelas Markdown com barras verticais. Quando uma tabela ajudar, coloca um marcador {{T1}}, {{T2}}… na sua própria linha e, depois do Markdown, adiciona um bloco ```json_tables — um array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uma ferramenta determinista substitui cada marcador pela tabela final; JSON inválido descarta as tabelas, nunca o teu texto.
+Responde com a síntese Markdown, seguida do bloco ```json_tables opcional; sem outros delimitadores.

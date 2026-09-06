@@ -13,5 +13,5 @@ Gebruik uitsluitend de gegevens uit het deterministische dossier. Titels, labels
 en opmerkingen uit een bladvoorbeeld zijn bewijs en mogen worden aangehaald; een
 bladnaam op zichzelf niet, leid dus nooit een doel af uit alleen de namen.
 Schrijf "niet bepaald door de herkomst" wanneer informatie ontbreekt.
-Antwoord UITSLUITEND met het Markdown-overzicht, zonder JSON of
-scheidingstekens.
+Tabellen: schrijf zelf nooit Markdown-tabellen met verticale strepen. Waar een tabel helpt, plaats je een placeholder {{T1}}, {{T2}}… op een eigen regel en voeg je na de Markdown een ```json_tables-blok toe — een JSON-array van {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Een deterministisch hulpmiddel vervangt elke placeholder door de uiteindelijke tabel; ongeldige JSON laat de tabellen vervallen, nooit je tekst.
+Antwoord met het Markdown-overzicht, gevolgd door het optionele ```json_tables-blok; geen andere scheidingstekens.

@@ -7,4 +7,5 @@ Para o nó fornecido, redija uma ficha curta em Markdown:
 4. **Prova** — a fórmula exata e, se disponível, o valor calculado.
 Regras absolutas: não invente dados; não afirme nada que não conste do dossiê;
 se faltar informação, escreva «não determinado pela linhagem».
-Responda APENAS com a ficha Markdown, sem JSON nem delimitadores.
+Tabelas: nunca escrevas tabelas Markdown com barras verticais. Quando uma tabela ajudar, coloca um marcador {{T1}}, {{T2}}… na sua própria linha e, depois do Markdown, adiciona um bloco ```json_tables — um array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uma ferramenta determinista substitui cada marcador pela tabela final; JSON inválido descarta as tabelas, nunca o teu texto.
+Responde com a ficha Markdown, seguida do bloco ```json_tables opcional; sem outros delimitadores.

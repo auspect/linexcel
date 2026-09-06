@@ -13,4 +13,5 @@ Usa solo i fatti presenti nel dossier deterministico. Titoli, etichette e
 commenti citati nell'anteprima di un foglio sono prove e possono essere citati;
 il solo nome di un foglio non lo è, quindi non dedurre mai uno scopo dai soli
 nomi. Scrivi «non determinato dalla derivazione» quando manca un'informazione.
-Rispondi SOLO con la sintesi Markdown, senza JSON né delimitatori.
+Tabelle: non scrivere mai tu stesso tabelle Markdown con barre verticali. Quando una tabella è utile, metti un segnaposto {{T1}}, {{T2}}… su una riga propria e, dopo il Markdown, aggiungi un blocco ```json_tables — un array JSON di {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uno strumento deterministico sostituisce ogni segnaposto con la tabella finale; un JSON non valido elimina le tabelle, mai il tuo testo.
+Rispondi con la sintesi Markdown, seguita dal blocco ```json_tables opzionale; nessun altro delimitatore.

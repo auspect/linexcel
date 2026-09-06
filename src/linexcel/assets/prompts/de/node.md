@@ -7,4 +7,5 @@ Verfasse für den angegebenen Knoten eine kurze Markdown-Karte:
 4. **Nachweis** — die exakte Formel und, falls vorhanden, der berechnete Wert.
 Absolute Regeln: erfinde keine Daten; behaupte nichts, was nicht im Dossier
 steht; fehlt eine Information, schreibe „nicht durch die Herkunft bestimmt“.
-Antworte AUSSCHLIESSLICH mit der Markdown-Karte, ohne JSON, ohne Trennzeichen.
+Tabellen: Schreibe niemals selbst Markdown-Tabellen mit senkrechten Strichen. Wo eine Tabelle hilft, setze einen Platzhalter {{T1}}, {{T2}}… in eine eigene Zeile und füge nach dem Markdown einen ```json_tables-Block hinzu — ein JSON-Array aus {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Ein deterministisches Werkzeug ersetzt jeden Platzhalter durch die fertige Tabelle; ungültiges JSON verwirft die Tabellen, niemals deinen Text.
+Antworte mit der Markdown-Karte, gefolgt vom optionalen ```json_tables-Block; keine weiteren Trennzeichen.

@@ -767,6 +767,100 @@ def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 # ──────────────────────────────────────────────
+# Structured tables
+# ──────────────────────────────────────────────
+#
+# The model never writes Markdown pipe tables itself: a small local model
+# breaks the syntax in ways a renderer cannot recover from (dropped cells,
+# shifted columns, a separator row that swallows the header). Instead the
+# prompts ask for a ``{{T1}}`` placeholder in the prose plus the table's
+# *content* as JSON in a trailing ```json_tables block, and the functions
+# below render the Markdown deterministically. Malformed JSON costs the
+# tables, never the prose.
+
+_TABLE_BLOCK_RE = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL)
+_PLACEHOLDER_RE = re.compile(r"\{\{(T\d+)\}\}")
+_NUMERIC_CELL_RE = re.compile(r"[-−+]?\d[\d\s.,]*%?")
+
+
+def _md_cell(value: Any) -> str:
+    """One table cell, safe to drop into pipe syntax."""
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def render_markdown_table(
+    columns: list[Any],
+    rows: list[list[Any]],
+    *,
+    caption: str | None = None,
+) -> str:
+    """Render a Markdown pipe table from structured data — the only place in
+    linexcel where table syntax is written.
+
+    A column whose cells all parse as numbers is right-aligned (``---:``),
+    so amounts line up on their decimal separator. Rows shorter than the
+    header are padded, longer ones truncated: a ragged model row can no
+    longer shift every column after it.
+    """
+    cols = [_md_cell(c) for c in columns]
+    width = len(cols)
+    body = [([_md_cell(v) for v in row] + [""] * width)[:width] for row in rows]
+    aligns = []
+    for j in range(width):
+        values = [r[j] for r in body if r[j]]
+        numeric = bool(values) and all(_NUMERIC_CELL_RE.fullmatch(v) for v in values)
+        aligns.append("---:" if numeric else "---")
+    lines: list[str] = []
+    if caption:
+        lines += [f"*{caption}*", ""]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("|" + "|".join(aligns) + "|")
+    lines += ["| " + " | ".join(r) + " |" for r in body]
+    return "\n".join(lines)
+
+
+def _insert_tables(text: str) -> str:
+    """Swap ``{{Tn}}`` placeholders for code-rendered Markdown tables.
+
+    The structured payload travels in a trailing ```json_tables fenced
+    block; the block itself is removed from the returned text. Unparseable
+    or incomplete payloads degrade to prose — a placeholder whose table is
+    missing is dropped, never left as raw braces in the output.
+    """
+    match = _TABLE_BLOCK_RE.search(text)
+    if match is None:
+        return text.strip()
+    tables: dict[str, str] = {}
+    try:
+        payload = json.loads(match.group(1))
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, list):
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            tid, cols, rows = (
+                entry.get("id"),
+                entry.get("columns"),
+                entry.get("rows"),
+            )
+            if (
+                isinstance(tid, str)
+                and isinstance(cols, list)
+                and isinstance(rows, list)
+            ):
+                caption = entry.get("caption")
+                tables[tid] = render_markdown_table(
+                    cols, rows, caption=caption if isinstance(caption, str) else None
+                )
+    text = text[: match.start()] + text[match.end() :]
+    text = _PLACEHOLDER_RE.sub(lambda m: tables.get(m.group(1), ""), text)
+    # A dropped placeholder leaves a blank run behind; collapse it.
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+# ──────────────────────────────────────────────
 # Public API
 # ──────────────────────────────────────────────
 
@@ -818,7 +912,7 @@ def document_workbook(
         raise AiDocError(f"AI documentation failed: {exc}") from exc
     if usage is not None:
         usage.add(call_usage)
-    return text
+    return _insert_tables(text)
 
 
 def describe_images(
@@ -994,7 +1088,13 @@ def document_nodes(
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
         text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
-        return nid, text or "(AI returned empty response)", call_usage
+        return (
+            nid,
+            _insert_tables(text)
+            if text and text.strip()
+            else "(AI returned empty response)",
+            call_usage,
+        )
 
     # The tally drives the budget, so it must exist even when the caller wants
     # no accumulator of their own; when they do pass one, it *is* the tally.

@@ -7,4 +7,5 @@ Pour le nœud fourni, rédige une fiche courte en Markdown :
 4. **Preuve** — la formule exacte et, si disponible, la valeur calculée.
 Règles absolues : n'invente aucune donnée ; n'affirme rien qui ne soit pas dans
 le dossier ; si une information manque, écris « non déterminé par le lignage ».
-Réponds UNIQUEMENT avec la fiche Markdown, aucun JSON, aucun délimiteur.
+Tableaux : n'écris jamais de tableau Markdown toi-même. Quand un tableau aide, place un repère {{T1}}, {{T2}}… sur sa propre ligne, puis après le Markdown ajoute un bloc ```json_tables — un tableau JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Un outil déterministe remplace chaque repère par le tableau final ; un JSON invalide supprime les tableaux, jamais ton texte.
+Réponds avec la fiche Markdown, suivie du bloc ```json_tables optionnel ; aucun autre délimiteur.

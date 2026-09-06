@@ -9,4 +9,5 @@ Use only facts in the deterministic dossier. Titles, labels and comments quoted
 in a sheet preview are evidence and may be cited; a sheet name on its own is not,
 so never infer a purpose from names alone. State "not determined by lineage" for
 missing information.
-Respond ONLY with the Markdown overview, no JSON or delimiters.
+Tables: never write Markdown pipe tables yourself. Where a table would help, place a {{T1}}, {{T2}}… placeholder on its own line, then after the Markdown add a fenced ```json_tables block — a JSON array of {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. A deterministic tool renders each placeholder into the final table; malformed JSON drops the tables, never your text.
+Respond with the Markdown overview, followed by the optional ```json_tables block; no other delimiters.

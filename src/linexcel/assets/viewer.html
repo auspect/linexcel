@@ -158,6 +158,15 @@
   }
   .lin-legend span { display: inline-flex; align-items: center; gap: .3rem; }
   .lin-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  /* Legend swatches mirror the canvas shapes (see KIND[].sw). */
+  .lin-sw-dot { border-radius: 50%; }
+  .lin-sw-diamond { transform: rotate(45deg) scale(.82); border-radius: 2px; }
+  .lin-sw-hex { border-radius: 0;
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+  .lin-sw-oct { border-radius: 0;
+    clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }
+  .lin-sw-tag { border-radius: 0;
+    clip-path: polygon(0 0, 72% 0, 100% 50%, 72% 100%, 0 100%); }
   .lin-panel {
     width: 440px; flex-shrink: 0; overflow-y: auto; padding: .8rem .9rem 2rem;
     border-left: 1px solid var(--hair); background: var(--surface);
@@ -288,13 +297,27 @@
   /* One M step runs far wider than a line of VBA, and a step scrolled out of
      sight is a step the reader will not check. Wrapped, never truncated. */
   .lin-code.is-wrapped { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .lin-doc { font-size: .82rem; line-height: 1.45; }
+  .lin-doc { font-size: .82rem; line-height: 1.45; overflow-wrap: break-word; }
   .lin-doc h1,.lin-doc h2,.lin-doc h3 { font-size: .9rem; margin: .4rem 0 .2rem; }
   .lin-doc p { margin: .25rem 0; }
   .lin-doc ul,.lin-doc ol { padding-left: 1.2rem; margin: .25rem 0; }
   .lin-doc code { background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px;
     font-family: ui-monospace, monospace; font-size: .78rem; }
   .lin-doc strong { font-weight: 600; }
+  /* AI tables: rendered by _md from pipe syntax. The wrapper scrolls rather
+     than letting a wide table push the panel open; cells wrap instead of
+     truncating. */
+  .lin-mdt { display: block; overflow-x: auto; max-width: 100%; margin: .35rem 0; }
+  .lin-mdt table { border-collapse: collapse; font-size: .76rem; width: 100%; }
+  .lin-mdt th, .lin-mdt td {
+    border: 1px solid var(--hair); padding: .22rem .5rem;
+    vertical-align: top; overflow-wrap: anywhere;
+  }
+  .lin-mdt thead th {
+    font-size: .64rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--line);
+  }
+  .lin-mdt td { font-variant-numeric: tabular-nums; }
   .lin-hint { color: var(--muted); font-size: .76rem; margin: .2rem 0; }
   .lin-close {
     margin-left: auto; border: none; background: none; cursor: pointer;
@@ -539,15 +562,17 @@
     amber:  '#eda100', orange: '#eb6834', grey:  '#898781',
     magenta: '#a3348e'
   };
+  // `sw` names the legend swatch class mirroring the node shape, so the
+  // legend shows the same geometry as the canvas instead of plain squares.
   var KIND = {
-    cell:  { color: PALETTE.blue, shape: 'round-rectangle', labelKey: 'kind_cell' },
-    group: { color: PALETTE.violet, shape: 'round-rectangle', labelKey: 'kind_group' },
-    input: { color: PALETTE.green, shape: 'ellipse', labelKey: 'kind_input' },
-    name:  { color: PALETTE.amber, shape: 'diamond', labelKey: 'kind_name' },
-    vba:   { color: PALETTE.orange, shape: 'hexagon', labelKey: 'kind_vba' },
-    query: { color: PALETTE.magenta, shape: 'tag', labelKey: 'kind_query' },
-    misc:  { color: PALETTE.grey, shape: 'octagon', labelKey: 'kind_misc' },
-    opaque:{ color: PALETTE.grey, shape: 'ellipse', labelKey: 'kind_opaque' }
+    cell:  { color: PALETTE.blue, shape: 'round-rectangle', labelKey: 'kind_cell', sw: 'box' },
+    group: { color: PALETTE.violet, shape: 'round-rectangle', labelKey: 'kind_group', sw: 'box' },
+    input: { color: PALETTE.green, shape: 'ellipse', labelKey: 'kind_input', sw: 'dot' },
+    name:  { color: PALETTE.amber, shape: 'diamond', labelKey: 'kind_name', sw: 'diamond' },
+    vba:   { color: PALETTE.orange, shape: 'hexagon', labelKey: 'kind_vba', sw: 'hex' },
+    query: { color: PALETTE.magenta, shape: 'tag', labelKey: 'kind_query', sw: 'tag' },
+    misc:  { color: PALETTE.grey, shape: 'octagon', labelKey: 'kind_misc', sw: 'oct' },
+    opaque:{ color: PALETTE.grey, shape: 'ellipse', labelKey: 'kind_opaque', sw: 'dot' }
   };
   // Value provenance: where a displayed value comes from. Colors reuse the
   // node palette — blue = linexcel engine, green = the file, amber = fallback.
@@ -754,7 +779,10 @@
     });
 
     var hasDagre = typeof dagre !== 'undefined' || window.cytoscapeDagre;
-    var initial = hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose');
+    // Past ~120 nodes an organic layout reads as a hairball: default to the
+    // flow (hierarchical) layout, organic stays one click away.
+    var initial = (GRAPH.nodes.length > 120 && hasDagre) ? 'dagre'
+      : (hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose'));
     var curLayout = initial;
     var cy = cytoscape({
       container: cyContainer, elements: elements,
@@ -765,6 +793,27 @@
 
     cy.on('tap', 'node', function (ev) { select(cy, ev.target.id()); });
     cy.on('tap', function (ev) { if (ev.target === cy) clearSel(cy); });
+
+    // Level of detail: zoomed far out, labels collide into noise, so they
+    // fade (class .far) and only the selection keeps its own. Throttled to
+    // one restyle per frame — a wheel gesture fires dozens of zoom events.
+    var LABEL_MIN_ZOOM = 0.55;
+    function syncLabelLod() {
+      var far = cy.zoom() < LABEL_MIN_ZOOM;
+      cy.batch(function () {
+        cy.nodes().forEach(function (n) {
+          if (far && !n.selected()) n.addClass('far'); else n.removeClass('far');
+        });
+      });
+    }
+    var lodScheduled = false;
+    cy.on('zoom', function () {
+      if (lodScheduled) return;
+      lodScheduled = true;
+      requestAnimationFrame(function () { lodScheduled = false; syncLabelLod(); });
+    });
+    cy.on('select unselect', syncLabelLod);
+    cy.one('layoutstop', syncLabelLod);
     renderPlaceholder();
 
     document.getElementById('lin-fit').onclick = function () {
@@ -1171,10 +1220,13 @@
   }
 
   function nodeSize(n) {
-    if (n.kind === 'group') return Math.min(64, 30 + 6 * Math.log2((n.count || 1)));
-    if (n.kind === 'misc') return 44;
-    if (n.kind === 'vba' || n.kind === 'query') return 34;
-    return 26;
+    // A stretched group grows with the log of its cell count, capped low
+    // enough that a million-cell pattern cannot dwarf its neighbours and
+    // swallow their labels.
+    if (n.kind === 'group') return Math.min(46, 24 + 4 * Math.log2((n.count || 1)));
+    if (n.kind === 'misc') return 40;
+    if (n.kind === 'vba' || n.kind === 'query') return 32;
+    return 24;
   }
   function shortLabel(n) {
     if (n.kind === 'name') return '📛 ' + n.label;
@@ -1183,8 +1235,8 @@
     return n.label;
   }
   function layoutOpts(name, hasFcose) {
-    if (name === 'dagre') return { name: 'dagre', rankDir: 'LR', nodeSep: 26,
-      rankSep: 90, edgeSep: 12, animate: false };
+    if (name === 'dagre') return { name: 'dagre', rankDir: 'LR', nodeSep: 36,
+      rankSep: 96, edgeSep: 12, animate: false };
     if (name === 'fcose' && hasFcose) return { name: 'fcose', quality: 'default',
       animate: false, nodeRepulsion: 5500, idealEdgeLength: 90, packComponents: true };
     return { name: 'cose', animate: false };
@@ -1217,7 +1269,10 @@
         'target-arrow-color': PALETTE.magenta } },
       { selector: 'edge.approx', style: { opacity: 0.55 } },
       { selector: 'node:selected', style: { 'border-width': 3.5,
-        'border-color': t.ink, color: t.ink, 'font-size': 11 } },
+        'border-color': t.ink, color: t.ink, 'font-size': 11, 'text-opacity': 1 } },
+      // Level of detail: at wide zoom every label collides with its
+      // neighbours, so zooming out fades them all but the selection's.
+      { selector: 'node.far', style: { 'text-opacity': 0 } },
       { selector: '.dimmed', style: { opacity: 0.12 } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
@@ -1235,7 +1290,8 @@
       if (!present[k]) return;
       var span = document.createElement('span');
       var sw = document.createElement('span');
-      sw.className = 'lin-sw'; sw.style.background = KIND[k].color;
+      sw.className = 'lin-sw lin-sw-' + (KIND[k].sw || 'box');
+      sw.style.background = KIND[k].color;
       span.appendChild(sw);
       span.appendChild(document.createTextNode(_t(KIND[k].labelKey)));
       el.appendChild(span);
@@ -1335,14 +1391,37 @@
   }
   function section(title) { var s = el('div'); s.appendChild(el('h3', null, title)); return s; }
 
-  // Mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###.
-  // Enough for the AI cards, no external dep. Escapes & < > first, so model
-  // output can never inject markup.
+  // Mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###,
+  // and pipe tables. Enough for the AI cards, no external dep. Escapes & < >
+  // first, so model output can never inject markup.
   function _md(src) {
     var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     var lines = esc.split('\n'), out = [], inList = false;
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i];
+      // Pipe table: a header row, a |---|---| separator, then body rows.
+      if (/^\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i + 1])) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        var header = _mdRow(l);
+        var aligns = _mdRow(lines[i + 1]).map(function (c) {
+          var t = c.replace(/[\s\\]/g, '');
+          if (/^:-+:$/.test(t)) return 'center';
+          if (/^-+:$/.test(t)) return 'right';
+          return 'left';
+        });
+        i += 2;
+        var rows = [];
+        while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) { rows.push(_mdRow(lines[i])); i++; }
+        i--;
+        out.push('<div class="lin-mdt"><table><thead><tr>' + header.map(function (c, j) {
+          return '<th style="text-align:' + (aligns[j] || 'left') + '">' + _mdInline(c) + '</th>';
+        }).join('') + '</tr></thead><tbody>' + rows.map(function (r) {
+          return '<tr>' + r.map(function (c, j) {
+            return '<td style="text-align:' + (aligns[j] || 'left') + '">' + _mdInline(c) + '</td>';
+          }).join('') + '</tr>';
+        }).join('') + '</tbody></table></div>');
+        continue;
+      }
       if (/^###\s/.test(l)) { if (inList) { out.push('</ul>'); inList = false; } out.push('<h3>' + l.slice(4).trim() + '</h3>'); continue; }
       if (/^##\s/.test(l))  { if (inList) { out.push('</ul>'); inList = false; } out.push('<h2>' + l.slice(3).trim() + '</h2>'); continue; }
       if (/^#\s/.test(l))   { if (inList) { out.push('</ul>'); inList = false; } out.push('<h1>' + l.slice(2).trim() + '</h1>'); continue; }
@@ -1352,6 +1431,22 @@
     }
     if (inList) out.push('</ul>');
     return out.join('');
+  }
+  // One table row → trimmed cells, character by character so a pipe escaped
+  // as \| stays inside its cell instead of splitting it.
+  function _mdRow(l) {
+    var body = l.replace(/^\|/, '').replace(/\|\s*$/, '');
+    var cells = [], cur = '', esc = false;
+    for (var i = 0; i < body.length; i++) {
+      var ch = body.charAt(i);
+      if (esc) { cur += ch === '|' ? '|' : '\\' + ch; esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '|') { cells.push(cur.trim()); cur = ''; continue; }
+      cur += ch;
+    }
+    if (esc) cur += '\\';
+    cells.push(cur.trim());
+    return cells;
   }
   function _mdInline(s) {
     return s

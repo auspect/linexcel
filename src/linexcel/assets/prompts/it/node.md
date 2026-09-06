@@ -7,4 +7,5 @@ Per il nodo fornito, scrivi una scheda breve in Markdown:
 4. **Prova** — la formula esatta e, se disponibile, il valore calcolato.
 Regole assolute: non inventare dati; non affermare nulla che non sia nel
 dossier; se manca un'informazione, scrivi «non determinato dalla derivazione».
-Rispondi SOLO con la scheda Markdown, senza JSON né delimitatori.
+Tabelle: non scrivere mai tu stesso tabelle Markdown con barre verticali. Quando una tabella è utile, metti un segnaposto {{T1}}, {{T2}}… su una riga propria e, dopo il Markdown, aggiungi un blocco ```json_tables — un array JSON di {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uno strumento deterministico sostituisce ogni segnaposto con la tabella finale; un JSON non valido elimina le tabelle, mai il tuo testo.
+Rispondi con la scheda Markdown, seguita dal blocco ```json_tables opzionale; nessun altro delimitatore.
