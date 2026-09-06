@@ -753,13 +753,19 @@ class TestSearchControl:
         assert ".lin-search-clear[hidden] { display: none; }" in html
         assert "named('lin-search-clear', _t('search_clear'));" in html
 
-    def test_escape_clears_and_restores_the_graph(self):
+    def test_escape_resets_an_active_search(self):
         html = render_html(search_graph())
-        esc = "else if (e.key === 'Escape') { e.preventDefault(); restoreGraph(); }"
-        assert esc in html
+        assert "if (search.value) { restoreGraph(); }" in html
         assert "function restoreGraph() {" in html
         assert "resetSearch();" in html
         assert "clearSel(cy);" in html
+
+    def test_escape_in_an_empty_box_leaves_the_canvas_alone(self):
+        """Échap with nothing typed only quits the box; it must not clear a
+        click-made selection or re-fit the camera (restoreGraph is gated on a
+        non-empty query)."""
+        html = render_html(search_graph())
+        assert "else { resetSearch(); search.blur(); }" in html
 
     def test_enter_still_submits(self):
         html = render_html(search_graph())
@@ -780,6 +786,18 @@ class TestSearchControl:
     def test_a_report_without_cytoscape_disables_the_box(self):
         html = render_html(search_graph())
         assert "search.disabled = true;" in html
+
+    def test_cytoscape_missing_stands_down_the_panel_and_keeps_the_stats(self):
+        """B1: the fallback must not be framed by an empty 440px detail panel,
+        and the header stat line is posed *before* the Cytoscape check so both
+        "nothing to draw" states keep the bandeau populated."""
+        html = render_html(search_graph())
+        branch = html.split("if (typeof cytoscape === 'undefined') {", 1)[1]
+        branch = branch.split("return;", 1)[0]
+        assert "panel.classList.add('hidden');" in branch
+        assert html.index("var stats = GRAPH.meta.stats;") < html.index(
+            "typeof cytoscape === 'undefined'"
+        )
 
     def test_every_language_defines_the_new_search_keys(self):
         for language, strings in UI_STRINGS.items():

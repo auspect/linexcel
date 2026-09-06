@@ -835,29 +835,10 @@
     sheetSel.title = _t('sheet_filter');
     sheetSel.setAttribute('aria-label', _t('sheet_filter'));
 
-    var cyContainer = document.getElementById('lin-cy');
-    if (typeof cytoscape === 'undefined') {
-      var f = document.createElement('div');
-      f.className = 'lin-fallback';
-      f.textContent = _t('fallback');
-      cyContainer.appendChild(f);
-      // Without a rendered graph the whole graph-only chrome is inert: the
-      // floating tools (zoom/fit/sheet filter) and the rail's Layout and Node
-      // types groups would read as controls that do something. Stand them down.
-      document.getElementById('lin-tools').hidden = true;
-      document.getElementById('lin-legend').hidden = true;
-      standDownGraphGroups();
-      sheetSel.disabled = true;  // nothing to filter without a rendered graph
-      search.disabled = true;    // nor to search
-      return;
-    }
-    // Register layout extensions if present.
-    var hasFcose = false;
-    try {
-      if (window.cytoscapeFcose) { cytoscape.use(window.cytoscapeFcose); hasFcose = true; }
-      if (window.cytoscapeDagre) { cytoscape.use(window.cytoscapeDagre); }
-    } catch (e) { /* already registered */ }
-
+    // The header's stat line is engine data, independent of Cytoscape: pose it
+    // up front so every report keeps it — including the two "nothing to draw"
+    // states (Cytoscape missing, or a workbook with no formula-driven nodes),
+    // which would otherwise leave the bandeau's line blank.
     var stats = GRAPH.meta.stats;
     // One tail for everything the workbook holds beside formulas. The
     // placeholder is still called {vba} in the nine locales; what it carries
@@ -870,6 +851,33 @@
       edges: stats.totalEdges,
       vba: extraText
     });
+
+    var cyContainer = document.getElementById('lin-cy');
+    if (typeof cytoscape === 'undefined') {
+      var f = document.createElement('div');
+      f.className = 'lin-fallback';
+      f.textContent = _t('fallback');
+      cyContainer.appendChild(f);
+      // Without a rendered graph the whole graph-only chrome is inert: the
+      // floating tools (zoom/fit/sheet filter) and the rail's Layout and Node
+      // types groups would read as controls that do something. Stand them down
+      // and drop the detail column too, so the fallback isn't framed by an
+      // empty 440 px band that reads as a broken render (the 0-node state
+      // stands its panel down the same way).
+      document.getElementById('lin-tools').hidden = true;
+      document.getElementById('lin-legend').hidden = true;
+      standDownGraphGroups();
+      sheetSel.disabled = true;  // nothing to filter without a rendered graph
+      search.disabled = true;    // nor to search
+      panel.classList.add('hidden');
+      return;
+    }
+    // Register layout extensions if present.
+    var hasFcose = false;
+    try {
+      if (window.cytoscapeFcose) { cytoscape.use(window.cytoscapeFcose); hasFcose = true; }
+      if (window.cytoscapeDagre) { cytoscape.use(window.cytoscapeDagre); }
+    } catch (e) { /* already registered */ }
 
     var big = GRAPH.nodes.length + GRAPH.edges.length > 2500;
     var degreeMap = {};
@@ -919,6 +927,10 @@
 
     cy.on('tap', 'node', function (ev) { select(cy, ev.target.id()); });
     cy.on('tap', function (ev) { if (ev.target === cy) clearSel(cy); });
+    // Hover singles the node out (see node.hovered in buildStyle); the mouse
+    // leaving the canvas fires mouseout so the class cannot stick.
+    cy.on('mouseover', 'node', function (ev) { ev.target.addClass('hovered'); });
+    cy.on('mouseout', 'node', function (ev) { ev.target.removeClass('hovered'); });
 
     // Level of detail: zoomed far out, labels collide into noise, so they
     // fade (class .far) and only the selection keeps its own. Throttled to
@@ -1042,7 +1054,15 @@
     });
     search.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
-      else if (e.key === 'Escape') { e.preventDefault(); restoreGraph(); }
+      else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Escape ends an *active* search: clear its matches and re-frame. With
+        // the box already empty it must not clobber a click-made selection or
+        // re-fit the camera — that side effect only ever belongs to a query
+        // this box actually ran — so it just quits the box.
+        if (search.value) { restoreGraph(); }
+        else { resetSearch(); search.blur(); }
+      }
     });
     searchClear.onclick = function () { restoreGraph(); search.focus(); };
     buildLegend();
@@ -1403,6 +1423,12 @@
       { selector: 'node.far', style: { 'text-opacity': 0 } },
       { selector: 'node:selected', style: { 'border-width': 3.5,
         'border-color': t.ink, color: t.ink, 'font-size': 11, 'text-opacity': 1 } },
+      // Dense-graph affordance: hovering a node singles it out with a firmer
+      // border and, when zoomed out, its full label — so "is this the cell?"
+      // can be answered before the click. Declared after .far so the label
+      // comes back even at wide zoom.
+      { selector: 'node.hovered', style: { 'text-opacity': 1, 'font-size': 10.5,
+        'border-width': 3, 'z-index': 20 } },
       // A kind switched off in the rail leaves the layout entirely.
       { selector: '.kind-off', style: { 'display': 'none' } },
       { selector: '.dimmed', style: { opacity: 0.12 } },
