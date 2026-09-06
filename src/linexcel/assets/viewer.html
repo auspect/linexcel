@@ -841,6 +841,12 @@
       f.className = 'lin-fallback';
       f.textContent = _t('fallback');
       cyContainer.appendChild(f);
+      // Without a rendered graph the whole graph-only chrome is inert: the
+      // floating tools (zoom/fit/sheet filter) and the rail's Layout and Node
+      // types groups would read as controls that do something. Stand them down.
+      document.getElementById('lin-tools').hidden = true;
+      document.getElementById('lin-legend').hidden = true;
+      standDownGraphGroups();
       sheetSel.disabled = true;  // nothing to filter without a rendered graph
       search.disabled = true;    // nor to search
       return;
@@ -892,10 +898,7 @@
       document.getElementById('lin-tools').hidden = true;
       document.getElementById('lin-legend').hidden = true;
       panel.classList.add('hidden');
-      ['lin-rail-kinds-label', 'lin-rail-layout-label'].forEach(function (id) {
-        var lbl = document.getElementById(id);
-        if (lbl && lbl.parentElement) lbl.parentElement.hidden = true;
-      });
+      standDownGraphGroups();
       renderEmptyGraph(cyContainer);
       return;
     }
@@ -1550,6 +1553,15 @@
 
   // A workbook with no formula-driven cells: the canvas area states the
   // absence in the reader's language instead of sitting blank.
+  function standDownGraphGroups() {
+    // The rail's Node types and Layout groups act only on a rendered graph;
+    // when there is none (zero formulas, or Cytoscape missing) they are hidden
+    // so they never read as controls that do something.
+    ['lin-rail-kinds-label', 'lin-rail-layout-label'].forEach(function (id) {
+      var lbl = document.getElementById(id);
+      if (lbl && lbl.parentElement) lbl.parentElement.hidden = true;
+    });
+  }
   function renderEmptyGraph(host) {
     var box = el('div', 'lin-emptygraph');
     var inner = el('div', 'lin-emptygraph-inner');
