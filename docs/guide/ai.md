@@ -35,7 +35,7 @@ who doubts a sentence can check it without leaving the page.
 docs = result.document(base_url=..., model=...)
 
 # Or a chosen few
-docs = result.document(["c:Synthese!B3"], base_url=..., model=...)
+docs = result.document(["c:Summary!B3"], base_url=..., model=...)
 ```
 
 `document()` issues `max_workers` requests in parallel (4 by default):
@@ -64,7 +64,7 @@ each sheet, cell comments, merged ranges, frozen panes, hidden columns — the
 same cues the [sheet screenshots](context.md#screenshots) show a human reader.
 
 That second half is what lets the model write about the file rather than about
-a graph. A title sitting two rows above a table, a column called `Prix` that
+a graph. A title sitting two rows above a table, a column called `Price` that
 somebody hid, a comment reading *"exported product category"* — no formula
 records any of it, and an overview written without them describes a structure
 nobody recognises.

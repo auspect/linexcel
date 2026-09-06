@@ -12,8 +12,8 @@ def build_lineage_workbook() -> bytes:
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Ventes"
-    ws["A1"], ws["B1"], ws["C1"], ws["D1"] = "Produit", "Qté", "Prix", "CA"
+    ws.title = "Sales"
+    ws["A1"], ws["B1"], ws["C1"], ws["D1"] = "Product", "Qty", "Price", "Revenue"
     for r in range(2, 102):
         ws.cell(row=r, column=1, value=f"P{r - 1}")
         ws.cell(row=r, column=2, value=r % 7 + 1)
@@ -25,17 +25,17 @@ def build_lineage_workbook() -> bytes:
     ws.merge_cells("F1:G1")
     ws["F1"] = "Presentation context"
 
-    syn = wb.create_sheet("Synthese")
-    syn["B1"] = "=SUM(Ventes!D2:D101)"
-    syn["B2"] = "=ROUND(AVERAGE(Ventes!D2:D101), 2)"
+    syn = wb.create_sheet("Summary")
+    syn["B1"] = "=SUM(Sales!D2:D101)"
+    syn["B2"] = "=ROUND(AVERAGE(Sales!D2:D101), 2)"
     syn["B3"] = (
-        "=IF(SUM(Ventes!D2:D101)>TauxCible, "
+        "=IF(SUM(Sales!D2:D101)>TargetRate, "
         'CONCATENATE("OK: ", ROUND(B1/1000,1), "k"), "KO")'
     )
 
     params = wb.create_sheet("Params")
     params["A1"] = 5000
-    wb.defined_names.add(DefinedName("TauxCible", attr_text="Params!$A$1"))
+    wb.defined_names.add(DefinedName("TargetRate", attr_text="Params!$A$1"))
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -158,26 +158,26 @@ class TestAnalyze:
     def test_group_inputs_are_aggregated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
         input_labels = {n["label"] for n in graph["nodes"] if n["kind"] == "input"}
-        assert "Ventes!B2:B101" in input_labels
-        assert "Ventes!C2:C101" in input_labels
+        assert "Sales!B2:B101" in input_labels
+        assert "Sales!C2:C101" in input_labels
 
     def test_defined_name_resolved(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
         names = [n for n in graph["nodes"] if n["kind"] == "name"]
-        assert names and names[0]["label"] == "TauxCible"
-        # name is fed by Params!A1 and feeds Synthese!B3
+        assert names and names[0]["label"] == "TargetRate"
+        # name is fed by Params!A1 and feeds Summary!B3
         edges = graph["edges"]
         assert any(
             e["target"] == names[0]["id"] and "Params" in e["source"] for e in edges
         )
         assert any(
-            e["source"] == names[0]["id"] and e["target"].endswith("Synthese!B3")
+            e["source"] == names[0]["id"] and e["target"].endswith("Summary!B3")
             for e in edges
         )
 
     def test_composed_formula_steps_evaluated(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        node = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B3"))
+        node = next(n for n in graph["nodes"] if n["id"].endswith("Summary!B3"))
         steps = node["steps"]
         assert steps["label"] == "IF"
         assert steps["evaluated"] and steps["value"] == node["value"]
@@ -309,7 +309,7 @@ class TestAnalyze:
 
     def test_values_computed_by_engine(self, lineage_excel):
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
-        b1 = next(n for n in graph["nodes"] if n["id"].endswith("Synthese!B1"))
+        b1 = next(n for n in graph["nodes"] if n["id"].endswith("Summary!B1"))
         assert isinstance(b1["value"], float) and b1["value"] > 0
 
 
@@ -452,7 +452,7 @@ class TestPackageApi:
         result = analyze(lineage_excel, filename="demo.xlsx")
         assert isinstance(result, LineageResult)
         assert result.stats["totalFormulas"] == 103
-        assert "Ventes" in result.sheets
+        assert "Sales" in result.sheets
 
     def test_analyze_from_path(self, tmp_path, lineage_excel):
         path = tmp_path / "workbook.xlsx"
@@ -466,11 +466,11 @@ class TestPackageApi:
 
     def test_navigation_helpers(self, lineage_excel):
         result = analyze(lineage_excel)
-        b3 = result.find("Synthese!B3")
-        assert b3 and b3[0]["id"].endswith("Synthese!B3")
+        b3 = result.find("Summary!B3")
+        assert b3 and b3[0]["id"].endswith("Summary!B3")
         node_id = b3[0]["id"]
         prec_labels = {n["label"] for n in result.precedents(node_id)}
-        assert "TauxCible" in prec_labels
+        assert "TargetRate" in prec_labels
         node = result.node(node_id)
         assert node and node["formula"].startswith("=IF")
 
@@ -484,23 +484,23 @@ class TestPackageApi:
     def test_workbook_context_preserves_preview_and_comments(self, lineage_excel):
         result = analyze(lineage_excel, filename="context.xlsx")
         context = result.workbook_context
-        ventes = next(sheet for sheet in context["sheets"] if sheet["name"] == "Ventes")
-        assert ventes["preview"][0]["values"][:4] == [
-            "Produit",
-            "Qté",
-            "Prix",
-            "CA",
+        sales = next(sheet for sheet in context["sheets"] if sheet["name"] == "Sales")
+        assert sales["preview"][0]["values"][:4] == [
+            "Product",
+            "Qty",
+            "Price",
+            "Revenue",
         ]
-        assert ventes["comments"] == [
+        assert sales["comments"] == [
             {
                 "cell": "A1",
                 "author": "Data team",
                 "text": "Exported product category",
             }
         ]
-        assert ventes["freeze_panes"] == "A2"
-        assert ventes["hidden_columns"] == ["C"]
-        assert "F1:G1" in ventes["merged_ranges"]
+        assert sales["freeze_panes"] == "A2"
+        assert sales["hidden_columns"] == ["C"]
+        assert "F1:G1" in sales["merged_ranges"]
 
     def test_screenshots_report_a_missing_renderer(
         self, lineage_excel, monkeypatch, tmp_path
@@ -589,7 +589,7 @@ class TestPackageApi:
         assert "cdn.jsdelivr" not in html
         assert "cytoscape" in html
         # the composite formula and its decomposition are in the injected data
-        assert "Synthese!B3" in html
+        assert "Summary!B3" in html
 
     def test_workbook_doc_has_a_separate_html_tab(self, lineage_excel):
         result = analyze(lineage_excel)
@@ -603,10 +603,10 @@ class TestPackageApi:
 
         dossier = build_workbook_dossier(analyze(lineage_excel).graph)
         sheets = {sheet["name"]: sheet for sheet in dossier["sheets"]}
-        assert sheets["Ventes"]["formula_cells"] == 100
-        assert sheets["Ventes"]["dimensions"]["columns"] == 7
+        assert sheets["Sales"]["formula_cells"] == 100
+        assert sheets["Sales"]["dimensions"]["columns"] == 7
         assert dossier["defined_names"] == [
-            {"name": "TauxCible", "targets": ["Params!A1"]}
+            {"name": "TargetRate", "targets": ["Params!A1"]}
         ]
         assert dossier["formula_patterns"][0]["cells"] == 100
 
@@ -1366,9 +1366,9 @@ class TestWorkbookPresentationContext:
 
         result = analyze(lineage_excel)
         dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
-        ventes = next(s for s in dossier["sheets"] if s["name"] == "Ventes")
-        assert ventes["preview"], "the first rows a reader sees must be included"
-        assert ventes["formula_cells"] == 100, "lineage facts must survive the merge"
+        sales = next(s for s in dossier["sheets"] if s["name"] == "Sales")
+        assert sales["preview"], "the first rows a reader sees must be included"
+        assert sales["formula_cells"] == 100, "lineage facts must survive the merge"
 
     def test_comments_and_layout_reach_the_dossier(self, lineage_excel):
         import json
@@ -1490,13 +1490,13 @@ class TestWorkbookPresentationContext:
 class TestVba:
     MODULES = {
         "Module1": (
-            """Public Sub MAJ()
-        total = WorksheetFunction.Sum(Worksheets("Ventes").Range("D2:D101"))
-        Worksheets("Synthese").Range("B10").Value = total * Taux()
+            """Public Sub Refresh()
+        total = WorksheetFunction.Sum(Worksheets("Sales").Range("D2:D101"))
+        Worksheets("Summary").Range("B10").Value = total * Rate()
         Cells(3, 2) = "ok"
     End Sub
-    Private Function Taux() As Double
-        Taux = Sheets("Params").Range("A1").Value
+    Private Function Rate() As Double
+        Rate = Sheets("Params").Range("A1").Value
     End Function
 """
         )
@@ -1505,17 +1505,17 @@ class TestVba:
     def test_procedures_and_calls(self):
         procs = analyze_vba(self.MODULES)
         names = {p.name: p for p in procs}
-        assert set(names) == {"MAJ", "Taux"}
-        assert names["MAJ"].calls == ["Taux"]
-        assert names["MAJ"].kind == "Sub"
-        assert names["Taux"].kind == "Function"
+        assert set(names) == {"Refresh", "Rate"}
+        assert names["Refresh"].calls == ["Rate"]
+        assert names["Refresh"].kind == "Sub"
+        assert names["Rate"].kind == "Function"
 
     def test_read_write_detection(self):
         procs = analyze_vba(self.MODULES)
-        maj = next(p for p in procs if p.name == "MAJ")
-        accesses = {(r.sheet, r.ref): r.access for r in maj.refs}
-        assert accesses[("Ventes", "D2:D101")] == "read"
-        assert accesses[("Synthese", "B10")] == "write"
+        refresh = next(p for p in procs if p.name == "Refresh")
+        accesses = {(r.sheet, r.ref): r.access for r in refresh.refs}
+        assert accesses[("Sales", "D2:D101")] == "read"
+        assert accesses[("Summary", "B10")] == "write"
         assert accesses[(None, "B3")] == "write"
 
     def test_comments_ignored(self):
@@ -1572,7 +1572,7 @@ class TestVbaGraph:
             {
                 "Module1": (
                     "Public Sub Refresh()\n"
-                    '    Worksheets("Synthese").Range("B10").Value = Rate()\n'
+                    '    Worksheets("Summary").Range("B10").Value = Rate()\n'
                     "End Sub\n"
                     "Private Function Rate() As Double\n"
                     '    Rate = Sheets("Params").Range("A1").Value\n'
@@ -1596,7 +1596,7 @@ class TestVbaGraph:
             {
                 "Module1": (
                     "Sub Refresh()\n"
-                    '    Worksheets("Synthese").Range("B10").Value = 1\n'
+                    '    Worksheets("Summary").Range("B10").Value = 1\n'
                     '    x = Sheets("Params").Range("A1").Value\n'
                     "End Sub\n"
                 )
@@ -1605,7 +1605,7 @@ class TestVbaGraph:
         by_id = {n["id"]: n for n in graph["nodes"]}
         writes = [e for e in graph["edges"] if e["kind"] == "vba-write"]
         reads = [e for e in graph["edges"] if e["kind"] == "vba-read"]
-        assert [by_id[e["target"]]["label"] for e in writes] == ["Synthese!B10"]
+        assert [by_id[e["target"]]["label"] for e in writes] == ["Summary!B10"]
         assert [by_id[e["source"]]["label"] for e in reads] == ["Params!A1"]
 
     def test_call_resolves_in_the_calling_module_first(
@@ -1748,10 +1748,10 @@ class TestScreenshotsPerSheet:
         self._renderer(monkeypatch, [png_bytes()] * 3)
         shots = analyze(lineage_excel).save_screenshots(tmp_path)
         assert isinstance(shots, dict)
-        assert list(shots) == ["Ventes", "Synthese", "Params"]
+        assert list(shots) == ["Sales", "Summary", "Params"]
         assert [p.name for pages in shots.values() for p in pages] == [
-            "workbook-Ventes.png",
-            "workbook-Synthese.png",
+            "workbook-Sales.png",
+            "workbook-Summary.png",
             "workbook-Params.png",
         ]
 
@@ -1792,7 +1792,7 @@ class TestScreenshotsPerSheet:
         self._renderer(monkeypatch, [png_bytes(), png_bytes(97, 1), png_bytes()])
         shots = analyze(lineage_excel).save_screenshots(tmp_path)
         assert isinstance(shots, dict)
-        assert list(shots) == ["Ventes", "Params"]
+        assert list(shots) == ["Sales", "Params"]
 
     def test_pages_of_an_earlier_run_are_not_returned_as_this_one(
         self, lineage_excel, monkeypatch, tmp_path
@@ -1908,45 +1908,45 @@ class TestScreenshotDescriptions:
     """
 
     def test_each_sheet_comes_back_described(self, lineage_excel, tmp_path):
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
         result = analyze(lineage_excel)
-        docs = result.describe_screenshots({"Ventes": [shot]}, provider=vision)
-        assert docs == {"Ventes": "A grid of blue input cells."}
-        assert vision.calls[0]["user"] == "Sheet: Ventes"
+        docs = result.describe_screenshots({"Sales": [shot]}, provider=vision)
+        assert docs == {"Sales": "A grid of blue input cells."}
+        assert vision.calls[0]["user"] == "Sheet: Sales"
         assert vision.calls[0]["bytes"] == png_bytes()
 
     def test_the_sheet_name_reaches_the_model_but_the_dossier_does_not(
         self, lineage_excel, tmp_path
     ):
         """The evidence is the image; sending the graph too would blur that."""
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
-        analyze(lineage_excel).describe_screenshots({"Ventes": [shot]}, provider=vision)
+        analyze(lineage_excel).describe_screenshots({"Sales": [shot]}, provider=vision)
         (call,) = vision.calls
         assert "formula" not in call["user"].lower()
         assert "screenshot" in call["system"].lower()
 
     def test_the_media_type_follows_the_file(self, lineage_excel, tmp_path):
-        shot = tmp_path / "Ventes.jpg"
+        shot = tmp_path / "Sales.jpg"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
-        analyze(lineage_excel).describe_screenshots({"Ventes": [shot]}, provider=vision)
+        analyze(lineage_excel).describe_screenshots({"Sales": [shot]}, provider=vision)
         assert vision.calls[0]["media_type"] == "image/jpeg"
 
     def test_one_image_per_sheet_may_be_given_without_a_list(
         self, lineage_excel, tmp_path
     ):
         """A lone path is a path: indexing it would send the letter ``C``."""
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
         docs = analyze(lineage_excel).describe_screenshots(
-            {"Ventes": str(shot)}, provider=vision
+            {"Sales": str(shot)}, provider=vision
         )
-        assert set(docs) == {"Ventes"}
+        assert set(docs) == {"Sales"}
         assert vision.calls[0]["bytes"] == png_bytes()
 
     def test_a_flat_list_of_pages_is_keyed_by_file_name(self, lineage_excel, tmp_path):
@@ -1963,7 +1963,7 @@ class TestScreenshotDescriptions:
     def test_a_text_only_provider_is_refused_by_name(self, lineage_excel, tmp_path):
         from linexcel.aidoc import AiDocError
 
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
 
         class TextOnly:
@@ -1972,7 +1972,7 @@ class TestScreenshotDescriptions:
 
         result = analyze(lineage_excel)
         with pytest.raises(AiDocError, match="generate_with_image"):
-            result.describe_screenshots({"Ventes": [shot]}, provider=TextOnly())
+            result.describe_screenshots({"Sales": [shot]}, provider=TextOnly())
 
     def test_an_oversized_image_is_named_rather_than_posted(
         self, lineage_excel, tmp_path, monkeypatch
@@ -1980,19 +1980,19 @@ class TestScreenshotDescriptions:
         from linexcel import aidoc
 
         monkeypatch.setattr(aidoc, "MAX_IMAGE_BYTES", 8)
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
-        with pytest.raises(aidoc.AiDocError, match="Ventes"):
+        with pytest.raises(aidoc.AiDocError, match="Sales"):
             analyze(lineage_excel).describe_screenshots(
-                {"Ventes": [shot]}, provider=vision
+                {"Sales": [shot]}, provider=vision
             )
         assert vision.calls == []
 
     def test_one_failure_does_not_discard_the_others(self, lineage_excel, tmp_path):
         from linexcel.aidoc import AiDocError, describe_images
 
-        good = tmp_path / "Ventes.png"
+        good = tmp_path / "Sales.png"
         good.write_bytes(png_bytes())
 
         class Choosy(_VisionStub):
@@ -2002,18 +2002,18 @@ class TestScreenshotDescriptions:
                 return super().generate_with_image(system, user, image, **kwargs)
 
         with pytest.warns(UserWarning, match="not described"):
-            docs = describe_images({"Ventes": good, "Params": good}, provider=Choosy())
-        assert set(docs) == {"Ventes"}
+            docs = describe_images({"Sales": good, "Params": good}, provider=Choosy())
+        assert set(docs) == {"Sales"}
 
     def test_the_tokens_are_counted_on_the_result(self, lineage_excel, tmp_path):
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         result = analyze(lineage_excel)
-        result.describe_screenshots({"Ventes": [shot]}, provider=_VisionStub())
+        result.describe_screenshots({"Sales": [shot]}, provider=_VisionStub())
         assert result.token_usage.total == 840
 
     def test_the_budget_stops_the_next_image(self, lineage_excel, tmp_path):
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
         result = analyze(lineage_excel)
@@ -2026,11 +2026,11 @@ class TestScreenshotDescriptions:
         assert len(vision.calls) == 2  # the third is never sent
 
     def test_the_description_travels_with_the_report(self, lineage_excel, tmp_path):
-        shot = tmp_path / "Ventes.png"
+        shot = tmp_path / "Sales.png"
         shot.write_bytes(png_bytes())
         html = analyze(lineage_excel).to_html(
-            screenshots={"Ventes": [shot]},
-            screenshot_docs={"Ventes": "Blue inputs, black formulas."},
+            screenshots={"Sales": [shot]},
+            screenshot_docs={"Sales": "Blue inputs, black formulas."},
         )
         assert "Blue inputs, black formulas." in html
         assert '"screenshotDocs"' in html
@@ -2159,7 +2159,7 @@ class TestVbaExtraction:
                 "x",
                 "p",
                 "VBA/Module1.bas",
-                'Sub Refresh()\n    Worksheets("Synthese").Range("B10").Value = 1\n'
+                'Sub Refresh()\n    Worksheets("Summary").Range("B10").Value = 1\n'
                 "End Sub\n",
             ),
         )

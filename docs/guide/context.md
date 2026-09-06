@@ -40,8 +40,8 @@ beside its comments, frozen panes and first cells:
 
 ```python
 result.save_screenshots("screenshots/")
-# {'Ventes': [PosixPath('screenshots/demo-Ventes.png')],
-#  'Synthese': [PosixPath('screenshots/demo-Synthese.png')], ...}
+# {'Sales': [PosixPath('screenshots/demo-Sales.png')],
+#  'Summary': [PosixPath('screenshots/demo-Summary.png')], ...}
 ```
 
 Pass `per_sheet=False` for the flat `list[Path]` of print pages instead, laid

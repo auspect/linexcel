@@ -79,7 +79,7 @@ SHOTS = (
         name="viewer_node_documented.png",
         caption="A node selected: formula, step-by-step evaluation, AI card",
         clicks=("lin-tab-graph",),
-        search="Synthese!C5",
+        search="Summary!C5",
     ),
     Shot(
         name="viewer_workbook_overview.png",

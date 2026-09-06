@@ -10,7 +10,6 @@ Usage:
     diff /tmp/snapshot_before.json /tmp/snapshot_after.json
 """
 
-import io
 import json
 import sys
 from pathlib import Path

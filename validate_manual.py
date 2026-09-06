@@ -4,7 +4,7 @@
 Two workbooks, analysed then documented, rendered to PNG and written out as
 standalone HTML reports to open by hand:
 
-``sales``   a small readable French report — a table that does not start at A1,
+``sales``   a small readable sales report — a table that does not start at A1,
             a hidden column, merged cells, a chart, a comment, a defined name,
             cross-sheet aggregation. This is what the README screenshots show.
 ``stress``  a much larger English workbook built to break things: every Excel
@@ -101,13 +101,13 @@ class Case:
 CASES = {
     "sales": Case(
         name="sales",
-        headline="readable French sales report",
+        headline="readable sales report",
         build=validation_workbooks.build_sales_workbook,
         workbook=Path("validation_demo.xlsx"),
         languages=("fr", "en"),
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
-            "  It should name the title in B2, the hidden Prix column and the",
+            "  It should name the title in B2, the hidden Price column and the",
             "  comment on B3, none of which any formula reveals.",
             "'Sheets' — every sheet shows its own rendered image and its first",
             "  cells, alongside comments, frozen panes and merged ranges.",

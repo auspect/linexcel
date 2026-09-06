@@ -2,7 +2,7 @@
 
 Two fixtures, with different jobs:
 
-``build_sales_workbook`` is a small, plausible French sales report. It is what
+``build_sales_workbook`` is a small, plausible sales report. It is what
 the README screenshots are captured from, so it stays readable: a table that
 does not start at A1, a hidden column, a merged range, a chart, a comment, a
 defined name and cross-sheet aggregation. Enough to show every tab of the report
@@ -74,15 +74,15 @@ def build_sales_workbook() -> bytes:
     align_left = Alignment(horizontal="left", vertical="center")
     align_right = Alignment(horizontal="right", vertical="center")
 
-    # --- 1. SHEET: Ventes ---
+    # --- 1. SHEET: Sales ---
     ws = wb.active
-    ws.title = "Ventes"
+    ws.title = "Sales"
 
     # Leaving empty Row 1 & 2, and empty Column A. Table starts at B3.
-    ws["B2"] = "Rapport de Ventes Hebdomadaire"
+    ws["B2"] = "Weekly Sales Report"
     ws["B2"].font = font_title
 
-    headers = ["Produit", "Qté", "Prix", "CA"]
+    headers = ["Product", "Qty", "Price", "Revenue"]
     for col_idx, text in enumerate(headers, start=2):
         cell = ws.cell(row=3, column=col_idx, value=text)
         cell.font = font_header
@@ -115,7 +115,7 @@ def build_sales_workbook() -> bytes:
 
     # Freeze row 3 & column A (so we specify B4)
     ws.freeze_panes = "B4"
-    ws.column_dimensions["D"].hidden = True  # Hide column D (Prix)
+    ws.column_dimensions["D"].hidden = True  # Hide column D (Price)
 
     # Configure print settings: Landscape, paper size A3 (large), fit to width
     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
@@ -125,7 +125,7 @@ def build_sales_workbook() -> bytes:
     ws.sheet_properties.pageSetUpPr.fitToPage = True
 
     ws.merge_cells("G3:H3")
-    ws["G3"] = "Contexte de Présentation"
+    ws["G3"] = "Presentation Context"
     ws["G3"].font = font_bold
     ws["G3"].alignment = align_center
     ws["G3"].border = border_thin
@@ -136,17 +136,17 @@ def build_sales_workbook() -> bytes:
     # B width adjustment for better visibility
     ws.column_dimensions["B"].width = 30
 
-    # Add Chart to "Ventes"
+    # Add Chart to "Sales"
     chart = BarChart()
     chart.type = "col"
     chart.style = 10
-    chart.title = "Chiffre d'Affaires par Produit (Top 10)"
+    chart.title = "Revenue by Product (Top 10)"
     # openpyxl's axis descriptor coerces a str into a Title; ty only sees the
     # declared Title type.
-    chart.y_axis.title = "CA ($)"  # ty: ignore[invalid-assignment]
-    chart.x_axis.title = "Produit"  # ty: ignore[invalid-assignment]
+    chart.y_axis.title = "Revenue ($)"  # ty: ignore[invalid-assignment]
+    chart.x_axis.title = "Product"  # ty: ignore[invalid-assignment]
 
-    # References for chart (CA is col 5, Product is col 2)
+    # References for chart (Revenue is col 5, Product is col 2)
     data = Reference(ws, min_col=5, min_row=3, max_row=13)
     cats = Reference(ws, min_col=2, min_row=4, max_row=13)
     chart.add_data(data, titles_from_data=True)
@@ -155,33 +155,33 @@ def build_sales_workbook() -> bytes:
     chart.height = 10
     ws.add_chart(chart, "G5")
 
-    # --- 2. SHEET: Synthese ---
-    syn = wb.create_sheet("Synthese")
-    syn["B2"] = "Synthèse des Performances"
+    # --- 2. SHEET: Summary ---
+    syn = wb.create_sheet("Summary")
+    syn["B2"] = "Performance Summary"
     syn["B2"].font = font_title
 
     # Headers
-    syn.cell(row=4, column=2, value="Métrique").font = font_header
+    syn.cell(row=4, column=2, value="Metric").font = font_header
     syn.cell(row=4, column=2).fill = fill_header
     syn.cell(row=4, column=2).border = border_header
     syn.cell(row=4, column=2).alignment = align_left
 
-    syn.cell(row=4, column=3, value="Valeur").font = font_header
+    syn.cell(row=4, column=3, value="Value").font = font_header
     syn.cell(row=4, column=3).fill = fill_header
     syn.cell(row=4, column=3).border = border_header
     syn.cell(row=4, column=3).alignment = align_right
 
-    # Formulas reference Ventes!E4:E103 (the CA column E)
+    # Formulas reference Sales!E4:E103 (the Revenue column E)
     m_cells = [
-        ("Total CA", "=SUM(Ventes!E4:E103)", "$#,##0.00"),
+        ("Total Revenue", "=SUM(Sales!E4:E103)", "$#,##0.00"),
         (
-            "CA Moyen par Produit",
-            "=ROUND(AVERAGE(Ventes!E4:E103), 2)",
+            "Average Revenue per Product",
+            "=ROUND(AVERAGE(Sales!E4:E103), 2)",
             "$#,##0.00",
         ),
         (
-            "Statut Objectif",
-            "=IF(SUM(Ventes!E4:E103)>TauxCible, "
+            "Target Status",
+            "=IF(SUM(Sales!E4:E103)>TargetRate, "
             'CONCATENATE("OK: ", ROUND(C5/1000,1), "k"), "KO")',
             None,
         ),
@@ -208,10 +208,10 @@ def build_sales_workbook() -> bytes:
 
     # --- 3. SHEET: Params ---
     params = wb.create_sheet("Params")
-    params["B2"] = "Paramètres de Simulation"
+    params["B2"] = "Simulation Parameters"
     params["B2"].font = font_title
 
-    lbl_cell = params.cell(row=4, column=2, value="Seuil CA Cible")
+    lbl_cell = params.cell(row=4, column=2, value="Target Revenue Threshold")
     lbl_cell.font = font_bold
     lbl_cell.border = border_thin
 
@@ -221,7 +221,7 @@ def build_sales_workbook() -> bytes:
     val_cell.number_format = "$#,##0.00"
     val_cell.alignment = align_right
 
-    wb.defined_names.add(DefinedName("TauxCible", attr_text="Params!$C$4"))
+    wb.defined_names.add(DefinedName("TargetRate", attr_text="Params!$C$4"))
 
     return _to_bytes(wb)
 

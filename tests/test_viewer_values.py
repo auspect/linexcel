@@ -881,19 +881,19 @@ class TestScreenshotDescription:
     def _report(**meta) -> str:
         described = graph()
         described["meta"] = {
-            "workbookContext": {"sheets": [{"name": "Ventes", "dims": [3, 3]}]},
+            "workbookContext": {"sheets": [{"name": "Sales", "dims": [3, 3]}]},
             **meta,
         }
         return render_html(described)
 
     def test_the_description_is_rendered_under_its_sheet(self):
-        html = self._report(screenshotDocs={"Ventes": "Blue inputs, black formulas."})
+        html = self._report(screenshotDocs={"Sales": "Blue inputs, black formulas."})
         assert "Blue inputs, black formulas." in html
         assert "var seen = (GRAPH.meta.screenshotDocs || {})[sheet.name];" in html
         assert "prose.innerHTML = _md(seen);" in html
 
     def test_it_is_badged_as_read_from_the_image_not_from_the_lineage(self):
-        html = self._report(screenshotDocs={"Ventes": "..."})
+        html = self._report(screenshotDocs={"Sales": "..."})
         assert EN["ai_vision"] == "🤖 AI — read from the screenshot"
         assert EN["ai_vision"] in html
         assert EN["ai_doc"] in html  # the two badges stay distinguishable

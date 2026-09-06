@@ -69,8 +69,8 @@ def test_vision_docs_is_refused_in_deterministic_mode(workbook_path, tmp_path, c
 
 def test_screenshots_are_rendered_and_embedded(workbook_path, tmp_path, monkeypatch):
     """The flag renders the sheets and puts them in the report, no AI involved."""
-    shots = {"Ventes": [tmp_path / "Ventes.png"]}
-    shots["Ventes"][0].write_bytes(b"\x89PNG\r\n\x1a\n")
+    shots = {"Sales": [tmp_path / "Sales.png"]}
+    shots["Sales"][0].write_bytes(b"\x89PNG\r\n\x1a\n")
     monkeypatch.setattr(
         "linexcel.result.LineageResult.save_screenshots",
         lambda self, output_dir, **kwargs: shots,
@@ -105,7 +105,7 @@ class TestDryRun:
     def test_it_names_the_sheets_and_their_declared_size(self, workbook_path, capsys):
         main(["analyze", str(workbook_path), "--dry-run"])
         out = capsys.readouterr().out
-        assert "Ventes" in out
+        assert "Sales" in out
         assert "cells declared" in out
 
     def test_it_goes_to_stdout_so_it_can_be_piped(self, workbook_path, capsys):
