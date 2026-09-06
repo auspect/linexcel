@@ -780,10 +780,11 @@ def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 _TABLE_BLOCK_RE = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(r"\{\{(T\d+)\}\}")
-# A quantity: optional sign, digits with optional thousands spacing, at most
-# one decimal separator, optional %. Version strings ("1.2.3") and dates
-# ("2024-01-01") deliberately fail, so they keep left alignment.
-_NUMERIC_CELL_RE = re.compile(r"[-−+]?\d[\d\s]*([.,]\d+)?%?")
+# A quantity: optional sign, digits with optional thousands spacing or US
+# comma grouping, at most one decimal separator, optional %. Version strings
+# ("1.2.3") and dates ("2024-01-01") deliberately fail, so they keep left
+# alignment.
+_NUMERIC_CELL_RE = re.compile(r"[-−+]?(\d[\d\s]*|\d{1,3}(?:,\d{3})+)([.,]\d+)?%?")
 
 
 def _md_cell(value: Any) -> str:

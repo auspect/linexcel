@@ -124,3 +124,7 @@ class TestNumericAlignment:
     def test_grouped_and_decimal_numbers_are_quantities(self):
         md = render_markdown_table(["Amount"], [["1 000"], ["1 234,56"]])
         assert "|---:|" in md
+
+    def test_us_grouping_is_a_quantity(self):
+        md = render_markdown_table(["Amount"], [["1,234.56"], ["1,234,567"]])
+        assert "|---:|" in md
