@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-09-06
+
+### Fixed
+
+- **Cached formula errors are now retained when the fast reader omits them.**
+  A formula already saved by Excel with an error such as `#DIV/0!` could be
+  reported as *Not stored*, even though the workbook contained the cached
+  result. The loader now recovers those error values so the report shows the
+  value Excel saved.
+
 ## [1.5.0] — 2026-09-03
 
 ### Changed
