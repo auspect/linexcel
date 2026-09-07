@@ -1189,11 +1189,12 @@ class TestQuarantineReadsTheXml:
         src = buf.getvalue()
 
         out = io.BytesIO()
-        with zipfile.ZipFile(io.BytesIO(src)) as zin, zipfile.ZipFile(
-            out, "w", zipfile.ZIP_DEFLATED
-        ) as zout:
+        with (
+            zipfile.ZipFile(io.BytesIO(src)) as zin,
+            zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
             for entry in zin.infolist():
-                payload = zf_payload = zin.read(entry.filename)
+                payload = zin.read(entry.filename)
                 if entry.filename.endswith("sheet1.xml"):
                     # B1 becomes the shared master, B2:B10 its slaves.
                     payload = re.sub(
@@ -1223,14 +1224,16 @@ class TestQuarantineReadsTheXml:
         assert formulas[(10, 2)] == "='[Budget.xlsx]Annual'!A1"
 
     def test_entities_in_formulas_are_unescaped(self):
-        from linexcel.engine import _iter_formulas_xml
-
         from openpyxl import Workbook
+
+        from linexcel.engine import _iter_formulas_xml
 
         wb = Workbook()
         ws = wb.active
         ws.title = "Data"
-        ws["A1"] = '=IF(1&gt;2, "a&amp;b", "c")'.replace("&gt;", ">").replace("&amp;", "&")
+        ws["A1"] = '=IF(1&gt;2, "a&amp;b", "c")'.replace("&gt;", ">").replace(
+            "&amp;", "&"
+        )
         buf = io.BytesIO()
         wb.save(buf)
         formulas = list(_iter_formulas_xml(buf.getvalue()))
