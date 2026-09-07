@@ -956,6 +956,13 @@ class TestUncomputableFormulas:
         resolver = resolver_for({(SHEET, 1, 1): error("SomethingNew")}, cached, [])
         assert resolver.value(SHEET, 1, 1) == (7, "file", None)
 
+    def test_a_spill_error_falls_back_to_the_stored_value(self):
+        """formualizer does not compute dynamic-array overflow, so it reports
+        #SPILL! even when Excel stored a real value. The file's value must win."""
+        cached = CachedValues({(SHEET, 1, 1): 7}, set(), False)
+        resolver = resolver_for({(SHEET, 1, 1): error("Spill")}, cached, [])
+        assert resolver.value(SHEET, 1, 1) == (7, "file", None)
+
     def test_the_range_intersection_operator_claims_no_value(self):
         # A workbook openpyxl wrote caches nothing, so there is no file value to
         # fall back to either: the cell must simply claim none.

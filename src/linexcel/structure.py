@@ -21,13 +21,15 @@ from linexcel.tables import _collect_defined_names, _force_dimensions
 
 MAX_NODES_PER_SHEET = 400
 
-#: Seconds per megabyte of uncompressed sheet XML. Measured across workbooks
-#: from a thousand cells to two hundred thousand formulas, where the cost per
-#: byte stays near enough constant to be worth quoting: what an analysis
-#: really costs tracks how much formula there is to read, and that is what the
-#: sheet parts weigh. A file of mostly values is faster than this says, which
-#: is the right direction for a warning to be wrong in.
+#: Seconds per megabyte of uncompressed sheet XML, for everything that reads
+#: the file: parsing, sweeping, grouping. Measured across workbooks from a
+#: thousand cells to two hundred thousand formulas.
 SECONDS_PER_SHEET_MB = 0.5
+#: Seconds of evaluation per formula cell. Measured near 15 µs on chained
+#: formulas; doubled here because a real workbook mixes in cross-sheet
+#: references and lookups, and an estimate reads better slightly high than
+#: an order of magnitude low.
+SECONDS_PER_FORMULA = 30e-6
 #: Below this the estimate is noise and nobody was going to wait anyway.
 WORTH_MENTIONING_SECONDS = 5.0
 
@@ -73,6 +75,40 @@ def sheet_bytes(data: bytes) -> int:
         return 0
 
 
+def count_formulas(data: bytes) -> int:
+    """Number of formula cells, counted in the sheet XML.
+
+    Unlike :func:`sheet_bytes` this unpacks the sheet parts, so it is not the
+    free read the zip index gives. ``<f`` opens a formula element and nothing
+    else in sheet XML, and a shared-formula slave is a real formula cell, so
+    the raw byte count is the count.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return sum(
+                zf.read(entry.filename).count(b"<f")
+                for entry in zf.infolist()
+                if _SHEET_PART_RE.fullmatch(entry.filename)
+            )
+    except Exception:
+        return 0
+
+
+def estimate_seconds(data: bytes) -> float:
+    """How long analysing this file is likely to take, in seconds.
+
+    Two terms: reading the file scales with the weight of the sheet parts,
+    and evaluating it scales with the number of formulas. The count costs an
+    unpack of the sheets, so it is only paid when the weight alone already
+    says the run will be long — a small file gets the cheap floor, which is
+    all the warning it needs.
+    """
+    seconds = sheet_bytes(data) / 1_048_576 * SECONDS_PER_SHEET_MB
+    if seconds < WORTH_MENTIONING_SECONDS:
+        return seconds
+    return seconds + count_formulas(data) * SECONDS_PER_FORMULA
+
+
 def inspect_workbook(data: bytes) -> dict[str, Any]:
     """What the file says about itself, before anything analyses it.
 
@@ -110,7 +146,7 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
     return {
         "bytes": len(data),
         "sheetBytes": weight,
-        "estimatedSeconds": round(weight / 1_048_576 * SECONDS_PER_SHEET_MB, 1),
+        "estimatedSeconds": round(estimate_seconds(data), 1),
         "sheets": sheets,
         "declaredCells": sum(s["cells"] for s in sheets),
         "externalWorkbooks": [b.name for b in books.values()],

@@ -46,7 +46,10 @@ EXCEL_ERRORS = frozenset(ERROR_KIND_TEXT.values())
 #: ``Circ`` a reference cycle, which Excel resolves by convention rather than by
 #: computing. Neither may be shown as "the value linexcel recalculated", because
 #: linexcel recalculated nothing; the cell falls back to what the file stores.
-UNCOMPUTED_ERROR_KINDS = frozenset({"NImpl", "Cancelled", "Circ"})
+#: ``Spill`` is here too: formualizer does not compute dynamic-array overflow, so
+#: a spilled formula reads back as #SPILL! even when Excel stored a real value;
+#: treat it as uncomputed and keep the file's value instead of the error text.
+UNCOMPUTED_ERROR_KINDS = frozenset({"NImpl", "Cancelled", "Circ", "Spill"})
 
 
 def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:

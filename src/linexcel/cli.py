@@ -8,7 +8,10 @@ OpenAI-compatible endpoint.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 from linexcel import __version__
@@ -162,35 +165,79 @@ def _format_duration(seconds: float) -> str:
     return f"about {round(seconds / 60)} minute" + ("s" if seconds >= 90 else "")
 
 
-def _warn_if_long(workbook: Path) -> None:
+#: A run lasting this many times its estimate is no longer within noise.
+OVERRUN_FACTOR = 4
+#: Never cry wolf sooner than this, however small the estimate was.
+OVERRUN_NOTICE_FLOOR_SECONDS = 60.0
+
+
+def _warn_if_long(workbook: Path) -> float:
     """Say how long this is likely to take, before it starts taking it.
 
-    Reads the zip index and nothing else — the uncompressed size of the sheet
-    parts is in the central directory, so this costs about a twentieth of a
-    millisecond. Silence under a few seconds: a heads-up on every small file
-    would be noise, and noise is what people learn to skip.
+    Returns the estimate so the caller can watch for the run blowing past it.
+    Silence under a few seconds: a heads-up on every small file would be
+    noise, and noise is what people learn to skip.
     """
     from linexcel.structure import (
-        SECONDS_PER_SHEET_MB,
         WORTH_MENTIONING_SECONDS,
+        estimate_seconds,
         sheet_bytes,
     )
 
     try:
-        weight = sheet_bytes(workbook.read_bytes())
+        data = workbook.read_bytes()
     except OSError:
-        return  # the analysis itself will report this properly
-    seconds = weight / 1_048_576 * SECONDS_PER_SHEET_MB
+        return 0.0  # the analysis itself will report this properly
+    seconds = estimate_seconds(data)
     if seconds < WORTH_MENTIONING_SECONDS:
-        return
+        return seconds
+    weight = sheet_bytes(data)
     print(
         f"{weight / 1_048_576:.0f} MB of formulas: this should take "
-        f"{_format_duration(seconds)} — a floor, not a promise. It counts how "
-        f"much formula there is, not how much those formulas depend on each "
-        f"other, and a workbook of long chains takes far longer. -v shows "
-        f"progress; --time-budget caps the part that can run away.",
+        f"{_format_duration(seconds)} — an estimate, not a promise. It "
+        f"weighs the formulas and counts them, but not how deep their "
+        f"dependency chains run, and a workbook of long chains takes "
+        f"longer. -v shows progress; --time-budget caps the part that can "
+        f"run away.",
         file=sys.stderr,
     )
+    return seconds
+
+
+@contextlib.contextmanager
+def _overrun_notice(estimated_seconds: float) -> Iterator[None]:
+    """Print one actionable note if the run sails past its estimate.
+
+    A timer thread, because the phases that run long are blocking Rust calls
+    no Python-side loop can report from. Fires once, after the longer of four
+    times the estimate and a minute; cancelled silently when the run finishes
+    in time, which is nearly all of them.
+    """
+    wait = max(estimated_seconds * OVERRUN_FACTOR, OVERRUN_NOTICE_FLOOR_SECONDS)
+
+    def _fire() -> None:
+        context = (
+            f" — already {wait / estimated_seconds:.0f}× the "
+            f"{_format_duration(estimated_seconds)} estimate"
+            if estimated_seconds >= 1
+            else ""
+        )
+        print(
+            f"[linexcel] still running{context}. Long dependency chains or "
+            f"references the engine cannot resolve are the usual causes, and "
+            f"the warnings printed at the end will say what was left out. On "
+            f"a rerun, -v shows which phase is slow and --time-budget "
+            f"SECONDS caps the step-by-step decomposition.",
+            file=sys.stderr,
+        )
+
+    timer = threading.Timer(wait, _fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
 
 
 def _report_dry_run(workbook: Path, facts: dict) -> None:
@@ -239,7 +286,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
     if args.dry_run:
         _report_dry_run(args.workbook, inspect_workbook(args.workbook.read_bytes()))
         return 0
-    _warn_if_long(args.workbook)
+    estimated = _warn_if_long(args.workbook)
 
     if args.vision_docs and args.screenshots is None:
         raise ValueError(
@@ -252,12 +299,13 @@ def _run_analyze(args: argparse.Namespace) -> int:
             "--deterministic-only rules out."
         )
 
-    result = analyze_workbook(
-        args.workbook,
-        verbose=args.verbose,
-        refs_dir=args.refs_dir,
-        step_seconds=args.time_budget,
-    )
+    with _overrun_notice(estimated):
+        result = analyze_workbook(
+            args.workbook,
+            verbose=args.verbose,
+            refs_dir=args.refs_dir,
+            step_seconds=args.time_budget,
+        )
 
     screenshots = None
     if args.screenshots is not None:
