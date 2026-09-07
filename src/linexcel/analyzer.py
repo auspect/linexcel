@@ -79,7 +79,7 @@ def analyze_workbook(
 
     # --- 2. computation engine -------------------------------------------
     _t = time.perf_counter()
-    session = boot_engine(data, sheet_dims, warnings)
+    session = boot_engine(data, warnings)
     engine = session.engine
     engine_sheets = session.engine_sheets
     engine_alive = session.engine_alive
