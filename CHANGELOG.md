@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A dynamic-array formula no longer reads as `#SPILL!`.** The recalculation
+  engine does not compute array spill, so a spilled formula (one written to
+  spill across a range) came back as `#SPILL!` even when Excel had stored a
+  real value for it. `#SPILL!` is now treated as *not recalculated* rather than
+  as a result: the value the file actually stores is shown instead, so a cell
+  that has a number in Excel no longer appears to have errored.
+
+### Changed
+
+- **The viewer lets you pick a sheet again.** The graph toolbar that floats
+  over the canvas sits above it now, so the sheet dropdown is clickable instead
+  of the mouse always grabbing the graph underneath.
+- **The graph opens organic (fcose) whatever its size.** Previously a large
+  graph fell back to the hierarchical *flow* layout, which is often unreadable
+  once the file is big; flow stays one click away, organic is the default.
+- **The "should take" estimate counts formulas, not just their weight.** A
+  workbook's likely runtime now reflects the number of formulas as well as how
+  much formula there is, so the printed estimate is closer to reality for
+  formula-heavy files.
+- **A run that overruns its estimate says so, with a way out.** If analysis
+  goes past four times the estimate (and at least a minute), the console prints
+  one actionable note naming `--time-budget` and `-v` instead of letting a long
+  run pass in silence.
+
+### Performance
+
+- **A failed full recalculation no longer turns minutes into hours.** Blanking
+  the formulas that stop the engine used to read them back one cell at a time —
+  quadratic, the source of multi-thousand-second runs. The suspect scan now
+  streams the sheet's XML instead (linear). A fresh run adds a small
+  `perf_probe` helper for measuring where time goes.
+
 ## [1.6.0] — 2026-09-07
 
 ### Changed
