@@ -357,9 +357,7 @@ def _report_recommendations(
             "(needs LibreOffice)"
         )
     stats = result.graph.get("meta", {}).get("stats", {})
-    unread = stats.get("externalWorkbooks", 0) - stats.get(
-        "externalWorkbooksRead", 0
-    )
+    unread = stats.get("externalWorkbooks", 0) - stats.get("externalWorkbooksRead", 0)
     if (
         unread > 0
         and refs_dir is None

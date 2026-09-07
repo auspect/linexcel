@@ -33,9 +33,7 @@ def cached_link_workbook(tmp_path):
 
 
 class TestScreenshotRecommendation:
-    def test_a_multi_sheet_workbook_is_told_about_the_flag(
-        self, workbook_path, capsys
-    ):
+    def test_a_multi_sheet_workbook_is_told_about_the_flag(self, workbook_path, capsys):
         assert main(["analyze", str(workbook_path), "--no-html"]) == 0
         hint = capsys.readouterr().err
         assert "hint:" in hint
@@ -79,9 +77,7 @@ class TestScreenshotFailureIsExplained:
                 "LibreOffice could not be found. Install with: ..."
             )
 
-        monkeypatch.setattr(
-            "linexcel.result.LineageResult.save_screenshots", _boom
-        )
+        monkeypatch.setattr("linexcel.result.LineageResult.save_screenshots", _boom)
         out = tmp_path / "o.html"
         argv = [
             "analyze",
@@ -104,9 +100,7 @@ class TestScreenshotFailureIsExplained:
         def _boom(self, output_dir, **kwargs):
             raise WorkbookRenderError("LibreOffice did not produce a PDF")
 
-        monkeypatch.setattr(
-            "linexcel.result.LineageResult.save_screenshots", _boom
-        )
+        monkeypatch.setattr("linexcel.result.LineageResult.save_screenshots", _boom)
         argv = [
             "analyze",
             str(workbook_path),
