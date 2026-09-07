@@ -83,7 +83,7 @@
      the header: the header keeps identity and search, the canvas keeps
      what only makes sense above a graph. */
   .lin-tools {
-    position: absolute; top: .6rem; right: .6rem; z-index: 5;
+    position: absolute; top: .6rem; right: .6rem; z-index: 12;
     display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
     justify-content: flex-end;
     background: var(--legend-bg); border: 1px solid var(--hair);
@@ -912,10 +912,10 @@
     }
 
     var hasDagre = typeof dagre !== 'undefined' || window.cytoscapeDagre;
-    // Past ~120 nodes an organic layout reads as a hairball: default to the
-    // flow (hierarchical) layout, organic stays one click away.
-    var initial = (GRAPH.nodes.length > 120 && hasDagre) ? 'dagre'
-      : (hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose'));
+    // Organic (fcose) is the default whatever the size: a hierarchical flow
+    // layout reads worse on a big graph than a hairball does, and fcose's
+    // compound bundling keeps dense cases legible. Flow stays one click away.
+    var initial = (hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose'));
     var curLayout = initial;
     var cy = cytoscape({
       container: cyContainer, elements: elements,
