@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The viewer is more resilient and easier to read when there is nothing to
+  draw.** A workbook with no formulas now shows a clear, localised message
+  ("no formulas were found") instead of a blank canvas, and turns off the graph
+  chrome (toolbar, legend, disabled search and filters) so nothing looks broken
+  but inactive. The same treatment applies when the graph engine fails to load:
+  the detail panel is hidden and the stats line is filled, matching the
+  no-formula case instead of leaving an empty column. Esc now clears a
+  selection and closes the detail panel from anywhere, and hovering a node on a
+  dense graph gives a visual cue to identify it before clicking.
+
 ## [1.5.2] — 2026-09-06
 
 ### Fixed
