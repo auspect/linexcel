@@ -151,7 +151,7 @@ class TestSayingHowLongItWillTake:
         err = capsys.readouterr().err
         assert "200 MB of formulas" in err
         assert "about 2 minutes" in err
-        assert "a floor, not a promise" in err
+        assert "an estimate, not a promise" in err
 
     def test_it_goes_to_stderr_so_a_piped_report_stays_clean(
         self, workbook_path, monkeypatch, capsys
@@ -194,3 +194,71 @@ class TestTheEstimateReadsAsAnOrderOfMagnitude:
 
         assert _format_duration(100) == "about 2 minutes"
         assert _format_duration(600) == "about 10 minutes"
+
+
+class TestTheEstimateCountsFormulas:
+    """Weight alone could not see a small file of expensive formulas."""
+
+    def test_formulas_are_counted_in_the_sheet_xml(self, workbook_path):
+        from linexcel.structure import count_formulas
+
+        assert count_formulas(workbook_path.read_bytes()) > 0
+
+    def test_something_that_is_not_a_package_has_no_formulas(self):
+        from linexcel.structure import count_formulas
+
+        assert count_formulas(b"not a zip") == 0
+
+    def test_a_small_workbook_skips_the_count(self, workbook_path, monkeypatch):
+        """Counting unpacks the sheets; a quick run is not worth that."""
+        from linexcel import structure
+
+        def _boom(data):
+            raise AssertionError("count_formulas should not run under the floor")
+
+        monkeypatch.setattr(structure, "count_formulas", _boom)
+        assert structure.estimate_seconds(workbook_path.read_bytes()) >= 0
+
+    def test_a_heavy_one_pays_the_count(self, workbook_path, monkeypatch):
+        from linexcel import structure
+
+        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
+        monkeypatch.setattr(structure, "count_formulas", lambda data: 1_000_000)
+        estimate = structure.estimate_seconds(workbook_path.read_bytes())
+        # 100 s of reading + 30 s of evaluation
+        assert estimate == pytest.approx(130.0)
+
+
+class TestOverrunNotice:
+    """A run that sails past its estimate says so while there is still time
+    to act on it, not in a post-mortem."""
+
+    def test_it_fires_when_the_run_overruns(self, monkeypatch, capsys):
+        import time
+
+        from linexcel import cli
+
+        monkeypatch.setattr(cli, "OVERRUN_NOTICE_FLOOR_SECONDS", 0.05)
+        with cli._overrun_notice(0.0):
+            time.sleep(0.3)
+        err = capsys.readouterr().err
+        assert "still running" in err
+        assert "--time-budget" in err
+
+    def test_it_names_the_estimate_it_overran(self, monkeypatch, capsys):
+        import time
+
+        from linexcel import cli
+
+        monkeypatch.setattr(cli, "OVERRUN_NOTICE_FLOOR_SECONDS", 0.0)
+        monkeypatch.setattr(cli, "OVERRUN_FACTOR", 0.01)
+        with cli._overrun_notice(10.0):
+            time.sleep(0.3)
+        assert "estimate" in capsys.readouterr().err
+
+    def test_a_run_that_finishes_in_time_says_nothing(self, capsys):
+        from linexcel import cli
+
+        with cli._overrun_notice(0.0):
+            pass
+        assert capsys.readouterr().err == ""

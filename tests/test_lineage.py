@@ -1157,6 +1157,95 @@ class TestUnresolvableCellsAreIsolated:
         assert not _is_unresolvable('=IFERROR(#REF!, "handled")', {"Data"})
         assert not _is_unresolvable("=Data!A1", {"Data"})
         assert _is_unresolvable("=Gone!A1", {"Data"})
+
+
+class TestQuarantineReadsTheXml:
+    """The suspect scan streams the sheet XML, never the engine.
+
+    Reading formulas back from a freshly rebuilt engine builds the dependency
+    graph one cell at a time — quadratic, and the reason a failed
+    ``evaluate_all`` used to turn minutes into hours.
+    """
+
+    @staticmethod
+    def _shared_formula_workbook() -> bytes:
+        """A column of shared formulas, the way real Excel writes them.
+
+        openpyxl never writes shared formulas, so the sheet part is rewritten
+        by hand: one master carrying the text, slaves naming only its index.
+        """
+        import zipfile
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        for row in range(1, 11):
+            ws.cell(row=row, column=1, value=row)
+            ws.cell(row=row, column=2, value=f"='[Budget.xlsx]Annual'!A{row}")
+        buf = io.BytesIO()
+        wb.save(buf)
+        src = buf.getvalue()
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(src)) as zin, zipfile.ZipFile(
+            out, "w", zipfile.ZIP_DEFLATED
+        ) as zout:
+            for entry in zin.infolist():
+                payload = zf_payload = zin.read(entry.filename)
+                if entry.filename.endswith("sheet1.xml"):
+                    # B1 becomes the shared master, B2:B10 its slaves.
+                    payload = re.sub(
+                        rb'<c r="B1"[^>]*>.*?</c>',
+                        b'<c r="B1"><f t="shared" ref="B1:B10" si="0">'
+                        b"'[Budget.xlsx]Annual'!A1</f></c>",
+                        payload,
+                    )
+                    for row in range(2, 11):
+                        payload = re.sub(
+                            rb'<c r="B%d"[^>]*>.*?</c>' % row,
+                            b'<c r="B%d"><f t="shared" si="0"/></c>' % row,
+                            payload,
+                        )
+                zout.writestr(entry, payload)
+        return out.getvalue()
+
+    def test_a_shared_slave_yields_its_masters_text(self):
+        from linexcel.engine import _iter_formulas_xml
+
+        formulas = {
+            (row, col): f
+            for _, row, col, f in _iter_formulas_xml(self._shared_formula_workbook())
+        }
+        assert formulas[(1, 2)] == "='[Budget.xlsx]Annual'!A1"
+        # The slave carries no text of its own; the scan reads the master's.
+        assert formulas[(10, 2)] == "='[Budget.xlsx]Annual'!A1"
+
+    def test_entities_in_formulas_are_unescaped(self):
+        from linexcel.engine import _iter_formulas_xml
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = '=IF(1&gt;2, "a&amp;b", "c")'.replace("&gt;", ">").replace("&amp;", "&")
+        buf = io.BytesIO()
+        wb.save(buf)
+        formulas = list(_iter_formulas_xml(buf.getvalue()))
+        assert formulas[0][3] == '=IF(1>2, "a&b", "c")'
+
+    def test_a_shared_group_is_isolated_whole(self):
+        """Cutting the master but not its slaves would corrupt the retry."""
+        from linexcel.engine import _is_unresolvable, boot_engine
+
+        warnings: list[str] = []
+        session = boot_engine(self._shared_formula_workbook(), warnings)
+        assert session.engine_alive
+        assert ("Data", 1, 2) in session.quarantined
+        assert ("Data", 10, 2) in session.quarantined
+        assert len(session.quarantined) == 10
         assert _is_unresolvable("='[Other.xlsx]S'!A1", {"Data"})
 
     def test_a_guarded_formula_is_never_isolated(self):
