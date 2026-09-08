@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-09-08
+
+### Added
+
+- **The viewer says plainly when it has no sheet screenshots.** The *Visual
+  preview* tab used to disappear entirely when a report was built without
+  `--screenshots` (flag not passed, or LibreOffice unavailable). It now shows a
+  short explanation and the exact command that produces the screenshots, so the
+  feature is discoverable instead of silently absent.
+- **`linexcel analyze --rich`** prints the end-of-run summary as a table of
+  nodes by kind. Opt-in; it degrades to the plain one-line summary when the
+  optional `progress` extra is not installed, and it writes to stderr only, so
+  the HTML/JSON report is byte-identical with or without it.
+- **English recommendations at the end of a run.** When a multi-sheet report
+  has no screenshots, the CLI suggests rerunning with `--screenshots DIR`; when
+  a workbook reads another file it was not given, it points to `--refs-dir DIR`.
+- **A failed screenshot render is reported, not silent.** If `--screenshots`
+  was requested but LibreOffice or `pdftoppm` is missing (or fails), the reason
+  and the fix are printed, and the report is still written without screenshots.
+
+### Fixed
+
+- **The screenshots pane is no longer double-rendered when a Cytoscape-less
+  report still carries screenshots.** `setupScreenshots` now runs before the
+  Cytoscape guard and is idempotent, so every report keeps its visual preview
+  (or its stated absence) exactly once.
+
+### Changed
+
+- **The graph toolbar floats above the canvas again.** The sheet picker and
+  layout controls are no longer captured by the Cytoscape layer underneath, so
+  the sheet dropdown is clickable instead of dragging the graph.
+
 ## [1.7.0] — 2026-09-07
 
 ### Fixed
