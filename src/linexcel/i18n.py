@@ -158,6 +158,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Rendered sheet",
         "details_panel": "Node details",
         "page": "Page {n}",
+        "shots_empty_title": "No sheet screenshots in this report",
+        "shots_empty_desc": (
+            "The report was generated without rendering the sheets to images, "
+            "so there is no visual preview to show."
+        ),
+        "shots_hint": (
+            "Re-run: linexcel analyze WORKBOOK.xlsx --screenshots DIR "
+            "(needs LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "This report has rendered sheets — see them in the Sheets tab, "
+            "under each sheet."
+        ),
     },
     "fr": {
         "graph": "Graphe",
@@ -289,6 +302,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Rendu de la feuille",
         "details_panel": "Détails du nœud",
         "page": "Page {n}",
+        "shots_empty_title": "Aucune capture des feuilles dans ce rapport",
+        "shots_empty_desc": (
+            "Le rapport a été généré sans rendre les feuilles en images : "
+            "il n'y a pas d'aperçu visuel à afficher."
+        ),
+        "shots_hint": (
+            "Relancez : linexcel analyze CLASSEUR.xlsx --screenshots DOSSIER "
+            "(LibreOffice requis)"
+        ),
+        "shots_in_sheets": (
+            "Ce rapport contient des feuilles rendues — voyez-les dans "
+            "l'onglet Feuilles, sous chaque feuille."
+        ),
     },
     "es": {
         "graph": "Grafo",
@@ -421,6 +447,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Hoja renderizada",
         "details_panel": "Detalles del nodo",
         "page": "Página {n}",
+        "shots_empty_title": "Este informe no incluye capturas de las hojas",
+        "shots_empty_desc": (
+            "El informe se generó sin renderizar las hojas como imágenes; "
+            "no hay vista previa que mostrar."
+        ),
+        "shots_hint": (
+            "Vuelva a ejecutar: linexcel analyze LIBRO.xlsx --screenshots DIR "
+            "(requiere LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "Este informe tiene hojas renderizadas — véalas en la pestaña "
+            "Hojas, bajo cada hoja."
+        ),
     },
     "de": {
         "graph": "Graph",
@@ -554,6 +593,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Gerendertes Blatt",
         "details_panel": "Knotendetails",
         "page": "Seite {n}",
+        "shots_empty_title": "Keine Tabellen-Screenshots in diesem Bericht",
+        "shots_empty_desc": (
+            "Der Bericht wurde ohne gerenderte Tabellenblätter erstellt; "
+            "es gibt keine visuelle Vorschau."
+        ),
+        "shots_hint": (
+            "Erneut ausführen: linexcel analyze MAPPE.xlsx --screenshots ORDNER "
+            "(benötigt LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "Dieser Bericht enthält gerenderte Blätter — sie stehen im Tab "
+            "„Blätter“ unter dem jeweiligen Blatt."
+        ),
     },
     "it": {
         "graph": "Grafo",
@@ -687,6 +739,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Foglio renderizzato",
         "details_panel": "Dettagli del nodo",
         "page": "Pagina {n}",
+        "shots_empty_title": "Nessuno screenshot dei fogli in questo report",
+        "shots_empty_desc": (
+            "Il report è stato generato senza il rendering dei fogli come "
+            "immagini; non c'è un'anteprima visiva da mostrare."
+        ),
+        "shots_hint": (
+            "Eseguire di nuovo: linexcel analyze FILE.xlsx --screenshots DIR "
+            "(richiede LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "Questo report contiene fogli renderizzati — sono nella scheda "
+            "Fogli, sotto ciascun foglio."
+        ),
     },
     "pt": {
         "graph": "Grafo",
@@ -818,6 +883,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Folha renderizada",
         "details_panel": "Detalhes do nó",
         "page": "Página {n}",
+        "shots_empty_title": "Sem capturas de ecrã das folhas neste relatório",
+        "shots_empty_desc": (
+            "O relatório foi gerado sem renderizar as folhas em imagens; "
+            "não há pré-visualização para mostrar."
+        ),
+        "shots_hint": (
+            "Execute de novo: linexcel analyze FICHEIRO.xlsx --screenshots "
+            "PASTA (requer o LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "Este relatório tem folhas renderizadas — veja-as no separador "
+            "Folhas, sob cada folha."
+        ),
     },
     "nl": {
         "graph": "Graaf",
@@ -951,6 +1029,19 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "Weergegeven blad",
         "details_panel": "Knoopdetails",
         "page": "Pagina {n}",
+        "shots_empty_title": "Geen bladscreenshots in dit rapport",
+        "shots_empty_desc": (
+            "Het rapport is gemaakt zonder de bladen als afbeelding te "
+            "renderen; er is geen visuele preview om te tonen."
+        ),
+        "shots_hint": (
+            "Voer opnieuw uit: linexcel analyze BESTAND.xlsx --screenshots "
+            "MAP (vereist LibreOffice)"
+        ),
+        "shots_in_sheets": (
+            "Dit rapport bevat gerenderde bladen — zie ze op het tabblad "
+            "Bladen, onder elk blad."
+        ),
     },
     "ja": {
         "graph": "グラフ",
@@ -1076,6 +1167,18 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "シートの描画",
         "details_panel": "ノードの詳細",
         "page": "ページ {n}",
+        "shots_empty_title": "このレポートにはシートのスクリーンショットがありません",
+        "shots_empty_desc": (
+            "シートが画像としてレンダリングされていないため、表示できる"
+            "ビジュアルプレビューはありません。"
+        ),
+        "shots_hint": (
+            "再実行: linexcel analyze FILE.xlsx --screenshots DIR（LibreOffice が必要）"
+        ),
+        "shots_in_sheets": (
+            "このレポートにはレンダリング済みのシートがあります——"
+            "「シート」タブの各シートの下に表示されます。"
+        ),
     },
     "zh": {
         "graph": "图谱",
@@ -1194,6 +1297,16 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "sheet_render": "工作表渲染图",
         "details_panel": "节点详情",
         "page": "第 {n} 页",
+        "shots_empty_title": "此报告不包含工作表截图",
+        "shots_empty_desc": (
+            "报告生成时未将工作表渲染为图片，因此没有可视化预览可显示。"
+        ),
+        "shots_hint": (
+            "重新运行：linexcel analyze FILE.xlsx --screenshots DIR（需要 LibreOffice）"
+        ),
+        "shots_in_sheets": (
+            "此报告包含已渲染的工作表——请在“工作表”选项卡中各工作表下方查看。"
+        ),
     },
 }
 

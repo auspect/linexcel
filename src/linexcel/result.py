@@ -275,6 +275,11 @@ class LineageResult:
         A mapping is also downgraded to that flat list when the renderer does
         not produce exactly one page per sheet, rather than filing images under
         sheets they may not belong to.
+
+        Raises :class:`linexcel.insights.WorkbookRenderError` when the
+        renderer is missing or fails — the message says what was not found
+        and how to install it, so callers (the CLI does) can show it and
+        still write the report without screenshots.
         """
         from linexcel.insights import render_workbook_screenshots
 

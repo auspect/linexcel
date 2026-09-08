@@ -90,6 +90,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze.add_argument(
+        "--rich",
+        action="store_true",
+        help=(
+            "Print the end-of-run summary as a table (needs the 'progress' "
+            "extra; plain text when rich is not installed). Affects stderr "
+            "only — the HTML/JSON report is identical either way."
+        ),
+    )
+    analyze.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -279,6 +288,89 @@ def _report_dry_run(workbook: Path, facts: dict) -> None:
     )
 
 
+def _print_summary(result, *, fancy: bool) -> None:
+    """The end-of-run tally: one plain line by default, a table when asked.
+
+    ``fancy`` is opt-in (``--rich``) and degrades to the plain line when rich
+    is not installed. Either way it writes to stderr only, so the HTML/JSON
+    report is byte-identical with or without it.
+    """
+    line = (
+        f"Nodes: {len(result.nodes)}  Edges: {len(result.edges)}  "
+        f"Sheets: {len(result.sheets)}"
+    )
+    if not fancy:
+        print(line, file=sys.stderr)
+        return
+    from linexcel.progress import _rich_console
+
+    console = _rich_console()
+    if console is None:
+        print(
+            "hint: --rich needs the 'progress' extra "
+            "(pip install 'linexcel[progress]'); the plain summary follows.",
+            file=sys.stderr,
+        )
+        print(line, file=sys.stderr)
+        return
+    from collections import Counter
+
+    from rich.table import Table
+
+    kinds = Counter(str(n.get("kind", "unknown")) for n in result.nodes)
+    table = Table(title="linexcel summary")
+    table.add_column("Node kind")
+    table.add_column("Count", justify="right")
+    for kind, count in sorted(kinds.items()):
+        table.add_row(kind, f"{count:,}")
+    table.add_section()
+    table.add_row("total", f"{len(result.nodes):,}")
+    console.print(table)
+    console.print(
+        f"Edges: {len(result.edges):,}  Sheets: {len(result.sheets):,}",
+        highlight=False,
+    )
+
+
+def _report_recommendations(
+    result,
+    *,
+    screenshots_asked: bool,
+    screenshots_failed: bool,
+    refs_dir: Path | None,
+) -> None:
+    """What a rerun could do better, one line each, printed last.
+
+    Same register as the dry-run notes: plain advice about flags, on stderr,
+    after the warnings that carry the detail.
+    """
+    hints: list[str] = []
+    if screenshots_failed:
+        hints.append(
+            "the report has no sheet screenshots — fix the renderer named "
+            "above and rerun with --screenshots DIR to include them"
+        )
+    elif not screenshots_asked and len(result.sheets) > 1:
+        hints.append(
+            f"{len(result.sheets)} sheets would render as pictures — rerun "
+            "with --screenshots DIR to see them in the report "
+            "(needs LibreOffice)"
+        )
+    stats = result.graph.get("meta", {}).get("stats", {})
+    unread = stats.get("externalWorkbooks", 0) - stats.get("externalWorkbooksRead", 0)
+    if (
+        unread > 0
+        and refs_dir is None
+        and not any("--refs-dir" in w for w in result.warnings)
+    ):
+        hints.append(
+            "pass --refs-dir DIR pointing at the other workbook(s) to read "
+            "them instead of trusting the cache Excel left behind"
+        )
+    for hint in hints:
+        print(f"hint: {hint}", file=sys.stderr)
+
+
 def _run_analyze(args: argparse.Namespace) -> int:
     from linexcel import analyze as analyze_workbook
     from linexcel.structure import inspect_workbook
@@ -308,9 +400,20 @@ def _run_analyze(args: argparse.Namespace) -> int:
         )
 
     screenshots = None
+    screenshot_error: str | None = None
     if args.screenshots is not None:
-        screenshots = result.save_screenshots(args.screenshots)
-        print(f"Shots: {args.screenshots}", file=sys.stderr)
+        from linexcel.insights import WorkbookRenderError
+
+        try:
+            screenshots = result.save_screenshots(args.screenshots)
+        except WorkbookRenderError as exc:
+            # The analysis itself is done and worth keeping: the report is
+            # written without screenshots, and the message says why and how
+            # to enable the renderer.
+            screenshot_error = str(exc)
+            print(f"warning: {exc}", file=sys.stderr)
+        else:
+            print(f"Shots: {args.screenshots}", file=sys.stderr)
 
     screenshot_docs: dict[str, str] | None = None
     if args.vision_docs and screenshots:
@@ -379,15 +482,17 @@ def _run_analyze(args: argparse.Namespace) -> int:
             )
             print(f"HTML:  {out}", file=sys.stderr)
 
-    print(
-        f"Nodes: {len(result.nodes)}  Edges: {len(result.edges)}  "
-        f"Sheets: {len(result.sheets)}",
-        file=sys.stderr,
-    )
+    _print_summary(result, fancy=args.rich)
     if args.ai_docs or args.vision_docs:
         print(f"AI:    {result.token_usage}", file=sys.stderr)
     for warning in result.warnings:
         print(f"warning: {warning}", file=sys.stderr)
+    _report_recommendations(
+        result,
+        screenshots_asked=args.screenshots is not None,
+        screenshots_failed=screenshot_error is not None,
+        refs_dir=args.refs_dir,
+    )
     return 0
 
 

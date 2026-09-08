@@ -351,6 +351,10 @@ class TestNewInterfaceStrings:
         "rail_views",
         "rail_kinds",
         "rail_layout",
+        "shots_empty_title",
+        "shots_empty_desc",
+        "shots_hint",
+        "shots_in_sheets",
     )
 
     def test_every_language_defines_them(self):
@@ -457,3 +461,48 @@ class TestSheetsTab:
 
     def test_a_wide_preview_scrolls_rather_than_widening_the_card(self):
         assert ".lin-gridwrap { overflow-x: auto" in render_html(sheets_graph())
+
+
+class TestScreenshotsTabStates:
+    """The Visual preview tab used to vanish whenever the report carried no
+    screenshots (the default run), which read as a missing feature rather
+    than a missing render. It now always opens, on one of three states:
+    the page gallery, a pointer to the per-sheet renders, or an empty state
+    that names the command producing them.
+    """
+
+    def test_setup_is_called_once_and_before_the_cytoscape_guard(self):
+        """A second call before the guard used to double-render the gallery;
+        and a call after it left the tab unset in the fallback states."""
+        script = script_of(render_html(demo_graph()))
+        assert script.count("setupScreenshots();") == 1
+        call_at = script.index("setupScreenshots();")
+        guard_at = script.index("typeof cytoscape === 'undefined'")
+        assert call_at < guard_at
+
+    def test_setup_is_idempotent(self):
+        script = script_of(render_html(demo_graph()))
+        assert "if (container.firstChild) return;" in script
+
+    def test_the_empty_state_says_so_and_names_the_command(self):
+        script = script_of(render_html(sheets_graph()))
+        assert "_t('shots_empty_title')" in script
+        assert "_t('shots_empty_desc')" in script
+        assert "_t('shots_hint')" in script
+        html = render_html(sheets_graph())
+        assert ".lin-shots-empty {" in html
+        assert "--screenshots DIR" in EN["shots_hint"]
+
+    def test_a_per_sheet_mapping_points_to_the_sheets_tab(self):
+        """Renders keyed by sheet name live under each sheet's card; the tab
+        says where they are instead of duplicating the gallery."""
+        script = script_of(render_html(sheets_graph({"In": ["a.png"]})))
+        assert "_t('shots_in_sheets')" in script
+
+    def test_the_tab_is_unhidden_in_every_state(self):
+        """The early `return` that kept the tab hidden when no flat page list
+        existed is gone: the button is revealed before the shape is read."""
+        script = script_of(render_html(sheets_graph()))
+        unhide_at = script.index("btn.hidden = false;")
+        branch_at = script.index("Array.isArray(images)")
+        assert unhide_at < branch_at
