@@ -203,6 +203,11 @@
   .lin-main { flex: 1; display: flex; min-height: 0; position: relative; }
   .lin-main.hidden { display: none; }
   .lin-cy { flex: 1; position: relative; min-width: 0; }
+  /* The canvas and its floating toolbar share one positioning parent, so the
+     toolbar can sit above the canvas (z-index) without ever landing under the
+     Cytoscape layer Cytoscape creates inside #lin-cy. */
+  .lin-canvas-area { flex: 1; position: relative; min-width: 0; display: flex; }
+  .lin-canvas-area .lin-cy { width: 100%; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
     flex-wrap: wrap; background: var(--legend-bg);
@@ -602,7 +607,10 @@
       </div>
     </nav>
     <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
-      <div class="lin-cy" id="lin-cy">
+      <div class="lin-canvas-area">
+        <div class="lin-cy" id="lin-cy">
+          <div class="lin-legend" id="lin-legend"></div>
+        </div>
         <div class="lin-tools" id="lin-tools">
           <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
           <div class="lin-group">
@@ -612,7 +620,6 @@
             <button type="button" id="lin-fit-sel" hidden>Fit Selection</button>
           </div>
         </div>
-        <div class="lin-legend" id="lin-legend"></div>
       </div>
       <aside class="lin-panel lin-empty" id="lin-panel" role="region" tabindex="-1"></aside>
     </div>
