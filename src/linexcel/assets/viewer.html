@@ -496,12 +496,25 @@
     padding: .35rem .7rem; border: 1px solid var(--line); border-radius: 6px;
     background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
   }
+  .lin-chip:hover { border-color: var(--ink2); }
   .lin-chip[aria-pressed="true"] {
     background: var(--ink); color: var(--surface); border-color: var(--ink);
   }
   .lin-shot {
     max-width: 100%; border: 1px solid var(--line); border-radius: 8px;
     box-shadow: 0 6px 16px var(--shadow); background: var(--paper);
+  }
+  /* No render came with the report (flag not passed, LibreOffice missing or
+     failed): say so and name the command that produces one, in the same
+     centred voice as the empty-graph state. */
+  .lin-shots-empty {
+    max-width: 32rem; margin: 3rem auto; text-align: center; color: var(--ink2);
+  }
+  .lin-shots-empty-title { color: var(--ink); font-size: 1rem; font-weight: 600; }
+  .lin-shots-cmd {
+    display: inline-block; margin-top: .9rem; padding: .45rem .8rem;
+    background: var(--surface2); border: 1px solid var(--hair); border-radius: 6px;
+    font-family: ui-monospace, monospace; font-size: .82rem; color: var(--ink);
   }
 
   /* --- narrow viewports: the detail panel overlays instead of squeezing -- */
@@ -859,6 +872,11 @@
       vba: extraText
     });
 
+    // Screenshots are workbook data, not graph data: pose the tab up front
+    // too, so the two "nothing to draw" states below (Cytoscape missing, no
+    // formula-driven nodes) keep the preview — or its empty state.
+    setupScreenshots();
+
     var cyContainer = document.getElementById('lin-cy');
     if (typeof cytoscape === 'undefined') {
       var f = document.createElement('div');
@@ -1074,7 +1092,6 @@
     searchClear.onclick = function () { restoreGraph(); search.focus(); };
     buildLegend();
     buildKindFilters(cy, layoutOpts, function () { return curLayout; }, hasFcose);
-    setupScreenshots();
   }
 
   // The four tabs, in reading order. Each key names both the button
@@ -1115,16 +1132,41 @@
     });
   }
 
+  // Runs before the Cytoscape guard (see boot()), so it must cope with every
+  // shape meta.screenshots takes: a flat list of print pages, a per-sheet
+  // mapping, or nothing at all. The pane is populated exactly once — the
+  // firstChild check makes a repeated call a no-op rather than a second
+  // render.
   function setupScreenshots() {
-    var images = GRAPH.meta.screenshots;
-    if (!images || !images.length) return;
-    if (typeof images === 'object' && !Array.isArray(images)) return;
-
     var btn = document.getElementById('lin-tab-screenshots');
-    btn.hidden = false;
-
     var container = document.getElementById('lin-screenshots');
+    if (container.firstChild) return;
+    btn.hidden = false;
     container.appendChild(el('h2', null, _t('visual')));
+
+    var images = GRAPH.meta.screenshots;
+    var pages = Array.isArray(images) ? images : null;
+    var bySheet = (!pages && images && typeof images === 'object') ? images : null;
+    var sheetNames = bySheet ? Object.keys(bySheet).filter(function (name) {
+      return bySheet[name] && bySheet[name].length;
+    }) : [];
+
+    if (!pages || !pages.length) {
+      // A per-sheet mapping renders inside each sheet's card (Sheets tab);
+      // the tab points there instead of duplicating the gallery. Anything
+      // else — flag not passed, LibreOffice missing, render failed — gets
+      // the plain statement and the command that would have produced it.
+      var note = el('div', 'lin-shots-empty');
+      if (sheetNames.length) {
+        note.appendChild(el('p', 'lin-hint', _t('shots_in_sheets')));
+      } else {
+        note.appendChild(el('div', 'lin-shots-empty-title', _t('shots_empty_title')));
+        note.appendChild(el('p', 'lin-hint', _t('shots_empty_desc')));
+        note.appendChild(el('code', 'lin-shots-cmd', _t('shots_hint')));
+      }
+      container.appendChild(note);
+      return;
+    }
 
     var activeIdx = 0;
 
@@ -1134,14 +1176,14 @@
 
     function showPage(idx) {
       activeIdx = idx;
-      imgEl.src = images[idx];
+      imgEl.src = pages[idx];
       imgEl.alt = _t('page', { n: idx + 1 });
       Array.prototype.forEach.call(switcher.children, function (child, cIdx) {
         child.setAttribute('aria-pressed', cIdx === idx ? 'true' : 'false');
       });
     }
 
-    images.forEach(function(src, idx) {
+    pages.forEach(function(src, idx) {
       var pBtn = el('button', 'lin-chip', _t('page', { n: idx + 1 }));
       pBtn.type = 'button';
       pBtn.setAttribute('aria-pressed', 'false');
@@ -1153,11 +1195,10 @@
     viewerContainer.appendChild(imgEl);
     container.appendChild(viewerContainer);
 
-    var screenshotsButton = document.getElementById('lin-tab-screenshots');
     var screenshotsMain = document.getElementById('lin-screenshots-main');
 
-    screenshotsButton.onclick = function () {
-      switchTab(screenshotsButton, screenshotsMain);
+    btn.onclick = function () {
+      switchTab(btn, screenshotsMain);
       showPage(activeIdx);
     };
   }
