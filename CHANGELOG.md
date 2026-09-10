@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-09-10
+
+### Fixed
+
+- **The *Workbook overview* tab is hidden when the report has no overview.**
+  A specificity clash left `.lin-tab[hidden]` overridden by the rail's tab
+  rule, so the tab stayed visible and clicking it opened a blank page. It is
+  now genuinely hidden, with no `!important`.
+- **The node detail panel is no longer covered by the graph toolbar on narrow
+  screens.** In the mobile layout the floating zoom/fit toolbar sat above the
+  detail drawer, hiding the node title and the close button; the panel now
+  stacks over it.
+- **The dark-mode selection ring is softer.** A 3.5 px near-white outline on a
+  dark canvas glared and washed out the node's type colour; the ring is
+  thinner (2.5 px).
+- **Deselected nodes stay legible.** The dimming applied to unrelated nodes on
+  selection was too strong (opacity 0.12); it is now 0.22, so the surrounding
+  structure remains visible without competing with the active subgraph.
+
 ## [1.8.0] — 2026-09-08
 
 ### Added
