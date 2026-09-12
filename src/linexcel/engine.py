@@ -61,6 +61,14 @@ _XML_ENTITIES = {"&quot;": '"', "&apos;": "'"}
 #: runs. Configurable per call via ``boot_engine``'s ``max_ast_depth``.
 MAX_AST_DEPTH = 900
 
+#: Whether the engine evaluates independent branches of the dependency graph
+#: in parallel. This is formualizer's own default since 0.9; it is stated
+#: explicitly so the choice is documented and so a workbook that misbehaves
+#: under parallel evaluation has an off switch — ``boot_engine(parallel=False)``
+#: — instead of a patched engine. Prototype timings live in
+#: ``scripts/perf_probe.py``.
+PARALLEL_EVALUATION = True
+
 
 @dataclass
 class EngineSession:
@@ -71,12 +79,22 @@ class EngineSession:
     scratch_ready: bool
 
 
+def _open_workbook(data: bytes, parallel: bool):
+    """Instantiate the engine with the configured evaluation options."""
+    eval_config = fz.EvaluationConfig()
+    eval_config.enable_parallel = parallel
+    return fz.Workbook.from_bytes(
+        data, config=fz.WorkbookConfig(eval_config=eval_config)
+    )
+
+
 def boot_engine(
     data: bytes,
     warnings: list[str],
     reporter: Reporter | None = None,
     *,
     max_ast_depth: int = MAX_AST_DEPTH,
+    parallel: bool = PARALLEL_EVALUATION,
 ) -> EngineSession:
     """Instantiate the engine and run its whole-workbook evaluation.
 
@@ -106,7 +124,7 @@ def boot_engine(
                 f"holds a chart and no cells, and the engine refuses a whole "
                 f"workbook that contains one"
             )
-        engine = fz.Workbook.from_bytes(data)
+        engine = _open_workbook(data, parallel)
         engine_sheets = set(engine.sheet_names)
         engine_alive = True
         quarantined: dict[tuple[str, int, int], str] = {}
@@ -114,8 +132,8 @@ def boot_engine(
         if too_deep:
             progress.step(f"quarantining {len(too_deep)} over-deep formula(s)")
             quarantined = too_deep
-            engine = fz.Workbook.from_bytes(
-                _blank_formulas_in_package(data, quarantined)
+            engine = _open_workbook(
+                _blank_formulas_in_package(data, quarantined), parallel
             )
             sheet, row, col = deepest
             warnings.append(
@@ -137,8 +155,8 @@ def boot_engine(
                 quarantined |= unresolvable
                 progress.step(f"retrying without {len(quarantined)} blocked cell(s)")
                 try:
-                    engine = fz.Workbook.from_bytes(
-                        _blank_formulas_in_package(data, quarantined)
+                    engine = _open_workbook(
+                        _blank_formulas_in_package(data, quarantined), parallel
                     )
                     engine.evaluate_all()
                     retried = True
@@ -148,7 +166,7 @@ def boot_engine(
                 # A failed global evaluation does not just drop the values: the
                 # engine then reports no formula at all, which would leave the
                 # graph empty. Rebuilding from the bytes gives the formulas back.
-                engine = fz.Workbook.from_bytes(data)
+                engine = _open_workbook(data, parallel)
             if retried:
                 warnings.append(
                     f"Global evaluation completed after isolating {len(quarantined)} "

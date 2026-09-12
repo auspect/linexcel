@@ -500,3 +500,31 @@ class TestAWorkbookWithAChartsheet:
         assert "Chart" in warning
         # the worksheets are analysed as if the chartsheet were not there
         assert next(n["value"] for n in result.nodes if n.get("addr") == "A2") == 20
+
+
+class TestParallelEvaluation:
+    """The engine's parallel mode is wired, documented, and has an off switch.
+
+    ``enable_parallel`` is formualizer's own default since 0.9; linexcel
+    states it explicitly (:data:`linexcel.engine.PARALLEL_EVALUATION`) so the
+    choice is deliberate and a workbook that misbehaves under parallel
+    evaluation can be booted with ``parallel=False`` instead of a patched
+    engine.
+    """
+
+    def test_parallel_is_the_documented_default(self):
+        from linexcel.engine import PARALLEL_EVALUATION
+
+        assert PARALLEL_EVALUATION is True
+
+    def test_both_modes_boot_and_agree_on_values(self):
+        from linexcel.engine import boot_engine
+
+        book = workbook({"A1": 2, "A2": "=A1*10", "B1": "=A2+5", "B2": "=SUM(A1:B1)"})
+        for parallel in (True, False):
+            warnings: list[str] = []
+            session = boot_engine(book, warnings, parallel=parallel)
+            assert session.engine_alive
+            assert session.engine.get_value("S", 2, 1) == 20
+            assert session.engine.get_value("S", 1, 2) == 25
+            assert session.engine.get_value("S", 2, 2) == 27
