@@ -262,7 +262,14 @@ class TestTheDecompositionIsBoundedInTime:
         return sum(walk(n.get("steps")) for n in result.nodes)
 
     def test_the_report_says_it_stopped_and_why(self):
-        result = analyze(self.running_totals(), filename="x.xlsx", step_seconds=0)
+        # The running-totals fixture is circular at A1; its decomposition is
+        # correctly unavailable before the budget is involved. Exercise the
+        # budget warning on an independently calculable expression instead.
+        result = analyze(
+            workbook({"A1": 2, "A2": "=(A1+3)*2"}),
+            filename="x.xlsx",
+            step_seconds=0,
+        )
         (warning,) = [w for w in result.warnings if "decomposition stopped" in w]
         assert "--time-budget" in warning
 

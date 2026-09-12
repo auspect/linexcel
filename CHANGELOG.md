@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The node panel can frame a node with its direct neighbors.** The action
+  remains accessible on mobile, where the panel leaves the graph controls
+  visible. Search returns to the graph from the other dashboard tabs.
 - **`--target SHEET!A1` limits the analysis to the cells feeding the named
   cell.** Repeatable, and several comma-separated cells fit in one flag; the
   library spelling is `analyze(..., targets=["Sheet1!A1"])`. The engine boots
@@ -34,6 +37,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **1904 workbooks use their calendar during engine import.** Formatted date
+  inputs, date functions and targeted evaluation no longer inherit a 1,462-day
+  shift from the engine's default 1900 calendar.
+- **Circular calculations honor workbook iteration settings.** Non-converged
+  components and their dependents retain file caches and omit unverifiable
+  breakdowns; independent formulas remain calculable. Convergence is qualified
+  by the engine's criteria and does not imply a unique fixed point.
+- **Self-closing XML cells cannot capture a following cell's formula.** The
+  quarantine scan no longer backtracks quadratically over styled empty cells.
+- **AI dossiers preserve value provenance and uncertainty.** Cached or volatile
+  snapshots are not labeled recalculated, disagreements and omitted neighbors
+  are explicit, and useful calculation steps are retained before extra neighbor
+  examples. Prompts in all nine languages reject unsupported explanations of
+  discrepancies and extrapolations across sparse groups. Vision descriptions
+  are labeled for checking against the source image.
+- **Viewer Markdown handles nested lists and inline formatting in headings.**
+  Spreadsheet errors and unevaluated steps no longer use the successful-result
+  style. Sheet context displays extraction warnings and unknown dimensions.
 - **Excel time caches compare correctly with numeric day fractions.** Midnight
   (`0`) and noon (`0.5`) agree with stored time values without converting plain
   text, booleans, multi-day durations or timezone-bearing values into times.
@@ -67,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Large sheet previews use streaming reads.** Above 20 MiB of worksheet XML,
+  report context avoids materializing the entire openpyxl worksheet. Omitted
+  comments and layout metadata are explicitly reported; previews still work
+  when worksheet dimensions are absent.
+- **Batch documentation indexes graph adjacency once**, instead of scanning
+  every node and edge again for each requested card.
+- **Formula-free XML sheets skip the quarantine scan.** CLI size estimates
+  describe worksheet XML rather than incorrectly calling it formula volume.
 - **Selecting many search results no longer scans the whole graph per result.**
   Selection updates are coalesced into one animation frame, and the selection
   collection is assembled in one pass.

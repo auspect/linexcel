@@ -517,18 +517,27 @@ def build_dossier(graph: dict[str, Any], node_id: str) -> dict[str, Any] | None:
     """
     Deterministic dossier for a node: everything the AI is allowed to use.
     """
+    return _build_dossier(_index_dossiers(graph), node_id)
+
+
+def _index_dossiers(graph: dict[str, Any]) -> tuple[dict, dict, dict]:
+    """Index adjacency once for a batch, instead of rescanning every edge."""
     nodes = {n["id"]: n for n in graph["nodes"]}
+    incoming: dict[str, list[dict]] = {}
+    outgoing: dict[str, list[dict]] = {}
+    for edge in graph["edges"]:
+        incoming.setdefault(edge["target"], []).append(edge)
+        outgoing.setdefault(edge["source"], []).append(edge)
+    return nodes, incoming, outgoing
+
+
+def _build_dossier(index: tuple[dict, dict, dict], node_id: str) -> dict | None:
+    nodes, incoming, outgoing = index
     node = nodes.get(node_id)
     if node is None:
         return None
-    precedents, dependents = [], []
-    for e in graph["edges"]:
-        if e["target"] == node_id:
-            src = nodes.get(e["source"], {})
-            precedents.append(_neighbor(src, e))
-        elif e["source"] == node_id:
-            dst = nodes.get(e["target"], {})
-            dependents.append(_neighbor(dst, e))
+    precedents = incoming.get(node_id, [])
+    dependents = outgoing.get(node_id, [])
     dossier = {
         "node_id": node_id,
         "kind": node.get("kind"),
@@ -538,11 +547,27 @@ def build_dossier(graph: dict[str, Any], node_id: str) -> dict[str, Any] | None:
         "r1c1_form": node.get("r1c1"),
         "group_cells": node.get("count"),
         "extent": node.get("bbox"),
-        "computed_value": node.get("value"),
+        "extent_is_bounding_box": node.get("kind") == "group",
+        # A file cache, volatile snapshot or unknown provenance is not proof
+        # of a successful recalculation. Keep its value with an explicit source.
+        "computed_value": node.get("value")
+        if node.get("valueSource") == "engine"
+        else None,
+        **_value_evidence(node),
         "value_samples": node.get("samples"),
         "decomposition": _compact_steps(node.get("steps")),
-        "precedents": precedents[:30],
-        "dependents": dependents[:30],
+        "precedents": [
+            _neighbor(nodes.get(e["source"], {}), e) for e in precedents[:30]
+        ],
+        "dependents": [
+            _neighbor(nodes.get(e["target"], {}), e) for e in dependents[:30]
+        ],
+        "neighbor_coverage": {
+            "precedents_total": len(precedents),
+            "dependents_total": len(dependents),
+            "precedents_omitted": max(0, len(precedents) - 30),
+            "dependents_omitted": max(0, len(dependents) - 30),
+        },
     }
     if node.get("kind") == "vba":
         dossier["vba"] = {
@@ -554,13 +579,51 @@ def build_dossier(graph: dict[str, Any], node_id: str) -> dict[str, Any] | None:
     return dossier
 
 
+def _value_evidence(node: dict) -> dict:
+    return {
+        "displayed_value": node.get("value"),
+        "value_source": node.get("valueSource", "unknown"),
+        "cached_value": node.get("cachedValue"),
+        "cached_agreement": node.get("cachedAgreement"),
+        "group_cached_agreement": node.get("groupCachedAgreement"),
+    }
+
+
+def _fit_node_dossier(dossier: dict) -> str:
+    """Trim supporting examples before losing the calculation's proof."""
+
+    def encoded() -> str:
+        return json.dumps(dossier, ensure_ascii=False, default=str)
+
+    if len(encoded()) <= MAX_DOSSIER_CHARS:
+        return encoded()
+    for limit in (10, 3, 1, 0):
+        for direction in ("precedents", "dependents"):
+            dossier[direction] = dossier[direction][:limit]
+            coverage = dossier["neighbor_coverage"]
+            coverage[f"{direction}_omitted"] = coverage[f"{direction}_total"] - len(
+                dossier[direction]
+            )
+        if len(encoded()) <= MAX_DOSSIER_CHARS:
+            return encoded()
+    samples = dossier.get("value_samples") or []
+    if samples:
+        dossier["value_samples_omitted"] = len(samples)
+        dossier["value_samples"] = []
+    if len(encoded()) > MAX_DOSSIER_CHARS:
+        dossier["decomposition"] = (
+            "omitted: dossier size limit; not a calculation proof"
+        )
+    return encoded()
+
+
 def _neighbor(other: dict, edge: dict) -> dict:
     return {
         "id": other.get("id"),
         "kind": other.get("kind"),
         "label": other.get("label"),
         "edge_kind": edge.get("kind"),
-        "value": other.get("value"),
+        **_value_evidence(other),
         "formula": other.get("formula"),
     }
 
@@ -572,6 +635,7 @@ def _compact_steps(step: dict | None) -> dict | None:
         "expression": step.get("expr"),
         "operation": step.get("label"),
         "value": step.get("value") if step.get("evaluated") else "not evaluated",
+        "evaluated": bool(step.get("evaluated")),
     }
     if step.get("inputs"):
         out["inputs"] = step["inputs"]
@@ -666,7 +730,10 @@ def build_workbook_dossier(
         "defined_names": defined_names,
         "vba_procedures": vba,
         "external_or_unresolved_references": opaque_references,
-        "warnings": meta.get("warnings", []),
+        "warnings": [
+            *meta.get("warnings", []),
+            *(context.get("warnings", []) if context else []),
+        ],
     }
 
 
@@ -824,6 +891,16 @@ def render_markdown_table(
     return "\n".join(lines)
 
 
+def _unwrap_markdown(text: str) -> str:
+    """Remove a model's whole-response Markdown wrapper, not real code blocks."""
+    match = re.fullmatch(
+        r"\s*```(?:markdown|md)[ \t]*\r?\n(.*?)\r?\n```\s*",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else text.strip()
+
+
 def _insert_tables(text: str) -> str:
     """Swap ``{{Tn}}`` placeholders for code-rendered Markdown tables.
 
@@ -833,6 +910,7 @@ def _insert_tables(text: str) -> str:
     whose table is missing is dropped, never left as raw braces in the
     output, and neither is a placeholder that arrived with no block at all.
     """
+    text = _unwrap_markdown(text)
     tables: dict[str, str] = {}
     for match in _TABLE_BLOCK_RE.finditer(text):
         try:
@@ -1000,7 +1078,7 @@ def describe_images(
         if usage is not None:
             usage.add(call_usage)
         if text.strip():
-            described[name] = text.strip()
+            described[name] = _unwrap_markdown(text)
     if failed and not described:
         raise AiDocError("No screenshot could be described: " + "; ".join(failed))
     if failed:
@@ -1079,13 +1157,11 @@ def document_nodes(
     system = _SYSTEM[language]
     docs: dict[str, str] = {}
     dossiers = []
+    index = _index_dossiers(graph)
     for nid in node_ids:
-        d = build_dossier(graph, nid)
+        d = _build_dossier(index, nid)
         if d is not None:
-            blob = json.dumps(d, ensure_ascii=False, default=str)
-            if len(blob) > MAX_DOSSIER_CHARS:
-                d["decomposition"] = "truncated (very long formula)"
-                blob = json.dumps(d, ensure_ascii=False, default=str)
+            blob = _fit_node_dossier(d)
             dossiers.append((nid, blob))
     if not dossiers:
         return docs

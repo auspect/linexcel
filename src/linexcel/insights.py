@@ -12,6 +12,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ PREVIEW_COLUMNS = 8
 MAX_COMMENTS_PER_SHEET = 20
 MAX_COMMENT_SCAN_CELLS = 100_000
 MAX_COMMENT_CHARS = 1_000
+MAX_CONTEXT_XML_BYTES = 20 * 1024 * 1024
 MAX_MERGED_RANGES = 30
 MAX_TABLES_PER_SHEET = 50
 MAX_STATIC_TABLES_PER_SHEET = 10
@@ -84,38 +86,59 @@ def extract_workbook_context(
     row is a header. Comments and sheet layout markers complement formula
     lineage with the cues users usually see when opening a workbook.
     """
+    # Rich openpyxl worksheets materialize every formatted cell, including
+    # empty ones. Large exports can have millions of them and only ten formulas.
+    # Keep the viewer's optional context bounded before allocating that tree.
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        context_bytes = sum(
+            part.file_size
+            for part in package.infolist()
+            if part.filename.startswith("xl/worksheets/")
+            and part.filename.endswith(".xml")
+        )
+    bounded = context_bytes > MAX_CONTEXT_XML_BYTES
     workbook = load_workbook(
         io.BytesIO(data),
-        read_only=False,
+        read_only=bounded,
         data_only=False,
         keep_vba=filename.lower().endswith((".xlsm", ".xltm")),
     )
     warnings: list[str] = []
+    if bounded:
+        warnings.append(
+            "Large workbook: sheet context uses bounded previews; comments, "
+            "tables, merged ranges, frozen panes and hidden columns were not scanned"
+        )
     sheets: list[dict[str, Any]] = []
     total_comments = 0
     try:
         for worksheet in workbook.worksheets:
-            max_row = max(worksheet.max_row or 1, 1)
-            max_column = max(worksheet.max_column or 1, 1)
+            max_row = max(worksheet.max_row or preview_rows, 1)
+            max_column = max(worksheet.max_column or preview_columns, 1)
             row_limit = min(max_row, preview_rows)
             column_limit = min(max_column, preview_columns)
             preview = [
                 {
-                    "row": row[0].row,
+                    "row": row_number,
                     "values": [
                         _safe_value(cell.value, getattr(cell, "number_format", None))
                         for cell in row
                     ],
                 }
-                for row in worksheet.iter_rows(
-                    min_row=1,
-                    max_row=row_limit,
-                    min_col=1,
-                    max_col=column_limit,
+                for row_number, row in enumerate(
+                    worksheet.iter_rows(
+                        min_row=1,
+                        max_row=row_limit,
+                        min_col=1,
+                        max_col=column_limit,
+                    ),
+                    start=1,
                 )
             ]
-            comments, comments_truncated = _extract_comments(
-                worksheet, max_row, max_column
+            comments, comments_truncated = (
+                ([], False)
+                if bounded
+                else _extract_comments(worksheet, max_row, max_column)
             )
             total_comments += len(comments)
             if comments_truncated:
@@ -126,21 +149,26 @@ def extract_workbook_context(
                 {
                     "name": worksheet.title,
                     "visibility": worksheet.sheet_state,
-                    "dimensions": {"rows": max_row, "columns": max_column},
+                    "dimensions": {
+                        "rows": worksheet.max_row,
+                        "columns": worksheet.max_column,
+                    },
                     "preview_range": f"A1:{num_to_col(column_limit)}{row_limit}",
                     "preview": preview,
                     "freeze_panes": str(worksheet.freeze_panes)
-                    if worksheet.freeze_panes
+                    if not bounded and worksheet.freeze_panes
                     else None,
                     "merged_ranges": [
                         str(cell_range)
-                        for cell_range in list(worksheet.merged_cells.ranges)[
-                            :MAX_MERGED_RANGES
-                        ]
+                        for cell_range in (
+                            [] if bounded else list(worksheet.merged_cells.ranges)
+                        )[:MAX_MERGED_RANGES]
                     ],
-                    "hidden_columns": _hidden_columns(worksheet, column_limit),
+                    "hidden_columns": []
+                    if bounded
+                    else _hidden_columns(worksheet, column_limit),
                     "comments": comments,
-                    "tables": detect_tables(worksheet),
+                    "tables": [] if bounded else detect_tables(worksheet),
                 }
             )
     finally:

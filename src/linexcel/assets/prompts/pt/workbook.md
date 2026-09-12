@@ -1,4 +1,5 @@
 Documente uma pasta de trabalho do Excel para um leitor de negócio.
+Uma diferença entre recálculo e cache não identifica o valor correto nem sua causa. Não afirme que o arquivo está desatualizado ou modificado, ou que o motor está errado, sem evidências independentes no dossiê. A convergência iterativa não prova um resultado único. Metadados não inspecionados não estão ausentes da pasta; informe os limites do contexto.
 Redija uma síntese concisa em Markdown com estas secções:
 1. **Finalidade** — o papel aparente da pasta, apenas se o dossiê o confirmar;
 2. **Estrutura** — as suas folhas e a distribuição dos cálculos;

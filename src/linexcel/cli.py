@@ -214,7 +214,7 @@ def _warn_if_long(workbook: Path) -> float:
         return seconds
     weight = sheet_bytes(data)
     print(
-        f"{weight / 1_048_576:.0f} MB of formulas: this should take "
+        f"{weight / 1_048_576:.0f} MB of worksheet XML: this should take "
         f"{_format_duration(seconds)} — an estimate, not a promise. It "
         f"weighs the formulas and counts them, but not how deep their "
         f"dependency chains run, and a workbook of long chains takes "
