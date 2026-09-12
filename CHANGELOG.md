@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Screenshot descriptions retain their image identity after HTML embedding.**
   Pages without sheet context remain accessible, chartsheets preserve page
   ordering, and images can be inspected at native resolution in the viewer.
+- **Narrow documentation tables preserve whole words and scroll horizontally.**
+  Group cards show their member count once, keeping the underlying label intact.
 
 - **1904 workbooks use their calendar during engine import.** Formatted date
   inputs, date functions and targeted evaluation no longer inherit a 1,462-day

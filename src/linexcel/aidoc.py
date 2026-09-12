@@ -1182,9 +1182,9 @@ def document_nodes(
     :class:`UserWarning` reports how many nodes were dropped.
     :class:`AiDocError` is raised only when *every* node failed.
 
-    If a :class:`TokenUsage` is passed as ``usage``, every successful call is
-    accumulated into it — including those of a run that later fails, since
-    tokens already spent are still billed.
+    If a :class:`TokenUsage` is passed as ``usage``, consumed tokens are
+    accumulated into it, including usage reported for rejected responses and
+    calls in a run that later fails. Tokens already spent are still billed.
 
     ``token_budget`` is a ceiling on the **total** tokens the run may spend,
     input and output together, counted against ``usage`` so several calls

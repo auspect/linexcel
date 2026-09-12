@@ -211,14 +211,24 @@ raises `ValueError`; to send nothing at all, do not call `document()`.
 !!! tip "Estimating before you spend"
 
     A dry run costs nothing: point `provider=` at a callable that records its
-    prompt and returns `""`. `result.token_usage` then holds the estimated input
-    cost of the whole workbook, which is the bulk of the bill for
-    documentation-shaped work.
+    prompt and returns `""`. Empty documents are rejected, so this deliberately
+    raises `AiDocError` after processing the nodes. `result.token_usage` still
+    holds the estimated input cost of those calls.
 
     ```python
-    result.document(provider=lambda system, user, *, temperature=0.2: "")
+    from linexcel.aidoc import AiDocError
+
+    try:
+        result.document(provider=lambda system, user, *, temperature=0.2: "")
+    except AiDocError:
+        pass  # Expected: an empty response is not valid documentation.
     print(result.token_usage)  # ~ input cost of documenting this workbook
     ```
+
+Empty replies and responses that the endpoint marks as truncated or filtered
+are failures. Reported token usage from rejected replies remains counted toward
+the budget. Partial node or image batches still return completed documents with
+a warning, so acceptance checks must compare their keys with the requested set.
 
 ## Language
 

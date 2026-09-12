@@ -129,6 +129,8 @@ def build_sales_workbook() -> bytes:
     ws["G3"].font = font_bold
     ws["G3"].alignment = align_center
     ws["G3"].border = border_thin
+    ws.column_dimensions["G"].width = 18
+    ws.column_dimensions["H"].width = 18
 
     # A1 comment was shifted to B3 (new table start)
     ws["B3"].comment = Comment("Exported product category", "Data team")

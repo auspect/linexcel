@@ -80,19 +80,32 @@ of those descriptions.
 
 ## Remaining work
 
-1. Expand the compatibility suite for legacy function names. In formualizer
-   0.9.3, `NORMSDIST(0)` and `NORMDIST(0,0,1,TRUE)` return `#NAME?`, while their
-   modern counterparts return 0.5. Do not classify every `#NAME?` as unsupported:
-   genuinely invalid names use the same error. Alias support needs semantic
-   tests, including guards and dependent formulas.
+The measurements above are the earlier integrated study snapshot. A subsequent
+local acceptance pass added legacy `NORMSDIST`/`NORMDIST` support through native
+modern functions, with tests for coercion, guards, arrays and dependent formulas.
+Four previously failing observations in two real workbooks now agree with both
+saved values and LibreOffice. This is not a remeasurement of the entire cohort.
+Local `LET`/`LAMBDA` subexpressions also stop claiming evaluated values when their
+bindings are unavailable outside the complete expression.
+
+1. Investigate comparison coercion in the underlying engine. A real discrepancy
+   cluster was traced to comparing a number with whitespace text. A minimal
+   example is `=IF(10<" "," ",123)`: formualizer 0.9.3 returns 123, while the
+   source and LibreOffice keep the text branch in the corresponding real
+   formulas. A diagnostic intervention only in memory removed all 63 sampled
+   downstream discrepancies. Establish a synthetic comparison matrix with an
+   independent oracle before changing semantics; do not rewrite user data.
 2. Investigate typed date arithmetic separately: subtracting a serial from
    `DATE(...)` can return a typed date representing zero instead of numeric zero.
 3. Preserve inter-engine disagreement on iterative models. Different starting
    values or evaluation order can produce different converged fixed points;
    neither a cache nor engine telemetry proves a unique Excel result.
 4. Add claim-level checks for generated documentation and calibrated visual
-   evaluation. The tested vision model can invent columns and row counts. Its
-   text remains an aid to inspection, with the original image alongside it.
+   evaluation. Full local runs expose errors that generation coverage cannot
+   detect: representative group values generalized to all cells, incorrect
+   descriptions of conditional dependencies, and invented image truncation.
+   The tested vision model can also invent columns and row counts. Its text
+   remains an aid to inspection, with the original image alongside it.
 5. Extend stratification by formula families, macros, dynamic references and
    external links. Static traces and sampled group values are not exhaustive
    proofs of workbook behavior. A dense whole-workbook graph still needs search,

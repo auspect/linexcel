@@ -442,3 +442,44 @@ def test_legacy_embedded_pages_keep_unpaired_descriptions_named_and_escaped(repo
     assert page.locator("#lin-screenshots .lin-doc img").count() == 0
     assert page.locator(".lin-shot-description .lin-doc").count() == 0
     assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_markdown_tables_keep_words_whole_and_scroll_long_tokens(report, width, height):
+    graph = rich_graph()
+    graph["nodes"][1]["doc"] = (
+        "| Sheet | Rows | Formula | Notable layout |\n|---|---|---|---|\n"
+        "| Summary | 7 x 3 | 100 | Revenue model with a long description |\n\n"
+        "| Reference | Meaning |\n|---|---|\n| " + "A" * 180 + " | Long token |"
+    )
+    page, errors = report(graph, width=width, height=height)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    for selector, word in (("td", "Summary"), ("th", "Formula")):
+        cell = page.locator("#lin-panel .lin-mdt " + selector).filter(has_text=word)
+        assert (
+            cell.evaluate("""e => {
+            const range=document.createRange();range.selectNodeContents(e);
+            return range.getClientRects().length;
+        }""")
+            == 1
+        )
+    assert (
+        page.locator("#lin-panel .lin-mdt")
+        .nth(1)
+        .evaluate("e=>e.scrollWidth>e.clientWidth")
+    )
+    assert page.locator("#lin-panel").evaluate("e=>e.scrollWidth===e.clientWidth")
+    assert not errors
+
+
+def test_group_card_shows_count_once_without_changing_source_label(report):
+    graph = filtered_graph()
+    graph["nodes"] = [
+        {"id": "g", "kind": "group", "label": "Sales!E4 x100", "count": 100},
+    ]
+    graph["edges"] = []
+    page, errors = report(graph)
+    assert page.evaluate("cy.getElementById('g').data('label')") == "Sales!E4\n×100"
+    page.evaluate("() => { cy.getElementById('g').emit('tap'); }")
+    assert page.locator("#lin-panel h2").inner_text() == "Sales!E4 x100"
+    assert not errors
