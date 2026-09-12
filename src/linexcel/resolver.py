@@ -22,6 +22,7 @@ from linexcel.decompose import (
     _guard_fallback_expr,
     _scratch_eval,
 )
+from linexcel.engine import is_too_deep
 from linexcel.external import (
     ExternalBook,
     ExternalRef,
@@ -503,6 +504,12 @@ class _ValueResolver:
         result: the IFERROR/IFNA fallback branch is then tried, exactly as it is
         when the evaluation itself does not come back.
         """
+        # A formula this deep aborted the whole process at ``evaluate_all``
+        # time (which is why it was quarantined); re-evaluating it in the
+        # scratch sheet would abort the same way, through a door no try/except
+        # watches. It keeps the value stored in the file instead.
+        if is_too_deep(expr):
+            return None, None
         if not self._engine_alive:
             self._resolve_precedents(sheet, expr, depth)
         # A value that came out of another workbook is not the engine's own

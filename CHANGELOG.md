@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`--target SHEET!A1` limits the analysis to the cells feeding the named
+  cell.** Repeatable, and several comma-separated cells fit in one flag; the
+  library spelling is `analyze(..., targets=["Sheet1!A1"])`. The engine boots
+  without the global `evaluate_all`, the upstream subgraph of the targets is
+  traced (`Workbook.trace`) and evaluated alone (`evaluate_cells`), and only
+  the lineage of those cells is built — the rest of the workbook is omitted
+  from the graph, and the report says so. Defined names, VBA and Power Query
+  nodes are kept as context. Without `--target` the whole workbook is
+  evaluated, as before.
+- **A warning now flags workbooks of long dependency chains.** On a targeted
+  run it is exact — the engine's evaluation plan (`get_eval_plan`) counts the
+  layers of the subgraph before it is evaluated. On a full run the plan reads
+  zero once everything is computed, so the measure is taken from the lineage
+  itself: the longest precedent→dependent path across formula nodes, and the
+  largest self-referencing group (a running-total column is one node on the
+  graph but a chain as deep as it is long). Either way it is a risk
+  indicator, not a duration estimate.
+
+### Changed
+
+- **A failed quarantine retry no longer pays a third `from_bytes`.** The
+  rebuild existed because a failed `evaluate_all` was believed to leave the
+  engine reporting no formula at all; on formualizer 0.9.3 the formula map
+  survives the failure, so the engine the run already holds is kept (with the
+  quarantined cells re-injected by the sweep) and the rebuild is paid only
+  when a probe of one formula cell finds the map really is gone.
+
 ## [1.8.1] — 2026-09-10
 
 ### Fixed

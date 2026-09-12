@@ -17,6 +17,7 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel import analyze
+from linexcel.engine import MAX_AST_DEPTH, ast_depth, is_too_deep
 from linexcel.external import read_workbook_values
 from linexcel.loader import (
     MAX_CELLS_PER_SHEET,
@@ -372,3 +373,158 @@ def test_cached_formula_error_is_read_not_dropped():
     assert values.get("S", 1, 1) == "#DIV/0!"
     # the sibling non-error formula is unaffected
     assert values.get("S", 1, 2) == 49
+
+
+class TestAFormulaTooDeepToEvaluate:
+    """A formula nested past what the evaluator's recursive walk survives.
+
+    ``evaluate_all`` walks the parse tree recursively, and past roughly 1,000
+    nested operations that walk overflows the stack and *aborts the process* —
+    a hard exit, not an exception a try/except can catch
+    (https://github.com/PSU3D0/formualizer/issues/411; measured on 0.9.3: a
+    700-term chain evaluates, a 1,000-term one aborts). Such formulas are
+    quarantined before the evaluation runs, exactly like the references the
+    engine cannot resolve.
+    """
+
+    def test_depth_comes_from_the_parse_tree(self):
+        shallow = ast_depth("=1+1")
+        assert shallow is not None and shallow < 10
+        assert ast_depth("=" + "+".join(["1"] * 100)) > 50
+        # an unparseable formula is not depth-quarantined: the evaluation
+        # failure path, which already exists, is the one that handles it
+        assert ast_depth("===((") is None
+
+    def test_the_gate_is_length_first(self):
+        # a tree can never nest deeper than the formula is long, so anything
+        # short skips the parse entirely
+        assert not is_too_deep("=" + "+".join(["1"] * MAX_AST_DEPTH))
+        assert is_too_deep("=" + "+".join(["1"] * (MAX_AST_DEPTH + 300)))
+
+    def test_a_1200_term_chain_degrades_instead_of_crashing(self):
+        deep = "=" + "+".join(["1"] * (MAX_AST_DEPTH + 300))
+        result = analyze(
+            workbook({"A1": deep, "B1": 5, "B2": "=B1*2"}), filename="deep.xlsx"
+        )
+        (warning,) = [w for w in result.warnings if "quarantined" in w]
+        assert "deeper than the engine" in warning
+        assert "S!A1" in warning
+        # the deep cell keeps a node — degraded, readable, no crash
+        node = next(n for n in result.nodes if n.get("addr") == "A1")
+        assert node["value"] is None
+        # and the rest of the workbook is computed as if nothing happened
+        assert next(n["value"] for n in result.nodes if n.get("addr") == "B2") == 10
+
+    def test_a_moderately_deep_formula_still_evaluates(self):
+        result = analyze(
+            workbook({"A1": "=" + "+".join(["1"] * 100)}), filename="ok.xlsx"
+        )
+        assert not any("quarantined" in w for w in result.warnings)
+        assert next(n["value"] for n in result.nodes if n.get("addr") == "A1") == 100
+
+
+def workbook_with_chartsheet(cells: dict[str, object]) -> bytes:
+    """A real workbook plus a chartsheet, by surgery on the package.
+
+    openpyxl cannot write a chartsheet, so one is grafted on after the fact:
+    a ``<sheet>`` entry whose relationship type is ``chartsheet``, and the
+    minimal part it points at. That is all calamine looks at when it refuses
+    the workbook with "Expecting a worksheet, got chartsheet".
+    """
+    src = workbook(cells)
+    chartsheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/'
+        '2006/main"><sheetPr/><sheetViews><sheetView workbookViewId="0"/>'
+        "</sheetViews></chartsheet>"
+    )
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(src)) as zin,
+        zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+    ):
+        for entry in zin.infolist():
+            payload = zin.read(entry.filename).decode("utf-8")
+            if entry.filename == "xl/workbook.xml":
+                payload = payload.replace(
+                    "</sheets>",
+                    '<sheet name="Chart" sheetId="99" r:id="rIdChart"/></sheets>',
+                )
+            elif entry.filename == "xl/_rels/workbook.xml.rels":
+                payload = payload.replace(
+                    "</Relationships>",
+                    '<Relationship Id="rIdChart" Type="http://schemas.openxmlformats.'
+                    'org/officeDocument/2006/relationships/chartsheet" '
+                    'Target="chartsheets/sheet1.xml"/></Relationships>',
+                )
+            elif entry.filename == "[Content_Types].xml":
+                payload = payload.replace(
+                    "</Types>",
+                    '<Override PartName="/xl/chartsheets/sheet1.xml" ContentType='
+                    '"application/vnd.openxmlformats-officedocument.spreadsheetml.'
+                    'chartsheet+xml"/></Types>',
+                )
+            zout.writestr(entry, payload)
+        zout.writestr("xl/chartsheets/sheet1.xml", chartsheet_xml)
+        # openpyxl's chartsheet reader expects the part's rels to exist
+        zout.writestr(
+            "xl/chartsheets/_rels/sheet1.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+            '2006/relationships"/>',
+        )
+    return out.getvalue()
+
+
+class TestAWorkbookWithAChartsheet:
+    """One chartsheet used to cost the whole workbook its analysis.
+
+    formualizer's reader refuses the package outright — ``Expecting a
+    worksheet, got chartsheet`` — however many real worksheets sit beside it.
+    The chartsheet holds no cells, so it is cut from ``workbook.xml`` before
+    the engine sees the file, and named in a warning.
+    """
+
+    def test_the_engine_would_refuse_the_file(self):
+        import formualizer as fz
+
+        with pytest.raises(OSError, match="chartsheet"):
+            fz.Workbook.from_bytes(workbook_with_chartsheet({"A1": 1}))
+
+    def test_the_analysis_skips_the_chartsheet_and_carries_on(self):
+        result = analyze(
+            workbook_with_chartsheet({"A1": 2, "A2": "=A1*10"}),
+            filename="chart.xlsx",
+        )
+        (warning,) = [w for w in result.warnings if "Chartsheet" in w]
+        assert "Chart" in warning
+        # the worksheets are analysed as if the chartsheet were not there
+        assert next(n["value"] for n in result.nodes if n.get("addr") == "A2") == 20
+
+
+class TestParallelEvaluation:
+    """The engine's parallel mode is wired, documented, and has an off switch.
+
+    ``enable_parallel`` is formualizer's own default since 0.9; linexcel
+    states it explicitly (:data:`linexcel.engine.PARALLEL_EVALUATION`) so the
+    choice is deliberate and a workbook that misbehaves under parallel
+    evaluation can be booted with ``parallel=False`` instead of a patched
+    engine.
+    """
+
+    def test_parallel_is_the_documented_default(self):
+        from linexcel.engine import PARALLEL_EVALUATION
+
+        assert PARALLEL_EVALUATION is True
+
+    def test_both_modes_boot_and_agree_on_values(self):
+        from linexcel.engine import boot_engine
+
+        book = workbook({"A1": 2, "A2": "=A1*10", "B1": "=A2+5", "B2": "=SUM(A1:B1)"})
+        for parallel in (True, False):
+            warnings: list[str] = []
+            session = boot_engine(book, warnings, parallel=parallel)
+            assert session.engine_alive
+            assert session.engine.get_value("S", 2, 1) == 20
+            assert session.engine.get_value("S", 1, 2) == 25
+            assert session.engine.get_value("S", 2, 2) == 27

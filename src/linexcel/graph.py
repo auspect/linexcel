@@ -19,6 +19,7 @@ from typing import Any
 import formualizer as fz
 
 from linexcel.decompose import _collect_step_exprs, _decompose
+from linexcel.engine import is_too_deep
 from linexcel.external import macro_files, parse_external_refs
 from linexcel.loader import _stepped
 from linexcel.powerquery import Query, QuerySource
@@ -34,6 +35,10 @@ SMALL_RANGE_CELLS = 20_000
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
 MAX_QUERY_CODE_CHARS = 6_000
+
+
+class _TooDeepError(Exception):
+    """Internal: skip the AST of a formula too deep to walk safely."""
 
 
 def _merge_rects(rects: list[Rect]) -> list[Rect]:
@@ -143,6 +148,10 @@ class GraphBuilder:
         self.cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
         self.ast_cache: dict[str, Any] = {}
         self.kept_groups: list[tuple[str, FormulaGroup]] = []
+        #: Largest self-referencing group seen, in cells — a running-total
+        #: column is one group whose members chain through each other, so its
+        #: size is the order of magnitude of a chain no inter-node path sees.
+        self.intra_chain = 0
 
     def select_nodes(self, groups: dict[tuple[str, str], FormulaGroup]) -> None:
         """Cap nodes per sheet; fold what's dropped into one 'misc' node."""
@@ -376,16 +385,20 @@ class GraphBuilder:
             sheet = grp.sheet
             is_group = len(grp.cells) > 1
             try:
+                # An over-deep formula was quarantined before evaluation; it
+                # parses fine, but the recursive walks below would hit Python's
+                # own recursion limit on it. It keeps a node, not a tree.
+                if is_too_deep(formula):
+                    raise _TooDeepError
                 ast = self.ast_cache.get(formula)
                 if ast is None:
                     ast = self.ast_cache[formula] = fz.parse(
                         formula if formula.startswith("=") else "=" + formula
                     )
                 ast_dict = ast.to_dict()
+                refs = _collect_ref_strings(ast_dict)
             except Exception:
-                ast, ast_dict = None, None
-
-            refs = _collect_ref_strings(ast_dict) if ast_dict else []
+                ast, ast_dict, refs = None, None, []
             rmin, cmin, rmax, cmax = grp.bbox
             agg_rects: list[Rect] = []
             for ref in refs:
@@ -403,6 +416,17 @@ class GraphBuilder:
                     else detail.rect
                 )
                 agg_rects.append(rect)
+
+            if is_group and agg_rects:
+                # A group whose stretched references overlap its own cells is
+                # chained through itself: ``=R[-1]C+1`` down a column is one
+                # group on the graph but a chain as deep as it is long.
+                bbox_rect = Rect(sheet, rmin, cmin, rmax, cmax)
+                if any(
+                    rect.sheet == sheet and rect.intersects(bbox_rect)
+                    for rect in agg_rects
+                ):
+                    self.intra_chain = max(self.intra_chain, len(grp.cells))
 
             for rect in _merge_rects(agg_rects):
                 self.resolve_rect_edges(rect, node_id)
