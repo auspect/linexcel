@@ -506,3 +506,151 @@ class TestScreenshotsTabStates:
         unhide_at = script.index("btn.hidden = false;")
         branch_at = script.index("Array.isArray(images)")
         assert unhide_at < branch_at
+
+
+class TestNodeCards:
+    """Nodes are cards now: the label — and a secondary annotation line — sits
+    inside the node instead of floating under a dot, and the node is sized
+    from its pre-truncated lines so a long label cannot overflow."""
+
+    def test_the_label_is_built_as_a_card_with_a_secondary_line(self):
+        script = script_of(render_html(demo_graph()))
+        assert "function cardLabel(n)" in script
+        assert "function subLabel(n)" in script
+        assert "lines.join('\\n')" in script
+
+    def test_the_card_is_sized_from_its_lines(self):
+        script = script_of(render_html(demo_graph()))
+        assert "id: n.id, label: card.label, w: card.w, h: card.h," in script
+        assert "width: 'data(w)', height: 'data(h)'," in script
+
+    def test_every_kind_is_a_rounded_card(self):
+        script = script_of(render_html(demo_graph()))
+        kinds = script.split("var KIND = {", 1)[1].split("};", 1)[0]
+        assert kinds.count("shape: 'round-rectangle'") == 8
+        for gone in ("'ellipse'", "'diamond'", "'hexagon'", "'tag'", "'octagon'"):
+            assert gone not in kinds, gone
+
+    def test_the_label_ink_is_derived_from_the_card_fill(self):
+        script = script_of(render_html(demo_graph()))
+        assert "color: onColor(KIND[k].color)" in script
+
+    def test_an_unresolved_external_gets_a_dashed_border(self):
+        script = script_of(render_html(demo_graph()))
+        assert "function unresolvedExternal(n)" in script
+        assert "' unresolved' : ''" in script
+        rule = "{ selector: 'node.unresolved', style: { 'border-style': 'dashed',"
+        assert rule in script
+
+    def test_the_unresolved_annotation_is_translated(self):
+        script = script_of(render_html(demo_graph(), language="fr"))
+        assert "_t('external_unresolved')" in script
+
+
+class TestLabelLevelOfDetail:
+    """Labels fade with the zoom band: none but the selection far out, the
+    selection and its neighbourhood in the middle band of a crowded graph,
+    everything close in."""
+
+    def test_two_zoom_thresholds_frame_the_middle_band(self):
+        script = script_of(render_html(demo_graph()))
+        assert "var LABEL_MIN_ZOOM = 0.55;" in script
+        assert "var LABEL_FULL_ZOOM = 1.6;" in script
+
+    def test_the_middle_band_labels_only_the_neighbourhood(self):
+        script = script_of(render_html(demo_graph()))
+        assert "sel.closedNeighborhood().nodes()" in script
+        assert "z >= LABEL_FULL_ZOOM" in script
+
+    def test_a_small_graph_stays_fully_labelled(self):
+        script = script_of(render_html(demo_graph()))
+        assert "var CROWDED = GRAPH.nodes.length > 80;" in script
+
+
+class TestLayoutAutoSwitch:
+    """Past a few hundred nodes the organic layout collapses into a hairball,
+    so a wide workbook opens on the hierarchical flow. The toggle keeps both
+    layouts one click away either way."""
+
+    def test_the_organic_default_is_capped_by_a_node_threshold(self):
+        script = script_of(render_html(demo_graph()))
+        assert "var ORGANIC_MAX_NODES = 300;" in script
+        assert "GRAPH.nodes.length <= ORGANIC_MAX_NODES" in script
+
+    def test_the_manual_toggle_still_reaches_both_layouts(self):
+        script = script_of(render_html(demo_graph()))
+        fcose = "cy.elements(':visible').layout(layoutOpts('fcose', hasFcose)).run();"
+        dagre = "cy.elements(':visible').layout(layoutOpts('dagre', hasFcose)).run();"
+        assert fcose in script
+        assert dagre in script
+
+
+class TestDiffsOnlyFilter:
+    """The rail's "discrepancies only" toggle keeps just the nodes whose
+    recalculated value differs from the file's."""
+
+    def test_the_toggle_sits_in_the_rail_under_its_own_label(self):
+        html = render_html(demo_graph())
+        assert 'id="lin-rail-filters-label"' in html
+        assert 'id="lin-diffs-only" class="lin-kind" aria-pressed="false"' in html
+
+    def test_the_toggle_hides_under_its_own_class(self):
+        """A dedicated class, so switching a kind off cannot lift the filter."""
+        script = script_of(render_html(demo_graph()))
+        assert "{ selector: '.diff-off', style: { 'display': 'none' } }" in script
+        assert "node.addClass('diff-off');" in script
+        assert "function nodeDiffers(n)" in script
+
+    def test_a_workbook_without_discrepancies_disables_the_toggle(self):
+        script = script_of(render_html(demo_graph()))
+        assert "if (!count) { btn.disabled = true; return; }" in script
+
+    def test_the_group_filters_stand_down_without_a_graph(self):
+        script = script_of(render_html(demo_graph()))
+        assert "'lin-rail-filters-label'" in script
+
+
+class TestFormulaHighlighting:
+    def test_the_panel_formula_is_tokenised_and_coloured(self):
+        script = script_of(render_html(demo_graph()))
+        assert "function highlightFormula(src)" in script
+        assert "fcode.innerHTML = highlightFormula(n.formula);" in script
+
+    def test_the_token_colours_are_theme_tokens(self):
+        html = render_html(demo_graph())
+        tokens = (
+            ".lin-tok-fn",
+            ".lin-tok-ref",
+            ".lin-tok-sheet",
+            ".lin-tok-num",
+            ".lin-tok-str",
+        )
+        for cls in tokens:
+            assert cls + " {" in html, cls
+        assert ".lin-tok-fn { color: var(--ai-fg);" in html
+
+
+class TestSearchShortcut:
+    def test_slash_focuses_the_search_box(self):
+        script = script_of(render_html(demo_graph()))
+        assert "function setupSearchShortcut()" in script
+        assert "setupSearchShortcut();" in script
+        assert "e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey" in script
+
+    def test_typing_in_a_field_never_triggers_the_shortcut(self):
+        script = script_of(render_html(demo_graph()))
+        assert "t.isContentEditable" in script
+        assert "t.tagName === 'TEXTAREA'" in script
+
+    def test_the_hint_is_on_the_box_title(self):
+        script = script_of(render_html(demo_graph()))
+        assert "search.title = _t('search_label') + ' (/)';" in script
+
+
+class TestDiffsAndCardStrings:
+    NEW_KEYS = ("rail_filters", "diffs_only", "external_unresolved")
+
+    def test_every_language_defines_them(self):
+        for language in LANGUAGES:
+            missing = set(self.NEW_KEYS) - set(UI_STRINGS[language])
+            assert not missing, f"{language} is missing {missing}"

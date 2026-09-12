@@ -150,6 +150,8 @@
     font-variant-numeric: tabular-nums;
   }
   .lin-kind[aria-pressed="false"] { opacity: .4; }
+  .lin-kind:disabled { cursor: default; opacity: .4; }
+  .lin-kind:disabled:hover { background: none; color: var(--ink2); }
   .lin-seg {
     display: inline-flex; border: 1px solid var(--line); border-radius: 6px;
     overflow: hidden; background: var(--surface2); margin: 0 .5rem;
@@ -275,10 +277,20 @@
     font-size: .64rem; text-transform: uppercase; letter-spacing: .04em;
     color: var(--muted); line-height: 1.3;
   }
+  /* The two figures are the point of the panel, so they read as figures:
+     large, serifed, side by side — a comparison, not a log line. */
   .lin-reading-val {
-    font-family: ui-monospace, monospace; font-size: 1rem; font-weight: 600;
-    color: var(--ink); overflow-wrap: anywhere;
+    font-family: Georgia, 'Times New Roman', serif; font-size: 1.25rem;
+    font-weight: 600; color: var(--ink); overflow-wrap: anywhere;
   }
+  /* Formula syntax highlighting: functions, references and numbers are told
+     apart by colour, reusing the theme's own tokens so dark mode stays
+     legible without a second palette. */
+  .lin-tok-fn { color: var(--ai-fg); font-weight: 600; }
+  .lin-tok-ref { color: var(--link); }
+  .lin-tok-sheet { color: var(--muted); }
+  .lin-tok-num { color: var(--warn-fg); }
+  .lin-tok-str { color: var(--ok-fg); }
   /* The workbooks a cell reads from, and how far each one was followed. */
   .lin-books { list-style: none; margin: 0; padding: 0; }
   .lin-books li + li { margin-top: .4rem; }
@@ -618,6 +630,16 @@
           <button type="button" id="lin-lay-fcose" aria-pressed="true">Organic</button>
         </div>
       </div>
+      <div>
+        <div class="lin-rail-label" id="lin-rail-filters-label">Filters</div>
+        <div class="lin-kinds">
+          <button type="button" id="lin-diffs-only" class="lin-kind" aria-pressed="false">
+            <span class="lin-sw lin-sw-box" id="lin-diffs-sw"></span>
+            <span id="lin-diffs-text">Discrepancies only</span>
+            <span class="lin-kind-n" id="lin-diffs-n"></span>
+          </button>
+        </div>
+      </div>
     </nav>
     <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
       <div class="lin-canvas-area">
@@ -682,15 +704,19 @@
   };
   // `sw` names the legend swatch class mirroring the node shape, so the
   // legend shows the same geometry as the canvas instead of plain squares.
+  // Every kind is a card now: a rounded rectangle carrying its label — and a
+  // secondary annotation line — *inside* the node, so the text travels with
+  // the node instead of floating under a dot. Kind is told by colour alone;
+  // `sw` keeps the legend and rail swatches aligned with that card geometry.
   var KIND = {
     cell:  { color: PALETTE.blue, shape: 'round-rectangle', labelKey: 'kind_cell', sw: 'box' },
     group: { color: PALETTE.violet, shape: 'round-rectangle', labelKey: 'kind_group', sw: 'box' },
-    input: { color: PALETTE.green, shape: 'ellipse', labelKey: 'kind_input', sw: 'dot' },
-    name:  { color: PALETTE.amber, shape: 'diamond', labelKey: 'kind_name', sw: 'diamond' },
-    vba:   { color: PALETTE.orange, shape: 'hexagon', labelKey: 'kind_vba', sw: 'hex' },
-    query: { color: PALETTE.magenta, shape: 'tag', labelKey: 'kind_query', sw: 'tag' },
-    misc:  { color: PALETTE.grey, shape: 'octagon', labelKey: 'kind_misc', sw: 'oct' },
-    opaque:{ color: PALETTE.grey, shape: 'ellipse', labelKey: 'kind_opaque', sw: 'dot' }
+    input: { color: PALETTE.green, shape: 'round-rectangle', labelKey: 'kind_input', sw: 'box' },
+    name:  { color: PALETTE.amber, shape: 'round-rectangle', labelKey: 'kind_name', sw: 'box' },
+    vba:   { color: PALETTE.orange, shape: 'round-rectangle', labelKey: 'kind_vba', sw: 'box' },
+    query: { color: PALETTE.magenta, shape: 'round-rectangle', labelKey: 'kind_query', sw: 'box' },
+    misc:  { color: PALETTE.grey, shape: 'round-rectangle', labelKey: 'kind_misc', sw: 'box' },
+    opaque:{ color: PALETTE.grey, shape: 'round-rectangle', labelKey: 'kind_opaque', sw: 'box' }
   };
   // Value provenance: where a displayed value comes from. Colors reuse the
   // node palette — blue = linexcel engine, green = the file, amber = fallback.
@@ -828,6 +854,7 @@
     setupTheme();
     setupTabs();
     setupTablistKeys();
+    setupSearchShortcut();
 
     // Set UI labels in the correct language
     document.getElementById('lin-tab-graph').textContent = _t('graph');
@@ -837,10 +864,16 @@
     document.getElementById('lin-rail-views').textContent = _t('rail_views');
     document.getElementById('lin-rail-kinds-label').textContent = _t('rail_kinds');
     document.getElementById('lin-rail-layout-label').textContent = _t('rail_layout');
+    document.getElementById('lin-rail-filters-label').textContent = _t('rail_filters');
+    var diffsBtn = document.getElementById('lin-diffs-only');
+    document.getElementById('lin-diffs-text').textContent = _t('diffs_only');
+    diffsBtn.title = _t('diffs_only');
+    diffsBtn.setAttribute('aria-label', _t('diffs_only'));
+    document.getElementById('lin-diffs-sw').style.background = PALETTE.orange;
     var search = document.getElementById('lin-search');
     search.placeholder = _t('search');
     search.setAttribute('aria-label', _t('search_label'));
-    search.title = _t('search_label');
+    search.title = _t('search_label') + ' (/)';
     named('lin-search-clear', _t('search_clear'));
     label('lin-lay-dagre', _t('layout_flow'));
     label('lin-lay-fcose', _t('layout_organic'));
@@ -912,10 +945,11 @@
     });
     var elements = [];
     GRAPH.nodes.forEach(function (n) {
+      var card = cardLabel(n);
       elements.push({ data: {
-        id: n.id, label: shortLabel(n), size: nodeSize(n),
+        id: n.id, label: card.label, w: card.w, h: card.h,
         degree: degreeMap[n.id] || 0, sheet: n.sheet || ''
-      }, classes: n.kind });
+      }, classes: n.kind + (unresolvedExternal(n) ? ' unresolved' : '') });
     });
     GRAPH.edges.forEach(function (e) {
       elements.push({ data: { id: e.id, source: e.source, target: e.target },
@@ -937,10 +971,14 @@
     }
 
     var hasDagre = typeof dagre !== 'undefined' || window.cytoscapeDagre;
-    // Organic (fcose) is the default whatever the size: a hierarchical flow
-    // layout reads worse on a big graph than a hairball does, and fcose's
-    // compound bundling keeps dense cases legible. Flow stays one click away.
-    var initial = (hasFcose ? 'fcose' : (hasDagre ? 'dagre' : 'cose'));
+    // Organic (fcose) is the default for small graphs: its bundling reads well
+    // while the node count stays low. Past ORGANIC_MAX_NODES it collapses into
+    // a hairball no zoom level untangles, so a wide workbook opens on the
+    // hierarchical flow instead. The rail toggle keeps both one click away —
+    // the reader can still force Organic on a dense graph.
+    var ORGANIC_MAX_NODES = 300;
+    var initial = (hasFcose && GRAPH.nodes.length <= ORGANIC_MAX_NODES)
+      ? 'fcose' : (hasDagre ? 'dagre' : 'cose');
     var curLayout = initial;
     var cy = cytoscape({
       container: cyContainer, elements: elements,
@@ -957,15 +995,31 @@
     cy.on('mouseover', 'node', function (ev) { ev.target.addClass('hovered'); });
     cy.on('mouseout', 'node', function (ev) { ev.target.removeClass('hovered'); });
 
-    // Level of detail: zoomed far out, labels collide into noise, so they
-    // fade (class .far) and only the selection keeps its own. Throttled to
-    // one restyle per frame — a wheel gesture fires dozens of zoom events.
+    // Level of detail: which nodes keep their label depends on the zoom band.
+    // Far out, labels collide into noise, so only the selection keeps its own
+    // (class .far hides the rest). In the middle band a dense graph still
+    // packs labels shoulder to shoulder, so only the selection and its direct
+    // neighbourhood stay labelled — the reader zooms in on a region by first
+    // picking a node. Close in, every label shows. A small graph never crowds,
+    // so it stays fully labelled from the middle band up. Throttled to one
+    // restyle per frame — a wheel gesture fires dozens of zoom events.
     var LABEL_MIN_ZOOM = 0.55;
+    var LABEL_FULL_ZOOM = 1.6;
+    var CROWDED = GRAPH.nodes.length > 80;
     function syncLabelLod() {
-      var far = cy.zoom() < LABEL_MIN_ZOOM;
+      var z = cy.zoom();
+      var hood = null;
+      if (CROWDED && z >= LABEL_MIN_ZOOM && z < LABEL_FULL_ZOOM) {
+        var sel = cy.nodes(':selected');
+        if (sel.length) hood = sel.closedNeighborhood().nodes();
+      }
       cy.batch(function () {
         cy.nodes().forEach(function (n) {
-          if (far && !n.selected()) n.addClass('far'); else n.removeClass('far');
+          var show = z >= LABEL_FULL_ZOOM
+            || (z >= LABEL_MIN_ZOOM && (!CROWDED || n.selected()
+              || (hood !== null && hood.contains(n))))
+            || (z < LABEL_MIN_ZOOM && n.selected());
+          if (show) n.removeClass('far'); else n.addClass('far');
         });
       });
     }
@@ -977,6 +1031,11 @@
     });
     cy.on('select unselect', syncLabelLod);
     cy.one('layoutstop', syncLabelLod);
+    // A synchronous layout (dagre, animate: false) fires layoutstop *inside*
+    // the cytoscape() call, before the handler above exists; the zoom handler
+    // misses the layout's own fit for the same reason. The direct call is
+    // idempotent, so async layouts lose nothing.
+    syncLabelLod();
     renderPlaceholder();
     setupEscapeDismiss();
 
@@ -1003,7 +1062,7 @@
     fitSelBtn.onclick = function () {
       var sel = cy.nodes(':selected');
       if (sel.length > 0) {
-        cy.animate({ fit: { eles: sel, padding: 40 }, duration: 250 });
+        frameEles(cy, sel, 250);
       }
     };
     cy.on('select unselect', function () {
@@ -1071,7 +1130,7 @@
           eles = eles.union(ele);
         }
       });
-      cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });
+      frameEles(cy, eles, 300);
     }
     search.addEventListener('input', function () {
       searchClear.hidden = !search.value;
@@ -1092,6 +1151,35 @@
     searchClear.onclick = function () { restoreGraph(); search.focus(); };
     buildLegend();
     buildKindFilters(cy, layoutOpts, function () { return curLayout; }, hasFcose);
+    setupDiffsFilter(cy, layoutOpts, function () { return curLayout; }, hasFcose);
+  }
+
+  // "Discrepancies only": keep just the nodes whose recalculated value differs
+  // from the file's — the cells a reviewer actually came for. Hidden nodes
+  // leave the layout like a switched-off kind, but under their own class so
+  // the two filters compose instead of clobbering each other.
+  function setupDiffsFilter(cy, layoutOpts, getLayout, hasFcose) {
+    var btn = document.getElementById('lin-diffs-only');
+    var count = GRAPH.nodes.filter(nodeDiffers).length;
+    document.getElementById('lin-diffs-n').textContent = count.toLocaleString(LANG);
+    // No disagreement anywhere: the toggle would filter to an empty canvas, so
+    // it stands down rather than promising a view that cannot exist.
+    if (!count) { btn.disabled = true; return; }
+    btn.onclick = function () {
+      var on = btn.getAttribute('aria-pressed') !== 'true';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      cy.batch(function () {
+        cy.nodes().forEach(function (node) {
+          var n = byId[node.id()];
+          if (on && n && !nodeDiffers(n)) node.addClass('diff-off');
+          else node.removeClass('diff-off');
+        });
+      });
+      clearSel(cy);  // the selection may have just left the canvas
+      var visible = cy.elements(':visible');
+      visible.layout(layoutOpts(getLayout(), hasFcose)).run();
+      cy.fit(visible, 40);
+    };
   }
 
   // The four tabs, in reading order. Each key names both the button
@@ -1415,20 +1503,67 @@
     node.title = text; node.setAttribute('aria-label', text);
   }
 
-  function nodeSize(n) {
-    // A stretched group grows with the log of its cell count, capped low
-    // enough that a million-cell pattern cannot dwarf its neighbours and
-    // swallow their labels.
-    if (n.kind === 'group') return Math.min(46, 24 + 4 * Math.log2((n.count || 1)));
-    if (n.kind === 'misc') return 40;
-    if (n.kind === 'vba' || n.kind === 'query') return 32;
-    return 24;
+  // --- node cards ------------------------------------------------------------
+  // A card is a label with, when there is something worth saying, a secondary
+  // annotation line under it: the formatted value for a constant or a named
+  // cell, the folded-cell count for a stretched pattern, the macro kind for
+  // VBA, "external · unresolved" for a reference nobody could read. Both
+  // lines are pre-truncated and the card sized from them, because Cytoscape
+  // sizes a node independently of its label — an overflowing label is what
+  // made the dense graphs unreadable.
+  var CARD_LINE = 24;
+  function truncLine(s) {
+    s = String(s);
+    return s.length > CARD_LINE ? s.slice(0, CARD_LINE - 1) + '…' : s;
   }
   function shortLabel(n) {
     if (n.kind === 'name') return '📛 ' + n.label;
     if (n.kind === 'vba') return '⚙ ' + n.label;
     if (n.kind === 'query') return '⟳ ' + n.label;
     return n.label;
+  }
+  // The card's second line, or '' when the node has nothing more to say.
+  function subLabel(n) {
+    if (unresolvedExternal(n)) return _t('external_unresolved');
+    if (n.kind === 'group') return '×' + (n.count || 0).toLocaleString(LANG);
+    if (n.kind === 'vba') return n.procKind || '';
+    if (n.kind === 'misc') return (n.count || 0).toLocaleString(LANG) + ' ' + _t('cells');
+    if (n.value !== undefined && n.value !== null) return fmt(n.value);
+    if (n.kind === 'input' && n.values && n.values.length)
+      return fmt(n.values[0].value);
+    return '';
+  }
+  function cardLabel(n) {
+    var top = truncLine(shortLabel(n));
+    var sub = subLabel(n);
+    var lines = sub ? [top, truncLine(sub)] : [top];
+    var maxLen = 0;
+    lines.forEach(function (l) { maxLen = Math.max(maxLen, l.length); });
+    return {
+      label: lines.join('\n'),
+      // ~5.6px per 9px sans glyph, plus the card's inner padding.
+      w: Math.max(46, Math.min(150, 14 + maxLen * 5.6)),
+      h: lines.length > 1 ? 32 : 22
+    };
+  }
+  // An external reference the analysis named but never read: no value could
+  // be attached, from neither the linked folder nor the file's own cache.
+  function unresolvedExternal(n) {
+    return n.kind === 'opaque' && !!(n.externalBooks && n.externalBooks.length)
+      && !n.valueSource;
+  }
+  // The verdict travels with the node (cachedAgreement), falling back to the
+  // same comparison the value card runs. A genuine disagreement only — a
+  // format-only difference ('format') is the same value in another locale.
+  function nodeDiffers(n) {
+    var r = readings(n);
+    if (r.comparable && !r.agree) return true;
+    var rows = n.samples || [];
+    for (var i = 0; i < rows.length; i++) {
+      var sr = readings(rows[i]);
+      if (sr.comparable && !sr.agree) return true;
+    }
+    return false;
   }
   function layoutOpts(name, hasFcose) {
     if (name === 'dagre') return { name: 'dagre', rankDir: 'LR', nodeSep: 36,
@@ -1440,10 +1575,13 @@
   function buildStyle(big) {
     var t = themeInk();
     var s = [
+      // A card: fixed size computed from its (pre-truncated) label lines, with
+      // the text centred inside. The label ink is set per kind below, derived
+      // from the fill, so a coloured card never gets a low-contrast label.
       { selector: 'node', style: {
-        label: 'data(label)', width: 'data(size)', height: 'data(size)',
-        'font-size': 9, 'min-zoomed-font-size': 8, 'text-valign': 'bottom',
-        'text-margin-y': 4, 'text-wrap': 'ellipsis', 'text-max-width': 130,
+        label: 'data(label)', width: 'data(w)', height: 'data(h)',
+        'font-size': 9, 'min-zoomed-font-size': 8, 'text-valign': 'center',
+        'text-halign': 'center', 'text-wrap': 'wrap', 'line-height': 1.25,
         color: t.ink2, 'border-width': 1.5, 'border-color': t.nodeBorder } },
       { selector: 'node[degree <= 1]', style: { 'opacity': 0.55 } },
       { selector: 'node[degree = 2]', style: { 'opacity': 0.75 } },
@@ -1464,27 +1602,39 @@
       { selector: 'edge.query-load', style: { 'line-color': PALETTE.magenta,
         'target-arrow-color': PALETTE.magenta } },
       { selector: 'edge.approx', style: { opacity: 0.55 } },
+      // An external reference nobody could read: the dashed orange border says
+      // "named but never opened" — a broken edge of the workbook's world.
+      { selector: 'node.unresolved', style: { 'border-style': 'dashed',
+        'border-width': 2, 'border-color': PALETTE.orange } },
       // Level of detail: at wide zoom every label collides with its
-      // neighbours, so zooming out fades them all but the selection's.
+      // neighbours, so zooming out fades them all but the selection's; the
+      // cards stay full size — shrunk to dots they would vanish under the
+      // fit zoom of a wide flow layout.
       // Declared *before* node:selected so the selection's text-opacity: 1
       // always wins over a stale .far class.
       { selector: 'node.far', style: { 'text-opacity': 0 } },
+      // No font-size bump on selection: the card width is computed for the
+      // base 9px, and a wider selected font would wrap the label mid-address.
       { selector: 'node:selected', style: { 'border-width': 2.5,
-        'border-color': t.ink, color: t.ink, 'font-size': 11, 'text-opacity': 1 } },
+        'border-color': t.ink, 'text-opacity': 1 } },
       // Dense-graph affordance: hovering a node singles it out with a firmer
       // border and, when zoomed out, its full label — so "is this the cell?"
       // can be answered before the click. Declared after .far so the label
-      // comes back even at wide zoom.
-      { selector: 'node.hovered', style: { 'text-opacity': 1, 'font-size': 10.5,
+      // comes back even at wide zoom. No font bump either (see node:selected).
+      { selector: 'node.hovered', style: { 'text-opacity': 1,
         'border-width': 3, 'z-index': 20 } },
       // A kind switched off in the rail leaves the layout entirely.
       { selector: '.kind-off', style: { 'display': 'none' } },
+      // "Discrepancies only" hides a node the same way, under its own class so
+      // the two filters compose instead of clobbering each other.
+      { selector: '.diff-off', style: { 'display': 'none' } },
       { selector: '.dimmed', style: { opacity: 0.22 } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
     Object.keys(KIND).forEach(function (k) {
       s.push({ selector: 'node.' + k,
-        style: { 'background-color': KIND[k].color, shape: KIND[k].shape } });
+        style: { 'background-color': KIND[k].color, shape: KIND[k].shape,
+          color: onColor(KIND[k].color) } });
     });
     return s;
   }
@@ -1585,6 +1735,22 @@
     }).addClass('dimmed');
   }
 
+  // Frame a set of elements, but never closer than FOCUS_MAX_ZOOM: a lone
+  // card fitted to the viewport would fill the screen and push its whole
+  // neighbourhood out of frame — the very context the selection is about.
+  // The fit runs first (it pans as well as zooms); the cap then only pulls
+  // the zoom back, keeping the set centred.
+  var FOCUS_MAX_ZOOM = 1.2;
+  function frameEles(cy, eles, duration) {
+    cy.animate({ fit: { eles: eles, padding: 40 }, duration: duration,
+      complete: function () {
+        if (cy.zoom() <= FOCUS_MAX_ZOOM) return;
+        var bb = eles.boundingBox();
+        cy.animate({ zoom: { level: FOCUS_MAX_ZOOM, position: {
+          x: (bb.x1 + bb.x2) / 2, y: (bb.y1 + bb.y2) / 2 } }, duration: 150 });
+      } });
+  }
+
   function select(cy, id) {
     var n = byId[id]; if (!n) return;
     var ele = cy.getElementById(id);
@@ -1601,6 +1767,24 @@
     dimExternal(cy);
     renderPlaceholder();
   }
+  // "/" focuses the search box from anywhere — the convention every reader
+  // coming from a documentation site or an IDE already has. Typing inside a
+  // field never triggers it, and a disabled box (no graph rendered) cannot be
+  // focused.
+  function setupSearchShortcut() {
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+          || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      var box = document.getElementById('lin-search');
+      if (!box || box.disabled) return;
+      e.preventDefault();
+      box.focus();
+      box.select();
+    });
+  }
+
   // Escape dismisses the selection and its detail panel — the keyboard
   // counterpart of the panel's ✕ — from anywhere in the document. The search
   // box owns Escape (it resets the query there), so it is left untouched.
@@ -1631,7 +1815,7 @@
     // The rail's Node types and Layout groups act only on a rendered graph;
     // when there is none (zero formulas, or Cytoscape missing) they are hidden
     // so they never read as controls that do something.
-    ['lin-rail-kinds-label', 'lin-rail-layout-label'].forEach(function (id) {
+    ['lin-rail-kinds-label', 'lin-rail-layout-label', 'lin-rail-filters-label'].forEach(function (id) {
       var lbl = document.getElementById(id);
       if (lbl && lbl.parentElement) lbl.parentElement.hidden = true;
     });
@@ -1726,6 +1910,25 @@
       .replace(/\*([^*]+)\*/g, '<em>$1</em>');
   }
 
+  // Mini syntax highlighting for a formula: functions, references (with their
+  // sheet prefix), numbers and string literals each get a colour. The text is
+  // escaped first, so a workbook string can never inject markup; the regex
+  // then walks the escaped text in one pass — entities it introduces contain
+  // no quotes, digits-after-letters or identifier-followed-by-'(', so they
+  // cannot match a pattern themselves.
+  function highlightFormula(src) {
+    var esc = String(src).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    var re = /("(?:[^"]|"")*")|((?:'[^']+'|[A-Za-z_][\w.]*|\[[^\]]*\][\w. ]*)!)?(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)|([A-Za-z_][\w.]*)(?=\()|(\d+(?:[.,]\d+)?\b)/g;
+    return esc.replace(re, function (m, str, sheet, ref, fn, num) {
+      if (str) return '<span class="lin-tok-str">' + str + '</span>';
+      if (ref) return (sheet ? '<span class="lin-tok-sheet">' + sheet + '</span>' : '')
+        + '<span class="lin-tok-ref">' + ref + '</span>';
+      if (fn) return '<span class="lin-tok-fn">' + fn + '</span>';
+      if (num) return '<span class="lin-tok-num">' + num + '</span>';
+      return m;
+    });
+  }
+
   function renderPanel(cy, n) {
     var p = document.getElementById('lin-panel');
     p.classList.remove('hidden'); p.classList.remove('lin-empty'); p.innerHTML = '';
@@ -1743,7 +1946,10 @@
     p.appendChild(el('h2', null, n.label));
 
     if (n.formula) {
-      var sf = section(_t('formula')); sf.appendChild(el('code', 'lin-formula', n.formula));
+      var sf = section(_t('formula'));
+      var fcode = el('code', 'lin-formula');
+      fcode.innerHTML = highlightFormula(n.formula);
+      sf.appendChild(fcode);
       if (n.kind === 'group') {
         sf.appendChild(el('p', 'lin-hint',
           _t('stretched_pattern', { count: n.count.toLocaleString(LANG), bbox: n.bbox })));

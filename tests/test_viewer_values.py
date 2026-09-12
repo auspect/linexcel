@@ -683,8 +683,15 @@ class TestSearchAll:
 
     def test_the_view_frames_the_whole_matched_set(self):
         html = render_html(search_graph())
-        fit = "cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });"
-        assert fit in html
+        assert "frameEles(cy, eles, 300);" in html
+
+    def test_framing_is_capped_so_a_lone_match_keeps_its_neighbourhood(self):
+        """A single card fitted to the viewport would fill the screen and push
+        every neighbour out of frame — the context the selection is about."""
+        script = render_html(search_graph())
+        assert "var FOCUS_MAX_ZOOM = 1.2;" in script
+        assert "function frameEles(cy, eles, duration)" in script
+        assert "if (cy.zoom() <= FOCUS_MAX_ZOOM) return;" in script
 
     def test_an_empty_result_leaves_the_graph_alone_and_says_so(self):
         html = render_html(search_graph())
@@ -829,9 +836,11 @@ class TestPowerQueryPanel:
         assert "if (n.kind === 'query') p.appendChild(querySection(n));" in html
         assert "sq.appendChild(el('pre', 'lin-code is-wrapped', n.code || ''));" in html
 
-    def test_the_query_kind_has_its_own_colour_and_shape(self):
+    def test_the_query_kind_has_its_own_colour(self):
+        """Every kind is a card since the viewer refresh; kind is told by
+        colour, and the query keeps its own — magenta, never recycled."""
         html = render_html(query_graph())
-        assert "query: { color: PALETTE.magenta, shape: 'tag'" in html
+        assert "query: { color: PALETTE.magenta, shape: 'round-rectangle'" in html
         assert "'#a3348e'" in html  # the canvas cannot resolve var()
         assert EN["kind_query"] == "Power Query"
         assert EN["kind_query"] in html
