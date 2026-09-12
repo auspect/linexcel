@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Graph navigation uses a dedicated responsive toolbar** with a labeled sheet
+  selector, grouped zoom controls and a live zoom percentage, and explicit
+  framing actions. Search has a visible submit action and describes its scope.
+
 - **Local acceptance runs include both fixtures, screenshots and image analysis
   with Ollama by default.** Each run keeps separate artifacts and a manifest
   with source/input/image hashes and per-language coverage. Partial runs and
@@ -44,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selections, and desktop/mobile controls in light and dark themes.
 
 ### Fixed
+
+- **Visual preview is hidden when its content is already available in Sheets.**
+  Standalone image pages and descriptions without sheet context remain reachable.
+- **Search feedback is cleared when the query or graph filters change.**
+  Searches with no matches also clear the previous selection.
+- **Inline code in AI documentation preserves formula operators.** Markdown
+  emphasis no longer consumes multiplication signs inside code spans.
 
 - **Empty or truncated AI responses no longer become successful documents.**
   Failed calls retain their reported token usage; oversized formulas are
