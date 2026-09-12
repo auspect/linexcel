@@ -529,6 +529,12 @@ class LineageResult:
                     for name, s_list in by_sheet.items()
                 }
             else:
+                # Keep the identity used by describe_screenshots before paths
+                # become anonymous data URIs, so page prose follows its image.
+                meta["screenshotNames"] = [
+                    None if str(s).startswith("data:") else Path(s).stem
+                    for s in screenshots
+                ]
                 meta["screenshots"] = [_embed(s) for s in screenshots]
 
         if screenshot_docs:

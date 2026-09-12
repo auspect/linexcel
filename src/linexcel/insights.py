@@ -6,6 +6,7 @@ import datetime
 import io
 import math
 import os
+import posixpath
 import re
 import shutil
 import struct
@@ -16,6 +17,7 @@ import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format, is_datetime
@@ -504,17 +506,145 @@ def render_workbook_screenshots(
 def _sheet_names(data: bytes) -> list[str]:
     """Sheet names in workbook order — the order LibreOffice paginates in.
 
-    Hidden sheets included: LibreOffice gives them a page like any other, so
-    dropping them here would shift every name onto the wrong image.
+    Hidden sheets and chartsheets included: LibreOffice gives them a page like
+    any other, so dropping them here would shift names or lose the mapping.
     """
     try:
         workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception:
         return []
     try:
-        return [worksheet.title for worksheet in workbook.worksheets]
+        return workbook.sheetnames
     finally:
         workbook.close()
+
+
+def empty_sheet_render_exemptions(data: bytes) -> dict[str, str]:
+    """Name only sheets proven empty enough to omit a rendered screenshot.
+
+    This is a conservative validation aid, not an estimate from dimensions or
+    cached values. Chartsheets, styled cells, comments, drawings, relationships,
+    unknown XML and oversized parts remain expected. Unsupported or malformed
+    packages return no exemptions. No workbook cells are materialized.
+    """
+    namespaces = {
+        "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "http://purl.oclc.org/ooxml/spreadsheetml/main",
+    }
+    structural = {
+        "worksheet",
+        "sheetPr",
+        "outlinePr",
+        "pageSetUpPr",
+        "dimension",
+        "sheetViews",
+        "sheetView",
+        "selection",
+        "pane",
+        "sheetFormatPr",
+        "sheetData",
+        "pageMargins",
+        "printOptions",
+        "pageSetup",
+        "headerFooter",
+        "oddHeader",
+        "oddFooter",
+        "evenHeader",
+        "evenFooter",
+        "firstHeader",
+        "firstFooter",
+    }
+
+    scanned_bytes = 0
+
+    def xml(package: zipfile.ZipFile, name: str) -> ElementTree.Element:
+        nonlocal scanned_bytes
+        scanned_bytes += package.getinfo(name).file_size
+        if scanned_bytes > MAX_CONTEXT_XML_BYTES:
+            raise ValueError("Part too large to prove empty")
+        raw = package.read(name)
+        if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+            raise ValueError("Unexpected XML declaration")
+        return ElementTree.fromstring(raw)
+
+    exemptions: dict[str, str] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            # Duplicate members make even a valid relationship ambiguous.
+            members = package.namelist()
+            if len(members) != len(set(members)):
+                return {}
+            workbook = xml(package, "xl/workbook.xml")
+            rels = xml(package, "xl/_rels/workbook.xml.rels")
+            relationships = {rel.get("Id"): rel for rel in rels}
+            if len(relationships) != len(rels):
+                return {}
+            for sheet in workbook.findall("{*}sheets/{*}sheet"):
+                rid = next(
+                    (v for k, v in sheet.attrib.items() if k.endswith("}id")), None
+                )
+                rel = relationships.get(rid)
+                if rel is None or rel.get("TargetMode") == "External":
+                    continue
+                if not (rel.get("Type") or "").endswith("/worksheet"):
+                    continue
+                target = rel.get("Target", "")
+                if not target or "\\" in target or ":" in target:
+                    continue
+                part = posixpath.normpath(posixpath.join("xl", target))
+                if target.startswith("/"):
+                    part = posixpath.normpath(target.lstrip("/"))
+                if not part.startswith("xl/"):
+                    continue
+                try:
+                    root = xml(package, part)
+                    relation_part = posixpath.join(
+                        posixpath.dirname(part),
+                        "_rels",
+                        posixpath.basename(part) + ".rels",
+                    )
+                    if relation_part in members:
+                        sheet_rels = xml(package, relation_part)
+                        if not sheet_rels.tag.endswith("}Relationships") or len(
+                            sheet_rels
+                        ):
+                            continue
+                    if any(
+                        not node.tag.startswith("{")
+                        or node.tag[1:].split("}", 1)[0] not in namespaces
+                        or node.tag.rsplit("}", 1)[-1] not in structural
+                        or (node.text or "").strip()
+                        or (node.tail or "").strip()
+                        for node in root.iter()
+                    ):
+                        continue
+                    if root.tag.rsplit("}", 1)[-1] != "worksheet":
+                        continue
+                    print_options = root.find("{*}printOptions")
+                    if print_options is not None and any(
+                        print_options.get(option, "false") not in {"false", "0"}
+                        for option in ("headings", "gridLines")
+                    ):
+                        continue
+                except (KeyError, ValueError, ElementTree.ParseError):
+                    continue
+                name = sheet.get("name")
+                if name:
+                    exemptions[name] = (
+                        "Worksheet XML contains only empty structural metadata; "
+                        "no cells, formatting rows/columns or related content"
+                    )
+    except (
+        KeyError,
+        ValueError,
+        ElementTree.ParseError,
+        zipfile.BadZipFile,
+        OSError,
+        RuntimeError,
+        NotImplementedError,
+    ):
+        return {}
+    return exemptions
 
 
 def _place_pages(pages: list[Path], target: Path, stem: str) -> list[Path]:

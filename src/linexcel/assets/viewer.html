@@ -487,6 +487,10 @@
     background: var(--paper);
   }
   .lin-gallery img { display: block; max-width: 100%; }
+  .lin-shot-viewer { width: 100%; min-width: 0; }
+  .lin-shot-viewer > .lin-chip { margin-bottom: .4rem; }
+  .lin-shot-viewer img { display: block; max-width: 100%; }
+  .lin-frame.is-zoomed img { max-width: none; }
 
   /* The first cells of the sheet, as openpyxl read them. Always present, where
      the rendered image needs LibreOffice, so this is what the tab shows when
@@ -514,6 +518,8 @@
   /* --- visual preview tab ---------------------------------------------- */
   .lin-shots { display: flex; flex-direction: column; gap: 1.2rem; align-items: center; }
   .lin-shot-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .5rem; }
+  .lin-shot-tabs .lin-chip { max-width: 100%; overflow-wrap: anywhere; }
+  .lin-shot-description { width: 100%; min-width: 0; }
   .lin-chip {
     padding: .35rem .7rem; border: 1px solid var(--line); border-radius: 6px;
     background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
@@ -1252,6 +1258,38 @@
     });
   }
 
+  // Preserve the source resolution: the fitted preview is readable at a
+  // glance, while native-size mode lets a reader inspect a dense 200-DPI page.
+  function screenshotViewer(src, alt, className) {
+    var root = el('div', 'lin-shot-viewer');
+    var zoom = el('button', 'lin-chip', _t('zoom_in'));
+    zoom.type = 'button';
+    zoom.setAttribute('aria-pressed', 'false');
+    var frame = el('div', 'lin-frame');
+    var img = el('img', className);
+    if (src) img.src = src;
+    img.alt = alt;
+    zoom.onclick = function () {
+      var enlarged = frame.classList.toggle('is-zoomed');
+      zoom.setAttribute('aria-pressed', enlarged ? 'true' : 'false');
+      zoom.textContent = _t(enlarged ? 'zoom_out' : 'zoom_in');
+    };
+    frame.appendChild(img);
+    root.appendChild(zoom);
+    root.appendChild(frame);
+    return {root: root, img: img};
+  }
+
+  function appendVision(target, text) {
+    if (!text) return;
+    var box = el('div', 'lin-ai-box');
+    box.appendChild(el('span', 'lin-ai-badge', _t('ai_vision')));
+    var prose = el('div', 'lin-doc');
+    prose.innerHTML = _md(text);
+    box.appendChild(prose);
+    target.appendChild(box);
+  }
+
   // Runs before the Cytoscape guard (see boot()), so it must cope with every
   // shape meta.screenshots takes: a flat list of print pages, a per-sheet
   // mapping, or nothing at all. The pane is populated exactly once — the
@@ -1270,14 +1308,37 @@
     var sheetNames = bySheet ? Object.keys(bySheet).filter(function (name) {
       return bySheet[name] && bySheet[name].length;
     }) : [];
+    var ctx = GRAPH.meta.workbookContext || {};
+    var contextNames = new Set((ctx.sheets || []).map(function (sheet) { return sheet.name; }));
+    var docs = GRAPH.meta.screenshotDocs || {};
+    var docKeysShown = new Set();
+    var gallery = [];
+    if (pages) {
+      pages.forEach(function (src, idx) {
+        var key = (GRAPH.meta.screenshotNames || [])[idx];
+        // Legacy reports with path URLs still retain a filename. Embedded
+        // legacy images do not: keep their descriptions separate below.
+        if (!key && !/^data:/i.test(src)) {
+          key = src.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+        }
+        gallery.push({src: src, label: _t('page', {n: idx + 1}), key: key});
+      });
+    }
+    var inSheets = sheetNames.filter(function (name) { return contextNames.has(name); });
+    sheetNames.forEach(function (name) {
+      if (contextNames.has(name)) { docKeysShown.add(name); return; }
+      // Chartsheets or reports without extracted context have no sheet card.
+      // Keep every such image reachable in the workbook gallery.
+      bySheet[name].forEach(function (src, idx) {
+        gallery.push({src: src, key: name, label: name +
+          (bySheet[name].length > 1 ? ' — ' + _t('page', {n: idx + 1}) : '')});
+      });
+    });
+    gallery.forEach(function (page) { if (page.key) docKeysShown.add(page.key); });
 
-    if (!pages || !pages.length) {
-      // A per-sheet mapping renders inside each sheet's card (Sheets tab);
-      // the tab points there instead of duplicating the gallery. Anything
-      // else — flag not passed, LibreOffice missing, render failed — gets
-      // the plain statement and the command that would have produced it.
+    if (inSheets.length || !gallery.length) {
       var note = el('div', 'lin-shots-empty');
-      if (sheetNames.length) {
+      if (inSheets.length) {
         note.appendChild(el('p', 'lin-hint', _t('shots_in_sheets')));
       } else {
         note.appendChild(el('div', 'lin-shots-empty-title', _t('shots_empty_title')));
@@ -1285,42 +1346,47 @@
         note.appendChild(el('code', 'lin-shots-cmd', _t('shots_hint')));
       }
       container.appendChild(note);
-      return;
     }
 
-    var activeIdx = 0;
+    if (gallery.length) {
+      var viewerContainer = el('div', 'lin-shots');
+      var switcher = el('div', 'lin-shot-tabs');
+      var shot = screenshotViewer(null, '', 'lin-shot');
+      var description = el('div', 'lin-shot-description');
 
-    var viewerContainer = el('div', 'lin-shots');
-    var switcher = el('div', 'lin-shot-tabs');
-    var imgEl = el('img', 'lin-shot');
+      function showPage(idx) {
+        var page = gallery[idx];
+        shot.img.src = page.src;
+        shot.img.alt = page.label;
+        description.innerHTML = '';
+        appendVision(description, docs[page.key]);
+        Array.prototype.forEach.call(switcher.children, function (child, cIdx) {
+          child.setAttribute('aria-pressed', cIdx === idx ? 'true' : 'false');
+        });
+      }
 
-    function showPage(idx) {
-      activeIdx = idx;
-      imgEl.src = pages[idx];
-      imgEl.alt = _t('page', { n: idx + 1 });
-      Array.prototype.forEach.call(switcher.children, function (child, cIdx) {
-        child.setAttribute('aria-pressed', cIdx === idx ? 'true' : 'false');
+      gallery.forEach(function(page, idx) {
+        var pBtn = el('button', 'lin-chip', page.label);
+        pBtn.type = 'button';
+        pBtn.setAttribute('aria-pressed', 'false');
+        pBtn.onclick = function() { showPage(idx); };
+        switcher.appendChild(pBtn);
       });
+
+      viewerContainer.appendChild(switcher);
+      viewerContainer.appendChild(shot.root);
+      viewerContainer.appendChild(description);
+      container.appendChild(viewerContainer);
+      showPage(0);
     }
 
-    pages.forEach(function(src, idx) {
-      var pBtn = el('button', 'lin-chip', _t('page', { n: idx + 1 }));
-      pBtn.type = 'button';
-      pBtn.setAttribute('aria-pressed', 'false');
-      pBtn.onclick = function() { showPage(idx); };
-      switcher.appendChild(pBtn);
+    // Missing images or old embedded pages cannot be paired by dictionary
+    // order. Retain their named prose without inventing an image association.
+    Object.keys(docs).forEach(function (name) {
+      if (docKeysShown.has(name) || !docs[name]) return;
+      container.appendChild(el('h3', null, name));
+      appendVision(container, docs[name]);
     });
-
-    viewerContainer.appendChild(switcher);
-    viewerContainer.appendChild(imgEl);
-    container.appendChild(viewerContainer);
-
-    var screenshotsMain = document.getElementById('lin-screenshots-main');
-
-    btn.onclick = function () {
-      switchTab(btn, screenshotsMain);
-      showPage(activeIdx);
-    };
   }
 
   function setupTabs() {
@@ -1429,13 +1495,9 @@
           card.appendChild(el('h4', 'lin-sub', '📸 ' + _t('sheet_render')));
           var imgGallery = el('div', 'lin-gallery');
           shots.forEach(function (imgSrc) {
-            var frame = el('div', 'lin-frame');
-            var img = el('img');
-            img.src = imgSrc;
-            img.alt = _t('sheet_render') + ' — ' + sheet.name;
-            img.loading = 'lazy';
-            frame.appendChild(img);
-            imgGallery.appendChild(frame);
+            var shot = screenshotViewer(imgSrc, _t('sheet_render') + ' — ' + sheet.name);
+            shot.img.loading = 'lazy';
+            imgGallery.appendChild(shot.root);
           });
           card.appendChild(imgGallery);
           // What the picture says and the dossier cannot: colour conventions,

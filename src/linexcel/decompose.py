@@ -36,6 +36,7 @@ GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
 MAX_STEPS_PER_FORMULA = 48
 
 _STEP_KINDS = {"Function", "BinaryOp", "UnaryOp"}
+_LOCAL_SCOPE_FUNCTIONS = {"LET", "LAMBDA", "_XLFN.LET", "_XLFN.LAMBDA"}
 #: Excel operator precedence, loosest first. An unknown operator scores 0 and
 #: is therefore always parenthesized, which is the safe way to be wrong.
 _PRECEDENCE = {
@@ -73,14 +74,18 @@ def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]
     exprs: list[str] = []
     counter = itertools.count()
 
-    def walk(node: dict, is_root: bool) -> None:
+    def walk(node: dict, is_root: bool, local_scope: bool = False) -> None:
         ntype = node.get("node_type")
         if ntype not in _STEP_KINDS:
             return
         if next(counter) >= MAX_STEPS_PER_FORMULA:
             return
-        if not (is_root and skip_root):
+        if not local_scope and not (is_root and skip_root):
             exprs.append(_render_expr(node))
+        child_scope = local_scope or (
+            ntype == "Function"
+            and str(node.get("name", "")).upper() in _LOCAL_SCOPE_FUNCTIONS
+        )
         if ntype == "Function":
             children = node.get("args", [])
         elif ntype == "BinaryOp":
@@ -89,7 +94,7 @@ def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]
             children = [node.get("operand") or node.get("expr")]
         for c in children:
             if c:
-                walk(c, False)
+                walk(c, False, child_scope)
 
     walk(ast_dict, True)
     return exprs
@@ -117,7 +122,7 @@ def _decompose(
     def expr_of(node: dict) -> str:
         return _render_expr(node)
 
-    def walk(node: dict, depth: int) -> dict | None:
+    def walk(node: dict, depth: int, local_scope: bool = False) -> dict | None:
         ntype = node.get("node_type")
         if ntype not in _STEP_KINDS:
             return None
@@ -137,29 +142,41 @@ def _decompose(
 
         inputs = []
         children = []
+        child_scope = local_scope or (
+            ntype == "Function" and str(label).upper() in _LOCAL_SCOPE_FUNCTIONS
+        )
         for child in children_ast:
-            sub = walk(child, depth + 1)
+            sub = walk(child, depth + 1, child_scope)
             if sub is not None:
                 children.append(sub)
             else:
                 ctype = child.get("node_type")
                 if ctype == "Reference":
                     ref = child.get("reference", "?")
-                    preview, date_text = _ref_preview(
-                        resolver, ref, sheet, defined_names
+                    preview, date_text = (
+                        (None, None)
+                        if child_scope
+                        else _ref_preview(resolver, ref, sheet, defined_names)
                     )
                     entry: dict[str, Any] = {"ref": ref, "value": preview}
+                    if child_scope:
+                        entry["evaluationReason"] = "local-scope"
                     if date_text is not None:
                         entry["date"] = date_text
                     inputs.append(entry)
                 elif ctype == "Literal":
                     inputs.append({"literal": child.get("value")})
 
-        if depth == 0 and root_value is not None:
+        if local_scope:
+            # LET bindings and LAMBDA parameters belong to their enclosing
+            # expression. Moving a subtree to scratch can resolve a different
+            # workbook name, or invent #NAME? for a valid local variable.
+            value, evaluated = None, False
+        elif depth == 0 and root_value is not None:
             value, evaluated = root_value, True
         else:
             value, evaluated = resolver.eval_expr(expr, sheet)
-        return {
+        result = {
             "kind": ntype,
             "label": label,
             "expr": expr,
@@ -168,6 +185,9 @@ def _decompose(
             "inputs": inputs,
             "children": children,
         }
+        if local_scope:
+            result["evaluationReason"] = "local-scope"
+        return result
 
     return walk(ast_dict, 0)
 

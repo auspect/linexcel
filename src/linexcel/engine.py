@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import math
 import re
+import threading
 import zipfile
 from bisect import bisect_left, bisect_right
 from collections import deque
@@ -116,8 +117,64 @@ def _open_workbook(data: bytes, parallel: bool):
     eval_config.cycle_policy = "iterate" if iterate else "error"
     eval_config.iterate_max_iterations = count
     eval_config.iterate_max_change = delta
-    return fz.Workbook.from_bytes(
+    workbook = fz.Workbook.from_bytes(
         data, config=fz.WorkbookConfig(eval_config=eval_config)
+    )
+    _register_legacy_normal_functions(workbook, eval_config.date_system)
+    return workbook
+
+
+def _register_legacy_normal_functions(workbook, date_system: str) -> None:
+    """Bridge two Excel compatibility names to their native modern functions.
+
+    Registering workbook-local functions preserves original formulas, traces
+    and scratch expressions. The callback must never re-enter its workbook;
+    formualizer explicitly permits using a separate workbook. That evaluator
+    owns only argument cells and delegates coercion and errors to the native
+    statistical functions, instead of approximating their Excel semantics.
+    """
+    native = None
+    lock = threading.Lock()
+
+    def evaluate(modern: str, arguments: tuple) -> Any:
+        nonlocal native
+        with lock:
+            if native is None:
+                config = fz.EvaluationConfig()
+                config.enable_parallel = False
+                config.date_system = date_system
+                native = fz.Workbook(config=fz.WorkbookConfig(eval_config=config))
+                for name in ("Result", "Arg1", "Arg2", "Arg3", "Arg4"):
+                    native.add_sheet(name)
+            references = []
+            for index, argument in enumerate(arguments, 1):
+                sheet = f"Arg{index}"
+                if isinstance(argument, list):
+                    rows = argument or [[None]]
+                    height, width = len(rows), len(rows[0])
+                    native.sheet(sheet).set_values_batch(1, 1, height, width, rows)
+                    references.append(f"{sheet}!A1:{a1(height, width)}")
+                else:
+                    native.set_value(sheet, 1, 1, argument)
+                    references.append(f"{sheet}!A1")
+            if modern == "NORM.S.DIST":
+                references.append("TRUE")
+            native.set_formula("Result", 1, 1, f"={modern}({','.join(references)})")
+            return native.evaluate_cell("Result", 1, 1)
+
+    workbook.register_function(
+        "NORMSDIST",
+        lambda *args: evaluate("NORM.S.DIST", args),
+        min_args=1,
+        max_args=1,
+        thread_safe=False,
+    )
+    workbook.register_function(
+        "NORMDIST",
+        lambda *args: evaluate("NORM.DIST", args),
+        min_args=4,
+        max_args=4,
+        thread_safe=False,
     )
 
 

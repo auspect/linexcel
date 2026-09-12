@@ -159,6 +159,9 @@ def build_sales_workbook() -> bytes:
     syn = wb.create_sheet("Summary")
     syn["B2"] = "Performance Summary"
     syn["B2"].font = font_title
+    syn.merge_cells("B2:C2")
+    syn.column_dimensions["B"].width = 38
+    syn.column_dimensions["C"].width = 20
 
     # Headers
     syn.cell(row=4, column=2, value="Metric").font = font_header
@@ -210,6 +213,9 @@ def build_sales_workbook() -> bytes:
     params = wb.create_sheet("Params")
     params["B2"] = "Simulation Parameters"
     params["B2"].font = font_title
+    params.merge_cells("B2:C2")
+    params.column_dimensions["B"].width = 38
+    params.column_dimensions["C"].width = 20
 
     lbl_cell = params.cell(row=4, column=2, value="Target Revenue Threshold")
     lbl_cell.font = font_bold
@@ -402,8 +408,8 @@ def _nested_if(depth: int) -> str:
 def _oversized_sum(terms: int) -> str:
     """A formula whose dossier exceeds ``aidoc.MAX_DOSSIER_CHARS``.
 
-    Excel's own ceiling is 8,192 characters, so this stays legal while forcing
-    the truncation branch that replaces the decomposition with a marker.
+    With 700 terms this deliberately exceeds Excel's 8,192-character limit.
+    It tests hostile OOXML and bounded AI dossiers, not Excel compatibility.
     """
     return "=" + "+".join(
         f"ROUND('Sales Data'!E{i % 200 + 2}, 2)" for i in range(terms)
