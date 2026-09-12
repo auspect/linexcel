@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Standalone image pages and descriptions without sheet context remain reachable.
 - **Search feedback is cleared when the query or graph filters change.**
   Searches with no matches also clear the previous selection.
+- **Inline code in AI documentation preserves formula operators.** Markdown
+  emphasis no longer consumes multiplication signs inside code spans.
 
 - **Empty or truncated AI responses no longer become successful documents.**
   Failed calls retain their reported token usage; oversized formulas are

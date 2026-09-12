@@ -2126,10 +2126,21 @@
     return cells;
   }
   function _mdInline(s) {
-    return s
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Code is already HTML-escaped by _md. Keep its literal operators out of
+    // emphasis matching, including when emphasis surrounds a code span.
+    // Pick a marker absent from the input so supplied text cannot alias it.
+    var marker = '\u0000';
+    while (s.indexOf(marker) !== -1) marker += '\u0000';
+    var code = [];
+    var prose = s.replace(/`([^`]+)`/g, function (_, literal) {
+      code.push(literal);
+      return marker + (code.length - 1) + marker;
+    });
+    prose = prose
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
       .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    return prose.replace(new RegExp(marker + '(\\d+)' + marker, 'g'),
+      function (_, index) { return '<code>' + code[Number(index)] + '</code>'; });
   }
 
   // Mini syntax highlighting for a formula: functions, references (with their

@@ -1,8 +1,8 @@
 {
-  "captured": "2026-09-12",
+  "captured": "2026-09-13",
   "sources": {
     "src/linexcel/viewer.py": "5cc57330cf1cc08c8192222163922169e79f197babd8dc33a249e39d447c80fa",
-    "src/linexcel/assets/viewer.html": "06343f61307cb75a38b64229ee0180615c4dd012893e092552f98c16eaf68187",
+    "src/linexcel/assets/viewer.html": "532883064876537afa432381aab8fe15e4447cf99781465b91bd8732004906be",
     "src/linexcel/i18n.py": "fb1b678ee93d609705de22fb997b1f94af62a9fd15aeb621dd7f2346c757fca1"
   },
   "images": {

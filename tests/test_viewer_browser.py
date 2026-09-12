@@ -636,3 +636,32 @@ def test_search_button_stands_down_with_unavailable_graph(
         assert not errors
     finally:
         page.close()
+
+
+def test_inline_code_preserves_operators_and_literal_markup_inside_emphasis(report):
+    graph = rich_graph()
+    graph["meta"]["workbookDoc"] = (
+        "Formula `C4 * D4` (R1C1: `RC[-2] * RC[-1]`).\n\n"
+        '`**literal**` and `<img src=x onerror="window.injected=true">`.\n\n'
+        "**before `A1*B1` after** and *before `x` after*.\n\n"
+        "Literal marker \x000\x00 and `2*3` with `4*5`."
+    )
+    page, errors = report(graph)
+    page.click("#lin-tab-overview")
+    code = page.locator("#lin-overview code")
+    assert code.all_text_contents() == [
+        "C4 * D4",
+        "RC[-2] * RC[-1]",
+        "**literal**",
+        '<img src=x onerror="window.injected=true">',
+        "A1*B1",
+        "x",
+        "2*3",
+        "4*5",
+    ]
+    assert page.locator("#lin-overview code *").count() == 0
+    assert page.locator("#lin-overview strong").inner_text() == "before A1*B1 after"
+    assert page.locator("#lin-overview em").inner_text() == "before x after"
+    assert page.locator("#lin-overview img").count() == 0
+    assert page.evaluate("window.injected === undefined")
+    assert not errors
