@@ -79,30 +79,46 @@
     display: flex; align-items: center; gap: .5rem; flex-wrap: nowrap;
     justify-content: flex-end; margin-left: auto; min-width: 0;
   }
-  /* The graph tools float over the canvas, top right, instead of crowding
-     the header: the header keeps identity and search, the canvas keeps
-     what only makes sense above a graph. */
+  /* A dedicated command row preserves the entire canvas for the graph. */
   .lin-tools {
-    position: absolute; top: .6rem; right: .6rem; z-index: 12;
-    display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
-    justify-content: flex-end;
-    background: var(--legend-bg); border: 1px solid var(--hair);
-    border-radius: 8px; padding: .3rem;
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+    flex-shrink: 0; padding: .65rem .8rem; background: var(--surface2);
+    border-bottom: 1px solid var(--hair); font-size: .8rem;
   }
   .lin-tools[hidden] { display: none; }
-  .lin-group { display: inline-flex; gap: .2rem; }
-  .lin-tools button, .lin-theme {
-    padding: .3rem .6rem; border: 1px solid var(--line); border-radius: 6px;
-    background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
+  .lin-group { display: inline-flex; gap: .35rem; align-items: center; }
+  .lin-sheet-control {
+    display: flex; align-items: center; gap: .6rem; min-width: 0;
+    flex: 1 1 170px; max-width: 290px;
   }
+  .lin-sheet-control > span { font-size: .75rem; font-weight: 600; color: var(--ink2); }
+  .lin-tools button, .lin-theme {
+    min-height: 40px; padding: .4rem .7rem; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--surface2); color: var(--ink); cursor: pointer; font: inherit;
+    display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  }
+  .lin-tools button:disabled { cursor: default; color: var(--muted); opacity: .5; }
+  .lin-tools button[hidden] { display: none; }
+  .lin-tools button svg { width: 16px; height: 16px; flex-shrink: 0; }
   .lin-tools button:hover, .lin-theme:hover { border-color: var(--ink2); }
   .lin-tools select {
-    padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
+    min-height: 40px; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 7px;
     background: var(--surface2); color: var(--ink); cursor: pointer;
-    font: inherit; max-width: 200px;
+    font: inherit; flex: 1; min-width: 0; width: 100%; text-overflow: ellipsis;
   }
   .lin-tools select:disabled { cursor: default; opacity: .5; }
-  .lin-icon { min-width: 2rem; text-align: center; }
+  .lin-icon { min-width: 40px; text-align: center; }
+  .lin-zoom-control {
+    display: inline-flex; align-items: center; border: 1px solid var(--line);
+    border-radius: 7px; overflow: hidden; flex-shrink: 0;
+  }
+  .lin-zoom-control button { border: none; border-radius: 0; min-height: 38px; padding: .3rem; }
+  .lin-zoom-control button:hover:not(:disabled) { background: var(--hair); }
+  .lin-zoom-control output {
+    min-width: 3.2rem; padding: 0 .25rem; text-align: center;
+    font-size: .75rem; font-variant-numeric: tabular-nums; color: var(--ink2);
+  }
+  .lin-fit-actions { margin-left: auto; }
   .lin-theme {
     display: inline-flex; align-items: center; justify-content: center;
     padding: .32rem .45rem; color: var(--ink2);
@@ -179,8 +195,16 @@
   .lin-search svg { width: 14px; height: 14px; display: block; flex-shrink: 0; }
   .lin-search input {
     border: none; outline: none; background: none; font: inherit;
-    padding: .3rem 0; width: 190px; color: var(--ink); min-width: 0;
+    padding: .45rem 0; width: 210px; color: var(--ink); min-width: 0;
   }
+  .lin-search-submit {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 38px;
+    width: 30px; border: none; border-radius: 5px; background: none; color: var(--ink2); cursor: pointer;
+  }
+  .lin-search-submit:hover { background: var(--hair); }
+  .lin-search-clear { min-height: 34px; min-width: 30px; align-items: center; justify-content: center; }
+  .lin-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .lin-search input::-webkit-search-cancel-button,
   .lin-search input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
   .lin-search input:disabled { cursor: default; }
@@ -204,11 +228,9 @@
 
   .lin-main { flex: 1; display: flex; min-height: 0; min-width: 0; position: relative; }
   .lin-main.hidden { display: none; }
-  .lin-cy { flex: 1; position: relative; min-width: 0; }
-  /* The canvas and its floating toolbar share one positioning parent, so the
-     toolbar can sit above the canvas (z-index) without ever landing under the
-     Cytoscape layer Cytoscape creates inside #lin-cy. */
-  .lin-canvas-area { flex: 1; position: relative; min-width: 0; min-height: 0; display: flex; }
+  .lin-cy { flex: 1; position: relative; min-width: 0; min-height: 0; }
+  /* Keep commands in the document flow above the canvas. */
+  .lin-canvas-area { flex: 1; position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .lin-canvas-area .lin-cy { width: 100%; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
@@ -545,11 +567,12 @@
     font-family: ui-monospace, monospace; font-size: .82rem; color: var(--ink);
   }
 
-  /* --- narrow viewports: the detail panel overlays instead of squeezing -- */
+  /* --- narrow viewports: the detail panel stacks below the graph -- */
   @media (max-width: 900px) {
+    #lin-graph-main { flex-direction: column; }
     .lin-panel {
-      position: absolute; top: 0; right: 0; bottom: 0; z-index: 20;
-      width: min(440px, 92vw); box-shadow: -6px 0 20px var(--shadow);
+      position: relative; width: 100%; flex: 0 0 50%; max-height: 50%; min-height: 0;
+      box-shadow: 0 -4px 16px var(--shadow);
     }
     .lin-panel.lin-empty { display: none; }
     .lin-legend { max-width: 100%; right: .6rem; }
@@ -566,7 +589,9 @@
       border-right: none; border-bottom: 1px solid var(--hair);
       overflow-x: auto; overflow-y: hidden; padding: .5rem .6rem;
     }
-    .lin-rail .lin-tabs { flex-direction: row; }
+    .lin-rail .lin-tabs { flex-direction: row; flex-wrap: nowrap; }
+    .lin-rail .lin-tab { white-space: nowrap; }
+    .lin-rail > div { flex-shrink: 0; }
     .lin-rail-label { margin-bottom: 0; }
     .lin-kinds { flex-direction: row; }
     /* One line per filter: the strip scrolls horizontally instead of
@@ -575,8 +600,19 @@
     .lin-seg { margin: 0; }
   }
   /* The two readings stop being readable side by side once the panel is a
-     narrow overlay: stack them and move the divider between the rows. */
+     narrow panel: stack them and move the divider between the rows. */
   @media (max-width: 560px) {
+    .lin-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; padding: .5rem .6rem; }
+    .lin-sheet-control { max-width: none; gap: .35rem; }
+    .lin-sheet-control > span { font-size: .68rem; }
+    .lin-fit-actions { grid-column: 1 / -1; display: flex; margin: 0; }
+    .lin-fit-actions button { flex: 1; }
+    .lin-bar-right { width: 100%; flex-wrap: wrap; }
+    .lin-search { flex: 1; min-width: 0; }
+    .lin-search input { flex: 1; width: 100%; }
+    .lin-search-status { order: 3; max-width: 100%; white-space: normal; }
+    .lin-id { flex-wrap: wrap; }
+    .lin-id h1 { max-width: 100%; }
     /* Keep the graph controls usable while inspecting a cell on a phone.
        A full-height overlay covered both the selected node and Fit controls. */
     #lin-graph-main { flex-direction: column; }
@@ -585,15 +621,15 @@
       width: 100%; flex: 0 0 55%; max-height: 55%; min-height: 0;
       box-shadow: 0 -4px 16px var(--shadow);
     }
-    .lin-rail .lin-tabs { flex-wrap: nowrap; }
-    .lin-rail .lin-tab { white-space: nowrap; }
-    .lin-rail > div { flex-shrink: 0; }
     .lin-vgrid { grid-template-columns: 1fr; }
     .lin-reading + .lin-reading { border-left: none; border-top: 1px solid var(--hair); }
     /* The sample table keeps its three columns — a per-cell comparison read
-       row by row is the point — but tightens up to fit the overlay. */
+       row by row is the point — but tightens up to fit the panel. */
     .lin-vtable th, .lin-vtable td { padding: .28rem .35rem; }
     .lin-vtable tbody td { font-size: .74rem; }
+  }
+  @media (max-width: 900px) and (max-height: 500px) {
+    .lin-panel { flex-basis: 40%; max-height: 40%; }
   }
 </style>
 
@@ -607,12 +643,15 @@
       <span class="stat" id="lin-stats"></span>
     </div>
     <div class="lin-bar-right">
-      <div class="lin-search" id="lin-searchbox">
+      <div class="lin-search" id="lin-searchbox" role="search">
+        <button type="button" id="lin-search-submit" class="lin-search-submit">
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
           <path d="M10.6 10.6 L14.2 14.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
         </svg>
-        <input id="lin-search" type="search" autocomplete="off" spellcheck="false" />
+        </button>
+        <input id="lin-search" type="search" autocomplete="off" spellcheck="false" aria-describedby="lin-search-hint" />
+        <span id="lin-search-hint" class="lin-sr-only"></span>
         <button type="button" id="lin-search-clear" class="lin-search-clear" hidden>
           <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d="M4.2 4.2 L11.8 11.8 M11.8 4.2 L4.2 11.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
@@ -670,17 +709,23 @@
     </nav>
     <div class="lin-main" id="lin-graph-main" role="tabpanel" aria-labelledby="lin-tab-graph">
       <div class="lin-canvas-area">
+        <div class="lin-tools" id="lin-tools" role="group">
+          <label class="lin-sheet-control" for="lin-sheet-filter">
+            <span id="lin-sheet-label">Sheet</span>
+            <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
+          </label>
+          <div class="lin-zoom-control" role="group" id="lin-zoom-controls">
+            <button type="button" id="lin-zoom-out" class="lin-icon">−</button>
+            <output id="lin-zoom-level">100%</output>
+            <button type="button" id="lin-zoom-in" class="lin-icon">+</button>
+          </div>
+          <div class="lin-group lin-fit-actions">
+            <button type="button" id="lin-fit"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span id="lin-fit-label">Fit graph</span></button>
+            <button type="button" id="lin-fit-sel" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v3m0 8v3M1 8h3m8 0h3" stroke="currentColor" stroke-width="1.5"/></svg><span id="lin-fit-sel-label">Focus selection</span></button>
+          </div>
+        </div>
         <div class="lin-cy" id="lin-cy">
           <div class="lin-legend" id="lin-legend"></div>
-        </div>
-        <div class="lin-tools" id="lin-tools">
-          <select id="lin-sheet-filter">__SHEET_OPTIONS__</select>
-          <div class="lin-group">
-            <button type="button" id="lin-zoom-in" class="lin-icon">+</button>
-            <button type="button" id="lin-zoom-out" class="lin-icon">−</button>
-            <button type="button" id="lin-fit">Fit</button>
-            <button type="button" id="lin-fit-sel" hidden>Fit Selection</button>
-          </div>
         </div>
       </div>
       <aside class="lin-panel lin-empty" id="lin-panel" role="region" tabindex="-1"></aside>
@@ -907,8 +952,16 @@
     // Icon-only controls carry their name in aria-label, not in the glyph.
     named('lin-zoom-in', _t('zoom_in'));
     named('lin-zoom-out', _t('zoom_out'));
-    label('lin-fit', _t('fit_all'));
-    label('lin-fit-sel', _t('fit_sel'));
+    label('lin-fit-label', _t('fit_all'));
+    label('lin-fit-sel-label', _t('fit_sel'));
+    named('lin-fit', _t('fit_all'));
+    named('lin-fit-sel', _t('fit_sel'));
+    label('lin-sheet-label', _t('sheet_scope'));
+    named('lin-tools', _t('graph_controls'));
+    named('lin-zoom-controls', _t('zoom_level'));
+    named('lin-zoom-level', _t('zoom_level'));
+    named('lin-search-submit', _t('search_label'));
+    document.getElementById('lin-search-hint').textContent = _t('search_scope');
     var panel = document.getElementById('lin-panel');
     panel.setAttribute('aria-label', _t('details_panel'));
     var sheetSel = document.getElementById('lin-sheet-filter');
@@ -944,7 +997,7 @@
       f.textContent = _t('fallback');
       cyContainer.appendChild(f);
       // Without a rendered graph the whole graph-only chrome is inert: the
-      // floating tools (zoom/fit/sheet filter) and the rail's Layout and Node
+      // command bar (zoom/fit/sheet filter) and the rail's Layout and Node
       // types groups would read as controls that do something. Stand them down
       // and drop the detail column too, so the fallback isn't framed by an
       // empty 440 px band that reads as a broken render (the 0-node state
@@ -953,7 +1006,7 @@
       document.getElementById('lin-legend').hidden = true;
       standDownGraphGroups();
       sheetSel.disabled = true;  // nothing to filter without a rendered graph
-      search.disabled = true;    // nor to search
+      search.disabled = true; document.getElementById('lin-search-submit').disabled = true;    // nor to search
       panel.classList.add('hidden');
       return;
     }
@@ -988,7 +1041,7 @@
     // absence rather than drawing a blank canvas that reads as a broken
     // render — the report is still navigable (its other tabs stay live).
     if (!elements.length) {
-      sheetSel.disabled = true; search.disabled = true;
+      sheetSel.disabled = true; search.disabled = true; document.getElementById('lin-search-submit').disabled = true;
       document.getElementById('lin-tools').hidden = true;
       document.getElementById('lin-legend').hidden = true;
       panel.classList.add('hidden');
@@ -1064,7 +1117,7 @@
     setupEscapeDismiss();
 
     document.getElementById('lin-fit').onclick = function () {
-      cy.animate({ fit: { padding: 40 }, duration: 250 });
+      frameEles(cy, cy.nodes(':visible'), 250);
     };
     document.getElementById('lin-zoom-in').onclick = function () {
       var currentZoom = cy.zoom();
@@ -1083,6 +1136,15 @@
       });
     };
     var fitSelBtn = document.getElementById('lin-fit-sel');
+    function syncCommands() {
+      var zoom = cy.zoom();
+      document.getElementById('lin-zoom-level').textContent =
+        (zoom * 100).toLocaleString(LANG, {maximumFractionDigits: zoom < .1 ? 1 : 0}) + '%';
+      document.getElementById('lin-zoom-in').disabled = zoom >= cy.maxZoom() - 1e-9;
+      document.getElementById('lin-zoom-out').disabled = zoom <= cy.minZoom() + 1e-9;
+      fitSelBtn.disabled = cy.nodes(':selected').length === 0;
+    }
+    syncCommands();
     fitSelBtn.onclick = function () {
       var sel = cy.nodes(':selected');
       if (sel.length > 0) {
@@ -1095,7 +1157,7 @@
       requestAnimationFrame(function () {
         selectionScheduled = false;
         syncLabelLod();
-        fitSelBtn.hidden = cy.nodes(':selected').length === 0;
+        syncCommands();
       });
     }
     var selectionScheduled = false;
@@ -1115,6 +1177,7 @@
     };
     if (initial === 'dagre') setActive(bd, bf);
     sheetSel.onchange = function () {
+      resetSearch();
       applySheetFilter(cy, sheetSel.value, curLayout, hasFcose);
     };
     var searchBox = document.getElementById('lin-searchbox');
@@ -1138,7 +1201,7 @@
     function restoreGraph() {
       resetSearch();
       clearSel(cy);
-      cy.animate({ fit: { padding: 40 }, duration: 250 });
+      frameEles(cy, cy.nodes(':visible'), 250);
     }
     function runSearch() {
       var q = search.value.trim().toLowerCase();
@@ -1148,7 +1211,7 @@
           (n.label || '').toLowerCase().indexOf(q) >= 0
           || (n.formula || '').toLowerCase().indexOf(q) >= 0);
       });
-      if (!matched.length) { setStatus(_t('search_none'), true); return; }
+      if (!matched.length) { clearSel(cy); setStatus(_t('search_none'), true); return; }
       // Search lives in the shared header on every tab. Bring its result into
       // view before selecting it, including when documentation is open.
       switchTab(document.getElementById('lin-tab-graph'),
@@ -1170,7 +1233,7 @@
     }
     search.addEventListener('input', function () {
       searchClear.hidden = !search.value;
-      if (!search.value) setStatus('', false);
+      setStatus('', false);
     });
     search.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
@@ -1185,9 +1248,12 @@
       }
     });
     searchClear.onclick = function () { restoreGraph(); search.focus(); };
+    document.getElementById('lin-search-submit').onclick = runSearch;
     buildLegend();
     buildKindFilters(cy, layoutOpts, function () { return curLayout; }, hasFcose);
     setupDiffsFilter(cy, layoutOpts, function () { return curLayout; }, hasFcose);
+    document.getElementById('lin-rail-kinds').addEventListener('click', resetSearch);
+    document.getElementById('lin-diffs-only').addEventListener('click', resetSearch);
   }
 
   // "Discrepancies only": keep just the nodes whose recalculated value differs
@@ -1299,7 +1365,6 @@
     var btn = document.getElementById('lin-tab-screenshots');
     var container = document.getElementById('lin-screenshots');
     if (container.firstChild) return;
-    btn.hidden = false;
     container.appendChild(el('h2', null, _t('visual')));
 
     var images = GRAPH.meta.screenshots;
@@ -1324,7 +1389,6 @@
         gallery.push({src: src, label: _t('page', {n: idx + 1}), key: key});
       });
     }
-    var inSheets = sheetNames.filter(function (name) { return contextNames.has(name); });
     sheetNames.forEach(function (name) {
       if (contextNames.has(name)) { docKeysShown.add(name); return; }
       // Chartsheets or reports without extracted context have no sheet card.
@@ -1336,17 +1400,12 @@
     });
     gallery.forEach(function (page) { if (page.key) docKeysShown.add(page.key); });
 
-    if (inSheets.length || !gallery.length) {
-      var note = el('div', 'lin-shots-empty');
-      if (inSheets.length) {
-        note.appendChild(el('p', 'lin-hint', _t('shots_in_sheets')));
-      } else {
-        note.appendChild(el('div', 'lin-shots-empty-title', _t('shots_empty_title')));
-        note.appendChild(el('p', 'lin-hint', _t('shots_empty_desc')));
-        note.appendChild(el('code', 'lin-shots-cmd', _t('shots_hint')));
-      }
-      container.appendChild(note);
-    }
+    var unpairedDocs = Object.keys(docs).filter(function (name) {
+      return !docKeysShown.has(name) && docs[name];
+    });
+    // Only expose a tab with content of its own. Normal sheet renders already
+    // live in Sheets; no extra destination merely repeats that instruction.
+    btn.hidden = !gallery.length && !unpairedDocs.length;
 
     if (gallery.length) {
       var viewerContainer = el('div', 'lin-shots');
@@ -1382,8 +1441,7 @@
 
     // Missing images or old embedded pages cannot be paired by dictionary
     // order. Retain their named prose without inventing an image association.
-    Object.keys(docs).forEach(function (name) {
-      if (docKeysShown.has(name) || !docs[name]) return;
+    unpairedDocs.forEach(function (name) {
       container.appendChild(el('h3', null, name));
       appendVision(container, docs[name]);
     });
@@ -1864,6 +1922,7 @@
   // the zoom back, keeping the set centred.
   var FOCUS_MAX_ZOOM = 1.2;
   function frameEles(cy, eles, duration) {
+    if (!eles || !eles.length) return;
     // Opening the mobile detail pane changes the canvas height. Refresh its
     // dimensions before fitting rather than waiting for ResizeObserver.
     cy.resize();
@@ -1925,13 +1984,13 @@
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || !activeCy) return;
       var t = e.target;
-      if (t && (t.id === 'lin-search' || (t.tagName === 'INPUT' && t.type === 'search'))) return;
+      if (t && (t.tagName === 'SELECT' || t.id === 'lin-search'
+          || (t.tagName === 'INPUT' && t.type === 'search'))) return;
       if (activeCy.nodes(':selected').length) { clearSel(activeCy); e.preventDefault(); }
     });
   }
 
-  // Nothing selected. On a narrow viewport the panel overlays the graph, so
-  // the empty state stands down entirely (.lin-empty) rather than covering it.
+  // On narrow viewports, give the graph the empty detail panel’s space.
   function renderPlaceholder() {
     var p = document.getElementById('lin-panel');
     p.classList.remove('hidden'); p.classList.add('lin-empty'); p.innerHTML = '';

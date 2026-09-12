@@ -696,9 +696,12 @@ class TestSearchAll:
         assert "function frameEles(cy, eles, duration)" in script
         assert "if (cy.zoom() <= FOCUS_MAX_ZOOM) return;" in script
 
-    def test_an_empty_result_leaves_the_graph_alone_and_says_so(self):
+    def test_an_empty_result_clears_previous_selection_and_says_so(self):
         html = render_html(search_graph())
-        guard = "if (!matched.length) { setStatus(_t('search_none'), true); return; }"
+        guard = (
+            "if (!matched.length) { clearSel(cy); "
+            "setStatus(_t('search_none'), true); return; }"
+        )
         assert guard in html
         assert EN["search_none"] == "No matches"
         assert EN["search_none"] in html
@@ -749,7 +752,9 @@ class TestSearchControl:
 
     def test_the_affordance_is_inline_svg_rather_than_a_glyph(self):
         html = render_html(search_graph())
-        box = html.split('<div class="lin-search" id="lin-searchbox">', 1)[1]
+        box = html.split(
+            '<div class="lin-search" id="lin-searchbox" role="search">', 1
+        )[1]
         box = box.split("</div>", 1)[0]
         assert "<svg viewBox=" in box
         assert "⏎" not in html
@@ -784,7 +789,7 @@ class TestSearchControl:
     def test_the_box_is_named_rather_than_relying_on_the_placeholder(self):
         html = render_html(search_graph())
         assert "search.setAttribute('aria-label', _t('search_label'));" in html
-        assert EN["search_label"] == "Search cells and formulas (Enter)"
+        assert EN["search_label"] == "Search visible cells and formulas (Enter)"
         assert EN["search_label"] in html
 
     def test_the_name_still_says_how_to_submit_now_that_the_glyph_is_gone(self):
