@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI and documentation checks cover stacked PRs targeting `codex/**` branches**,
+  so dependent improvements are validated before their base PR reaches main.
 - **The node panel can frame a node with its direct neighbors.** The action
   remains accessible on mobile, where the panel leaves the graph controls
   visible. Search returns to the graph from the other dashboard tabs.
