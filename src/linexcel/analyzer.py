@@ -78,14 +78,12 @@ def analyze_workbook(
     cached = load_cached_values(data, warnings, reporter)
 
     # --- 2. computation engine -------------------------------------------
-    _t = time.perf_counter()
-    session = boot_engine(data, warnings)
+    session = boot_engine(data, warnings, reporter)
     engine = session.engine
     engine_sheets = session.engine_sheets
     engine_alive = session.engine_alive
     quarantined = session.quarantined
     scratch_ready = session.scratch_ready
-    _v("engine_init+evaluate_all", _t)
 
     # Tables: declared ones from the package parts, static ones from a small
     # window the engine already holds. A per-cell lookup enriching the nodes.

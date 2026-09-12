@@ -18,6 +18,7 @@ from xml.sax.saxutils import unescape
 import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
+from linexcel.progress import Reporter
 from linexcel.refs import col_to_num
 
 # Guards to stay responsive on large workbooks.
@@ -64,6 +65,7 @@ class EngineSession:
 def boot_engine(
     data: bytes,
     warnings: list[str],
+    reporter: Reporter | None = None,
 ) -> EngineSession:
     """Instantiate the engine and run its whole-workbook evaluation.
 
@@ -73,44 +75,53 @@ def boot_engine(
     happens, the offending formulas are cut out of the package bytes and the
     pass retried on the sanitized copy, leaving only them to the slower
     per-cell recovery.
-    """
-    engine = fz.Workbook.from_bytes(data)
-    engine_sheets = set(engine.sheet_names)
-    engine_alive = True
-    quarantined: dict[tuple[str, int, int], str] = {}
-    try:
-        engine.evaluate_all()
-    except Exception as exc:  # graph remains useful without values
-        quarantined = _find_unresolvable(data, engine_sheets)
-        retried = False
-        if quarantined:
-            try:
-                engine = fz.Workbook.from_bytes(
-                    _blank_formulas_in_package(data, quarantined)
-                )
-                engine.evaluate_all()
-                retried = True
-            except Exception:
-                pass
-        if not retried:
-            # A failed global evaluation does not just drop the values: the
-            # engine then reports no formula at all, which would leave the
-            # graph empty. Rebuilding from the bytes gives the formulas back.
-            engine = fz.Workbook.from_bytes(data)
-        if retried:
-            warnings.append(
-                f"Global evaluation completed after isolating {len(quarantined)} "
-                f"cell(s) whose references the engine cannot resolve; every other "
-                f"cell was recomputed. Only those keep the value stored in the "
-                f"file, if any. First blocker: {exc}"
-            )
-        else:
-            warnings.append(f"Global evaluation incomplete: {exc}")
-            # Values are recovered cell by cell further down.
-            engine_alive = False
-            quarantined = {}
 
-    scratch_ready = _ensure_scratch(engine)
+    This is the long silent stretch of a large workbook — it used to be the
+    one phase nothing reported while it ran — so it is a reporter phase like
+    the others, with a step per stage rather than a timing printed after.
+    """
+    reporter = reporter or Reporter()
+    with reporter.phase("engine evaluation") as progress:
+        progress.step("loading workbook")
+        engine = fz.Workbook.from_bytes(data)
+        engine_sheets = set(engine.sheet_names)
+        engine_alive = True
+        quarantined: dict[tuple[str, int, int], str] = {}
+        try:
+            progress.step("evaluating formulas")
+            engine.evaluate_all()
+        except Exception as exc:  # graph remains useful without values
+            quarantined = _find_unresolvable(data, engine_sheets)
+            retried = False
+            if quarantined:
+                progress.step(f"retrying without {len(quarantined)} blocked cell(s)")
+                try:
+                    engine = fz.Workbook.from_bytes(
+                        _blank_formulas_in_package(data, quarantined)
+                    )
+                    engine.evaluate_all()
+                    retried = True
+                except Exception:
+                    pass
+            if not retried:
+                # A failed global evaluation does not just drop the values: the
+                # engine then reports no formula at all, which would leave the
+                # graph empty. Rebuilding from the bytes gives the formulas back.
+                engine = fz.Workbook.from_bytes(data)
+            if retried:
+                warnings.append(
+                    f"Global evaluation completed after isolating {len(quarantined)} "
+                    f"cell(s) whose references the engine cannot resolve; every other "
+                    f"cell was recomputed. Only those keep the value stored in the "
+                    f"file, if any. First blocker: {exc}"
+                )
+            else:
+                warnings.append(f"Global evaluation incomplete: {exc}")
+                # Values are recovered cell by cell further down.
+                engine_alive = False
+                quarantined = {}
+
+        scratch_ready = _ensure_scratch(engine)
     return EngineSession(
         engine, engine_sheets, engine_alive, quarantined, scratch_ready
     )

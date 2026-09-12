@@ -71,7 +71,13 @@ class TestWhereItWrites:
     def test_every_phase_is_still_reported(self, small, capsys):
         analyze(small, filename="s.xlsx", verbose=True)
         err = capsys.readouterr().err
-        for phase in ("structure", "cached values", "extraction+grouping", "total"):
+        for phase in (
+            "structure",
+            "cached values",
+            "engine evaluation",
+            "extraction+grouping",
+            "total",
+        ):
             assert phase in err, phase
 
 
