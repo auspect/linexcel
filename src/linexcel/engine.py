@@ -19,7 +19,7 @@ import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
 from linexcel.progress import Reporter
-from linexcel.refs import col_to_num
+from linexcel.refs import a1, col_to_num
 
 # Guards to stay responsive on large workbooks.
 SCAN_CHUNK_ROWS = 20_000
@@ -52,6 +52,15 @@ _F_RE = re.compile(rb"<f\b([^>]*?)(?:/>|>(.*?)</f>)", re.S)
 _SI_RE = re.compile(rb'\bsi="(\d+)"')
 _XML_ENTITIES = {"&quot;": '"', "&apos;": "'"}
 
+#: Deepest formula parse tree ``evaluate_all`` is trusted with. The evaluator
+#: walks the tree recursively, and past roughly 1,000 nested operations that
+#: walk overflows the stack and *aborts the process* — a hard exit no
+#: try/except sees (upstream: https://github.com/PSU3D0/formualizer/issues/411;
+#: measured here on 0.9.3: a 700-term chain evaluates, a 1,000-term one
+#: aborts). Formulas deeper than this are quarantined before the evaluation
+#: runs. Configurable per call via ``boot_engine``'s ``max_ast_depth``.
+MAX_AST_DEPTH = 900
+
 
 @dataclass
 class EngineSession:
@@ -66,6 +75,8 @@ def boot_engine(
     data: bytes,
     warnings: list[str],
     reporter: Reporter | None = None,
+    *,
+    max_ast_depth: int = MAX_AST_DEPTH,
 ) -> EngineSession:
     """Instantiate the engine and run its whole-workbook evaluation.
 
@@ -75,6 +86,11 @@ def boot_engine(
     happens, the offending formulas are cut out of the package bytes and the
     pass retried on the sanitized copy, leaving only them to the slower
     per-cell recovery.
+
+    Two formulas never reach ``evaluate_all`` at all: the ones whose parse
+    tree is deeper than ``max_ast_depth``, because the evaluator's recursive
+    walk aborts the process on them rather than raising. They are quarantined
+    up front, before the first evaluation.
 
     This is the long silent stretch of a large workbook — it used to be the
     one phase nothing reported while it ran — so it is a reporter phase like
@@ -87,13 +103,31 @@ def boot_engine(
         engine_sheets = set(engine.sheet_names)
         engine_alive = True
         quarantined: dict[tuple[str, int, int], str] = {}
+        too_deep, deepest = _find_too_deep(data, engine_sheets, max_ast_depth)
+        if too_deep:
+            progress.step(f"quarantining {len(too_deep)} over-deep formula(s)")
+            quarantined = too_deep
+            engine = fz.Workbook.from_bytes(
+                _blank_formulas_in_package(data, quarantined)
+            )
+            sheet, row, col = deepest
+            warnings.append(
+                f"{len(too_deep)} cell(s) hold a formula nested deeper than the "
+                f"engine can safely evaluate (parse tree over {max_ast_depth} "
+                f"levels; evaluating one has aborted the process outright on such "
+                f"input — https://github.com/PSU3D0/formualizer/issues/411). They "
+                f"were quarantined before evaluation and keep the value stored in "
+                f"the file, if any; every other cell is recomputed. Deepest: "
+                f"{sheet}!{a1(row, col)}"
+            )
         try:
             progress.step("evaluating formulas")
             engine.evaluate_all()
         except Exception as exc:  # graph remains useful without values
-            quarantined = _find_unresolvable(data, engine_sheets)
+            unresolvable = _find_unresolvable(data, engine_sheets)
             retried = False
-            if quarantined:
+            if unresolvable:
+                quarantined |= unresolvable
                 progress.step(f"retrying without {len(quarantined)} blocked cell(s)")
                 try:
                     engine = fz.Workbook.from_bytes(
@@ -203,6 +237,67 @@ def _iter_formulas_xml(data: bytes):
         # A package this best-effort scan cannot read leaves the retry to fail
         # as it did before quarantine existed.
         return
+
+
+def ast_depth(formula: str) -> int | None:
+    """Depth of ``formula``'s parse tree, or ``None`` when it does not parse.
+
+    The walk is iterative: a recursive one would hit Python's own recursion
+    limit on exactly the formulas this exists to measure. ``fz.parse`` itself
+    holds up at those depths — it is the evaluator, not the parser, that
+    overflows.
+    """
+    try:
+        root = fz.parse(formula if formula.startswith("=") else "=" + formula).to_dict()
+    except Exception:
+        return None
+    depth = 0
+    stack: list[tuple[object, int]] = [(root, 1)]
+    while stack:
+        node, level = stack.pop()
+        depth = max(depth, level)
+        if isinstance(node, dict):
+            children = node.values()
+        elif isinstance(node, list):
+            children = node
+        else:
+            continue
+        stack.extend((v, level + 1) for v in children if isinstance(v, (dict, list)))
+    return depth
+
+
+def is_too_deep(formula: str, max_depth: int = MAX_AST_DEPTH) -> bool:
+    """Whether evaluating ``formula`` risks the stack-overflow abort.
+
+    A tree can never nest deeper than the formula is long — every level spends
+    at least one character — so the parse is paid only for formulas long
+    enough to be dangerous.
+    """
+    if len(formula) <= max_depth:
+        return False
+    depth = ast_depth(formula)
+    return depth is not None and depth > max_depth
+
+
+def _find_too_deep(
+    data: bytes, engine_sheets: set[str], max_depth: int = MAX_AST_DEPTH
+) -> tuple[dict[tuple[str, int, int], str], tuple[str, int, int]]:
+    """The cells whose formula is too deep to evaluate safely, keyed by cell.
+
+    Read from the sheet XML like the other quarantine suspects, never from the
+    engine — the scan must stay linear and must not ask the engine to build
+    the very graph the evaluation is about to choke on. Also returned: the
+    first offender, so the warning can name a cell rather than a count.
+    """
+    suspects: dict[tuple[str, int, int], str] = {}
+    first: tuple[str, int, int] | None = None
+    for sheet, row, col, formula in _iter_formulas_xml(data):
+        if sheet not in engine_sheets or not is_too_deep(formula, max_depth):
+            continue
+        suspects[(sheet, row, col)] = formula
+        if first is None:
+            first = (sheet, row, col)
+    return suspects, first or ("", 0, 0)
 
 
 def _blank_formulas_in_package(
