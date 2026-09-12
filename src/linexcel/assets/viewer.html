@@ -202,7 +202,7 @@
     font-weight: 600;
   }
 
-  .lin-main { flex: 1; display: flex; min-height: 0; position: relative; }
+  .lin-main { flex: 1; display: flex; min-height: 0; min-width: 0; position: relative; }
   .lin-main.hidden { display: none; }
   .lin-cy { flex: 1; position: relative; min-width: 0; }
   /* The canvas and its floating toolbar share one positioning parent, so the
@@ -1023,13 +1023,10 @@
         });
       });
     }
-    var lodScheduled = false;
-    cy.on('zoom', function () {
-      if (lodScheduled) return;
-      lodScheduled = true;
-      requestAnimationFrame(function () { lodScheduled = false; syncLabelLod(); });
-    });
-    cy.on('select unselect', syncLabelLod);
+    // Selection events fire for every matching node, even inside a batch.
+    // Coalesce them with zoom events so a broad search never scans the whole
+    // graph once per match.
+    cy.on('zoom select unselect', scheduleSelectionUpdate);
     cy.one('layoutstop', syncLabelLod);
     // A synchronous layout (dagre, animate: false) fires layoutstop *inside*
     // the cytoscape() call, before the handler above exists; the zoom handler
@@ -1065,9 +1062,16 @@
         frameEles(cy, sel, 250);
       }
     };
-    cy.on('select unselect', function () {
-      fitSelBtn.hidden = cy.nodes(':selected').length === 0;
-    });
+    function scheduleSelectionUpdate() {
+      if (selectionScheduled) return;
+      selectionScheduled = true;
+      requestAnimationFrame(function () {
+        selectionScheduled = false;
+        syncLabelLod();
+        fitSelBtn.hidden = cy.nodes(':selected').length === 0;
+      });
+    }
+    var selectionScheduled = false;
     // The canvas cannot follow CSS variables on its own: restyle whenever the
     // toggle flips, so the labels stay legible against the new surface.
     themeHooks.push(function () { cy.style(buildStyle(big)); });
@@ -1113,8 +1117,9 @@
       var q = search.value.trim().toLowerCase();
       if (!q) { setStatus('', false); return; }
       var matched = GRAPH.nodes.filter(function (n) {
-        return (n.label || '').toLowerCase().indexOf(q) >= 0
-          || (n.formula || '').toLowerCase().indexOf(q) >= 0;
+        return cy.getElementById(n.id).visible() && (
+          (n.label || '').toLowerCase().indexOf(q) >= 0
+          || (n.formula || '').toLowerCase().indexOf(q) >= 0);
       });
       if (!matched.length) { setStatus(_t('search_none'), true); return; }
       setStatus(_t('search_matches', { count: matched.length }), false);
@@ -1122,15 +1127,15 @@
       // other match joins the selection and is undimmed, then the view frames
       // the whole set.
       select(cy, matched[0].id);
-      var eles = cy.collection();
+      var matches = [];
       cy.batch(function () {
         for (var i = 0; i < matched.length; i++) {
           var ele = cy.getElementById(matched[i].id);
           ele.select(); ele.removeClass('dimmed');
-          eles = eles.union(ele);
+          matches.push(ele);
         }
       });
-      frameEles(cy, eles, 300);
+      frameEles(cy, cy.collection(matches), 300);
     }
     search.addEventListener('input', function () {
       searchClear.hidden = !search.value;
@@ -1177,6 +1182,7 @@
       });
       clearSel(cy);  // the selection may have just left the canvas
       var visible = cy.elements(':visible');
+      if (!visible.nodes().length) return;
       visible.layout(layoutOpts(getLayout(), hasFcose)).run();
       cy.fit(visible, 40);
     };
@@ -1200,7 +1206,8 @@
       if (pane) pane.classList.toggle('hidden', pane !== activeMain);
     });
     // Search, sheet filter, layout, zoom and fit only act on the graph.
-    document.getElementById('lin-tools').hidden = activeMain.id !== 'lin-graph-main';
+    document.getElementById('lin-tools').hidden =
+      activeMain.id !== 'lin-graph-main' || !activeCy;
   }
 
   // Arrow/Home/End move between tabs, as the tablist pattern expects; the
@@ -1556,6 +1563,7 @@
   // same comparison the value card runs. A genuine disagreement only — a
   // format-only difference ('format') is the same value in another locale.
   function nodeDiffers(n) {
+    if (n.groupCachedAgreement) return n.groupCachedAgreement === 'differ';
     var r = readings(n);
     if (r.comparable && !r.agree) return true;
     var rows = n.samples || [];
@@ -1566,6 +1574,12 @@
     return false;
   }
   function layoutOpts(name, hasFcose) {
+    // Without dependencies there are no ranks to communicate. Dagre puts
+    // every isolated node in one column, reducing a large report to a thin
+    // line at fit zoom; pack these cards across both canvas dimensions.
+    if (name === 'dagre' && !GRAPH.edges.length) return {
+      name: 'grid', avoidOverlap: true, condense: true, spacingFactor: 1.4
+    };
     if (name === 'dagre') return { name: 'dagre', rankDir: 'LR', nodeSep: 36,
       rankSep: 96, edgeSep: 12, animate: false };
     if (name === 'fcose' && hasFcose) return { name: 'fcose', quality: 'default',
@@ -1613,22 +1627,23 @@
       // Declared *before* node:selected so the selection's text-opacity: 1
       // always wins over a stale .far class.
       { selector: 'node.far', style: { 'text-opacity': 0 } },
+      { selector: '.dimmed', style: { opacity: 0.22 } },
       // No font-size bump on selection: the card width is computed for the
       // base 9px, and a wider selected font would wrap the label mid-address.
       { selector: 'node:selected', style: { 'border-width': 2.5,
-        'border-color': t.ink, 'text-opacity': 1 } },
+        'border-color': t.ink, 'text-opacity': 1, opacity: 1 } },
       // Dense-graph affordance: hovering a node singles it out with a firmer
       // border and, when zoomed out, its full label — so "is this the cell?"
       // can be answered before the click. Declared after .far so the label
       // comes back even at wide zoom. No font bump either (see node:selected).
       { selector: 'node.hovered', style: { 'text-opacity': 1,
-        'border-width': 3, 'z-index': 20 } },
+        'border-width': 3, 'z-index': 20, opacity: 1 } },
       // A kind switched off in the rail leaves the layout entirely.
       { selector: '.kind-off', style: { 'display': 'none' } },
+      { selector: '.sheet-off', style: { 'display': 'none' } },
       // "Discrepancies only" hides a node the same way, under its own class so
       // the two filters compose instead of clobbering each other.
       { selector: '.diff-off', style: { 'display': 'none' } },
-      { selector: '.dimmed', style: { opacity: 0.22 } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
     Object.keys(KIND).forEach(function (k) {
@@ -1682,6 +1697,7 @@
         // The selection may have just left the canvas with its kind.
         clearSel(cy);
         var visible = cy.elements(':visible');
+        if (!visible.nodes().length) return;
         visible.layout(layoutOpts(getLayout(), hasFcose)).run();
         cy.fit(visible, 40);
       };
@@ -1710,19 +1726,20 @@
     CUR_SHEET = sheet || ALL_SHEETS;
     cy.batch(function () {
       cy.elements().removeClass('dimmed hl');
-      if (CUR_SHEET === ALL_SHEETS) { cy.elements().show(); return; }
+      cy.nodes().removeClass('sheet-off');
+      if (CUR_SHEET === ALL_SHEETS) return;
       var inSheet = cy.nodes().filter(function (n) {
         return n.data('sheet') === CUR_SHEET;
       });
       var keep = inSheet.union(inSheet.neighborhood().nodes());
-      var keepEdges = cy.edges().filter(function (e) {
-        return keep.contains(e.source()) && keep.contains(e.target());
-      });
-      cy.elements().hide();
-      keep.show(); keepEdges.show();
+      // Use a stylesheet class, just like kind/discrepancy filters: show()
+      // writes a bypass style that would override the other filters' classes.
+      // Cytoscape hides edges automatically when either endpoint is hidden.
+      cy.nodes().not(keep).addClass('sheet-off');
     });
     clearSel(cy);  // the previously selected node may now be hidden
     var visible = cy.elements(':visible');
+    if (!visible.nodes().length) return;
     visible.layout(layoutOpts(layoutName, hasFcose)).run();
     if (cy.nodes(':visible').length !== before) cy.fit(visible, 40);
   }

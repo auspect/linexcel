@@ -113,10 +113,7 @@ class TestTopBarGroups:
 
     def test_the_tools_are_hidden_away_from_the_graph_tab(self):
         html = render_html(demo_graph())
-        assert (
-            "document.getElementById('lin-tools').hidden = "
-            "activeMain.id !== 'lin-graph-main';" in html
-        )
+        assert "activeMain.id !== 'lin-graph-main' || !activeCy;" in html
         assert ".lin-tools[hidden] { display: none; }" in html
 
     def test_fit_selection_toggles_through_the_hidden_property(self):

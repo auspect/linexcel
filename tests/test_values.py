@@ -792,7 +792,7 @@ class TestAGroupVerdictIsItsWorstSample:
 
     def test_the_group_reports_the_divergence(self):
         node = node_of(self.graph(), "g:S!A2#10")
-        assert node["cachedAgreement"] == "differ"
+        assert node["groupCachedAgreement"] == "differ"
 
     def test_the_diverging_sample_carries_its_own_verdict(self):
         samples = node_of(self.graph(), "g:S!A2#10")["samples"]
@@ -809,13 +809,33 @@ class TestAGroupVerdictIsItsWorstSample:
         buf = io.BytesIO()
         wb.save(buf)
         data = with_stored_results(
-            buf.getvalue(), {f"A{r}": str(r * 2) for r in range(2, 12)}
+            buf.getvalue(), {f"A{r}": str(r * 2) for r in range(2, 12)}, numeric=True
         )
         graph = analyze_workbook(data, "grouped.xlsx")["graph"]
         node = node_of(graph, "g:S!A2#10")
-        # The stored results are written as text, so agreement reads as a
-        # formatting quirk at worst — never a divergence.
+        # A numeric formula agrees with numeric cached results. A text "4"
+        # and the number 4 are different Excel values, despite their rendering.
         assert node["cachedAgreement"] in {"same", "format"}
+        assert node["groupCachedAgreement"] in {"same", "format"}
+
+    def test_representative_keeps_its_own_verdict_when_another_sample_differs(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = SHEET
+        for row in range(2, 12):
+            ws.cell(row, 2, row)
+            ws.cell(row, 1, f"=B{row}*2")
+        buf = io.BytesIO()
+        wb.save(buf)
+        data = with_stored_results(
+            buf.getvalue(),
+            {**{f"A{r}": str(r * 2) for r in range(2, 12)}, "A6": "999"},
+            numeric=True,
+        )
+        node = node_of(analyze_workbook(data)["graph"], "g:S!A2#10")
+        assert node["value"] == node["cachedValue"] == 4
+        assert node["cachedAgreement"] == "same"
+        assert node["groupCachedAgreement"] == "differ"
 
 
 class TestProvenance:
@@ -1109,7 +1129,9 @@ class TestReadingsAgree:
         assert readings_agree("1 2", "12", None) == "differ"
 
 
-def with_stored_results(data: bytes, cells: dict[str, str]) -> bytes:
+def with_stored_results(
+    data: bytes, cells: dict[str, str], *, numeric: bool = False
+) -> bytes:
     """Give formula cells the result a spreadsheet application would have stored.
 
     openpyxl writes formulas and an empty ``<v/>``: a generated fixture has no
@@ -1127,10 +1149,11 @@ def with_stored_results(data: bytes, cells: dict[str, str]) -> bytes:
             blob = src.read(item.filename)
             if item.filename == "xl/worksheets/sheet1.xml":
                 xml = blob.decode("utf-8")
+                cell_type = "n" if numeric else "str"
                 for address, text in cells.items():
                     xml = _re.sub(
                         rf'<c r="{address}"([^>]*)>(<f>.*?</f>)\s*<v\s*/>',
-                        rf'<c r="{address}"\g<1> t="str">\g<2><v>{text}</v>',
+                        rf'<c r="{address}"\g<1> t="{cell_type}">\g<2><v>{text}</v>',
                         xml,
                     )
                 blob = xml.encode("utf-8")

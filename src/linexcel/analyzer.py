@@ -11,6 +11,7 @@ import datetime
 import sys
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -45,10 +46,31 @@ def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
     set of them — spell those as several targets rather than one span.
     """
     cells: list[tuple[str, int, int]] = []
+    seen: set[tuple[str, int, int]] = set()
     for chunk in targets:
-        for raw in (t.strip() for t in chunk.split(",")):
+        # Commas inside an Excel-quoted sheet name belong to the name.
+        # Quotes can be escaped by doubling them.
+        parts: list[str] = []
+        start = 0
+        quoted = False
+        index = 0
+        while index < len(chunk):
+            char = chunk[index]
+            if char == "'" and (quoted or not chunk[start:index].strip()):
+                if quoted and chunk[index : index + 2] == "''":
+                    index += 2
+                    continue
+                quoted = not quoted
+            elif char == "," and not quoted:
+                parts.append(chunk[start:index])
+                start = index + 1
+            index += 1
+        parts.append(chunk[start:])
+        if quoted:
+            raise ValueError(f"Invalid target {chunk!r}: unclosed sheet quote.")
+        for raw in (t.strip() for t in parts):
             if not raw:
-                continue
+                raise ValueError("Invalid target: expected a sheet-qualified cell.")
             rect = parse_ref(raw)
             if (rect is None or rect.sheet is None) and "!" in raw:
                 # A sheet name with a space is legal unquoted on the command
@@ -56,25 +78,27 @@ def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
                 # user's. Split on the last '!': the sheet's existence is
                 # checked against the workbook later either way.
                 sheet, _, body = raw.rpartition("!")
-                rect = parse_ref(body, default_sheet=sheet.strip("'"))
+                if "'" in sheet[:1] or "'" in sheet[-1:]:
+                    raise ValueError(f"Invalid target {raw!r}: malformed sheet quote.")
+                rect = parse_ref(body, default_sheet=sheet)
             if rect is None or rect.sheet is None or rect.ncells != 1:
                 raise ValueError(
                     f"Invalid target {raw!r}: expected a sheet-qualified cell, "
                     f"like 'Sheet1!A1'."
                 )
             cell = (rect.sheet, rect.r1, rect.c1)
-            if cell not in cells:
+            if cell not in seen:
                 cells.append(cell)
+                seen.add(cell)
     return cells
 
 
 def _longest_dep_chain(nodes: dict[str, Any], edges: dict) -> int:
     """Longest precedent→dependent path across formula nodes, in steps.
 
-    Iterative post-order walk: a chain of running totals can be tens of
-    thousands of nodes deep, past any safe recursion limit. A cycle
-    contributes nothing — the engine stamps its members ``#CIRC!`` and the
-    graph reports them elsewhere.
+    A topological walk avoids recursion and visits each node/edge once.
+    Cycles and nodes blocked behind cycles do not contribute to this risk
+    indicator; the graph reports circular calculations separately.
     """
     cellish = {
         nid
@@ -86,31 +110,22 @@ def _longest_dep_chain(nodes: dict[str, Any], edges: dict) -> int:
         src, dst = edge["source"], edge["target"]
         if edge["kind"] == "dep" and src in cellish and dst in cellish:
             adjacency.setdefault(src, set()).add(dst)
-    depth: dict[str, int] = {}
+    indegree: dict[str, int] = {}
+    for src, children in adjacency.items():
+        indegree.setdefault(src, 0)
+        for dst in children:
+            indegree[dst] = indegree.get(dst, 0) + 1
+    ready = deque(nid for nid, degree in indegree.items() if degree == 0)
+    depth = dict.fromkeys(ready, 1)
     best = 0
-    for root in adjacency:
-        if root in depth:
-            continue
-        on_stack = {root}
-        stack = [(root, False)]
-        while stack:
-            node, expanded = stack.pop()
-            if expanded:
-                d = 1 + max(
-                    (depth.get(child, 0) for child in adjacency.get(node, ())),
-                    default=0,
-                )
-                depth[node] = d
-                best = max(best, d)
-                on_stack.discard(node)
-            elif node not in depth and node not in on_stack:
-                on_stack.add(node)
-                stack.append((node, True))
-                stack.extend(
-                    (child, False)
-                    for child in adjacency.get(node, ())
-                    if child not in depth and child not in on_stack
-                )
+    while ready:
+        node = ready.popleft()
+        best = max(best, depth[node])
+        for child in adjacency.get(node, ()):
+            depth[child] = max(depth.get(child, 1), depth[node] + 1)
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
     return best
 
 
@@ -215,6 +230,9 @@ def analyze_workbook(
         sheet_dims=sheet_dims,
         externals=externals,
         refs_files=refs_files,
+        reachable=reachable,
+        quarantined=quarantined,
+        unavailable=session.unavailable,
     )
 
     # --- 3. extraction + grouping ------------------------------------------
@@ -250,10 +268,12 @@ def analyze_workbook(
                 builder.ensure_input_node(Rect(sheet, row, col, row, col))
         asked = ", ".join(f"{s}!{a1(r, c)}" for s, r, c in target_cells)
         warnings.append(
-            f"Targeted analysis of {asked}: only the {len(reachable or []):,} "
-            f"cell(s) of the upstream subgraph were evaluated and graphed; "
-            f"the rest of the workbook is omitted from the lineage and its "
-            f"formulas were not recomputed"
+            f"Targeted analysis of {asked}: lineage is limited to the "
+            f"{len(reachable or []):,} cell(s) in the static upstream trace. "
+            f"The engine evaluates the requested cells and their dependencies; "
+            f"dynamic references (INDIRECT/OFFSET) or a truncated trace can "
+            f"cause additional cells to be evaluated while omitted from "
+            f"the lineage. No global recalculation was requested"
         )
     if engine_alive and not target_cells:
         # In targeted mode the engine's own evaluation plan already flagged
@@ -272,6 +292,8 @@ def analyze_workbook(
     # graph shows where the data landed and nothing about where it came from.
     queries = read_queries(data)
     builder.build_queries(queries)
+    if target_cells:
+        builder.retain_upstream(target_cells)
 
     pq_warning = query_warning(queries)
     if pq_warning:

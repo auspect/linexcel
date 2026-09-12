@@ -12,7 +12,8 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 from xml.sax.saxutils import unescape
 
 import formualizer as fz
@@ -88,7 +89,7 @@ CHAIN_LAYERS_WARNING = 25
 
 @dataclass
 class EngineSession:
-    engine: object
+    engine: Any
     engine_sheets: set[str]
     engine_alive: bool
     quarantined: dict[tuple[str, int, int], str]
@@ -96,6 +97,7 @@ class EngineSession:
     #: Cells of the upstream subgraph, set only by a targeted boot; ``None``
     #: means the whole workbook was evaluated, as before.
     reachable: set[tuple[str, int, int]] | None = None
+    unavailable: set[tuple[str, int, int]] = field(default_factory=set)
 
 
 def _open_workbook(data: bytes, parallel: bool):
@@ -154,12 +156,15 @@ def boot_engine(
         engine_alive = True
         quarantined: dict[tuple[str, int, int], str] = {}
         too_deep, deepest = _find_too_deep(data, engine_sheets, max_ast_depth)
+        unavailable: set[tuple[str, int, int]] = set()
         if too_deep:
             progress.step(f"quarantining {len(too_deep)} over-deep formula(s)")
             quarantined = too_deep
             engine = _open_workbook(
                 _blank_formulas_in_package(data, quarantined), parallel
             )
+            unavailable = _uncached_dependents(engine, data, too_deep, warnings)
+            _mark_uncached_quarantine(engine, quarantined)
             sheet, row, col = deepest
             warnings.append(
                 f"{len(too_deep)} cell(s) hold a formula nested deeper than the "
@@ -167,7 +172,8 @@ def boot_engine(
                 f"levels; evaluating one has aborted the process outright on such "
                 f"input — https://github.com/PSU3D0/formualizer/issues/411). They "
                 f"were quarantined before evaluation and keep the value stored in "
-                f"the file, if any; every other cell is recomputed. Deepest: "
+                f"the file, if any; without a cached value, dependent formulas "
+                f"also remain uncomputed. Deepest: "
                 f"{sheet}!{a1(row, col)}"
             )
         if targets is not None:
@@ -176,7 +182,13 @@ def boot_engine(
             )
             scratch_ready = _ensure_scratch(engine)
             return EngineSession(
-                engine, engine_sheets, True, quarantined, scratch_ready, reachable
+                engine,
+                engine_sheets,
+                True,
+                quarantined,
+                scratch_ready,
+                reachable,
+                unavailable,
             )
         try:
             progress.step("evaluating formulas")
@@ -191,6 +203,7 @@ def boot_engine(
                     engine = _open_workbook(
                         _blank_formulas_in_package(data, quarantined), parallel
                     )
+                    _mark_uncached_quarantine(engine, quarantined)
                     engine.evaluate_all()
                     retried = True
                 except Exception:
@@ -198,9 +211,9 @@ def boot_engine(
             if retried:
                 warnings.append(
                     f"Global evaluation completed after isolating {len(quarantined)} "
-                    f"cell(s) whose references the engine cannot resolve; every other "
-                    f"cell was recomputed. Only those keep the value stored in the "
-                    f"file, if any. First blocker: {exc}"
+                    f"cell(s) whose references the engine cannot resolve. Their "
+                    f"stored values are used where available; dependent formulas "
+                    f"without sufficient input remain uncomputed. First blocker: {exc}"
                 )
             else:
                 warnings.append(f"Global evaluation incomplete: {exc}")
@@ -211,13 +224,80 @@ def boot_engine(
                     # failed evaluate_all, so the rebuild is usually wasted —
                     # one full from_bytes. It is paid only when the probe says
                     # the engine really did come back empty.
-                    engine = _open_workbook(data, parallel)
-                    quarantined = {}
+                    rebuilt_data = (
+                        _blank_formulas_in_package(data, too_deep) if too_deep else data
+                    )
+                    engine = _open_workbook(rebuilt_data, parallel)
+                    quarantined = too_deep.copy()
+                    _mark_uncached_quarantine(engine, quarantined)
 
         scratch_ready = _ensure_scratch(engine)
     return EngineSession(
-        engine, engine_sheets, engine_alive, quarantined, scratch_ready
+        engine,
+        engine_sheets,
+        engine_alive,
+        quarantined,
+        scratch_ready,
+        unavailable=unavailable,
     )
+
+
+def _uncached_dependents(engine, data: bytes, too_deep: dict, warnings: list[str]):
+    """Keep engine limitations distinct from spreadsheet errors caught by guards.
+
+    IFERROR can catch our NImpl marker, but its fallback is not evidence of
+    what Excel would compute from the missing input. Suppress readings and
+    decompositions throughout the dependent closure, retaining file caches.
+    """
+    roots = [cell for cell in too_deep if engine.get_value(*cell) is None]
+    if not roots:
+        return set()
+    # Dynamic addresses do not expose all precedents to a static trace. Their
+    # independence from an unavailable value cannot be established safely.
+    for sheet, row, col, formula in _iter_formulas_xml(data):
+        code = re.sub(r'"(?:[^"]|"")*"', '""', formula)
+        if re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", code, re.IGNORECASE):
+            roots.append((sheet, row, col))
+    try:
+        # XLSX loading defers construction of the dependency graph. A plan
+        # materializes it without evaluating formulas; trace alone refuses it.
+        engine.get_eval_plan([])
+        trace = engine.trace(
+            [f"{quote_sheet(s)}!{a1(r, c)}" for s, r, c in roots],
+            direction=fz.TraceDirection.Dependents,
+            max_depth=TRACE_MAX_DEPTH,
+            max_nodes=TRACE_MAX_NODES,
+            max_links=TRACE_MAX_LINKS,
+            max_work=TRACE_MAX_WORK,
+            range_member_budget=TRACE_RANGE_MEMBERS,
+        )
+        if trace.truncation.incomplete:
+            raise ValueError("dependent trace budget exhausted")
+        unavailable = set(roots)
+        for key in trace.nodes.keys():
+            rect = parse_ref(key)
+            if rect is not None and rect.ncells == 1 and rect.sheet is not None:
+                unavailable.add((rect.sheet, rect.r1, rect.c1))
+        return unavailable
+    except Exception:
+        warnings.append(
+            "The dependents of an uncached over-deep formula could not be fully "
+            "traced; formula readings use file caches conservatively because "
+            "their independence from the missing input could not be established"
+        )
+        return {(s, r, c) for s, r, c, _ in _iter_formulas_xml(data)}
+
+
+def _mark_uncached_quarantine(engine, quarantined: dict) -> None:
+    """A missing cached result is unknown, never the numeric value of blank.
+
+    NImpl is an engine error that propagates through arithmetic and ranges,
+    and the value resolver already treats it as uncomputed. Cached values
+    remain constants so downstream calculations can use the stored reading.
+    """
+    for sheet, row, col in quarantined:
+        if engine.get_value(sheet, row, col) is None:
+            engine.set_value(sheet, row, col, {"type": "Error", "kind": "NImpl"})
 
 
 def _evaluate_targets(
@@ -264,8 +344,8 @@ def _evaluate_targets(
     if trace.truncation.incomplete:
         warnings.append(
             "The upstream trace of the target cell(s) hit its budget: part of "
-            "the subgraph is missing from the lineage, and the values of the "
-            "missing cells were not recomputed"
+            "the subgraph is missing from the lineage. The engine may still "
+            "evaluate omitted precedents to compute the requested targets"
         )
     # The evaluation plan counts layers only for cells still dirty, so it is
     # read here, before the evaluation — after it the same plan comes back

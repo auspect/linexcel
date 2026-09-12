@@ -73,6 +73,19 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  viewer-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          prune-cache: true
+          python-version: "3.13"
+      - run: uv sync --locked --extra screenshots
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest tests/test_viewer_browser.py -v
+
   build:
     runs-on: ubuntu-latest
     needs: [lint, typecheck, test]
@@ -102,7 +115,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, typecheck, test, build]
+    needs: [lint, typecheck, test, viewer-browser, build]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs

@@ -133,7 +133,7 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     if error_text is not None or isinstance(cached, str) and cached in EXCEL_ERRORS:
         return error_text != cached
     if isinstance(raw, bool) or isinstance(cached, bool):
-        return False
+        return type(raw) is not type(cached) or raw != cached
     if isinstance(raw, (int, float)) and isinstance(cached, (int, float)):
         return not math.isclose(float(raw), float(cached), rel_tol=1e-9, abs_tol=1e-9)
     return False
@@ -250,15 +250,29 @@ def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str
     """
     if _values_differ(recalculated, stored, date_text):
         return "differ"
+    if date_text is not None:
+        stored_date = _date_text_of(stored)
+        if stored_date is None and isinstance(stored, str):
+            try:
+                stored_date = datetime.datetime.fromisoformat(stored).date().isoformat()
+            except ValueError:
+                pass
+        if stored_date is not None:
+            return "same" if date_text == stored_date else "differ"
+    error_text = _excel_error_text(recalculated)
+    if error_text is not None:
+        return "same" if error_text == stored else "differ"
     if isinstance(recalculated, (int, float)) and isinstance(stored, (int, float)):
         return "same"
+    if type(recalculated) is not type(stored):
+        return "differ"
     left, right = _fmt_value(recalculated), _fmt_value(stored)
     if left == right:
         return "same"
-    if _separators_only(left, right):
+    if (
+        isinstance(recalculated, str)
+        and isinstance(stored, str)
+        and _separators_only(left, right)
+    ):
         return "format"
-    return (
-        "differ"
-        if isinstance(recalculated, str) and isinstance(stored, str)
-        else "same"
-    )
+    return "differ"

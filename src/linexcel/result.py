@@ -94,8 +94,10 @@ def analyze(
         Excel left in the file, or not read at all.
     targets : sequence of str, optional
         Sheet-qualified cells (``["Sheet1!A1", ...]``). When given, only the
-        upstream subgraph of these cells is traced, evaluated and graphed;
-        the rest of the workbook is omitted from the lineage.
+        static upstream subgraph of these cells is traced and graphed;
+        the rest of the workbook is omitted from the lineage. No global
+        recalculation is requested, but dynamic references or a truncated
+        trace can make the engine evaluate precedents omitted from the graph.
     """
     data, name = _read_source(source, filename)
     try:

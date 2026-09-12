@@ -169,6 +169,9 @@ class _ValueResolver:
         sheet_dims: dict[str, tuple[int, int]] | None = None,
         externals: dict[str, ExternalBook] | None = None,
         refs_files: dict[str, Path] | None = None,
+        reachable: set[tuple[str, int, int]] | None = None,
+        quarantined: dict[tuple[str, int, int], str] | None = None,
+        unavailable: set[tuple[str, int, int]] | None = None,
     ):
         self.engine = engine
         self.engine_sheets = engine_sheets
@@ -184,6 +187,9 @@ class _ValueResolver:
         }
         self._named_books: dict[str, ExternalBook] = {}
         self._engine_alive = engine_alive
+        self.reachable = reachable
+        self.quarantined = quarantined or {}
+        self.unavailable = unavailable or set()
         self._compared: set[tuple[str, int, int]] = set()
         self._n_mismatches = 0
         self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
@@ -200,6 +206,36 @@ class _ValueResolver:
         """Return ``(value, source, date_text)`` for one cell."""
         if sheet is None:
             return None, None, None
+        if (sheet, row, col) in self.unavailable:
+            self._note_uncomputed(sheet, row, col)
+            return self._from_cache(sheet, row, col)
+        if self.reachable is not None and (sheet, row, col) not in self.reachable:
+            return self._from_cache(sheet, row, col)
+        if (sheet, row, col) in self.quarantined:
+            quarantined_formula = self.quarantined[(sheet, row, col)]
+            if is_too_deep(quarantined_formula) or not parse_external_refs(
+                quarantined_formula
+            ):
+                self._note_uncomputed(sheet, row, col)
+                return self._from_cache(sheet, row, col)
+            # External links can be recovered from refs_dir or the external
+            # cache even though the engine cannot load their original formula.
+            key = (sheet, row, col)
+            recovered = self._resolved.get(key)
+            if recovered is None:
+                recovered = self._remember(
+                    sheet,
+                    row,
+                    col,
+                    self._eval_formula(sheet, quarantined_formula, 0),
+                )
+            raw, source = recovered
+            if raw is None or _is_uncomputed(raw):
+                self._note_uncomputed(sheet, row, col)
+                return self._from_cache(sheet, row, col)
+            date_text = self._date_text(sheet, row, col, raw)
+            self._check_mismatch(sheet, row, col, raw, date_text)
+            return _jsonable(raw), source, date_text
         if sheet not in self.engine_sheets:
             return self._from_cache(sheet, row, col)
         if formula is None:
@@ -465,13 +501,14 @@ class _ValueResolver:
             raw = self.engine.get_value(sheet, row, col)
         except Exception:
             raw = None
-        if raw is not None:
+        if raw is not None and not _is_uncomputed(raw):
             return raw, "engine"
         if formula is None:
             formula = self._formula_at(sheet, row, col)
         if not formula:
-            return None, None
-        return self._recover(sheet, row, col, formula)
+            return raw, None
+        recovered = self._recover(sheet, row, col, formula)
+        return (raw, None) if recovered[0] is None and raw is not None else recovered
 
     def _recover(
         self, sheet: str, row: int, col: int, formula: str

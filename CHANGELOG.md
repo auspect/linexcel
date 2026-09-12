@@ -13,11 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cell.** Repeatable, and several comma-separated cells fit in one flag; the
   library spelling is `analyze(..., targets=["Sheet1!A1"])`. The engine boots
   without the global `evaluate_all`, the upstream subgraph of the targets is
-  traced (`Workbook.trace`) and evaluated alone (`evaluate_cells`), and only
-  the lineage of those cells is built — the rest of the workbook is omitted
-  from the graph, and the report says so. Defined names, VBA and Power Query
-  nodes are kept as context. Without `--target` the whole workbook is
-  evaluated, as before.
+  traced (`Workbook.trace`) and evaluated (`evaluate_cells`), and its lineage
+  is built with relevant defined names, VBA and Power Query context. Dynamic
+  references (`INDIRECT`/`OFFSET`) or a truncated trace can cause dependencies
+  to be evaluated without appearing in the graph; the report states this
+  limitation. Without `--target` the whole workbook is evaluated, as before.
 - **A warning now flags workbooks of long dependency chains.** On a targeted
   run it is exact — the engine's evaluation plan (`get_eval_plan`) counts the
   layers of the subgraph before it is evaluated. On a full run the plan reads
@@ -26,9 +26,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   largest self-referencing group (a running-total column is one node on the
   graph but a chain as deep as it is long). Either way it is a risk
   indicator, not a duration estimate.
+- **The viewer uses readable card nodes and zoom-aware labels**, offers a
+  differences-only filter, and initially uses flow layout for larger graphs.
+  The layout choice remains available in the toolbar.
+- **Browser regression tests run in CI**, exercising filters, search, dense
+  selections, and desktop/mobile controls in light and dark themes.
+
+### Fixed
+
+- **Quarantined formulas keep honest value provenance.** A stored result is
+  attributed to the file, and a missing result is not treated as zero. When a
+  deep formula has no cache, dependent calculations and their breakdowns remain
+  uncomputed, including IFERROR/ISERROR and dynamic references. Independent
+  formulas still evaluate when their independence can be established.
+- **An engine rebuild preserves the deep-formula quarantine** instead of
+  restoring formulas that could overflow the evaluator's stack.
+- **Targeted formula scans read only traced cells.** Sparse targets no longer
+  consume the sheet scan limit on intervening empty rows or columns, and
+  unrelated defined names no longer trigger out-of-scope recalculation.
+- **Long chains across distinct formula groups are detected.** The previous
+  traversal skipped every root; the replacement visits each node and edge once
+  and handles cycles without recursion.
+- **Targets support quoted sheet names containing commas and escaped quotes.**
+  Malformed or empty target entries fail with an actionable error.
+- **Boolean and mixed-type disagreements are no longer reported as agreement.**
+  Numeric tolerance, equivalent date representations and Excel error values
+  retain their comparison semantics; recalculated errors over stored numbers
+  are differences.
+- **Sheet, type and difference filters compose correctly.** Searching only
+  matches visible nodes, so hidden results are not selected or centered.
+- **Group comparison keeps the representative cell's verdict separate from
+  the worst sampled verdict.** The difference filter includes a group when a
+  sampled cell differs without falsely labeling an agreeing representative.
+- **Disconnected graphs use a compact grid in flow mode**, avoiding a tall
+  single rank of nearly invisible cards when hundreds of nodes have no links.
+
+### Performance
+
+- **Selecting many search results no longer scans the whole graph per result.**
+  Selection updates are coalesced into one animation frame, and the selection
+  collection is assembled in one pass.
 
 ### Changed
 
+- **formualizer 0.9.3 is the minimum supported engine.** Parallel evaluation is
+  configured explicitly and can be disabled through `boot_engine(parallel=False)`.
+- **Chartsheets are skipped with a warning** so their presence does not prevent
+  worksheet analysis. Over-deep formulas are quarantined before evaluation to
+  avoid an evaluator stack overflow.
 - **A failed quarantine retry no longer pays a third `from_bytes`.** The
   rebuild existed because a failed `evaluate_all` was believed to leave the
   engine reporting no formula at all; on formualizer 0.9.3 the formula map

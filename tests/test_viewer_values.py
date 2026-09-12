@@ -568,13 +568,15 @@ class TestSheetFilter:
 
     def test_edges_survive_only_between_two_visible_nodes(self):
         html = render_html(two_sheet_graph())
-        assert "return keep.contains(e.source()) && keep.contains(e.target());" in html
-        assert "keep.show(); keepEdges.show();" in html
+        assert "cy.nodes().not(keep).addClass('sheet-off');" in html
+        assert "{ selector: '.sheet-off', style: { 'display': 'none' } }" in html
 
     def test_the_sentinel_restores_the_whole_graph(self):
         html = render_html(two_sheet_graph())
         assert "var ALL_SHEETS = '__all__';" in html
-        assert "if (CUR_SHEET === ALL_SHEETS) { cy.elements().show(); return; }" in html
+        assert "cy.nodes().removeClass('sheet-off');" in html
+        assert "if (CUR_SHEET === ALL_SHEETS) return;" in html
+        assert "cy.elements().show()" not in html
 
     def test_the_filter_relayouts_the_visible_graph(self):
         html = render_html(two_sheet_graph())
@@ -660,8 +662,9 @@ class TestSearchAll:
 
     def test_the_predicate_still_reads_label_and_formula(self):
         html = render_html(search_graph())
-        assert "return (n.label || '').toLowerCase().indexOf(q) >= 0" in html
-        assert "|| (n.formula || '').toLowerCase().indexOf(q) >= 0;" in html
+        assert "cy.getElementById(n.id).visible() && (" in html
+        assert "(n.label || '').toLowerCase().indexOf(q) >= 0" in html
+        assert "|| (n.formula || '').toLowerCase().indexOf(q) >= 0);" in html
 
     def test_the_searchable_text_of_every_node_ships(self):
         html = render_html(search_graph())
@@ -683,7 +686,7 @@ class TestSearchAll:
 
     def test_the_view_frames_the_whole_matched_set(self):
         html = render_html(search_graph())
-        assert "frameEles(cy, eles, 300);" in html
+        assert "frameEles(cy, cy.collection(matches), 300);" in html
 
     def test_framing_is_capped_so_a_lone_match_keeps_its_neighbourhood(self):
         """A single card fitted to the viewport would fill the screen and push
