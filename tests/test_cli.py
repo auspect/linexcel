@@ -262,3 +262,61 @@ class TestOverrunNotice:
         with cli._overrun_notice(0.0):
             pass
         assert capsys.readouterr().err == ""
+
+
+class TestTargetOption:
+    """--target SHEET!A1: the analysis is the upstream subgraph, and nothing else."""
+
+    def test_the_graph_is_limited_to_the_upstream_subgraph(
+        self, workbook_path, tmp_path
+    ):
+        out = tmp_path / "g.json"
+        argv = [
+            "analyze",
+            str(workbook_path),
+            "--no-html",
+            "--json",
+            str(out),
+            "--target",
+            "Summary!B1",
+        ]
+        assert main(argv) == 0
+        graph = json.loads(out.read_text(encoding="utf-8"))
+        assert graph["targets"] == ["Summary!B1"]
+        ids = {n["id"] for n in graph["nodes"]}
+        assert "c:Summary!B1" in ids
+        assert "g:Sales!D2#100" in ids
+        # The neighbouring formulas the target does not read are omitted.
+        assert "c:Summary!B2" not in ids
+        assert "c:Summary!B3" not in ids
+
+    def test_several_targets_comma_separated_and_repeated(
+        self, workbook_path, tmp_path
+    ):
+        out = tmp_path / "g.json"
+        argv = [
+            "analyze",
+            str(workbook_path),
+            "--no-html",
+            "--json",
+            str(out),
+            "--target",
+            "Summary!B1,Summary!B2",
+            "--target",
+            "Summary!B3",
+        ]
+        assert main(argv) == 0
+        graph = json.loads(out.read_text(encoding="utf-8"))
+        assert graph["targets"] == ["Summary!B1", "Summary!B2", "Summary!B3"]
+        ids = {n["id"] for n in graph["nodes"]}
+        assert {"c:Summary!B1", "c:Summary!B2", "c:Summary!B3"} <= ids
+
+    def test_an_invalid_target_exits_2(self, workbook_path, capsys):
+        code = main(["analyze", str(workbook_path), "--no-html", "--target", "B1"])
+        assert code == 2
+        assert "Invalid target" in capsys.readouterr().err
+
+    def test_a_target_on_an_unknown_sheet_exits_2(self, workbook_path, capsys):
+        code = main(["analyze", str(workbook_path), "--no-html", "--target", "Gone!A1"])
+        assert code == 2
+        assert "does not have" in capsys.readouterr().err

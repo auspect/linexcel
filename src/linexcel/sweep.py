@@ -5,10 +5,15 @@ re-inject the formulas quarantined by ``engine.boot_engine`` so they still
 show in the lineage, and group cells sharing the same R1C1-canonicalized
 formula into one FormulaGroup — a column of 50,000 copied formulas becomes
 ONE entry.
+
+A targeted analysis (``reachable`` set by ``boot_engine``) sweeps only the
+rows the upstream subgraph touches and keeps only its cells; the rest of the
+workbook is omitted from the lineage rather than swept and dropped.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,6 +59,8 @@ def sweep_sheets(
     quarantined: dict[tuple[str, int, int], str],
     warnings: list[str],
     reporter: Reporter,
+    *,
+    reachable: set[tuple[str, int, int]] | None = None,
 ) -> SweepResult:
     groups: dict[tuple[str, str], FormulaGroup] = {}
     formula_count = 0
@@ -64,6 +71,21 @@ def sweep_sheets(
             if sheet not in engine_sheets:
                 warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
                 continue
+            rows_wanted: list[int] | None = None
+            if reachable is not None:
+                rows_wanted = sorted(r for s, r, _c in reachable if s == sheet)
+                if not rows_wanted:
+                    # Outside the targeted subgraph: nothing to sweep here.
+                    sheet_stats.append(
+                        {
+                            "name": sheet,
+                            "rows": max_row,
+                            "cols": max_col,
+                            "formulaCells": 0,
+                        }
+                    )
+                    _bar.step(f"sweeping {sheet}")
+                    continue
             n_formulas = 0
             scanned = 0
             fsheet = engine.sheet(sheet)
@@ -83,6 +105,13 @@ def sweep_sheets(
                     )
                     break
                 r1 = min(r0 + chunk_rows - 1, max_row, r0 + rows_left - 1)
+                if rows_wanted is not None:
+                    i = bisect_left(rows_wanted, r0)
+                    if i >= len(rows_wanted) or rows_wanted[i] > r1:
+                        # A chunk no targeted cell lives in is not read at all
+                        # — and spends none of the cell ceiling.
+                        r0 = r1 + 1
+                        continue
                 ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
                 try:
                     rows = fsheet.get_formulas(ra)
@@ -93,13 +122,15 @@ def sweep_sheets(
                 for i, row_vals in enumerate(rows):
                     r = r0 + i
                     for j, f in enumerate(row_vals):
+                        c = j + 1
+                        if reachable is not None and (sheet, r, c) not in reachable:
+                            continue
                         if not f:
                             # A quarantined cell reads back blank: its formula was
                             # removed so the rest of the workbook could evaluate.
-                            f = quarantined.get((sheet, r, j + 1))
+                            f = quarantined.get((sheet, r, c))
                         if not f:
                             continue
-                        c = j + 1
                         n_formulas += 1
                         key = (sheet, canonical_r1c1(f, r, c))
                         grp = groups.get(key)

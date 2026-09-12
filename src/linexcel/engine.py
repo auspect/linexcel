@@ -19,7 +19,7 @@ import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
 from linexcel.progress import Reporter
-from linexcel.refs import a1, col_to_num
+from linexcel.refs import a1, col_to_num, parse_ref, quote_sheet
 
 # Guards to stay responsive on large workbooks.
 SCAN_CHUNK_ROWS = 20_000
@@ -69,6 +69,22 @@ MAX_AST_DEPTH = 900
 #: ``scripts/perf_probe.py``.
 PARALLEL_EVALUATION = True
 
+#: Budgets for the upstream trace behind targeted evaluation. The defaults
+#: (depth 6, 512 nodes) are an interactive-explorer budget, not an analysis
+#: one: a running-total column is a chain exactly as deep as it is long.
+#: A trace that still hits one of these reports it through its truncation
+#: flag, and the warning names the analysis as partial.
+TRACE_MAX_DEPTH = 100_000
+TRACE_MAX_NODES = 2_000_000
+TRACE_MAX_LINKS = 4_000_000
+TRACE_MAX_WORK = 20_000_000
+TRACE_RANGE_MEMBERS = 100_000
+
+#: From how many linked calculation steps a workbook counts as chain-heavy.
+#: An indicator of risk, not a duration estimate: what long chains do to the
+#: step-by-step decomposition is the warning's business, not the stopwatch's.
+CHAIN_LAYERS_WARNING = 25
+
 
 @dataclass
 class EngineSession:
@@ -77,6 +93,9 @@ class EngineSession:
     engine_alive: bool
     quarantined: dict[tuple[str, int, int], str]
     scratch_ready: bool
+    #: Cells of the upstream subgraph, set only by a targeted boot; ``None``
+    #: means the whole workbook was evaluated, as before.
+    reachable: set[tuple[str, int, int]] | None = None
 
 
 def _open_workbook(data: bytes, parallel: bool):
@@ -95,8 +114,9 @@ def boot_engine(
     *,
     max_ast_depth: int = MAX_AST_DEPTH,
     parallel: bool = PARALLEL_EVALUATION,
+    targets: list[tuple[str, int, int]] | None = None,
 ) -> EngineSession:
-    """Instantiate the engine and run its whole-workbook evaluation.
+    """Instantiate the engine and run its evaluation.
 
     ``evaluate_all`` is all-or-nothing, and it gives up on the *first*
     reference it cannot resolve — so a single formula pointing at another
@@ -109,6 +129,11 @@ def boot_engine(
     tree is deeper than ``max_ast_depth``, because the evaluator's recursive
     walk aborts the process on them rather than raising. They are quarantined
     up front, before the first evaluation.
+
+    With ``targets`` the global pass is skipped entirely: the upstream
+    subgraph of those cells is traced, only it is evaluated, and the session
+    carries the reachable set so the sweep can leave the rest of the
+    workbook out of the lineage.
 
     This is the long silent stretch of a large workbook — it used to be the
     one phase nothing reported while it ran — so it is a reporter phase like
@@ -145,6 +170,14 @@ def boot_engine(
                 f"the file, if any; every other cell is recomputed. Deepest: "
                 f"{sheet}!{a1(row, col)}"
             )
+        if targets is not None:
+            reachable = _evaluate_targets(
+                engine, engine_sheets, targets, warnings, progress
+            )
+            scratch_ready = _ensure_scratch(engine)
+            return EngineSession(
+                engine, engine_sheets, True, quarantined, scratch_ready, reachable
+            )
         try:
             progress.step("evaluating formulas")
             engine.evaluate_all()
@@ -162,11 +195,6 @@ def boot_engine(
                     retried = True
                 except Exception:
                     pass
-            if not retried:
-                # A failed global evaluation does not just drop the values: the
-                # engine then reports no formula at all, which would leave the
-                # graph empty. Rebuilding from the bytes gives the formulas back.
-                engine = _open_workbook(data, parallel)
             if retried:
                 warnings.append(
                     f"Global evaluation completed after isolating {len(quarantined)} "
@@ -178,12 +206,129 @@ def boot_engine(
                 warnings.append(f"Global evaluation incomplete: {exc}")
                 # Values are recovered cell by cell further down.
                 engine_alive = False
-                quarantined = {}
+                if _formulas_gone(engine, data, engine_sheets, quarantined):
+                    # formualizer 0.9.3 keeps the formula map readable after a
+                    # failed evaluate_all, so the rebuild is usually wasted —
+                    # one full from_bytes. It is paid only when the probe says
+                    # the engine really did come back empty.
+                    engine = _open_workbook(data, parallel)
+                    quarantined = {}
 
         scratch_ready = _ensure_scratch(engine)
     return EngineSession(
         engine, engine_sheets, engine_alive, quarantined, scratch_ready
     )
+
+
+def _evaluate_targets(
+    engine,
+    engine_sheets: set[str],
+    targets: list[tuple[str, int, int]],
+    warnings: list[str],
+    progress,
+) -> set[tuple[str, int, int]]:
+    """Evaluate only the upstream subgraph of ``targets``; return its cells.
+
+    The global ``evaluate_all`` is never called: the trace walks the declared
+    precedents of the target cells, the closure is evaluated in one
+    ``evaluate_cells`` batch, and the reachable set comes back so the sweep
+    can skip everything else.
+
+    The batch is all-or-nothing like ``evaluate_all``: one broken precedent
+    fails it whole. The fallback evaluates the requested targets one at a
+    time — the cells the user actually asked for — and leaves the rest to
+    the per-cell recovery, which is what a global failure would have got.
+    """
+    unknown = sorted({sheet for sheet, _, _ in targets} - engine_sheets)
+    if unknown:
+        raise ValueError(
+            f"--target names sheet(s) this workbook does not have: "
+            f"{', '.join(unknown)}. It has: {', '.join(sorted(engine_sheets))}."
+        )
+    progress.step(f"tracing upstream of {len(targets)} target(s)")
+    roots = [f"{quote_sheet(sheet)}!{a1(row, col)}" for sheet, row, col in targets]
+    trace = engine.trace(
+        roots,
+        direction=fz.TraceDirection.Precedents,
+        max_depth=TRACE_MAX_DEPTH,
+        max_nodes=TRACE_MAX_NODES,
+        max_links=TRACE_MAX_LINKS,
+        max_work=TRACE_MAX_WORK,
+        range_member_budget=TRACE_RANGE_MEMBERS,
+    )
+    reachable: set[tuple[str, int, int]] = set(targets)
+    for key in trace.nodes.keys():
+        rect = parse_ref(key)
+        if rect is not None and rect.ncells == 1 and rect.sheet in engine_sheets:
+            reachable.add((rect.sheet, rect.r1, rect.c1))
+    if trace.truncation.incomplete:
+        warnings.append(
+            "The upstream trace of the target cell(s) hit its budget: part of "
+            "the subgraph is missing from the lineage, and the values of the "
+            "missing cells were not recomputed"
+        )
+    # The evaluation plan counts layers only for cells still dirty, so it is
+    # read here, before the evaluation — after it the same plan comes back
+    # empty. An indicator of risk, not a duration estimate.
+    try:
+        layers = len(engine.get_eval_plan(sorted(reachable)).layers)
+    except Exception:
+        layers = 0  # a plan that will not build says nothing usable
+    if layers >= CHAIN_LAYERS_WARNING:
+        warnings.append(
+            f"Long dependency chains: the targeted subgraph stacks "
+            f"{layers:,} evaluation layers. Such workbooks are where the "
+            f"step-by-step decomposition hits its time budget (raise it with "
+            f"--time-budget) and where an analysis runs long — a risk "
+            f"indicator, not a duration estimate"
+        )
+    progress.step(f"evaluating {len(reachable):,} cell(s)")
+    try:
+        engine.evaluate_cells(sorted(reachable))
+    except Exception as exc:
+        failed = []
+        for sheet, row, col in targets:
+            try:
+                engine.evaluate_cell(sheet, row, col)
+            except Exception:
+                failed.append(f"{sheet}!{a1(row, col)}")
+        note = (
+            f"the target(s) themselves did not evaluate: {', '.join(failed)}. "
+            if failed
+            else "the requested targets were evaluated one by one instead. "
+        )
+        warnings.append(
+            f"Targeted evaluation of {len(reachable):,} cell(s) failed as one "
+            f"batch ({exc}); {note}Cells that keep the value stored in the "
+            f"file are listed by the per-cell recovery"
+        )
+    return reachable
+
+
+def _formulas_gone(
+    engine,
+    data: bytes,
+    engine_sheets: set[str],
+    quarantined: dict[tuple[str, int, int], str],
+) -> bool:
+    """Whether the failed evaluation took the formulas down with it.
+
+    A rebuild from the bytes was the unconditional answer to a failed
+    ``evaluate_all``, on the grounds that the engine then reports no formula
+    at all. On 0.9.3 that is no longer what happens — ``get_formulas`` and
+    per-cell ``evaluate_cell`` still answer after the failure (measured on a
+    missing-sheet reference) — so the third ``from_bytes`` is probed for
+    rather than paid: one formula cell the quarantine did not blank is read
+    back, and only an empty answer sends the run through the rebuild.
+    """
+    for sheet, row, col, _formula in _iter_formulas_xml(data):
+        if sheet not in engine_sheets or (sheet, row, col) in quarantined:
+            continue
+        try:
+            return not engine.get_formula(sheet, row, col)
+        except Exception:
+            return True
+    return False
 
 
 def _find_unresolvable(

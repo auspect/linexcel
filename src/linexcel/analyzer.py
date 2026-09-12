@@ -14,12 +14,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from linexcel.engine import boot_engine
+from linexcel.engine import CHAIN_LAYERS_WARNING, boot_engine
 from linexcel.external import find_workbooks, read_external_links, resolve_books
 from linexcel.graph import GraphBuilder
 from linexcel.loader import load_cached_values
 from linexcel.powerquery import query_warning, read_queries
 from linexcel.progress import Reporter
+from linexcel.refs import Rect, a1, parse_ref
 from linexcel.resolver import (
     DEFAULT_STEP_SECONDS,
     MAX_SCRATCH_EVALS,
@@ -35,6 +36,108 @@ from linexcel.sweep import sweep_sheets
 from linexcel.tables import _build_table_index
 
 
+def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
+    """Sheet-qualified single cells, in the order given, duplicates removed.
+
+    Entries may carry several comma-separated cells, so the CLI can pass its
+    repeated ``--target`` flags straight through. A target without a sheet is
+    ambiguous in a multi-sheet workbook, and a range is not a target but a
+    set of them — spell those as several targets rather than one span.
+    """
+    cells: list[tuple[str, int, int]] = []
+    for chunk in targets:
+        for raw in (t.strip() for t in chunk.split(",")):
+            if not raw:
+                continue
+            rect = parse_ref(raw)
+            if (rect is None or rect.sheet is None) and "!" in raw:
+                # A sheet name with a space is legal unquoted on the command
+                # line — 'My Sheet'!B1 is the formula spelling, not the
+                # user's. Split on the last '!': the sheet's existence is
+                # checked against the workbook later either way.
+                sheet, _, body = raw.rpartition("!")
+                rect = parse_ref(body, default_sheet=sheet.strip("'"))
+            if rect is None or rect.sheet is None or rect.ncells != 1:
+                raise ValueError(
+                    f"Invalid target {raw!r}: expected a sheet-qualified cell, "
+                    f"like 'Sheet1!A1'."
+                )
+            cell = (rect.sheet, rect.r1, rect.c1)
+            if cell not in cells:
+                cells.append(cell)
+    return cells
+
+
+def _longest_dep_chain(nodes: dict[str, Any], edges: dict) -> int:
+    """Longest precedent→dependent path across formula nodes, in steps.
+
+    Iterative post-order walk: a chain of running totals can be tens of
+    thousands of nodes deep, past any safe recursion limit. A cycle
+    contributes nothing — the engine stamps its members ``#CIRC!`` and the
+    graph reports them elsewhere.
+    """
+    cellish = {
+        nid
+        for nid, node in nodes.items()
+        if node.get("kind") in {"cell", "group", "input", "misc"}
+    }
+    adjacency: dict[str, set[str]] = {}
+    for edge in edges.values():
+        src, dst = edge["source"], edge["target"]
+        if edge["kind"] == "dep" and src in cellish and dst in cellish:
+            adjacency.setdefault(src, set()).add(dst)
+    depth: dict[str, int] = {}
+    best = 0
+    for root in adjacency:
+        if root in depth:
+            continue
+        on_stack = {root}
+        stack = [(root, False)]
+        while stack:
+            node, expanded = stack.pop()
+            if expanded:
+                d = 1 + max(
+                    (depth.get(child, 0) for child in adjacency.get(node, ())),
+                    default=0,
+                )
+                depth[node] = d
+                best = max(best, d)
+                on_stack.discard(node)
+            elif node not in depth and node not in on_stack:
+                on_stack.add(node)
+                stack.append((node, True))
+                stack.extend(
+                    (child, False)
+                    for child in adjacency.get(node, ())
+                    if child not in depth and child not in on_stack
+                )
+    return best
+
+
+def _chain_depth_warning(
+    nodes: dict[str, Any], edges: dict, intra_chain: int
+) -> str | None:
+    """Flag a workbook whose formulas depend on each other in long chains.
+
+    The pre-run estimate weighs formulas and counts them but cannot see how
+    deep the dependency chains run, and the engine's own evaluation plan only
+    counts layers while cells are still dirty — after ``evaluate_all`` it
+    reads zero. So the measure is taken from the lineage itself: the longest
+    path across formula nodes, and the largest self-referencing group (a
+    running-total column is one node on the graph but a chain as deep as it
+    is long). An indicator of risk, not a duration estimate.
+    """
+    chain = max(_longest_dep_chain(nodes, edges), intra_chain)
+    if chain < CHAIN_LAYERS_WARNING:
+        return None
+    return (
+        f"Long dependency chains: up to {chain:,} linked calculation steps. "
+        f"Such workbooks are where the step-by-step decomposition hits its "
+        f"time budget (raise it with --time-budget) and where an analysis "
+        f"runs long — a risk indicator, not a duration estimate"
+    )
+
+
 def analyze_workbook(
     data: bytes,
     filename: str = "workbook.xlsx",
@@ -42,16 +145,24 @@ def analyze_workbook(
     verbose: bool = False,
     refs_dir: str | Path | None = None,
     step_seconds: float | None = DEFAULT_STEP_SECONDS,
+    targets: list[str] | None = None,
 ) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine.
 
     ``refs_dir`` is a folder holding the workbooks this one links to. Without
     it, a cell reading ``'[1]Annual'!B4`` is left unresolved; with it, the
     reference is read and evaluated.
+
+    ``targets`` limits the analysis to the upstream subgraph of those cells
+    (``["Sheet1!A1", ...]``): the engine boots without a global evaluation,
+    only the cells feeding the targets are traced, evaluated and graphed, and
+    the rest of the workbook is omitted from the lineage rather than
+    evaluated. Without it the whole workbook is analysed, as before.
     """
     warnings: list[str] = []
     _t0 = time.perf_counter()
     reporter = Reporter(verbose)
+    target_cells = _parse_targets(targets) if targets else None
 
     def _v(label: str, t: float) -> None:
         reporter.note(f"{label}: {time.perf_counter() - t:.1f}s")
@@ -78,12 +189,13 @@ def analyze_workbook(
     cached = load_cached_values(data, warnings, reporter)
 
     # --- 2. computation engine -------------------------------------------
-    session = boot_engine(data, warnings, reporter)
+    session = boot_engine(data, warnings, reporter, targets=target_cells)
     engine = session.engine
     engine_sheets = session.engine_sheets
     engine_alive = session.engine_alive
     quarantined = session.quarantined
     scratch_ready = session.scratch_ready
+    reachable = session.reachable
 
     # Tables: declared ones from the package parts, static ones from a small
     # window the engine already holds. A per-cell lookup enriching the nodes.
@@ -107,7 +219,13 @@ def analyze_workbook(
 
     # --- 3. extraction + grouping ------------------------------------------
     sweep = sweep_sheets(
-        engine, sheet_dims, engine_sheets, quarantined, warnings, reporter
+        engine,
+        sheet_dims,
+        engine_sheets,
+        quarantined,
+        warnings,
+        reporter,
+        reachable=reachable,
     )
     groups = sweep.groups
     formula_count = sweep.formula_count
@@ -124,6 +242,25 @@ def analyze_workbook(
     kept_groups = builder.kept_groups
     builder.build_names()
     builder.build_formula_nodes()
+    if target_cells:
+        # A target holding a constant has no formula group to own it; it
+        # still gets a node, so the subgraph the user asked for has its root.
+        for sheet, row, col in target_cells:
+            if (row, col) not in builder.cell_owner.get(sheet, {}):
+                builder.ensure_input_node(Rect(sheet, row, col, row, col))
+        asked = ", ".join(f"{s}!{a1(r, c)}" for s, r, c in target_cells)
+        warnings.append(
+            f"Targeted analysis of {asked}: only the {len(reachable or []):,} "
+            f"cell(s) of the upstream subgraph were evaluated and graphed; "
+            f"the rest of the workbook is omitted from the lineage and its "
+            f"formulas were not recomputed"
+        )
+    if engine_alive and not target_cells:
+        # In targeted mode the engine's own evaluation plan already flagged
+        # the subgraph, exactly, before evaluation.
+        chain_warning = _chain_depth_warning(nodes, edges, builder.intra_chain)
+        if chain_warning:
+            warnings.append(chain_warning)
 
     # --- 5. VBA (oletools) ---------------------------------------------------
     builder.build_vba(data, filename, refs_dir)
@@ -178,6 +315,11 @@ def analyze_workbook(
                 "queriesLoaded": sum(1 for q in queries if q.loaded),
             },
         },
+        **(
+            {"targets": [f"{s}!{a1(r, c)}" for s, r, c in target_cells]}
+            if target_cells
+            else {}
+        ),
         "sheets": list(sheet_dims.keys()),
         "nodes": list(nodes.values()),
         "edges": list(edges.values()),

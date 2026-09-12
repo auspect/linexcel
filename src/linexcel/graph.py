@@ -148,6 +148,10 @@ class GraphBuilder:
         self.cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
         self.ast_cache: dict[str, Any] = {}
         self.kept_groups: list[tuple[str, FormulaGroup]] = []
+        #: Largest self-referencing group seen, in cells — a running-total
+        #: column is one group whose members chain through each other, so its
+        #: size is the order of magnitude of a chain no inter-node path sees.
+        self.intra_chain = 0
 
     def select_nodes(self, groups: dict[tuple[str, str], FormulaGroup]) -> None:
         """Cap nodes per sheet; fold what's dropped into one 'misc' node."""
@@ -412,6 +416,17 @@ class GraphBuilder:
                     else detail.rect
                 )
                 agg_rects.append(rect)
+
+            if is_group and agg_rects:
+                # A group whose stretched references overlap its own cells is
+                # chained through itself: ``=R[-1]C+1`` down a column is one
+                # group on the graph but a chain as deep as it is long.
+                bbox_rect = Rect(sheet, rmin, cmin, rmax, cmax)
+                if any(
+                    rect.sheet == sheet and rect.intersects(bbox_rect)
+                    for rect in agg_rects
+                ):
+                    self.intra_chain = max(self.intra_chain, len(grp.cells))
 
             for rect in _merge_rects(agg_rects):
                 self.resolve_rect_edges(rect, node_id)
