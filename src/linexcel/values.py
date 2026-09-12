@@ -124,6 +124,12 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     # comparable, and a recalculated #DIV/0! over a stored #DIV/0! is agreement,
     # not a disagreement nobody can explain.
     error_text = _excel_error_text(raw)
+    if error_text is None and isinstance(raw, str) and raw in EXCEL_ERRORS:
+        # describe() compares the *jsonable* form of the engine value, where an
+        # error has already become the text Excel shows. That text is still an
+        # error, not prose: over a stored number it must read as a divergence,
+        # not fall through to "same" for being of mixed types.
+        error_text = raw
     if error_text is not None or isinstance(cached, str) and cached in EXCEL_ERRORS:
         return error_text != cached
     if isinstance(raw, bool) or isinstance(cached, bool):

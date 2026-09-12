@@ -417,6 +417,20 @@ class GraphBuilder:
                     }
                     for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
                 ]
+                # A group stands for every cell it folds: its verdict is the
+                # worst of the representative cell and the sampled ones. Taken
+                # from the representative alone, it can say "matches" over a
+                # sample that drifted — a green banner on a red row. Cells with
+                # no recorded verdict (nothing cached to compare against) simply
+                # do not vote: an uncomparable cell must not downgrade a group,
+                # and a group with no verdict anywhere stays without one.
+                rank = {"same": 0, "format": 1, "differ": 2}
+                verdicts = [value_fields.get("cachedAgreement")] + [
+                    s.get("cachedAgreement") for s in samples
+                ]
+                known = [v for v in verdicts if v in rank]
+                if known:
+                    value_fields["cachedAgreement"] = max(known, key=rank.__getitem__)
 
             steps = None
             # A volatile cell is shown as *not* recalculated, so decomposing it
