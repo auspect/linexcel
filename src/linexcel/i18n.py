@@ -133,6 +133,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Other (aggregated)",
         "kind_opaque": "External reference",
+        "rail_filters": "Filters",
+        "diffs_only": "Discrepancies only",
+        "external_unresolved": "external · unresolved",
         "placeholder_title": "Select a node",
         "graph_empty": (
             "No formulas were found in this workbook, so there is no lineage "
@@ -277,6 +280,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Autre (agrégé)",
         "kind_opaque": "Référence externe",
+        "rail_filters": "Filtres",
+        "diffs_only": "Écarts seulement",
+        "external_unresolved": "externe · non résolu",
         "placeholder_title": "Sélectionner un nœud",
         "graph_empty": (
             "Aucune formule trouvée dans ce classeur : il n'y a donc aucun graphe de"
@@ -421,6 +427,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Otros (agregados)",
         "kind_opaque": "Referencia externa",
+        "rail_filters": "Filtros",
+        "diffs_only": "Solo discrepancias",
+        "external_unresolved": "externo · sin resolver",
         "placeholder_title": "Seleccione un nodo",
         "graph_empty": (
             "No se encontraron fórmulas en este libro; por tanto, no hay gráfico de"
@@ -567,6 +576,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Sonstige (aggregiert)",
         "kind_opaque": "Externer Bezug",
+        "rail_filters": "Filter",
+        "diffs_only": "Nur Abweichungen",
+        "external_unresolved": "extern · nicht aufgelöst",
         "placeholder_title": "Knoten auswählen",
         "graph_empty": (
             "In dieser Arbeitsmappe wurden keine Formeln gefunden — daher ist kein"
@@ -713,6 +725,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Altro (aggregato)",
         "kind_opaque": "Riferimento esterno",
+        "rail_filters": "Filtri",
+        "diffs_only": "Solo discrepanze",
+        "external_unresolved": "esterno · non risolto",
         "placeholder_title": "Seleziona un nodo",
         "graph_empty": (
             "Nessuna formula trovata in questa cartella di lavoro: non c'è "
@@ -857,6 +872,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Outros (agregados)",
         "kind_opaque": "Referência externa",
+        "rail_filters": "Filtros",
+        "diffs_only": "Apenas discrepâncias",
+        "external_unresolved": "externo · não resolvido",
         "placeholder_title": "Selecione um nó",
         "graph_empty": (
             "Nenhuma fórmula foi encontrada neste livro; portanto, não há gráfico de"
@@ -1003,6 +1021,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "Overig (samengevoegd)",
         "kind_opaque": "Externe verwijzing",
+        "rail_filters": "Filters",
+        "diffs_only": "Alleen afwijkingen",
+        "external_unresolved": "extern · onopgelost",
         "placeholder_title": "Selecteer een knoop",
         "graph_empty": (
             "Geen formules gevonden in deze werkmap, dus er is geen "
@@ -1143,6 +1164,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "その他（集約）",
         "kind_opaque": "外部参照",
+        "rail_filters": "フィルター",
+        "diffs_only": "差異のみ",
+        "external_unresolved": "外部 · 未解決",
         "placeholder_title": "ノードを選択してください",
         "graph_empty": (
             "このブックに数式が見つからなかったため、表示する系統グラフはありません。"
@@ -1275,6 +1299,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "kind_query": "Power Query",
         "kind_misc": "其他（已聚合）",
         "kind_opaque": "外部引用",
+        "rail_filters": "筛选",
+        "diffs_only": "仅显示差异",
+        "external_unresolved": "外部 · 未解析",
         "placeholder_title": "请选择一个节点",
         "graph_empty": "此工作簿中未找到公式，因此没有可显示的谱系图。",
         "placeholder_desc": (

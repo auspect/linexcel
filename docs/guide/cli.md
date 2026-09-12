@@ -105,6 +105,7 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 | `--screenshots DIR` | Render each sheet to a PNG and show it in the report. Needs LibreOffice and Poppler; see [Screenshots](context.md#screenshots). |
 | `-v`, `--verbose` | Progress while it runs, and per-phase timing, on stderr. |
 | `--time-budget SECONDS` | Ceiling on the step-by-step decomposition (default 300). Past it, cells keep their values and lose only their breakdown, and the report says so. |
+| `--target SHEET!A1` | Trace the static upstream lineage of this cell without requesting global recalculation. Repeatable; comma-separated cells are accepted, with Excel quotes around sheet names containing commas (`'Costs, FY26'!A1`). Only relevant names, VBA and Power Query context remain. Dynamic references (INDIRECT/OFFSET) or a truncated trace can cause the engine to evaluate dependencies omitted from the graph; the report states this limitation. |
 | `--dry-run` | Say what the file declares — sheets, declared size, linked workbooks, the ceilings that will apply — and stop without analysing it. |
 
 ## AI documentation

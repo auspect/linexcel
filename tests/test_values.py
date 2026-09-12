@@ -763,6 +763,81 @@ class TestStretchedSamples:
         assert picked[-1] == (10, 2)
 
 
+class TestAGroupVerdictIsItsWorstSample:
+    """A group folds many cells behind one node and one banner.
+
+    The verdict used to be the representative cell's alone, so a group whose
+    head agreed with the file showed green over a sample row that had drifted
+    red. The verdict of a group is the worst verdict among its comparable
+    cells — the banner can no longer be calmer than the calmest lie it hides.
+    """
+
+    @staticmethod
+    def graph() -> dict:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = SHEET
+        for r in range(2, 12):
+            ws.cell(row=r, column=2, value=r)
+            ws.cell(row=r, column=1, value=f"=B{r}*2")
+        buf = io.BytesIO()
+        wb.save(buf)
+        # What Excel would have stored on save — with one cell holding an
+        # error the recalculation does not reproduce.
+        data = with_stored_results(
+            buf.getvalue(),
+            {**{f"A{r}": str(r * 2) for r in range(2, 12)}, "A6": "#VALUE!"},
+        )
+        return analyze_workbook(data, "grouped.xlsx")["graph"]
+
+    def test_the_group_reports_the_divergence(self):
+        node = node_of(self.graph(), "g:S!A2#10")
+        assert node["groupCachedAgreement"] == "differ"
+
+    def test_the_diverging_sample_carries_its_own_verdict(self):
+        samples = node_of(self.graph(), "g:S!A2#10")["samples"]
+        verdicts = {s["addr"]: s.get("cachedAgreement") for s in samples}
+        assert verdicts["A6"] == "differ"
+
+    def test_an_agreeing_group_stays_calm(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = SHEET
+        for r in range(2, 12):
+            ws.cell(row=r, column=2, value=r)
+            ws.cell(row=r, column=1, value=f"=B{r}*2")
+        buf = io.BytesIO()
+        wb.save(buf)
+        data = with_stored_results(
+            buf.getvalue(), {f"A{r}": str(r * 2) for r in range(2, 12)}, numeric=True
+        )
+        graph = analyze_workbook(data, "grouped.xlsx")["graph"]
+        node = node_of(graph, "g:S!A2#10")
+        # A numeric formula agrees with numeric cached results. A text "4"
+        # and the number 4 are different Excel values, despite their rendering.
+        assert node["cachedAgreement"] in {"same", "format"}
+        assert node["groupCachedAgreement"] in {"same", "format"}
+
+    def test_representative_keeps_its_own_verdict_when_another_sample_differs(self):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = SHEET
+        for row in range(2, 12):
+            ws.cell(row, 2, row)
+            ws.cell(row, 1, f"=B{row}*2")
+        buf = io.BytesIO()
+        wb.save(buf)
+        data = with_stored_results(
+            buf.getvalue(),
+            {**{f"A{r}": str(r * 2) for r in range(2, 12)}, "A6": "999"},
+            numeric=True,
+        )
+        node = node_of(analyze_workbook(data)["graph"], "g:S!A2#10")
+        assert node["value"] == node["cachedValue"] == 4
+        assert node["cachedAgreement"] == "same"
+        assert node["groupCachedAgreement"] == "differ"
+
+
 class TestProvenance:
     def test_formula_node_reports_the_engine(self):
         graph = graph_of({"A1": 2, "A2": "=A1*3"})
@@ -1019,12 +1094,28 @@ class TestReadingsAgree:
             ("oui, non", "oui. non", "differ"),
             # the text around the numbers has to match
             ("6.7 €", "6,7 $", "differ"),
+            # an error is a value the cell genuinely holds
+            ("#DIV/0!", "#DIV/0!", "same"),
+            ("#VALUE!", "du texte", "differ"),
+            ("#VALUE!", 377775.83, "differ"),
         ],
     )
     def test_the_verdict(self, recalculated, stored, verdict):
         from linexcel.values import readings_agree
 
         assert readings_agree(recalculated, stored, None) == verdict
+
+    def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
+        """The case a human found as a green banner over a red row.
+
+        describe() compares the *jsonable* form of the engine value, where an
+        error has already become the text Excel shows. That text over a stored
+        number used to fall through to "same" for being of mixed types — as if
+        ``#VALUE!`` and ``377775.83`` could be two spellings of one value.
+        """
+        from linexcel.values import readings_agree
+
+        assert readings_agree("#VALUE!", 377775.83, None) == "differ"
 
     def test_a_text_disagreement_is_finally_reported(self):
         """It never was: the old comparison returned False for any two strings."""
@@ -1038,7 +1129,9 @@ class TestReadingsAgree:
         assert readings_agree("1 2", "12", None) == "differ"
 
 
-def with_stored_results(data: bytes, cells: dict[str, str]) -> bytes:
+def with_stored_results(
+    data: bytes, cells: dict[str, str], *, numeric: bool = False
+) -> bytes:
     """Give formula cells the result a spreadsheet application would have stored.
 
     openpyxl writes formulas and an empty ``<v/>``: a generated fixture has no
@@ -1056,10 +1149,11 @@ def with_stored_results(data: bytes, cells: dict[str, str]) -> bytes:
             blob = src.read(item.filename)
             if item.filename == "xl/worksheets/sheet1.xml":
                 xml = blob.decode("utf-8")
+                cell_type = "n" if numeric else "str"
                 for address, text in cells.items():
                     xml = _re.sub(
                         rf'<c r="{address}"([^>]*)>(<f>.*?</f>)\s*<v\s*/>',
-                        rf'<c r="{address}"\g<1> t="str">\g<2><v>{text}</v>',
+                        rf'<c r="{address}"\g<1> t="{cell_type}">\g<2><v>{text}</v>',
                         xml,
                     )
                 blob = xml.encode("utf-8")

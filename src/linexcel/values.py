@@ -78,7 +78,75 @@ def _date_text_of(value: Any) -> str | None:
         return value.date().isoformat()
     if isinstance(value, datetime.date):
         return value.isoformat()
+    if isinstance(value, datetime.time) and value.tzinfo is None:
+        return value.isoformat()
     return None
+
+
+def serial_to_time_text(serial: Any) -> str | None:
+    """A fraction of one Excel day as a timezone-free time of day.
+
+    Cached times are read at millisecond precision. Keep the date component
+    meaningful: 1.5 days must not silently become the same value as noon.
+    """
+    if isinstance(serial, bool) or not isinstance(serial, (int, float)):
+        return None
+    if not math.isfinite(serial) or not 0 <= serial < 1:
+        return None
+    milliseconds = round(float(serial) * 86_400_000)
+    if milliseconds >= 86_400_000:
+        return None
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1000)
+    return datetime.time(hours, minutes, seconds, milliseconds * 1000).isoformat()
+
+
+def _naive_time(text: str | None) -> datetime.time | None:
+    if text is None:
+        return None
+    # Only the ISO spelling our cache serializer emits, never arbitrary
+    # numeric text, dates, timezone offsets or locale-dependent times.
+    if not re.fullmatch(r"\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?", text):
+        return None
+    try:
+        return datetime.time.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _time_agreement(raw: Any, cached: Any, time_text: str | None) -> str | None:
+    """Compare times only when their Python type or metadata proves the type."""
+    described_time = _naive_time(time_text)
+    if isinstance(cached, datetime.time):
+        stored_time = cached
+    elif described_time is not None and isinstance(cached, str):
+        stored_time = _naive_time(cached)
+    else:
+        return None
+    if stored_time is None or stored_time.tzinfo is not None:
+        return "differ"
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        if not math.isfinite(raw) or not 0 <= raw < 1:
+            return "differ"
+        stored_seconds = (
+            stored_time.hour * 3600
+            + stored_time.minute * 60
+            + stored_time.second
+            + stored_time.microsecond / 1_000_000
+        )
+        return (
+            "same"
+            if math.isclose(
+                float(raw) * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005
+            )
+            else "differ"
+        )
+    if isinstance(raw, datetime.time):
+        return "same" if raw.tzinfo is None and raw == stored_time else "differ"
+    if isinstance(raw, str) and described_time is not None:
+        return "same" if _naive_time(raw) == stored_time else "differ"
+    return "differ"
 
 
 def _error_kind(value: Any) -> str | None:
@@ -124,10 +192,16 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     # comparable, and a recalculated #DIV/0! over a stored #DIV/0! is agreement,
     # not a disagreement nobody can explain.
     error_text = _excel_error_text(raw)
+    if error_text is None and isinstance(raw, str) and raw in EXCEL_ERRORS:
+        # describe() compares the *jsonable* form of the engine value, where an
+        # error has already become the text Excel shows. That text is still an
+        # error, not prose: over a stored number it must read as a divergence,
+        # not fall through to "same" for being of mixed types.
+        error_text = raw
     if error_text is not None or isinstance(cached, str) and cached in EXCEL_ERRORS:
         return error_text != cached
     if isinstance(raw, bool) or isinstance(cached, bool):
-        return False
+        return type(raw) is not type(cached) or raw != cached
     if isinstance(raw, (int, float)) and isinstance(cached, (int, float)):
         return not math.isclose(float(raw), float(cached), rel_tol=1e-9, abs_tol=1e-9)
     return False
@@ -242,17 +316,34 @@ def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str
     with the separators of whatever saved the file. Both readings are still
     shown; only the verdict softens.
     """
+    time_agreement = _time_agreement(recalculated, stored, date_text)
+    if time_agreement is not None:
+        return time_agreement
     if _values_differ(recalculated, stored, date_text):
         return "differ"
+    if date_text is not None:
+        stored_date = _date_text_of(stored)
+        if stored_date is None and isinstance(stored, str):
+            try:
+                stored_date = datetime.datetime.fromisoformat(stored).date().isoformat()
+            except ValueError:
+                pass
+        if stored_date is not None:
+            return "same" if date_text == stored_date else "differ"
+    error_text = _excel_error_text(recalculated)
+    if error_text is not None:
+        return "same" if error_text == stored else "differ"
     if isinstance(recalculated, (int, float)) and isinstance(stored, (int, float)):
         return "same"
+    if type(recalculated) is not type(stored):
+        return "differ"
     left, right = _fmt_value(recalculated), _fmt_value(stored)
     if left == right:
         return "same"
-    if _separators_only(left, right):
+    if (
+        isinstance(recalculated, str)
+        and isinstance(stored, str)
+        and _separators_only(left, right)
+    ):
         return "format"
-    return (
-        "differ"
-        if isinstance(recalculated, str) and isinstance(stored, str)
-        else "same"
-    )
+    return "differ"

@@ -12,6 +12,7 @@ infrastructure (``add_edge``, ``ensure_opaque_node``, ``ensure_input_node``,
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -19,13 +20,14 @@ from typing import Any
 import formualizer as fz
 
 from linexcel.decompose import _collect_step_exprs, _decompose
+from linexcel.engine import is_too_deep
 from linexcel.external import macro_files, parse_external_refs
 from linexcel.loader import _stepped
 from linexcel.powerquery import Query, QuerySource
 from linexcel.refs import Rect, a1, parse_ref, parse_ref_detailed, stretch_ref
 from linexcel.resolver import _collect_ref_strings, _external_name, _ValueResolver
 from linexcel.structure import MAX_NODES_PER_SHEET
-from linexcel.sweep import FormulaGroup
+from linexcel.sweep import FormulaGroup, _target_ranges
 from linexcel.tables import _enrich_with_table
 from linexcel.values import _jsonable
 from linexcel.vba import VbaProc, analyze_vba, extract_vba_modules
@@ -34,6 +36,10 @@ SMALL_RANGE_CELLS = 20_000
 MAX_VALUE_SAMPLE = 5
 MAX_VBA_CODE_CHARS = 6_000
 MAX_QUERY_CODE_CHARS = 6_000
+
+
+class _TooDeepError(Exception):
+    """Internal: skip the AST of a formula too deep to walk safely."""
 
 
 def _merge_rects(rects: list[Rect]) -> list[Rect]:
@@ -135,6 +141,12 @@ class GraphBuilder:
         self.defined_names = defined_names
         self.warnings = warnings
         self.reporter = reporter
+        self._reachable_by_sheet: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        if resolver.reachable is not None:
+            for sheet, row, col in resolver.reachable:
+                self._reachable_by_sheet[sheet].append((row, col))
+            for cells in self._reachable_by_sheet.values():
+                cells.sort()
 
         self.nodes: dict[str, dict[str, Any]] = {}
         self.edges: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -143,6 +155,10 @@ class GraphBuilder:
         self.cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
         self.ast_cache: dict[str, Any] = {}
         self.kept_groups: list[tuple[str, FormulaGroup]] = []
+        #: Largest self-referencing group seen, in cells — a running-total
+        #: column is one group whose members chain through each other, so its
+        #: size is the order of magnitude of a chain no inter-node path sees.
+        self.intra_chain = 0
 
     def select_nodes(self, groups: dict[tuple[str, str], FormulaGroup]) -> None:
         """Cap nodes per sheet; fold what's dropped into one 'misc' node."""
@@ -301,6 +317,24 @@ class GraphBuilder:
                 return
             clipped = rect
         owners = self.cell_owner.get(sheet, {})
+        if self.resolver.reachable is not None:
+            candidates = self._reachable_by_sheet[sheet]
+            start = bisect_left(candidates, (clipped.r1, clipped.c1))
+            end = bisect_right(candidates, (clipped.r2, clipped.c2))
+            seen: set[str] = set()
+            plain = []
+            for row, col in candidates[start:end]:
+                if not clipped.c1 <= col <= clipped.c2:
+                    continue
+                owner = owners.get((row, col))
+                if owner is None:
+                    plain.append((row, col))
+                elif owner not in seen:
+                    seen.add(owner)
+                    edge(owner)
+            for r1, c1, r2, c2 in _target_ranges(plain):
+                edge(self.ensure_input_node(Rect(sheet, r1, c1, r2, c2)))
+            return
         if clipped.ncells <= SMALL_RANGE_CELLS:
             seen: set[str] = set()
             has_plain = False
@@ -328,7 +362,20 @@ class GraphBuilder:
 
     def build_names(self) -> None:
         """A node per defined name, wired to whatever it points at."""
+        wanted_names: set[str] | None = None
+        if self.resolver.reachable is not None:
+            wanted_names = set()
+            for _, grp in self.kept_groups:
+                for formula in grp.formulas.values():
+                    try:
+                        expr = formula if formula.startswith("=") else "=" + formula
+                        refs = _collect_ref_strings(fz.parse(expr).to_dict())
+                    except Exception:
+                        continue
+                    wanted_names.update(ref.upper() for ref in refs)
         for name, targets in self.defined_names.items():
+            if wanted_names is not None and name.upper() not in wanted_names:
+                continue
             node_id = f"n:{name}"
             self.name_nodes[name.upper()] = node_id
             value_fields: dict[str, Any] = {"value": None}
@@ -357,6 +404,39 @@ class GraphBuilder:
             for rect in targets:
                 self.resolve_rect_edges(rect, node_id, kind="name")
 
+    def retain_upstream(self, targets: list[tuple[str, int, int]]) -> None:
+        """Remove unrelated names, macros and queries from a targeted report.
+
+        Follow incoming provenance edges from the requested cells, retaining
+        relevant query loads and macro writes alongside formula precedents.
+        Mutate the dictionaries in place: the analyzer already holds them.
+        """
+        incoming: dict[str, set[str]] = defaultdict(set)
+        for edge in self.edges.values():
+            incoming[edge["target"]].add(edge["source"])
+        wanted = set()
+        for sheet, row, col in targets:
+            owner = self.cell_owner.get(sheet, {}).get((row, col))
+            if owner is not None:
+                wanted.add(owner)
+            else:
+                label = Rect(sheet, row, col, row, col).to_a1()
+                node_id = self.input_nodes.get(label)
+                if node_id is not None:
+                    wanted.add(node_id)
+        pending = list(wanted)
+        while pending:
+            for source in incoming[pending.pop()]:
+                if source not in wanted:
+                    wanted.add(source)
+                    pending.append(source)
+        for node_id in list(self.nodes):
+            if node_id not in wanted:
+                del self.nodes[node_id]
+        for edge_id, edge in list(self.edges.items()):
+            if edge["source"] not in wanted or edge["target"] not in wanted:
+                del self.edges[edge_id]
+
     def build_formula_nodes(self) -> None:
         """A node per kept formula pattern, wired to its precedents.
 
@@ -376,16 +456,20 @@ class GraphBuilder:
             sheet = grp.sheet
             is_group = len(grp.cells) > 1
             try:
+                # An over-deep formula was quarantined before evaluation; it
+                # parses fine, but the recursive walks below would hit Python's
+                # own recursion limit on it. It keeps a node, not a tree.
+                if is_too_deep(formula):
+                    raise _TooDeepError
                 ast = self.ast_cache.get(formula)
                 if ast is None:
                     ast = self.ast_cache[formula] = fz.parse(
                         formula if formula.startswith("=") else "=" + formula
                     )
                 ast_dict = ast.to_dict()
+                refs = _collect_ref_strings(ast_dict)
             except Exception:
-                ast, ast_dict = None, None
-
-            refs = _collect_ref_strings(ast_dict) if ast_dict else []
+                ast, ast_dict, refs = None, None, []
             rmin, cmin, rmax, cmax = grp.bbox
             agg_rects: list[Rect] = []
             for ref in refs:
@@ -404,6 +488,17 @@ class GraphBuilder:
                 )
                 agg_rects.append(rect)
 
+            if is_group and agg_rects:
+                # A group whose stretched references overlap its own cells is
+                # chained through itself: ``=R[-1]C+1`` down a column is one
+                # group on the graph but a chain as deep as it is long.
+                bbox_rect = Rect(sheet, rmin, cmin, rmax, cmax)
+                if any(
+                    rect.sheet == sheet and rect.intersects(bbox_rect)
+                    for rect in agg_rects
+                ):
+                    self.intra_chain = max(self.intra_chain, len(grp.cells))
+
             for rect in _merge_rects(agg_rects):
                 self.resolve_rect_edges(rect, node_id)
 
@@ -417,12 +512,32 @@ class GraphBuilder:
                     }
                     for r, c in _spread_cells(grp.cells, MAX_VALUE_SAMPLE)
                 ]
+                # A group stands for every cell it folds: its verdict is the
+                # worst of the representative cell and the sampled ones. Taken
+                # from the representative alone, it can say "matches" over a
+                # sample that drifted — a green banner on a red row. Cells with
+                # no recorded verdict (nothing cached to compare against) simply
+                # do not vote: an uncomparable cell must not downgrade a group,
+                # and a group with no verdict anywhere stays without one.
+                rank = {"same": 0, "format": 1, "differ": 2}
+                verdicts = [value_fields.get("cachedAgreement")] + [
+                    s.get("cachedAgreement") for s in samples
+                ]
+                known = [v for v in verdicts if v in rank]
+                if known:
+                    value_fields["groupCachedAgreement"] = max(
+                        known, key=rank.__getitem__
+                    )
 
             steps = None
             # A volatile cell is shown as *not* recalculated, so decomposing it
             # would contradict its own card: every step under `=TODAY()+7`
             # would carry a figure computed from today's clock.
-            if ast_dict is not None and value_fields.get("valueSource") != "volatile":
+            if (
+                ast_dict is not None
+                and value_fields.get("valueSource") != "volatile"
+                and (sheet, rep_r, rep_c) not in self.resolver.unavailable
+            ):
                 # The root step is the formula itself: when the engine computed
                 # the cell, its value is that step's value and needs no
                 # scratch pass.
@@ -590,7 +705,12 @@ class GraphBuilder:
                     else None
                 )
                 if rect is not None:
-                    self.add_edge(qid, self.ensure_input_node(rect), "query-load")
+                    if self.resolver.reachable is not None:
+                        self.resolve_rect_edges(
+                            rect, qid, kind="query-load", write=True
+                        )
+                    else:
+                        self.add_edge(qid, self.ensure_input_node(rect), "query-load")
 
     def _query_source_node(self, source: QuerySource) -> str:
         """A node for something a query reads that is not in this workbook."""

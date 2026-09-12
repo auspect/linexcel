@@ -568,13 +568,15 @@ class TestSheetFilter:
 
     def test_edges_survive_only_between_two_visible_nodes(self):
         html = render_html(two_sheet_graph())
-        assert "return keep.contains(e.source()) && keep.contains(e.target());" in html
-        assert "keep.show(); keepEdges.show();" in html
+        assert "cy.nodes().not(keep).addClass('sheet-off');" in html
+        assert "{ selector: '.sheet-off', style: { 'display': 'none' } }" in html
 
     def test_the_sentinel_restores_the_whole_graph(self):
         html = render_html(two_sheet_graph())
         assert "var ALL_SHEETS = '__all__';" in html
-        assert "if (CUR_SHEET === ALL_SHEETS) { cy.elements().show(); return; }" in html
+        assert "cy.nodes().removeClass('sheet-off');" in html
+        assert "if (CUR_SHEET === ALL_SHEETS) return;" in html
+        assert "cy.elements().show()" not in html
 
     def test_the_filter_relayouts_the_visible_graph(self):
         html = render_html(two_sheet_graph())
@@ -660,8 +662,9 @@ class TestSearchAll:
 
     def test_the_predicate_still_reads_label_and_formula(self):
         html = render_html(search_graph())
-        assert "return (n.label || '').toLowerCase().indexOf(q) >= 0" in html
-        assert "|| (n.formula || '').toLowerCase().indexOf(q) >= 0;" in html
+        assert "cy.getElementById(n.id).visible() && (" in html
+        assert "(n.label || '').toLowerCase().indexOf(q) >= 0" in html
+        assert "|| (n.formula || '').toLowerCase().indexOf(q) >= 0);" in html
 
     def test_the_searchable_text_of_every_node_ships(self):
         html = render_html(search_graph())
@@ -683,8 +686,15 @@ class TestSearchAll:
 
     def test_the_view_frames_the_whole_matched_set(self):
         html = render_html(search_graph())
-        fit = "cy.animate({ fit: { eles: eles, padding: 40 }, duration: 300 });"
-        assert fit in html
+        assert "frameEles(cy, cy.collection(matches), 300);" in html
+
+    def test_framing_is_capped_so_a_lone_match_keeps_its_neighbourhood(self):
+        """A single card fitted to the viewport would fill the screen and push
+        every neighbour out of frame — the context the selection is about."""
+        script = render_html(search_graph())
+        assert "var FOCUS_MAX_ZOOM = 1.2;" in script
+        assert "function frameEles(cy, eles, duration)" in script
+        assert "if (cy.zoom() <= FOCUS_MAX_ZOOM) return;" in script
 
     def test_an_empty_result_leaves_the_graph_alone_and_says_so(self):
         html = render_html(search_graph())
@@ -829,9 +839,11 @@ class TestPowerQueryPanel:
         assert "if (n.kind === 'query') p.appendChild(querySection(n));" in html
         assert "sq.appendChild(el('pre', 'lin-code is-wrapped', n.code || ''));" in html
 
-    def test_the_query_kind_has_its_own_colour_and_shape(self):
+    def test_the_query_kind_has_its_own_colour(self):
+        """Every kind is a card since the viewer refresh; kind is told by
+        colour, and the query keeps its own — magenta, never recycled."""
         html = render_html(query_graph())
-        assert "query: { color: PALETTE.magenta, shape: 'tag'" in html
+        assert "query: { color: PALETTE.magenta, shape: 'round-rectangle'" in html
         assert "'#a3348e'" in html  # the canvas cannot resolve var()
         assert EN["kind_query"] == "Power Query"
         assert EN["kind_query"] in html

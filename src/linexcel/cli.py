@@ -90,6 +90,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     analyze.add_argument(
+        "--target",
+        action="append",
+        metavar="SHEET!A1",
+        help=(
+            "Limit the analysis to the cells feeding this one (repeatable; "
+            "several comma-separated cells accepted in one flag). The engine "
+            "boots without a global evaluation, the upstream subgraph is "
+            "traced and evaluated, and the rest of the workbook is omitted "
+            "from the lineage. Without --target, everything is evaluated."
+        ),
+    )
+    analyze.add_argument(
         "--rich",
         action="store_true",
         help=(
@@ -397,6 +409,7 @@ def _run_analyze(args: argparse.Namespace) -> int:
             verbose=args.verbose,
             refs_dir=args.refs_dir,
             step_seconds=args.time_budget,
+            targets=args.target,
         )
 
     screenshots = None

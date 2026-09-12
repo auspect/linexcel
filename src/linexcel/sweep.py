@@ -5,10 +5,15 @@ re-inject the formulas quarantined by ``engine.boot_engine`` so they still
 show in the lineage, and group cells sharing the same R1C1-canonicalized
 formula into one FormulaGroup — a column of 50,000 copied formulas becomes
 ONE entry.
+
+A targeted analysis (``reachable`` set by ``boot_engine``) sweeps only the
+rows the upstream subgraph touches and keeps only its cells; the rest of the
+workbook is omitted from the lineage rather than swept and dropped.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +52,44 @@ class SweepResult:
     sheet_stats: list[dict[str, Any]]
 
 
+def _target_ranges(cells: list[tuple[int, int]]):
+    """Rectangles containing only requested cells, with bounded dense reads.
+
+    Merge adjacent columns and then identical spans on adjacent rows. A dense
+    target column stays one batch; distant cells never pay for the gaps.
+    """
+    by_row: dict[int, list[int]] = defaultdict(list)
+    for row, col in cells:
+        by_row[row].append(col)
+    pending: dict[tuple[int, int], tuple[int, int]] = {}
+    for row in sorted(by_row):
+        columns = sorted(by_row[row])
+        spans = []
+        first = last = columns[0]
+        for col in columns[1:]:
+            if col == last + 1:
+                last = col
+            else:
+                spans.append((first, last))
+                first = last = col
+        spans.append((first, last))
+        current = {}
+        for c1, c2 in spans:
+            previous = pending.pop((c1, c2), None)
+            if previous is not None:
+                r1, r2 = previous
+                if r2 == row - 1 and row - r1 < _chunk_rows(c2 - c1 + 1):
+                    current[(c1, c2)] = (r1, row)
+                    continue
+                yield r1, c1, r2, c2
+            current[(c1, c2)] = (row, row)
+        for (c1, c2), (r1, r2) in pending.items():
+            yield r1, c1, r2, c2
+        pending = current
+    for (c1, c2), (r1, r2) in pending.items():
+        yield r1, c1, r2, c2
+
+
 def sweep_sheets(
     engine,
     sheet_dims: dict[str, tuple[int, int]],
@@ -54,15 +97,62 @@ def sweep_sheets(
     quarantined: dict[tuple[str, int, int], str],
     warnings: list[str],
     reporter: Reporter,
+    *,
+    reachable: set[tuple[str, int, int]] | None = None,
 ) -> SweepResult:
     groups: dict[tuple[str, str], FormulaGroup] = {}
     formula_count = 0
     sheet_stats: list[dict[str, Any]] = []
+    wanted_by_sheet: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    if reachable is not None:
+        for sheet, row, col in reachable:
+            wanted_by_sheet[sheet].append((row, col))
+
+    def record(sheet: str, r: int, c: int, formula: str | None) -> int:
+        formula = formula or quarantined.get((sheet, r, c))
+        if not formula:
+            return 0
+        key = (sheet, canonical_r1c1(formula, r, c))
+        grp = groups.get(key)
+        if grp is None:
+            grp = groups[key] = FormulaGroup(sheet, key[1])
+        grp.cells.append((r, c))
+        if len(grp.formulas) < 3:
+            grp.formulas[(r, c)] = formula
+        elif (r, c) < max(grp.formulas):
+            del grp.formulas[max(grp.formulas)]
+            grp.formulas[(r, c)] = formula
+        return 1
 
     with reporter.phase("extraction+grouping", total=len(sheet_dims)) as _bar:
         for sheet, (max_row, max_col) in sheet_dims.items():
             if sheet not in engine_sheets:
                 warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
+                continue
+            if reachable is not None:
+                n_formulas = 0
+                fsheet = engine.sheet(sheet)
+                for r1, c1, r2, c2 in _target_ranges(wanted_by_sheet[sheet]):
+                    try:
+                        rows = fsheet.get_formulas(
+                            fz.RangeAddress(sheet, r1, c1, r2, c2)
+                        )
+                    except Exception as exc:
+                        warnings.append(f"Could not read formulas on {sheet}: {exc}")
+                        continue
+                    for i, row_vals in enumerate(rows):
+                        for j, formula in enumerate(row_vals):
+                            n_formulas += record(sheet, r1 + i, c1 + j, formula)
+                formula_count += n_formulas
+                sheet_stats.append(
+                    {
+                        "name": sheet,
+                        "rows": max_row,
+                        "cols": max_col,
+                        "formulaCells": n_formulas,
+                    }
+                )
+                _bar.step(f"sweeping {sheet}")
                 continue
             n_formulas = 0
             scanned = 0
@@ -93,23 +183,7 @@ def sweep_sheets(
                 for i, row_vals in enumerate(rows):
                     r = r0 + i
                     for j, f in enumerate(row_vals):
-                        if not f:
-                            # A quarantined cell reads back blank: its formula was
-                            # removed so the rest of the workbook could evaluate.
-                            f = quarantined.get((sheet, r, j + 1))
-                        if not f:
-                            continue
-                        c = j + 1
-                        n_formulas += 1
-                        key = (sheet, canonical_r1c1(f, r, c))
-                        grp = groups.get(key)
-                        if grp is None:
-                            grp = groups[key] = FormulaGroup(sheet, key[1])
-                        grp.cells.append((r, c))
-                        # row/col order scan: first cell seen is the representative
-                        # (min), keep 3 example formulas
-                        if len(grp.formulas) < 3:
-                            grp.formulas[(r, c)] = f
+                        n_formulas += record(sheet, r, j + 1, f)
                 r0 = r1 + 1
             formula_count += n_formulas
             sheet_stats.append(

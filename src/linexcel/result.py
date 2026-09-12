@@ -67,6 +67,7 @@ def analyze(
     verbose: bool = False,
     refs_dir: str | Path | None = None,
     step_seconds: float | None = None,
+    targets: Sequence[str] | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -91,12 +92,23 @@ def analyze(
         reference evaluates to the value it stands for. The report states, per
         workbook, whether it was read from the folder, taken from the cache
         Excel left in the file, or not read at all.
+    targets : sequence of str, optional
+        Sheet-qualified cells (``["Sheet1!A1", ...]``). When given, only the
+        static upstream subgraph of these cells is traced and graphed;
+        the rest of the workbook is omitted from the lineage. No global
+        recalculation is requested, but dynamic references or a truncated
+        trace can make the engine evaluate precedents omitted from the graph.
     """
     data, name = _read_source(source, filename)
     try:
         kwargs = {} if step_seconds is None else {"step_seconds": step_seconds}
         payload = analyze_workbook(
-            data, filename=name, verbose=verbose, refs_dir=refs_dir, **kwargs
+            data,
+            filename=name,
+            verbose=verbose,
+            refs_dir=refs_dir,
+            targets=list(targets) if targets else None,
+            **kwargs,
         )
     except Exception as exc:
         # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)

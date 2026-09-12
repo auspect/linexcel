@@ -21,7 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "openpyxl>=3.1",
-    "formualizer>=0.8.0",
+    "formualizer>=0.9.3",
     "oletools>=0.60.2",
     "python-calamine>=0.8.2",
 ]
@@ -36,7 +36,7 @@ all = ["openai>=1.0", "rich>=13.0"]
 # Progress while a large workbook is analysed. Optional on purpose: the
 # same phases and timings are printed without it, only unadorned.
 progress = ["rich>=13.0"]
-# Only for scripts/capture_viewer.py, which recaptures the README images.
+# README image capture and the optional browser regression suite.
 screenshots = ["playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
 
