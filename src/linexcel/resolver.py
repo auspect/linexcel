@@ -41,6 +41,7 @@ from linexcel.values import (
     _jsonable,
     readings_agree,
     serial_to_date_text,
+    serial_to_time_text,
 )
 
 MAX_SCRATCH_EVALS = 4_000
@@ -655,6 +656,8 @@ class _ValueResolver:
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return _date_text_of(raw)
         cached = self.cached.get(sheet, row, col)
+        if isinstance(cached, datetime.time):
+            return serial_to_time_text(raw) if cached.tzinfo is None else None
         is_date = isinstance(cached, (datetime.datetime, datetime.date))
         if not is_date and not self.cached.is_date(sheet, row, col):
             return None

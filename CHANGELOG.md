@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Excel time caches compare correctly with numeric day fractions.** Midnight
+  (`0`) and noon (`0.5`) agree with stored time values without converting plain
+  text, booleans, multi-day durations or timezone-bearing values into times.
+  The graph retains the numeric reading and carries its ISO time in `valueDate`.
 - **Quarantined formulas keep honest value provenance.** A stored result is
   attributed to the file, and a missing result is not treated as zero. When a
   deep formula has no cache, dependent calculations and their breakdowns remain
