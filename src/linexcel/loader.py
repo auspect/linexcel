@@ -22,6 +22,7 @@ import io
 import re
 import zipfile
 from typing import Any
+from xml.etree import ElementTree
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format
@@ -370,7 +371,14 @@ def _detect_epoch_1904(data: bytes) -> bool:
             xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
     except Exception:
         return False
-    return bool(re.search(r"""date1904=["']1""", xml))
+    try:
+        properties = ElementTree.fromstring(xml).find("{*}workbookPr")
+    except ElementTree.ParseError:
+        return False
+    return properties is not None and properties.get("date1904", "").strip() in {
+        "1",
+        "true",
+    }
 
 
 def _is_date_format(number_format: Any) -> bool:

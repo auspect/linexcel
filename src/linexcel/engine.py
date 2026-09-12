@@ -10,15 +10,20 @@ values.
 from __future__ import annotations
 
 import io
+import math
 import re
 import zipfile
+from bisect import bisect_left, bisect_right
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+from xml.etree import ElementTree
 from xml.sax.saxutils import unescape
 
 import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
+from linexcel.loader import _detect_epoch_1904
 from linexcel.progress import Reporter
 from linexcel.refs import a1, col_to_num, parse_ref, quote_sheet
 
@@ -45,7 +50,7 @@ _SHEET_QUALIFIER_RE = re.compile(r"'((?:[^']|'')+)'!|(?<![#\w.$])([A-Za-z_][\w.]
 
 #: A cell element and its body. ``<c>`` never nests another ``<c>``, so the
 #: lazy ``.*?</c>`` is safe; self-closing ``<c/>`` elements carry no formula.
-_CELL_RE = re.compile(rb'<c\b[^>]*\br="([A-Z]{1,3})(\d+)"[^>]*>(.*?)</c>', re.S)
+_CELL_RE = re.compile(rb'<c\b[^>]*\br="([A-Z]{1,3})(\d+)"[^>]*(?<!/)>(.*?)</c>', re.S)
 #: The ``<f>`` inside a cell body: either ``<f …/>`` (a shared-formula slave)
 #: or ``<f …>text</f>``.
 _F_RE = re.compile(rb"<f\b([^>]*?)(?:/>|>(.*?)</f>)", re.S)
@@ -104,8 +109,36 @@ def _open_workbook(data: bytes, parallel: bool):
     """Instantiate the engine with the configured evaluation options."""
     eval_config = fz.EvaluationConfig()
     eval_config.enable_parallel = parallel
+    # The importer uses this option while converting formatted numeric cells
+    # into dates; setting it after loading cannot undo a 1,462-day shift.
+    eval_config.date_system = "1904" if _detect_epoch_1904(data) else "1900"
+    iterate, count, delta = _iteration_options(data)
+    eval_config.cycle_policy = "iterate" if iterate else "error"
+    eval_config.iterate_max_iterations = count
+    eval_config.iterate_max_change = delta
     return fz.Workbook.from_bytes(
         data, config=fz.WorkbookConfig(eval_config=eval_config)
+    )
+
+
+def _iteration_options(data: bytes) -> tuple[bool, int, float]:
+    """Workbook-declared iteration settings, with Excel's default limits."""
+    enabled, count, delta = False, 100, 0.001
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            properties = ElementTree.fromstring(archive.read("xl/workbook.xml")).find(
+                "{*}calcPr"
+            )
+        if properties is not None:
+            enabled = properties.get("iterate", "").strip() in {"1", "true"}
+            count = int(properties.get("iterateCount", "100"))
+            delta = float(properties.get("iterateDelta", "0.001"))
+    except (KeyError, ValueError, ElementTree.ParseError, zipfile.BadZipFile):
+        return enabled, 100, 0.001
+    return (
+        enabled,
+        count if count > 0 else 100,
+        delta if math.isfinite(delta) and delta >= 0 else 0.001,
     )
 
 
@@ -177,14 +210,22 @@ def boot_engine(
                 f"{sheet}!{a1(row, col)}"
             )
         if targets is not None:
-            reachable = _evaluate_targets(
+            reachable, target_alive = _evaluate_targets(
                 engine, engine_sheets, targets, warnings, progress
+            )
+            unavailable |= _cycle_unavailable(
+                engine,
+                data,
+                engine_sheets,
+                warnings,
+                reachable,
+                evaluation_failed=not target_alive,
             )
             scratch_ready = _ensure_scratch(engine)
             return EngineSession(
                 engine,
                 engine_sheets,
-                True,
+                target_alive,
                 quarantined,
                 scratch_ready,
                 reachable,
@@ -231,6 +272,9 @@ def boot_engine(
                     quarantined = too_deep.copy()
                     _mark_uncached_quarantine(engine, quarantined)
 
+        unavailable |= _cycle_unavailable(
+            engine, data, engine_sheets, warnings, evaluation_failed=not engine_alive
+        )
         scratch_ready = _ensure_scratch(engine)
     return EngineSession(
         engine,
@@ -240,6 +284,180 @@ def boot_engine(
         scratch_ready,
         unavailable=unavailable,
     )
+
+
+def _cycle_unavailable(
+    engine, data, engine_sheets, warnings, reachable=None, *, evaluation_failed=False
+):
+    """Keep iteration endpoints from masquerading as converged calculations.
+
+    Telemetry reports convergence per component in aggregate, without cell
+    addresses. If any component was capped, all cyclic components and their
+    dependents conservatively use file caches. Acyclic branches stay usable.
+    """
+    try:
+        telemetry = engine.last_cycle_telemetry()
+    except (AttributeError, RuntimeError):
+        return set()
+    iterate, _count, _delta = _iteration_options(data)
+    capped = telemetry.capped_sccs
+    if (
+        not evaluation_failed
+        and not capped
+        and (iterate or not telemetry.live_cycles_witnessed)
+    ):
+        if iterate and telemetry.iterated_sccs:
+            warnings.append(
+                "Iterative calculation converged under engine criteria for "
+                f"{telemetry.converged_sccs} "
+                f"cycle component(s) within {telemetry.max_passes_single_scc} "
+                "pass(es), using the workbook's iteration limits. A circular "
+                "model can have multiple fixed points; the saved values may "
+                "reflect different starting values or evaluation order"
+            )
+        return set()
+    cells = {
+        (s, r, c): f
+        for s, r, c, f in _iter_formulas_xml(data)
+        if s in engine_sheets and (reachable is None or (s, r, c) in reachable)
+    }
+    labels = {f"{quote_sheet(s)}!{a1(r, c)}": (s, r, c) for s, r, c in cells}
+    conservative = False
+    try:
+        engine.get_eval_plan([])
+        trace = engine.trace(
+            list(labels),
+            direction=fz.TraceDirection.Dependents,
+            max_depth=TRACE_MAX_DEPTH,
+            max_nodes=TRACE_MAX_NODES,
+            max_links=TRACE_MAX_LINKS,
+            max_work=TRACE_MAX_WORK,
+            range_member_budget=TRACE_RANGE_MEMBERS,
+        )
+        if trace.truncation.incomplete:
+            raise ValueError("cycle trace incomplete")
+        adjacency = {key: set() for key in trace.nodes.keys()}
+        indegree = dict.fromkeys(adjacency, 0)
+        for link in trace.links:
+            source = link.source.address
+            for target in link.targets:
+                destination = target.node.address
+                if destination not in adjacency[source]:
+                    adjacency[source].add(destination)
+                    indegree[destination] += 1
+        pending = deque(key for key, degree in indegree.items() if degree == 0)
+        while pending:
+            for destination in adjacency[pending.popleft()]:
+                indegree[destination] -= 1
+                if indegree[destination] == 0:
+                    pending.append(destination)
+        affected = {key for key, degree in indegree.items() if degree > 0}
+        if not affected and not capped and not telemetry.live_cycles_witnessed:
+            return set()
+        # Static traces cannot prove a dynamic address independent of a cycle.
+        for label, cell in labels.items():
+            formula = re.sub(r'"(?:[^"]|"")*"', '""', cells[cell])
+            if re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", formula, re.IGNORECASE):
+                affected.add(label)
+        pending = deque(affected)
+        while pending:
+            for destination in adjacency.get(pending.popleft(), ()):
+                if destination not in affected:
+                    affected.add(destination)
+                    pending.append(destination)
+        unavailable = set()
+        for label in affected:
+            rect = parse_ref(label)
+            if rect is not None and rect.ncells == 1 and rect.sheet in engine_sheets:
+                unavailable.add((rect.sheet, rect.r1, rect.c1))
+        if not unavailable:
+            raise ValueError("cycle cells could not be located")
+    except Exception:
+        if evaluation_failed and not capped:
+            # Missing-sheet errors can prevent the engine from exposing any
+            # trace at all. Recover the static cell graph from the package so
+            # one broken reference does not hide every independent formula.
+            unavailable = _static_cycle_dependents(data, cells)
+            if not unavailable:
+                return set()
+            conservative = unavailable == set(cells)
+        else:
+            conservative = True
+            unavailable = set(cells)
+    reason = (
+        f"Iterative calculation did not converge in {telemetry.max_passes_single_scc} "
+        f"pass(es) for {capped} cycle component(s)"
+        if capped
+        else "Circular calculation was detected without workbook iteration enabled"
+    )
+    if evaluation_failed and not capped:
+        reason = (
+            "Circular calculation could not be verified after incomplete evaluation"
+        )
+    scope = (
+        "all formula readings" if conservative else "cyclic cells and their dependents"
+    )
+    warnings.append(
+        f"{reason}: {scope} keep file caches where available and omit decomposition; "
+        "iteration endpoints are not reported as verified recalculations"
+    )
+    return unavailable
+
+
+def _static_cycle_dependents(data, cells):
+    from linexcel.resolver import _collect_ref_strings
+    from linexcel.structure import read_structure
+
+    names = {
+        name.upper(): refs for name, refs in read_structure(data).defined_names.items()
+    }
+    by_sheet = {}
+    for sheet, row, col in cells:
+        by_sheet.setdefault(sheet, []).append((row, col))
+    for positions in by_sheet.values():
+        positions.sort()
+    adjacency = {cell: set() for cell in cells}
+    indegree = dict.fromkeys(cells, 0)
+    work = 0
+    for destination, formula in cells.items():
+        try:
+            refs = _collect_ref_strings(fz.parse(formula).to_dict())
+        except Exception:
+            continue
+        for ref in refs:
+            rect = parse_ref(ref, default_sheet=destination[0])
+            for region in [rect] if rect is not None else names.get(ref.upper(), []):
+                positions = by_sheet.get(region.sheet, [])
+                start = bisect_left(positions, (region.r1, region.c1))
+                end = bisect_right(positions, (region.r2, region.c2))
+                work += end - start
+                if work > TRACE_MAX_WORK:
+                    return set(cells)
+                for row, col in positions[start:end]:
+                    if not region.c1 <= col <= region.c2:
+                        continue
+                    source = (region.sheet, row, col)
+                    if destination not in adjacency[source]:
+                        adjacency[source].add(destination)
+                        indegree[destination] += 1
+    pending = deque(cell for cell, degree in indegree.items() if degree == 0)
+    while pending:
+        for destination in adjacency[pending.popleft()]:
+            indegree[destination] -= 1
+            if indegree[destination] == 0:
+                pending.append(destination)
+    affected = {cell for cell, degree in indegree.items() if degree > 0}
+    for cell, formula in cells.items():
+        code = re.sub(r'"(?:[^"]|"")*"', '""', formula)
+        if re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", code, re.IGNORECASE):
+            affected.add(cell)
+    pending = deque(affected)
+    while pending:
+        for destination in adjacency[pending.popleft()]:
+            if destination not in affected:
+                affected.add(destination)
+                pending.append(destination)
+    return affected
 
 
 def _uncached_dependents(engine, data: bytes, too_deep: dict, warnings: list[str]):
@@ -306,7 +524,7 @@ def _evaluate_targets(
     targets: list[tuple[str, int, int]],
     warnings: list[str],
     progress,
-) -> set[tuple[str, int, int]]:
+) -> tuple[set[tuple[str, int, int]], bool]:
     """Evaluate only the upstream subgraph of ``targets``; return its cells.
 
     The global ``evaluate_all`` is never called: the trace walks the declared
@@ -363,9 +581,11 @@ def _evaluate_targets(
             f"indicator, not a duration estimate"
         )
     progress.step(f"evaluating {len(reachable):,} cell(s)")
+    succeeded = True
     try:
         engine.evaluate_cells(sorted(reachable))
     except Exception as exc:
+        succeeded = False
         failed = []
         for sheet, row, col in targets:
             try:
@@ -382,7 +602,7 @@ def _evaluate_targets(
             f"batch ({exc}); {note}Cells that keep the value stored in the "
             f"file are listed by the per-cell recovery"
         )
-    return reachable
+    return reachable, succeeded
 
 
 def _formulas_gone(
@@ -457,6 +677,8 @@ def _iter_formulas_xml(data: bytes):
                 try:
                     sheet_xml = zf.read(zpath)
                 except KeyError:
+                    continue
+                if b"<f" not in sheet_xml:
                     continue
                 shared: dict[bytes, bytes] = {}
                 for cell in _CELL_RE.finditer(sheet_xml):

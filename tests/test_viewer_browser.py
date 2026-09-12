@@ -49,7 +49,9 @@ def report(browser, tmp_path):
         path.write_text(render_html(graph), encoding="utf-8")
         page.goto(path.as_uri())
         page.wait_for_function("document.querySelector('#lin-cy')._cyreg?.cy != null")
-        page.evaluate("window.cy = document.querySelector('#lin-cy')._cyreg.cy")
+        page.evaluate(
+            "() => { window.cy = document.querySelector('#lin-cy')._cyreg.cy; }"
+        )
         page.wait_for_timeout(100)
         return page, errors
 
@@ -213,4 +215,154 @@ def test_report_controls_fit_viewport(report, width, height, dark):
         assert box["x"] >= 0 and box["x"] + box["width"] <= width
     page.wait_for_timeout(600)
     capture(page, f"report-{width}-{'dark' if dark else 'light'}")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_neighbor_action_fits_the_visible_neighborhood(report, width, height):
+    graph = {
+        "nodes": [{"id": "hub", "kind": "cell", "label": "Hub"}]
+        + [{"id": str(i), "kind": "input", "label": f"Input {i}"} for i in range(80)],
+        "edges": [
+            {"id": f"e{i}", "source": str(i), "target": "hub", "kind": "ref"}
+            for i in range(80)
+        ],
+    }
+    page, errors = report(graph, width=width, height=height)
+    page.click("#lin-lay-dagre")
+    page.evaluate("() => { cy.getElementById('hub').emit('tap'); }")
+    page.click("#lin-fit-neighbors")
+    page.wait_for_function("""() => {
+        const rect = document.querySelector('#lin-cy').getBoundingClientRect();
+        const box = cy.nodes(':visible').renderedBoundingBox();
+        return box.x1 >= 0 && box.y1 >= 0
+            && box.x2 <= rect.width && box.y2 <= rect.height;
+    }""")
+    # A mobile reader can also reach the original canvas controls while the
+    # details are open. The old full-height overlay intercepted this click.
+    page.click("#lin-fit-sel")
+    assert page.evaluate("cy.getElementById('hub').selected()")
+    assert not errors
+
+
+@pytest.mark.parametrize(
+    "value,evaluated,state",
+    [
+        ("#VALUE!", True, "is-error"),
+        ({"type": "Error", "kind": "Div"}, True, "is-error"),
+        (None, False, "is-pending"),
+    ],
+)
+def test_failed_or_pending_final_step_does_not_signal_success(
+    report, value, evaluated, state
+):
+    graph = filtered_graph()
+    graph["nodes"][1]["steps"] = {
+        "label": "SUM",
+        "expr": "SUM(A1)",
+        "value": value,
+        "evaluated": evaluated,
+        "inputs": [{"ref": "A1", "value": value}],
+    }
+    page, errors = report(graph)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    assert state in page.locator(".lin-final").get_attribute("class")
+    assert (
+        page.locator(".lin-final").evaluate("e => getComputedStyle(e).borderLeftColor")
+        != "rgb(27, 175, 122)"
+    )
+    assert not errors
+
+
+def rich_graph():
+    graph = filtered_graph()
+    graph["nodes"][1]["doc"] = "## Synthetic cell documentation\nReads the input."
+    image = (
+        "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' "
+        "width='120' height='80'><rect width='120' height='80' fill='gray'/></svg>"
+    )
+    graph["meta"] = {
+        "workbookDoc": (
+            "# Synthetic overview\n\n| Item | Value |\n|---|---|\n| Test | 2 |"
+        ),
+        "workbookContext": {
+            "sheets": [
+                {
+                    "name": "Out",
+                    "visibility": "visible",
+                    "dimensions": {"rows": 1, "columns": 2},
+                    "preview_range": "A1:B1",
+                    "preview": [{"row": 1, "values": ["Test", 2]}],
+                }
+            ]
+        },
+        "screenshots": [image, image.replace("gray", "blue")],
+    }
+    return graph
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_all_rich_tabs_and_search_navigation(report, width, height):
+    page, errors = report(rich_graph(), width=width, height=height)
+    page.click("#lin-tab-overview")
+    assert (
+        page.locator("#lin-overview .lin-doc h1").inner_text() == "Synthetic overview"
+    )
+    assert page.locator("#lin-overview td").count() == 2
+    page.click("#lin-tab-sheets")
+    assert page.locator("#lin-sheet-details td").count() == 2
+    page.click("#lin-tab-screenshots")
+    page.locator("#lin-screenshots .lin-chip").nth(1).click()
+    assert (
+        page.locator("#lin-screenshots .lin-chip").nth(1).get_attribute("aria-pressed")
+        == "true"
+    )
+    page.wait_for_function("document.querySelector('.lin-shot').naturalWidth === 120")
+    # Search is available in the shared header: submitting a match must make
+    # the selected cell visible instead of modifying a hidden graph.
+    page.fill("#lin-search", "Output")
+    page.press("#lin-search", "Enter")
+    assert page.locator("#lin-graph-main").is_visible()
+    assert page.locator("#lin-panel .lin-doc h2").inner_text() == (
+        "Synthetic cell documentation"
+    )
+    assert page.evaluate("cy.getElementById('c').selected()")
+    assert not errors
+
+
+def test_documentation_renders_nested_lists_headings_and_literal_code(report):
+    graph = rich_graph()
+    graph["meta"]["workbookDoc"] = (
+        "# Workbook `example.xlsx`\n\n"
+        "- Outer\n  - Inner **bold**\n  - Another child\n- Next\n\n"
+        "1. First step\n2. Second step\n\n"
+        '```excel\n=IF(A1<2,"<tag>","ok")\n```'
+    )
+    page, errors = report(graph)
+    page.click("#lin-tab-overview")
+    assert page.locator("#lin-overview h1 code").inner_text() == "example.xlsx"
+    assert page.locator("#lin-overview ul > li > ul > li").count() == 2
+    assert page.locator("#lin-overview ul ul strong").inner_text() == "bold"
+    assert page.locator("#lin-overview ol > li").count() == 2
+    assert page.locator("#lin-overview pre code").inner_text() == (
+        '=IF(A1<2,"<tag>","ok")'
+    )
+    assert page.locator("#lin-overview tag").count() == 0
+    assert not errors
+
+
+def test_sheet_context_limits_are_visible_and_escaped(report):
+    graph = rich_graph()
+    warning = 'Comments not scanned: <img src=x onerror="window.injected=true">'
+    context = graph["meta"]["workbookContext"]
+    context["warnings"] = [warning]
+    context["sheets"][0]["dimensions"] = {"rows": None, "columns": None}
+    page, errors = report(graph)
+    page.click("#lin-tab-sheets")
+    note = page.locator(".lin-context-warnings")
+    assert note.is_visible()
+    assert note.inner_text() == warning
+    assert note.locator("img").count() == 0
+    assert "— rows × — columns" in page.locator("#lin-sheet-details").inner_text()
+    assert page.evaluate("window.injected === undefined")
     assert not errors

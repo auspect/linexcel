@@ -208,7 +208,7 @@
   /* The canvas and its floating toolbar share one positioning parent, so the
      toolbar can sit above the canvas (z-index) without ever landing under the
      Cytoscape layer Cytoscape creates inside #lin-cy. */
-  .lin-canvas-area { flex: 1; position: relative; min-width: 0; display: flex; }
+  .lin-canvas-area { flex: 1; position: relative; min-width: 0; min-height: 0; display: flex; }
   .lin-canvas-area .lin-cy { width: 100%; }
   .lin-legend {
     position: absolute; left: .6rem; bottom: .6rem; display: flex; gap: .6rem;
@@ -344,6 +344,10 @@
   .lin-step.lin-final { border-left-color: var(--green); }
   .lin-step.lin-final .lin-op { background: var(--green); }
   .lin-step.lin-final .lin-val { margin-bottom: .2rem; }
+  .lin-step.is-error { border-left-color: var(--warn-line); }
+  .lin-step.is-error .lin-op { background: var(--warn-bg); color: var(--warn-fg); }
+  .lin-step.is-pending { border-left-color: var(--line); }
+  .lin-step.is-pending .lin-op { background: var(--code-bg); color: var(--ink2); }
   .lin-op {
     font-size: .68rem; font-weight: 700; color: var(--on-brand); background: var(--blue);
     border-radius: 4px; padding: .04rem .35rem; margin-right: .35rem;
@@ -417,6 +421,12 @@
   .lin-empty-desc { text-align: center; line-height: 1.45; padding: 0 .5rem; }
   .lin-overview { flex: 1; overflow-y: auto; padding: 1.4rem clamp(1rem, 4vw, 4rem) 3rem; }
   .lin-overview-inner { max-width: 880px; }
+  .lin-context-warnings {
+    margin-bottom: 1rem; padding: .6rem .8rem; border-radius: 6px;
+    border: 1px solid var(--warn-line); background: var(--warn-bg);
+    color: var(--warn-fg); font-size: .82rem;
+  }
+  .lin-context-warnings p { margin: .25rem 0; }
   .lin-overview h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
   .lin-overview .lin-doc { font-size: .92rem; line-height: 1.55; }
   .lin-ai-box {
@@ -561,6 +571,17 @@
   /* The two readings stop being readable side by side once the panel is a
      narrow overlay: stack them and move the divider between the rows. */
   @media (max-width: 560px) {
+    /* Keep the graph controls usable while inspecting a cell on a phone.
+       A full-height overlay covered both the selected node and Fit controls. */
+    #lin-graph-main { flex-direction: column; }
+    .lin-panel {
+      position: relative; top: auto; right: auto; bottom: auto;
+      width: 100%; flex: 0 0 55%; max-height: 55%; min-height: 0;
+      box-shadow: 0 -4px 16px var(--shadow);
+    }
+    .lin-rail .lin-tabs { flex-wrap: nowrap; }
+    .lin-rail .lin-tab { white-space: nowrap; }
+    .lin-rail > div { flex-shrink: 0; }
     .lin-vgrid { grid-template-columns: 1fr; }
     .lin-reading + .lin-reading { border-left: none; border-top: 1px solid var(--hair); }
     /* The sample table keeps its three columns — a per-cell comparison read
@@ -1122,6 +1143,10 @@
           || (n.formula || '').toLowerCase().indexOf(q) >= 0);
       });
       if (!matched.length) { setStatus(_t('search_none'), true); return; }
+      // Search lives in the shared header on every tab. Bring its result into
+      // view before selecting it, including when documentation is open.
+      switchTab(document.getElementById('lin-tab-graph'),
+        document.getElementById('lin-graph-main'));
       setStatus(_t('search_matches', { count: matched.length }), false);
       // The first hit drives the panel and the neighbourhood highlight; every
       // other match joins the selection and is undimmed, then the view frames
@@ -1346,12 +1371,23 @@
 
       function showSheetDetails(sheet) {
         detailsContainer.innerHTML = '';
+        if (ctx.warnings && ctx.warnings.length) {
+          var notices = el('div', 'lin-context-warnings');
+          notices.setAttribute('role', 'note');
+          notices.appendChild(icon('warn'));
+          ctx.warnings.forEach(function (warning) {
+            notices.appendChild(el('p', null, warning));
+          });
+          detailsContainer.appendChild(notices);
+        }
 
         var card = el('div');
         var header = el('div', 'lin-card-head');
         header.appendChild(el('h3', null, '📄 ' + sheet.name));
+        var dims = sheet.dimensions || {};
         header.appendChild(el('span', 'lin-hint', _t('sheet_dims', {
-          rows: sheet.dimensions.rows, cols: sheet.dimensions.columns
+          rows: dims.rows == null ? '—' : dims.rows,
+          cols: dims.columns == null ? '—' : dims.columns
         })));
         card.appendChild(header);
 
@@ -1759,6 +1795,17 @@
   // the zoom back, keeping the set centred.
   var FOCUS_MAX_ZOOM = 1.2;
   function frameEles(cy, eles, duration) {
+    // Opening the mobile detail pane changes the canvas height. Refresh its
+    // dimensions before fitting rather than waiting for ResizeObserver.
+    cy.resize();
+    cy.stop(true, false);
+    // A broad neighborhood on a short mobile canvas may need to zoom out
+    // farther than the initial wheel limit. Otherwise "Fit" still clips it.
+    var bounds = eles.boundingBox();
+    var needed = Math.min((cy.width() - 80) / bounds.w, (cy.height() - 80) / bounds.h);
+    if (isFinite(needed) && needed > 0 && needed < cy.minZoom()) {
+      cy.minZoom(Math.max(0.000001, needed * 0.95));
+    }
     cy.animate({ fit: { eles: eles, padding: 40 }, duration: duration,
       complete: function () {
         if (cy.zoom() <= FOCUS_MAX_ZOOM) return;
@@ -1868,12 +1915,44 @@
   // first, so model output can never inject markup.
   function _md(src) {
     var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    var lines = esc.split('\n'), out = [], inList = false;
+    var lines = esc.split('\n'), out = [], lists = [];
+    function closeLists() {
+      while (lists.length) out.push('</li></' + lists.pop().type + '>');
+    }
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i];
+      // Documentation commonly contains nested bullet lists and numbered
+      // instructions. Keep child lists inside their parent list item.
+      var item = /^(\s*)([-*+]|\d+[.)])\s+(.+)$/.exec(l);
+      if (item) {
+        var indent = item[1].replace(/\t/g, '    ').length;
+        var type = /^\d/.test(item[2]) ? 'ol' : 'ul';
+        while (lists.length && indent < lists[lists.length - 1].indent) {
+          out.push('</li></' + lists.pop().type + '>');
+        }
+        var top = lists[lists.length - 1];
+        if (top && indent === top.indent && type !== top.type) {
+          out.push('</li></' + lists.pop().type + '>'); top = null;
+        }
+        if (!top || indent > top.indent) {
+          out.push('<' + type + '>'); lists.push({ indent: indent, type: type });
+        } else out.push('</li>');
+        out.push('<li>' + _mdInline(item[3]));
+        continue;
+      }
+      if (!l.trim()) continue;
+      if (lists.length && /^\s+\S/.test(l)) {
+        out.push(' ' + _mdInline(l.trim())); continue;
+      }
+      closeLists();
+      if (/^```[\w-]*\s*$/.test(l)) {
+        var code = [];
+        while (++i < lines.length && !/^```\s*$/.test(lines[i])) code.push(lines[i]);
+        out.push('<pre class="lin-code"><code>' + code.join('\n') + '</code></pre>');
+        continue;
+      }
       // Pipe table: a header row, a |---|---| separator, then body rows.
       if (/^\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i + 1])) {
-        if (inList) { out.push('</ul>'); inList = false; }
         var header = _mdRow(l);
         var aligns = _mdRow(lines[i + 1]).map(function (c) {
           var t = c.replace(/[\s\\]/g, '');
@@ -1894,14 +1973,12 @@
         }).join('') + '</tbody></table></div>');
         continue;
       }
-      if (/^###\s/.test(l)) { if (inList) { out.push('</ul>'); inList = false; } out.push('<h3>' + l.slice(4).trim() + '</h3>'); continue; }
-      if (/^##\s/.test(l))  { if (inList) { out.push('</ul>'); inList = false; } out.push('<h2>' + l.slice(3).trim() + '</h2>'); continue; }
-      if (/^#\s/.test(l))   { if (inList) { out.push('</ul>'); inList = false; } out.push('<h1>' + l.slice(2).trim() + '</h1>'); continue; }
-      if (/^[-*]\s/.test(l)) { if (!inList) { out.push('<ul>'); inList = true; } out.push('<li>' + _mdInline(l.replace(/^[-*]\s+/, '')) + '</li>'); continue; }
-      if (inList) { out.push('</ul>'); inList = false; }
+      if (/^###\s/.test(l)) { out.push('<h3>' + _mdInline(l.slice(4).trim()) + '</h3>'); continue; }
+      if (/^##\s/.test(l))  { out.push('<h2>' + _mdInline(l.slice(3).trim()) + '</h2>'); continue; }
+      if (/^#\s/.test(l))   { out.push('<h1>' + _mdInline(l.slice(2).trim()) + '</h1>'); continue; }
       out.push('<p>' + _mdInline(l) + '</p>');
     }
-    if (inList) out.push('</ul>');
+    closeLists();
     return out.join('');
   }
   // One table row → trimmed cells, character by character so a pipe escaped
@@ -1954,6 +2031,12 @@
     var badge = el('span', 'lin-badge', badgeLabel);
     paintBadge(badge, (KIND[n.kind] || {}).color || PALETTE.grey);
     head.appendChild(badge);
+    var neighbors = el('button', 'lin-chip', _t('fit_neighbors'));
+    neighbors.type = 'button'; neighbors.id = 'lin-fit-neighbors';
+    neighbors.onclick = function () {
+      frameEles(cy, cy.getElementById(n.id).closedNeighborhood().filter(':visible'), 250);
+    };
+    head.appendChild(neighbors);
     var close = el('button', 'lin-close', '✕');
     close.type = 'button';
     close.setAttribute('aria-label', _t('close'));
@@ -2259,6 +2342,12 @@
 
   function renderStep(parent, s, depth) {
     var d = el('div', 'lin-step' + (depth === 0 ? ' lin-final' : ''));
+    if (!s.evaluated) d.classList.add('is-pending');
+    else if ((s.value && typeof s.value === 'object' && s.value.type === 'Error')
+        || (typeof s.value === 'string'
+          && /^#(?:DIV\/0!|N\/A|NAME\?|NUM!|NULL!|REF!|VALUE!|SPILL!|CALC!)$/.test(s.value))) {
+      d.classList.add('is-error');
+    }
     d.style.marginLeft = Math.min(depth, 6) * 12 + 'px';
     if (depth === 0) d.appendChild(el('div', 'lin-val', _t('final_result')));
     var head = el('div');

@@ -149,7 +149,7 @@ class TestSayingHowLongItWillTake:
         monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
         main(["analyze", str(workbook_path), "--no-html"])
         err = capsys.readouterr().err
-        assert "200 MB of formulas" in err
+        assert "200 MB of worksheet XML" in err
         assert "about 2 minutes" in err
         assert "an estimate, not a promise" in err
 

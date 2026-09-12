@@ -41,6 +41,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Dark theme",
         "fit_all": "Fit",
         "fit_sel": "Fit Selection",
+        "fit_neighbors": "Fit neighbors",
         "zoom_in": "Zoom In",
         "zoom_out": "Zoom Out",
         "layout_flow": "Flow",
@@ -113,12 +114,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependents",
         "cells": "cells",
         "ai_doc": "🤖 AI Documentation (Generated)",
-        "ai_vision": "🤖 AI — read from the screenshot",
+        "ai_vision": "🤖 AI description — check against the screenshot",
         "ai_overview": "🤖 AI Generated Overview",
         "ai_overview_desc": (
-            "This overview was written by an AI model from the deterministic "
-            "lineage. The facts presented are derived from the workbook's "
-            "formulas and data."
+            "This AI overview is based on extracted workbook information. "
+            "Check its claims against the formulas, values and source workbook; "
+            "it is not independent evidence."
         ),
         "fallback": (
             "Cytoscape could not be loaded (CDN access required). The JSON "
@@ -187,6 +188,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Thème sombre",
         "fit_all": "Ajuster",
         "fit_sel": "Ajuster la sélection",
+        "fit_neighbors": "Cadrer les voisins",
         "zoom_in": "Zoom avant",
         "zoom_out": "Zoom arrière",
         "layout_flow": "Flux",
@@ -260,12 +262,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dépendants",
         "cells": "cellules",
         "ai_doc": "🤖 Documentation IA (Générée)",
-        "ai_vision": "🤖 IA — lu sur la capture",
+        "ai_vision": "🤖 Description IA — à vérifier sur la capture",
         "ai_overview": "🤖 Synthèse Générée par IA",
         "ai_overview_desc": (
-            "Cette synthèse a été rédigée par un modèle d'IA à partir du "
-            "lignage de calculs déterministe. Les faits présentés proviennent "
-            "des formules et des données du classeur."
+            "Cette synthèse IA s'appuie sur les informations extraites du classeur. "
+            "Vérifiez ses affirmations avec les formules, les valeurs et le classeur "
+            "source ; elle ne constitue pas une preuve indépendante."
         ),
         "fallback": (
             "Cytoscape n'a pas pu être chargé (accès CDN requis). Le graphe "
@@ -334,6 +336,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Tema oscuro",
         "fit_all": "Ajustar",
         "fit_sel": "Ajustar selección",
+        "fit_neighbors": "Ajustar vecinos",
         "zoom_in": "Acercar",
         "zoom_out": "Alejar",
         "layout_flow": "Flujo",
@@ -407,12 +410,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependientes",
         "cells": "celdas",
         "ai_doc": "🤖 Documentación IA (generada)",
-        "ai_vision": "🤖 IA — leído en la captura",
+        "ai_vision": "🤖 Descripción IA — verificar en la captura",
         "ai_overview": "🤖 Resumen generado por IA",
         "ai_overview_desc": (
-            "Este resumen ha sido redactado por un modelo de IA a partir del "
-            "linaje de cálculos determinista. Los hechos presentados proceden "
-            "de las fórmulas y los datos del libro."
+            "Este resumen de IA se basa en la información extraída del libro. "
+            "Compruebe sus afirmaciones con las fórmulas, los valores y el libro "
+            "original; no constituye una prueba independiente."
         ),
         "fallback": (
             "No se pudo cargar Cytoscape (se requiere acceso al CDN). El grafo "
@@ -482,6 +485,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Dunkles Design",
         "fit_all": "Einpassen",
         "fit_sel": "Auswahl einpassen",
+        "fit_neighbors": "Nachbarn einpassen",
         "zoom_in": "Vergrößern",
         "zoom_out": "Verkleinern",
         "layout_flow": "Fluss",
@@ -556,12 +560,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Nachfolger",
         "cells": "Zellen",
         "ai_doc": "🤖 KI-Dokumentation (generiert)",
-        "ai_vision": "🤖 KI — aus dem Screenshot gelesen",
+        "ai_vision": "🤖 KI-Beschreibung — am Screenshot prüfen",
         "ai_overview": "🤖 KI-generierter Überblick",
         "ai_overview_desc": (
-            "Dieser Überblick wurde von einem KI-Modell auf Basis der "
-            "deterministischen Berechnungsherkunft verfasst. Die dargestellten "
-            "Fakten stammen aus den Formeln und Daten der Arbeitsmappe."
+            "Dieser KI-Überblick basiert auf extrahierten Informationen aus der "
+            "Arbeitsmappe. Prüfen Sie die Aussagen anhand der Formeln, Werte und "
+            "Originalarbeitsmappe; er ist kein unabhängiger Nachweis."
         ),
         "fallback": (
             "Cytoscape konnte nicht geladen werden (CDN-Zugriff erforderlich). "
@@ -631,6 +635,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Tema scuro",
         "fit_all": "Adatta",
         "fit_sel": "Adatta selezione",
+        "fit_neighbors": "Inquadra vicini",
         "zoom_in": "Ingrandisci",
         "zoom_out": "Riduci",
         "layout_flow": "Flusso",
@@ -705,12 +710,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dipendenti",
         "cells": "celle",
         "ai_doc": "🤖 Documentazione IA (generata)",
-        "ai_vision": "🤖 IA — letto dalla schermata",
+        "ai_vision": "🤖 Descrizione IA — verificare sulla schermata",
         "ai_overview": "🤖 Panoramica generata dall'IA",
         "ai_overview_desc": (
-            "Questa panoramica è stata redatta da un modello di IA a partire "
-            "dalla derivazione deterministica dei calcoli. I fatti presentati "
-            "provengono dalle formule e dai dati della cartella di lavoro."
+            "Questa panoramica IA si basa sulle informazioni estratte dalla "
+            "cartella di lavoro. Verificate le affermazioni con le formule, i valori "
+            "e la cartella originale; non costituisce una prova indipendente."
         ),
         "fallback": (
             "Impossibile caricare Cytoscape (è necessario l'accesso al CDN). "
@@ -780,6 +785,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Tema escuro",
         "fit_all": "Ajustar",
         "fit_sel": "Ajustar seleção",
+        "fit_neighbors": "Ajustar vizinhos",
         "zoom_in": "Ampliar",
         "zoom_out": "Reduzir",
         "layout_flow": "Fluxo",
@@ -852,12 +858,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependentes",
         "cells": "células",
         "ai_doc": "🤖 Documentação de IA (gerada)",
-        "ai_vision": "🤖 IA — lido na captura",
+        "ai_vision": "🤖 Descrição IA — verificar na captura",
         "ai_overview": "🤖 Visão geral gerada por IA",
         "ai_overview_desc": (
-            "Esta visão geral foi redigida por um modelo de IA a partir da "
-            "linhagem determinista dos cálculos. As informações apresentadas "
-            "provêm das fórmulas e dos dados da pasta de trabalho."
+            "Esta visão geral de IA baseia-se nas informações extraídas da pasta "
+            "de trabalho. Verifique as afirmações nas fórmulas, nos valores e na "
+            "pasta original; não constitui uma prova independente."
         ),
         "fallback": (
             "Não foi possível carregar o Cytoscape (é necessário acesso ao "
@@ -927,6 +933,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "Donker thema",
         "fit_all": "Passend maken",
         "fit_sel": "Selectie passend maken",
+        "fit_neighbors": "Buren passend maken",
         "zoom_in": "Inzoomen",
         "zoom_out": "Uitzoomen",
         "layout_flow": "Stroom",
@@ -1001,12 +1008,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Afhankelijken",
         "cells": "cellen",
         "ai_doc": "🤖 AI-documentatie (gegenereerd)",
-        "ai_vision": "🤖 AI — van de schermafbeelding",
+        "ai_vision": "🤖 AI-beschrijving — controleer op de schermafbeelding",
         "ai_overview": "🤖 Door AI gegenereerd overzicht",
         "ai_overview_desc": (
-            "Dit overzicht is geschreven door een AI-model op basis van de "
-            "deterministische herkomst van de berekeningen. De weergegeven "
-            "gegevens komen uit de formules en gegevens van de werkmap."
+            "Dit AI-overzicht is gebaseerd op informatie uit de werkmap. "
+            "Controleer de beweringen aan de hand van de formules, waarden en "
+            "oorspronkelijke werkmap; het is geen onafhankelijk bewijs."
         ),
         "fallback": (
             "Cytoscape kon niet worden geladen (CDN-toegang vereist). De "
@@ -1076,6 +1083,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "ダークテーマ",
         "fit_all": "全体表示",
         "fit_sel": "選択範囲を表示",
+        "fit_neighbors": "隣接ノードを表示",
         "zoom_in": "拡大",
         "zoom_out": "縮小",
         "layout_flow": "フロー",
@@ -1145,11 +1153,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "参照先",
         "cells": "セル",
         "ai_doc": "🤖 AI ドキュメント（生成）",
-        "ai_vision": "🤖 AI — スクリーンショットから",
+        "ai_vision": "🤖 AIの説明 — スクリーンショットで確認してください",
         "ai_overview": "🤖 AI が生成した概要",
         "ai_overview_desc": (
-            "この概要は、決定論的に抽出された計算系統に基づいて AI モデルが"
-            "作成したものです。記載内容はブックの数式とデータに由来します。"
+            "この AI 概要は、ブックから抽出した情報に基づいています。"
+            "記載内容を数式、値、元のブックと照合してください。"
+            "この概要は独立した証拠にはなりません。"
         ),
         "fallback": (
             "Cytoscape を読み込めませんでした（CDN へのアクセスが必要です）。"
@@ -1216,6 +1225,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "theme_dark": "深色主题",
         "fit_all": "适应窗口",
         "fit_sel": "适应所选",
+        "fit_neighbors": "显示相邻节点",
         "zoom_in": "放大",
         "zoom_out": "缩小",
         "layout_flow": "流向",
@@ -1280,11 +1290,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "从属单元格",
         "cells": "个单元格",
         "ai_doc": "🤖 AI 文档（自动生成）",
-        "ai_vision": "🤖 AI — 读自截图",
+        "ai_vision": "🤖 AI 描述 — 请对照截图核实",
         "ai_overview": "🤖 AI 生成的概览",
         "ai_overview_desc": (
-            "本概览由 AI 模型根据确定性的计算血缘生成。"
-            "所述内容均来自工作簿的公式与数据。"
+            "本 AI 概览基于从工作簿中提取的信息。"
+            "请对照公式、数值和源工作簿核实其中的说法；"
+            "本概览不构成独立证据。"
         ),
         "fallback": (
             "无法加载 Cytoscape（需要访问 CDN）。"

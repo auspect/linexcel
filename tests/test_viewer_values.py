@@ -924,7 +924,7 @@ class TestScreenshotDescription:
 
     def test_it_is_badged_as_read_from_the_image_not_from_the_lineage(self):
         html = self._report(screenshotDocs={"Sales": "..."})
-        assert EN["ai_vision"] == "🤖 AI — read from the screenshot"
+        assert EN["ai_vision"] == "🤖 AI description — check against the screenshot"
         assert EN["ai_vision"] in html
         assert EN["ai_doc"] in html  # the two badges stay distinguishable
         assert "box.appendChild(el('span', 'lin-ai-badge', _t('ai_vision')));" in html
