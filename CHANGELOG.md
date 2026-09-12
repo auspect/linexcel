@@ -48,12 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the engine's criteria and does not imply a unique fixed point.
 - **Self-closing XML cells cannot capture a following cell's formula.** The
   quarantine scan no longer backtracks quadratically over styled empty cells.
-- **AI dossiers preserve value provenance and uncertainty.** Cached or volatile
+- **AI dossiers preserve engine identity, value provenance and uncertainty.** Cached or volatile
   snapshots are not labeled recalculated, disagreements and omitted neighbors
   are explicit, and useful calculation steps are retained before extra neighbor
   examples. Prompts in all nine languages reject unsupported explanations of
   discrepancies and extrapolations across sparse groups. Vision descriptions
-  are labeled for checking against the source image.
+  and overviews are labeled for checking against the original evidence.
 - **Viewer Markdown handles nested lists and inline formatting in headings.**
   Spreadsheet errors and unevaluated steps no longer use the successful-result
   style. Sheet context displays extraction warnings and unknown dimensions.

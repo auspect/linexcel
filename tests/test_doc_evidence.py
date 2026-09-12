@@ -39,6 +39,7 @@ def test_provider_receives_disagreement_and_partial_neighbor_evidence():
         {"id": f"S!B{i}", "value": i, "valueSource": "file"} for i in range(1, 36)
     ]
     graph = {
+        "meta": {"engine": "formualizer (Rust)"},
         "nodes": [node, *neighbors],
         "edges": [{"source": n["id"], "target": node["id"]} for n in neighbors],
     }
@@ -51,6 +52,7 @@ def test_provider_receives_disagreement_and_partial_neighbor_evidence():
     document_nodes(graph, [node["id"]], provider=provider)
     dossier = received[0]
     assert dossier["computed_value"] == 0
+    assert dossier["recalculation_engine"] == "formualizer (Rust)"
     assert dossier["cached_value"] == 42
     assert dossier["cached_agreement"] == "differ"
     assert dossier["group_cached_agreement"] == "differ"

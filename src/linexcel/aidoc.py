@@ -520,7 +520,7 @@ def build_dossier(graph: dict[str, Any], node_id: str) -> dict[str, Any] | None:
     return _build_dossier(_index_dossiers(graph), node_id)
 
 
-def _index_dossiers(graph: dict[str, Any]) -> tuple[dict, dict, dict]:
+def _index_dossiers(graph: dict[str, Any]) -> tuple[dict, dict, dict, dict]:
     """Index adjacency once for a batch, instead of rescanning every edge."""
     nodes = {n["id"]: n for n in graph["nodes"]}
     incoming: dict[str, list[dict]] = {}
@@ -528,11 +528,11 @@ def _index_dossiers(graph: dict[str, Any]) -> tuple[dict, dict, dict]:
     for edge in graph["edges"]:
         incoming.setdefault(edge["target"], []).append(edge)
         outgoing.setdefault(edge["source"], []).append(edge)
-    return nodes, incoming, outgoing
+    return nodes, incoming, outgoing, graph.get("meta", {})
 
 
-def _build_dossier(index: tuple[dict, dict, dict], node_id: str) -> dict | None:
-    nodes, incoming, outgoing = index
+def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict | None:
+    nodes, incoming, outgoing, meta = index
     node = nodes.get(node_id)
     if node is None:
         return None
@@ -553,6 +553,7 @@ def _build_dossier(index: tuple[dict, dict, dict], node_id: str) -> dict | None:
         "computed_value": node.get("value")
         if node.get("valueSource") == "engine"
         else None,
+        "recalculation_engine": meta.get("engine", "unspecified"),
         **_value_evidence(node),
         "value_samples": node.get("samples"),
         "decomposition": _compact_steps(node.get("steps")),

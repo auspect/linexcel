@@ -3,7 +3,7 @@
   "sources": {
     "src/linexcel/viewer.py": "5cc57330cf1cc08c8192222163922169e79f197babd8dc33a249e39d447c80fa",
     "src/linexcel/assets/viewer.html": "f53f57f188e1102155159ed3d18b6909da410064dd846cf4c327768d80554914",
-    "src/linexcel/i18n.py": "0be0da44370404f9750cced7b20a5f338a387a0f62b107d59d7e111ca22278d4"
+    "src/linexcel/i18n.py": "a4013ef7d5bd85405bf35e603fcf24fe7f46a8e3a9cfe5ac41df459e87928a75"
   },
   "images": {
     "viewer_graph.png": "Dependency graph, workbook-wide",
