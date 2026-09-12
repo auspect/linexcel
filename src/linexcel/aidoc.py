@@ -92,7 +92,9 @@ _VISION_SYSTEM = _prompts("vision")
 
 
 class AiDocError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, usage: TokenUsage | None = None):
+        super().__init__(message)
+        self.usage = usage
 
 
 # ──────────────────────────────────────────────
@@ -413,14 +415,32 @@ class _OpenAICompatProvider:
             text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
             raise AiDocError(f"OpenAI-compatible API call failed: {exc}") from exc
-        return text, _usage_from(
+        return self._checked_response(
+            response, system_prompt + "\n\n" + user_prompt, text
+        )
+
+    def _checked_response(
+        self, response: Any, prompt: str, text: str
+    ) -> tuple[str, TokenUsage]:
+        usage = _usage_from(
             getattr(response, "usage", None),
             ("prompt_tokens", "completion_tokens"),
-            system_prompt + "\n\n" + user_prompt,
+            prompt,
             text,
             model=self._model,
             provider="openai-compatible",
         )
+        reason = getattr(response.choices[0], "finish_reason", None)
+        if reason not in (None, "stop"):
+            raise AiDocError(
+                f"AI response is incomplete (finish_reason={reason}). "
+                "Increase max_tokens for a length limit, "
+                "or inspect the provider response.",
+                usage=usage,
+            )
+        if not text:
+            raise AiDocError("AI returned empty response", usage=usage)
+        return text, usage
 
     def generate_with_image(
         self,
@@ -470,13 +490,8 @@ class _OpenAICompatProvider:
         # The fallback estimate counts the prompts only — an image is worth
         # hundreds of tokens that no character count can see — so a run whose
         # endpoint reports nothing is under-counted, and says it is estimated.
-        return text, _usage_from(
-            getattr(response, "usage", None),
-            ("prompt_tokens", "completion_tokens"),
-            system_prompt + "\n\n" + user_prompt,
-            text,
-            model=self._model,
-            provider="openai-compatible",
+        return self._checked_response(
+            response, system_prompt + "\n\n" + user_prompt, text
         )
 
 
@@ -615,6 +630,26 @@ def _fit_node_dossier(dossier: dict) -> str:
         dossier["decomposition"] = (
             "omitted: dossier size limit; not a calculation proof"
         )
+    if len(encoded()) > MAX_DOSSIER_CHARS:
+        # Never pass a sliced formula as if it were the complete calculation.
+        # Oversized values/formulas carry an explicit omission instead.
+        def bound(value: Any) -> Any:
+            if isinstance(value, str) and len(value) > 1000:
+                return {
+                    "omitted": "dossier size limit",
+                    "original_characters": len(value),
+                }
+            if isinstance(value, dict):
+                return {key: bound(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [bound(item) for item in value]
+            return value
+
+        dossier = bound(dossier)
+    if len(encoded()) > MAX_DOSSIER_CHARS:
+        raise AiDocError(
+            "Node dossier exceeds size limit even after explicit omissions"
+        )
     return encoded()
 
 
@@ -640,6 +675,8 @@ def _compact_steps(step: dict | None) -> dict | None:
     }
     if step.get("inputs"):
         out["inputs"] = step["inputs"]
+    if step.get("evaluationReason"):
+        out["evaluation_reason"] = step["evaluationReason"]
     children = [_compact_steps(c) for c in step.get("children", [])]
     if children:
         out["sub_steps"] = children
@@ -989,15 +1026,18 @@ def document_workbook(
     user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
         text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
-    except AiDocError:
+    except AiDocError as exc:
+        if usage is not None and exc.usage is not None:
+            usage.add(exc.usage)
         raise
     except Exception as exc:
         raise AiDocError(f"AI documentation failed: {exc}") from exc
     if usage is not None:
         usage.add(call_usage)
-    if not text or not text.strip():
-        return "(AI returned empty response)"
-    return _insert_tables(text)
+    rendered = _insert_tables(text) if text else ""
+    if not rendered.strip():
+        raise AiDocError("AI returned empty response")
+    return rendered
 
 
 def describe_images(
@@ -1074,12 +1114,21 @@ def describe_images(
                 max_tokens=max_tokens,
             )
         except (AiDocError, OSError) as exc:
+            if (
+                isinstance(exc, AiDocError)
+                and exc.usage is not None
+                and usage is not None
+            ):
+                usage.add(exc.usage)
             failed.append(f"{name} ({exc})")
             continue
         if usage is not None:
             usage.add(call_usage)
-        if text.strip():
-            described[name] = _unwrap_markdown(text)
+        rendered = _unwrap_markdown(text)
+        if rendered.strip():
+            described[name] = rendered
+        else:
+            failed.append(f"{name} (AI returned empty response)")
     if failed and not described:
         raise AiDocError("No screenshot could be described: " + "; ".join(failed))
     if failed:
@@ -1133,9 +1182,9 @@ def document_nodes(
     :class:`UserWarning` reports how many nodes were dropped.
     :class:`AiDocError` is raised only when *every* node failed.
 
-    If a :class:`TokenUsage` is passed as ``usage``, every successful call is
-    accumulated into it — including those of a run that later fails, since
-    tokens already spent are still billed.
+    If a :class:`TokenUsage` is passed as ``usage``, consumed tokens are
+    accumulated into it, including usage reported for rejected responses and
+    calls in a run that later fails. Tokens already spent are still billed.
 
     ``token_budget`` is a ceiling on the **total** tokens the run may spend,
     input and output together, counted against ``usage`` so several calls
@@ -1171,13 +1220,10 @@ def document_nodes(
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
         text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
-        return (
-            nid,
-            _insert_tables(text)
-            if text and text.strip()
-            else "(AI returned empty response)",
-            call_usage,
-        )
+        rendered = _insert_tables(text) if text else ""
+        if not rendered.strip():
+            raise AiDocError("AI returned empty response", usage=call_usage)
+        return nid, rendered, call_usage
 
     # The tally drives the budget, so it must exist even when the caller wants
     # no accumulator of their own; when they do pass one, it *is* the tally.
@@ -1211,6 +1257,8 @@ def document_nodes(
                 try:
                     nid, text, call_usage = fut.result()
                 except Exception as exc:
+                    if isinstance(exc, AiDocError) and exc.usage is not None:
+                        tally.add(exc.usage)
                     failures.append((node_id, exc))
                     continue
                 docs[nid] = text

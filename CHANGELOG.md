@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local acceptance runs include both fixtures, screenshots and image analysis
+  with Ollama by default.** Each run keeps separate artifacts and a manifest
+  with source/input/image hashes and per-language coverage. Partial runs and
+  failed stages return a nonzero status. Contributor instructions require
+  inspecting dashboard tabs, sampled nodes and AI claims against screenshots.
+
 - **CI and documentation checks cover stacked PRs targeting `codex/**` branches**,
   so dependent improvements are validated before their base PR reaches main.
 - **The node panel can frame a node with its direct neighbors.** The action
@@ -38,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selections, and desktop/mobile controls in light and dark themes.
 
 ### Fixed
+
+- **Empty or truncated AI responses no longer become successful documents.**
+  Failed calls retain their reported token usage; oversized formulas are
+  explicitly omitted from bounded dossiers rather than passed as partial proof.
+- **Legacy `NORMSDIST` and `NORMDIST` formulas evaluate through their native
+  modern equivalents**, preserving original formulas, coercion and error values.
+- **Local `LET` and `LAMBDA` steps are not evaluated outside their scope.**
+  The complete calculation retains its value; unavailable inner steps state
+  that local scope prevents independent evaluation.
+- **Screenshot descriptions retain their image identity after HTML embedding.**
+  Pages without sheet context remain accessible, chartsheets preserve page
+  ordering, and images can be inspected at native resolution in the viewer.
+- **Narrow documentation tables preserve whole words and scroll horizontally.**
+  Group cards show their member count once, keeping the underlying label intact.
 
 - **1904 workbooks use their calendar during engine import.** Formatted date
   inputs, date functions and targeted evaluation no longer inherit a 1,462-day

@@ -366,3 +366,120 @@ def test_sheet_context_limits_are_visible_and_escaped(report):
     assert "— rows × — columns" in page.locator("#lin-sheet-details").inner_text()
     assert page.evaluate("window.injected === undefined")
     assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_flat_page_vision_follows_explicit_identity_and_native_zoom(
+    report, width, height
+):
+    graph = rich_graph()
+    graph["meta"]["screenshots"] = [
+        s.replace("width='120'", "width='2200'") for s in graph["meta"]["screenshots"]
+    ]
+    graph["meta"]["screenshotNames"] = ["finance-01", "finance-02"]
+    graph["meta"]["screenshotDocs"] = {"finance-02": "## Second page\n**Blue** inputs."}
+    page, errors = report(graph, width=width, height=height)
+    page.click("#lin-tab-screenshots")
+    assert page.locator(".lin-shot-description .lin-ai-box").count() == 0
+    page.locator(".lin-shot-tabs button").nth(1).click()
+    assert page.locator(".lin-shot-description h2").inner_text() == "Second page"
+    assert page.locator(".lin-shot-description strong").inner_text() == "Blue"
+    page.wait_for_function("document.querySelector('.lin-shot').naturalWidth === 2200")
+    page.locator("#lin-screenshots .lin-shot-viewer > button").click()
+    assert page.locator("#lin-screenshots .lin-frame").evaluate(
+        "e => e.scrollWidth > e.clientWidth"
+    )
+    assert page.locator("#lin-screenshots-main").evaluate(
+        "e => e.scrollWidth === e.clientWidth"
+    )
+    page.locator(".lin-shot-tabs button").nth(0).click()
+    assert page.locator(".lin-shot-description .lin-ai-box").count() == 0
+    assert not errors
+
+
+@pytest.mark.parametrize("with_context", [True, False])
+def test_unmapped_chart_images_and_vision_remain_reachable(report, with_context):
+    graph = rich_graph()
+    first, second = graph["meta"]["screenshots"]
+    graph["meta"]["screenshots"] = {"Out": [first], "Chart": [second]}
+    graph["meta"]["screenshotDocs"] = {
+        "Out": "Sheet description",
+        "Chart": "Chart description",
+    }
+    if not with_context:
+        graph["meta"].pop("workbookContext")
+    page, errors = report(graph, width=390, height=844)
+    if with_context:
+        page.click("#lin-tab-sheets")
+        assert (
+            page.locator("#lin-sheet-details .lin-doc").inner_text()
+            == "Sheet description"
+        )
+        assert page.locator("#lin-sheet-details img").count() == 1
+    page.click("#lin-tab-screenshots")
+    page.locator(".lin-shot-tabs button", has_text="Chart").click()
+    assert (
+        page.locator(".lin-shot-description .lin-doc").inner_text()
+        == "Chart description"
+    )
+    assert page.locator(".lin-shot").get_attribute("src") == second
+    if not with_context:
+        page.locator(".lin-shot-tabs button", has_text="Out").click()
+        assert (
+            page.locator(".lin-shot-description .lin-doc").inner_text()
+            == "Sheet description"
+        )
+    assert not errors
+
+
+def test_legacy_embedded_pages_keep_unpaired_descriptions_named_and_escaped(report):
+    graph = rich_graph()
+    graph["meta"]["screenshotDocs"] = {"old-page": "**Visible** <img onerror='evil()'>"}
+    page, errors = report(graph)
+    page.click("#lin-tab-screenshots")
+    assert page.locator("#lin-screenshots h3").inner_text() == "old-page"
+    assert page.locator("#lin-screenshots .lin-doc strong").inner_text() == "Visible"
+    assert page.locator("#lin-screenshots .lin-doc img").count() == 0
+    assert page.locator(".lin-shot-description .lin-doc").count() == 0
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_markdown_tables_keep_words_whole_and_scroll_long_tokens(report, width, height):
+    graph = rich_graph()
+    graph["nodes"][1]["doc"] = (
+        "| Sheet | Rows | Formula | Notable layout |\n|---|---|---|---|\n"
+        "| Summary | 7 x 3 | 100 | Revenue model with a long description |\n\n"
+        "| Reference | Meaning |\n|---|---|\n| " + "A" * 180 + " | Long token |"
+    )
+    page, errors = report(graph, width=width, height=height)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    for selector, word in (("td", "Summary"), ("th", "Formula")):
+        cell = page.locator("#lin-panel .lin-mdt " + selector).filter(has_text=word)
+        assert (
+            cell.evaluate("""e => {
+            const range=document.createRange();range.selectNodeContents(e);
+            return range.getClientRects().length;
+        }""")
+            == 1
+        )
+    assert (
+        page.locator("#lin-panel .lin-mdt")
+        .nth(1)
+        .evaluate("e=>e.scrollWidth>e.clientWidth")
+    )
+    assert page.locator("#lin-panel").evaluate("e=>e.scrollWidth===e.clientWidth")
+    assert not errors
+
+
+def test_group_card_shows_count_once_without_changing_source_label(report):
+    graph = filtered_graph()
+    graph["nodes"] = [
+        {"id": "g", "kind": "group", "label": "Sales!E4 x100", "count": 100},
+    ]
+    graph["edges"] = []
+    page, errors = report(graph)
+    assert page.evaluate("cy.getElementById('g').data('label')") == "Sales!E4\n×100"
+    page.evaluate("() => { cy.getElementById('g').emit('tap'); }")
+    assert page.locator("#lin-panel h2").inner_text() == "Sales!E4 x100"
+    assert not errors

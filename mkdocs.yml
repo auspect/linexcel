@@ -60,6 +60,7 @@ nav:
       - AI documentation: guide/ai.md
       - Languages: guide/languages.md
       - Data handling: guide/data-handling.md
+      - Local acceptance: manual_validation.md
   - API Reference:
       - result: api/result.md
       - analyzer: api/analyzer.md
