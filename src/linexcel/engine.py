@@ -99,6 +99,13 @@ def boot_engine(
     reporter = reporter or Reporter()
     with reporter.phase("engine evaluation") as progress:
         progress.step("loading workbook")
+        data, chartsheets = _without_chartsheets(data)
+        if chartsheets:
+            warnings.append(
+                f"Chartsheet(s) skipped: {', '.join(chartsheets)}. A chartsheet "
+                f"holds a chart and no cells, and the engine refuses a whole "
+                f"workbook that contains one"
+            )
         engine = fz.Workbook.from_bytes(data)
         engine_sheets = set(engine.sheet_names)
         engine_alive = True
@@ -298,6 +305,59 @@ def _find_too_deep(
         if first is None:
             first = (sheet, row, col)
     return suspects, first or ("", 0, 0)
+
+
+def _without_chartsheets(data: bytes) -> tuple[bytes, list[str]]:
+    """The package with its chartsheet ``<sheet>`` entries cut, and their names.
+
+    formualizer's reader refuses a workbook holding a chartsheet outright —
+    ``Expecting a worksheet, got chartsheet`` — however many real worksheets
+    sit beside it. A chartsheet holds a chart and no cells, so cutting its
+    entry from ``workbook.xml`` costs the lineage nothing and lets the rest
+    of the workbook through. The names come back so the caller can say which.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            rels = zf.read("xl/_rels/workbook.xml.rels").decode("utf-8", "ignore")
+            wb_xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
+    except Exception:
+        return data, []
+    chartsheet_ids: set[str] = set()
+    for rel in re.finditer(r"<Relationship\b([^>]+)>", rels):
+        attrs = rel.group(1)
+        type_m = re.search(r'\bType="([^"]*)"', attrs)
+        id_m = re.search(r'\bId="([^"]+)"', attrs)
+        if type_m and id_m and type_m.group(1).endswith("/chartsheet"):
+            chartsheet_ids.add(id_m.group(1))
+    if not chartsheet_ids:
+        return data, []
+
+    names: list[str] = []
+
+    def drop(m: re.Match[str]) -> str:
+        attrs = m.group(1)
+        rid_m = re.search(r'\br:id="([^"]+)"', attrs)
+        if not rid_m or rid_m.group(1) not in chartsheet_ids:
+            return m.group(0)
+        name_m = re.search(r'\bname="([^"]*)"', attrs)
+        names.append(unescape(name_m.group(1), _XML_ENTITIES) if name_m else "?")
+        return ""
+
+    # ``<sheet>`` has no children, so the element is always self-closing.
+    new_wb_xml = re.sub(r"<sheet\b([^>]+)/>", drop, wb_xml)
+    if not names:
+        return data, []
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as zf,
+        zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+    ):
+        for entry in zf.infolist():
+            payload = zf.read(entry.filename)
+            if entry.filename == "xl/workbook.xml":
+                payload = new_wb_xml.encode("utf-8")
+            zout.writestr(entry, payload)
+    return out.getvalue(), names
 
 
 def _blank_formulas_in_package(

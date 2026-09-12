@@ -421,3 +421,82 @@ class TestAFormulaTooDeepToEvaluate:
         )
         assert not any("quarantined" in w for w in result.warnings)
         assert next(n["value"] for n in result.nodes if n.get("addr") == "A1") == 100
+
+
+def workbook_with_chartsheet(cells: dict[str, object]) -> bytes:
+    """A real workbook plus a chartsheet, by surgery on the package.
+
+    openpyxl cannot write a chartsheet, so one is grafted on after the fact:
+    a ``<sheet>`` entry whose relationship type is ``chartsheet``, and the
+    minimal part it points at. That is all calamine looks at when it refuses
+    the workbook with "Expecting a worksheet, got chartsheet".
+    """
+    src = workbook(cells)
+    chartsheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<chartsheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/'
+        '2006/main"><sheetPr/><sheetViews><sheetView workbookViewId="0"/>'
+        "</sheetViews></chartsheet>"
+    )
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(src)) as zin,
+        zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout,
+    ):
+        for entry in zin.infolist():
+            payload = zin.read(entry.filename).decode("utf-8")
+            if entry.filename == "xl/workbook.xml":
+                payload = payload.replace(
+                    "</sheets>",
+                    '<sheet name="Chart" sheetId="99" r:id="rIdChart"/></sheets>',
+                )
+            elif entry.filename == "xl/_rels/workbook.xml.rels":
+                payload = payload.replace(
+                    "</Relationships>",
+                    '<Relationship Id="rIdChart" Type="http://schemas.openxmlformats.'
+                    'org/officeDocument/2006/relationships/chartsheet" '
+                    'Target="chartsheets/sheet1.xml"/></Relationships>',
+                )
+            elif entry.filename == "[Content_Types].xml":
+                payload = payload.replace(
+                    "</Types>",
+                    '<Override PartName="/xl/chartsheets/sheet1.xml" ContentType='
+                    '"application/vnd.openxmlformats-officedocument.spreadsheetml.'
+                    'chartsheet+xml"/></Types>',
+                )
+            zout.writestr(entry, payload)
+        zout.writestr("xl/chartsheets/sheet1.xml", chartsheet_xml)
+        # openpyxl's chartsheet reader expects the part's rels to exist
+        zout.writestr(
+            "xl/chartsheets/_rels/sheet1.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+            '2006/relationships"/>',
+        )
+    return out.getvalue()
+
+
+class TestAWorkbookWithAChartsheet:
+    """One chartsheet used to cost the whole workbook its analysis.
+
+    formualizer's reader refuses the package outright — ``Expecting a
+    worksheet, got chartsheet`` — however many real worksheets sit beside it.
+    The chartsheet holds no cells, so it is cut from ``workbook.xml`` before
+    the engine sees the file, and named in a warning.
+    """
+
+    def test_the_engine_would_refuse_the_file(self):
+        import formualizer as fz
+
+        with pytest.raises(OSError, match="chartsheet"):
+            fz.Workbook.from_bytes(workbook_with_chartsheet({"A1": 1}))
+
+    def test_the_analysis_skips_the_chartsheet_and_carries_on(self):
+        result = analyze(
+            workbook_with_chartsheet({"A1": 2, "A2": "=A1*10"}),
+            filename="chart.xlsx",
+        )
+        (warning,) = [w for w in result.warnings if "Chartsheet" in w]
+        assert "Chart" in warning
+        # the worksheets are analysed as if the chartsheet were not there
+        assert next(n["value"] for n in result.nodes if n.get("addr") == "A2") == 20
