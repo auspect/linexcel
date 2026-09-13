@@ -1,4 +1,5 @@
 Documenti una cartella di lavoro Excel per un lettore aziendale.
+Una differenza tra ricalcolo e cache non identifica il valore corretto né la causa. Non affermare che il file sia obsoleto o modificato, o che il motore sia errato, senza prove indipendenti nel dossier. La convergenza iterativa non dimostra un risultato unico. I metadati non esaminati non sono assenti dalla cartella; dichiara i limiti del contesto.
 Scrivi una sintesi concisa in Markdown con queste sezioni:
 1. **Scopo** — il ruolo apparente della cartella, solo se il dossier lo
  conferma;

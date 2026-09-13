@@ -89,9 +89,9 @@ class TestTopBarGroups:
         html = render_html(demo_graph())
         assert '<div class="lin-id">' in html
         assert '<div class="lin-tabs" role="tablist" id="lin-tablist">' in html
-        assert '<div class="lin-tools" id="lin-tools">' in html
+        assert '<div class="lin-tools" id="lin-tools" role="group">' in html
 
-    def test_the_graph_tools_float_over_the_canvas(self):
+    def test_the_graph_tools_are_grouped_above_the_canvas(self):
         """The toolbar holds only what makes sense above a graph; the search
         stays in the header, the layout switch lives in the rail."""
         html = render_html(demo_graph())
@@ -116,10 +116,10 @@ class TestTopBarGroups:
         assert "activeMain.id !== 'lin-graph-main' || !activeCy;" in html
         assert ".lin-tools[hidden] { display: none; }" in html
 
-    def test_fit_selection_toggles_through_the_hidden_property(self):
+    def test_fit_selection_disables_without_moving_the_commands(self):
         html = render_html(demo_graph())
-        assert "fitSelBtn.hidden = cy.nodes(':selected').length === 0;" in html
-        assert 'id="lin-fit-sel" hidden' in html
+        assert "fitSelBtn.disabled = cy.nodes(':selected').length === 0;" in html
+        assert 'id="lin-fit-sel" disabled' in html
 
 
 class TestLeftRail:
@@ -242,7 +242,7 @@ class TestDarkTheme:
 
     def test_the_toggle_lives_outside_the_graph_only_tools(self):
         """It must stay reachable on the tabs where .lin-tools is hidden:
-        the toggle sits in the header, the tools float over the graph canvas."""
+        the toggle sits in the header, the tools sit above the graph canvas."""
         html = render_html(demo_graph())
         assert '<div class="lin-bar-right">' in html
         header = html.split("</header>", 1)[0]
@@ -308,12 +308,12 @@ class TestResponsivePanel:
         html = render_html(demo_graph())
         assert "width: 440px; flex-shrink: 0;" in html
 
-    def test_the_panel_overlays_below_900px(self):
+    def test_the_panel_stacks_below_900px(self):
         narrow = render_html(demo_graph()).split("@media (max-width: 900px) {", 1)[1]
-        assert "position: absolute;" in narrow
-        assert "width: min(440px, 92vw);" in narrow
+        assert "position: relative;" in narrow
+        assert "flex: 0 0 50%; max-height: 50%;" in narrow
 
-    def test_the_two_readings_stack_once_the_panel_is_an_overlay(self):
+    def test_the_two_readings_stack_inside_the_narrow_panel(self):
         narrow = render_html(demo_graph()).split("@media (max-width: 560px) {", 1)[1]
         assert ".lin-vgrid { grid-template-columns: 1fr; }" in narrow
 
@@ -461,12 +461,7 @@ class TestSheetsTab:
 
 
 class TestScreenshotsTabStates:
-    """The Visual preview tab used to vanish whenever the report carried no
-    screenshots (the default run), which read as a missing feature rather
-    than a missing render. It now always opens, on one of three states:
-    the page gallery, a pointer to the per-sheet renders, or an empty state
-    that names the command producing them.
-    """
+    """Only expose the gallery when content is not already shown under Sheets."""
 
     def test_setup_is_called_once_and_before_the_cytoscape_guard(self):
         """A second call before the guard used to double-render the gallery;
@@ -481,28 +476,10 @@ class TestScreenshotsTabStates:
         script = script_of(render_html(demo_graph()))
         assert "if (container.firstChild) return;" in script
 
-    def test_the_empty_state_says_so_and_names_the_command(self):
+    def test_the_tab_only_exposes_images_or_docs_not_already_in_sheets(self):
         script = script_of(render_html(sheets_graph()))
-        assert "_t('shots_empty_title')" in script
-        assert "_t('shots_empty_desc')" in script
-        assert "_t('shots_hint')" in script
-        html = render_html(sheets_graph())
-        assert ".lin-shots-empty {" in html
-        assert "--screenshots DIR" in EN["shots_hint"]
-
-    def test_a_per_sheet_mapping_points_to_the_sheets_tab(self):
-        """Renders keyed by sheet name live under each sheet's card; the tab
-        says where they are instead of duplicating the gallery."""
-        script = script_of(render_html(sheets_graph({"In": ["a.png"]})))
-        assert "_t('shots_in_sheets')" in script
-
-    def test_the_tab_is_unhidden_in_every_state(self):
-        """The early `return` that kept the tab hidden when no flat page list
-        existed is gone: the button is revealed before the shape is read."""
-        script = script_of(render_html(sheets_graph()))
-        unhide_at = script.index("btn.hidden = false;")
-        branch_at = script.index("Array.isArray(images)")
-        assert unhide_at < branch_at
+        assert "btn.hidden = !gallery.length && !unpairedDocs.length;" in script
+        assert "_t('shots_in_sheets')" not in script
 
 
 class TestNodeCards:

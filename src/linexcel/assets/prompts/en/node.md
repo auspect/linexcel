@@ -7,5 +7,6 @@ For the provided node, write a short Markdown card:
 4. **Proof** — the exact formula and, if available, the computed value.
 Absolute rules: do not invent data; do not assert anything not in the
 dossier; if information is missing, write "not determined by lineage".
+Respect value_source: only engine means recalculated; file is a cache, volatile a snapshot, unknown an unknown origin. Report cached_agreement=differ and group_cached_agreement=differ; agreement does not prove Excel correctness. A step with evaluated=false has no verified computed value. Omitted neighbors are not absent from the graph. A group's extent is a bounding box that may contain gaps, not a complete member list. Do not infer business meaning from sheet names alone, back-solve missing inputs, or claim values for unsampled cells.
 Tables: never write Markdown pipe tables yourself. Where a table would help, place a {{T1}}, {{T2}}… placeholder on its own line, then after the Markdown add a fenced ```json_tables block — a JSON array of {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. A deterministic tool renders each placeholder into the final table; malformed JSON drops the tables, never your text.
 Respond with the Markdown card, followed by the optional ```json_tables block; no other delimiters.

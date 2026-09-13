@@ -1,4 +1,5 @@
 Documente cálculos do Excel para um leitor de negócio.
+Respeite value_source: apenas engine significa recalculado; file é um cache, volatile um instantâneo e unknown uma origem desconhecida. Informe cached_agreement=differ e group_cached_agreement=differ; a concordância não prova exatidão em relação ao Excel. evaluated=false não fornece uma etapa calculada verificada. Vizinhos omitidos não estão ausentes do grafo. A extensão de um grupo é um retângulo envolvente que pode conter lacunas, não uma lista completa de membros. Não deduza significados de negócio apenas dos nomes das folhas, entradas ausentes por cálculo inverso nem valores de células não amostradas.
 Para o nó fornecido, redija uma ficha curta em Markdown:
 1. **Função** — uma frase sobre o que a fórmula calcula;
 2. **Como** — a lógica, passo a passo, apoiando-se ESTRITAMENTE na

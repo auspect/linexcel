@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Graph navigation uses a dedicated responsive toolbar** with a labeled sheet
+  selector, grouped zoom controls and a live zoom percentage, and explicit
+  framing actions. Search has a visible submit action and describes its scope.
+
+- **Local acceptance runs include both fixtures, screenshots and image analysis
+  with Ollama by default.** Each run keeps separate artifacts and a manifest
+  with source/input/image hashes and per-language coverage. Partial runs and
+  failed stages return a nonzero status. Contributor instructions require
+  inspecting dashboard tabs, sampled nodes and AI claims against screenshots.
+
+- **CI and documentation checks cover stacked PRs targeting `codex/**` branches**,
+  so dependent improvements are validated before their base PR reaches main.
+- **The node panel can frame a node with its direct neighbors.** The action
+  remains accessible on mobile, where the panel leaves the graph controls
+  visible. Search returns to the graph from the other dashboard tabs.
 - **`--target SHEET!A1` limits the analysis to the cells feeding the named
   cell.** Repeatable, and several comma-separated cells fit in one flag; the
   library spelling is `analyze(..., targets=["Sheet1!A1"])`. The engine boots
@@ -34,6 +49,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Visual preview is hidden when its content is already available in Sheets.**
+  Standalone image pages and descriptions without sheet context remain reachable.
+- **Search feedback is cleared when the query or graph filters change.**
+  Searches with no matches also clear the previous selection.
+- **Inline code in AI documentation preserves formula operators.** Markdown
+  emphasis no longer consumes multiplication signs inside code spans.
+
+- **Empty or truncated AI responses no longer become successful documents.**
+  Failed calls retain their reported token usage; oversized formulas are
+  explicitly omitted from bounded dossiers rather than passed as partial proof.
+- **Legacy `NORMSDIST` and `NORMDIST` formulas evaluate through their native
+  modern equivalents**, preserving original formulas, coercion and error values.
+- **Local `LET` and `LAMBDA` steps are not evaluated outside their scope.**
+  The complete calculation retains its value; unavailable inner steps state
+  that local scope prevents independent evaluation.
+- **Screenshot descriptions retain their image identity after HTML embedding.**
+  Pages without sheet context remain accessible, chartsheets preserve page
+  ordering, and images can be inspected at native resolution in the viewer.
+- **Narrow documentation tables preserve whole words and scroll horizontally.**
+  Group cards show their member count once, keeping the underlying label intact.
+
+- **1904 workbooks use their calendar during engine import.** Formatted date
+  inputs, date functions and targeted evaluation no longer inherit a 1,462-day
+  shift from the engine's default 1900 calendar.
+- **Circular calculations honor workbook iteration settings.** Non-converged
+  components and their dependents retain file caches and omit unverifiable
+  breakdowns; independent formulas remain calculable. Convergence is qualified
+  by the engine's criteria and does not imply a unique fixed point.
+- **Self-closing XML cells cannot capture a following cell's formula.** The
+  quarantine scan no longer backtracks quadratically over styled empty cells.
+- **AI dossiers preserve engine identity, value provenance and uncertainty.** Cached or volatile
+  snapshots are not labeled recalculated, disagreements and omitted neighbors
+  are explicit, and useful calculation steps are retained before extra neighbor
+  examples. Prompts in all nine languages reject unsupported explanations of
+  discrepancies and extrapolations across sparse groups. Vision descriptions
+  and overviews are labeled for checking against the original evidence.
+- **Viewer Markdown handles nested lists and inline formatting in headings.**
+  Spreadsheet errors and unevaluated steps no longer use the successful-result
+  style. Sheet context displays extraction warnings and unknown dimensions.
 - **Excel time caches compare correctly with numeric day fractions.** Midnight
   (`0`) and noon (`0.5`) agree with stored time values without converting plain
   text, booleans, multi-day durations or timezone-bearing values into times.
@@ -67,6 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Large sheet previews use streaming reads.** Above 20 MiB of worksheet XML,
+  report context avoids materializing the entire openpyxl worksheet. Omitted
+  comments and layout metadata are explicitly reported; previews still work
+  when worksheet dimensions are absent.
+- **Batch documentation indexes graph adjacency once**, instead of scanning
+  every node and edge again for each requested card.
+- **Formula-free XML sheets skip the quarantine scan.** CLI size estimates
+  describe worksheet XML rather than incorrectly calling it formula volume.
 - **Selecting many search results no longer scans the whole graph per result.**
   Selection updates are coalesced into one animation frame, and the selection
   collection is assembled in one pass.

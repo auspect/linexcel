@@ -28,19 +28,26 @@ DEFAULT_LANGUAGE = "en"
 #: placeholders are substituted client-side and must be preserved verbatim.
 UI_STRINGS: dict[str, dict[str, str]] = {
     "en": {
+        "sheet_scope": "Sheet",
+        "graph_controls": "Graph controls",
+        "zoom_level": "Zoom level",
+        "search_scope": (
+            "Searches the visible graph, including connected cells from other sheets."
+        ),
         "graph": "Graph",
         "overview": "Workbook overview",
         "visual": "Visual preview",
         "search": "Search…",
-        "search_label": "Search cells and formulas (Enter)",
+        "search_label": "Search visible cells and formulas (Enter)",
         # Label-first so a single hit does not read "1 matches": the count is
         # now on screen, where the plural agreement is visible.
         "search_matches": "Matches: {count}",
         "search_none": "No matches",
         "search_clear": "Clear search",
         "theme_dark": "Dark theme",
-        "fit_all": "Fit",
-        "fit_sel": "Fit Selection",
+        "fit_all": "Fit graph",
+        "fit_sel": "Focus selection",
+        "fit_neighbors": "Fit neighbors",
         "zoom_in": "Zoom In",
         "zoom_out": "Zoom Out",
         "layout_flow": "Flow",
@@ -113,12 +120,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependents",
         "cells": "cells",
         "ai_doc": "🤖 AI Documentation (Generated)",
-        "ai_vision": "🤖 AI — read from the screenshot",
+        "ai_vision": "🤖 AI description — check against the screenshot",
         "ai_overview": "🤖 AI Generated Overview",
         "ai_overview_desc": (
-            "This overview was written by an AI model from the deterministic "
-            "lineage. The facts presented are derived from the workbook's "
-            "formulas and data."
+            "This AI overview is based on extracted workbook information. "
+            "Check its claims against the formulas, values and source workbook; "
+            "it is not independent evidence."
         ),
         "fallback": (
             "Cytoscape could not be loaded (CDN access required). The JSON "
@@ -176,17 +183,25 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "fr": {
+        "sheet_scope": "Feuille",
+        "graph_controls": "Commandes du graphe",
+        "zoom_level": "Niveau de zoom",
+        "search_scope": (
+            "Recherche dans le graphe visible, y compris les cellules "
+            "liées d’autres feuilles."
+        ),
         "graph": "Graphe",
         "overview": "Synthèse générale",
         "visual": "Aperçu visuel",
         "search": "Rechercher…",
-        "search_label": "Rechercher une cellule ou une formule (Entrée)",
+        "search_label": "Rechercher cellules et formules visibles (Entrée)",
         "search_matches": "Résultats : {count}",
         "search_none": "Aucun résultat",
         "search_clear": "Effacer la recherche",
         "theme_dark": "Thème sombre",
-        "fit_all": "Ajuster",
-        "fit_sel": "Ajuster la sélection",
+        "fit_all": "Tout cadrer",
+        "fit_sel": "Cadrer la sélection",
+        "fit_neighbors": "Cadrer les voisins",
         "zoom_in": "Zoom avant",
         "zoom_out": "Zoom arrière",
         "layout_flow": "Flux",
@@ -260,12 +275,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dépendants",
         "cells": "cellules",
         "ai_doc": "🤖 Documentation IA (Générée)",
-        "ai_vision": "🤖 IA — lu sur la capture",
+        "ai_vision": "🤖 Description IA — à vérifier sur la capture",
         "ai_overview": "🤖 Synthèse Générée par IA",
         "ai_overview_desc": (
-            "Cette synthèse a été rédigée par un modèle d'IA à partir du "
-            "lignage de calculs déterministe. Les faits présentés proviennent "
-            "des formules et des données du classeur."
+            "Cette synthèse IA s'appuie sur les informations extraites du classeur. "
+            "Vérifiez ses affirmations avec les formules, les valeurs et le classeur "
+            "source ; elle ne constitue pas une preuve indépendante."
         ),
         "fallback": (
             "Cytoscape n'a pas pu être chargé (accès CDN requis). Le graphe "
@@ -323,17 +338,24 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "es": {
+        "sheet_scope": "Hoja",
+        "graph_controls": "Controles del grafo",
+        "zoom_level": "Nivel de zoom",
+        "search_scope": (
+            "Busca en el grafo visible, incluidas las celdas conectadas de otras hojas."
+        ),
         "graph": "Grafo",
         "overview": "Resumen del libro",
         "visual": "Vista previa visual",
         "search": "Buscar…",
-        "search_label": "Buscar celdas y fórmulas (Intro)",
+        "search_label": "Buscar celdas y fórmulas visibles (Enter)",
         "search_matches": "Resultados: {count}",
         "search_none": "Sin resultados",
         "search_clear": "Borrar la búsqueda",
         "theme_dark": "Tema oscuro",
-        "fit_all": "Ajustar",
-        "fit_sel": "Ajustar selección",
+        "fit_all": "Ajustar grafo",
+        "fit_sel": "Centrar selección",
+        "fit_neighbors": "Ajustar vecinos",
         "zoom_in": "Acercar",
         "zoom_out": "Alejar",
         "layout_flow": "Flujo",
@@ -407,12 +429,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependientes",
         "cells": "celdas",
         "ai_doc": "🤖 Documentación IA (generada)",
-        "ai_vision": "🤖 IA — leído en la captura",
+        "ai_vision": "🤖 Descripción IA — verificar en la captura",
         "ai_overview": "🤖 Resumen generado por IA",
         "ai_overview_desc": (
-            "Este resumen ha sido redactado por un modelo de IA a partir del "
-            "linaje de cálculos determinista. Los hechos presentados proceden "
-            "de las fórmulas y los datos del libro."
+            "Este resumen de IA se basa en la información extraída del libro. "
+            "Compruebe sus afirmaciones con las fórmulas, los valores y el libro "
+            "original; no constituye una prueba independiente."
         ),
         "fallback": (
             "No se pudo cargar Cytoscape (se requiere acceso al CDN). El grafo "
@@ -471,17 +493,25 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "de": {
+        "sheet_scope": "Blatt",
+        "graph_controls": "Graphsteuerung",
+        "zoom_level": "Zoomstufe",
+        "search_scope": (
+            "Durchsucht den sichtbaren Graphen einschließlich "
+            "verbundener Zellen anderer Blätter."
+        ),
         "graph": "Graph",
         "overview": "Arbeitsmappen-Überblick",
         "visual": "Visuelle Vorschau",
         "search": "Suchen…",
-        "search_label": "Zellen und Formeln durchsuchen (Eingabetaste)",
+        "search_label": "Sichtbare Zellen und Formeln suchen (Enter)",
         "search_matches": "Treffer: {count}",
         "search_none": "Keine Treffer",
         "search_clear": "Suche löschen",
         "theme_dark": "Dunkles Design",
-        "fit_all": "Einpassen",
-        "fit_sel": "Auswahl einpassen",
+        "fit_all": "Graph einpassen",
+        "fit_sel": "Auswahl fokussieren",
+        "fit_neighbors": "Nachbarn einpassen",
         "zoom_in": "Vergrößern",
         "zoom_out": "Verkleinern",
         "layout_flow": "Fluss",
@@ -556,12 +586,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Nachfolger",
         "cells": "Zellen",
         "ai_doc": "🤖 KI-Dokumentation (generiert)",
-        "ai_vision": "🤖 KI — aus dem Screenshot gelesen",
+        "ai_vision": "🤖 KI-Beschreibung — am Screenshot prüfen",
         "ai_overview": "🤖 KI-generierter Überblick",
         "ai_overview_desc": (
-            "Dieser Überblick wurde von einem KI-Modell auf Basis der "
-            "deterministischen Berechnungsherkunft verfasst. Die dargestellten "
-            "Fakten stammen aus den Formeln und Daten der Arbeitsmappe."
+            "Dieser KI-Überblick basiert auf extrahierten Informationen aus der "
+            "Arbeitsmappe. Prüfen Sie die Aussagen anhand der Formeln, Werte und "
+            "Originalarbeitsmappe; er ist kein unabhängiger Nachweis."
         ),
         "fallback": (
             "Cytoscape konnte nicht geladen werden (CDN-Zugriff erforderlich). "
@@ -620,17 +650,24 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "it": {
+        "sheet_scope": "Foglio",
+        "graph_controls": "Controlli del grafo",
+        "zoom_level": "Livello di zoom",
+        "search_scope": (
+            "Cerca nel grafo visibile, incluse le celle collegate di altri fogli."
+        ),
         "graph": "Grafo",
         "overview": "Panoramica della cartella",
         "visual": "Anteprima visiva",
         "search": "Cerca…",
-        "search_label": "Cerca celle e formule (Invio)",
+        "search_label": "Cerca celle e formule visibili (Invio)",
         "search_matches": "Risultati: {count}",
         "search_none": "Nessun risultato",
         "search_clear": "Cancella la ricerca",
         "theme_dark": "Tema scuro",
-        "fit_all": "Adatta",
-        "fit_sel": "Adatta selezione",
+        "fit_all": "Adatta grafo",
+        "fit_sel": "Centra selezione",
+        "fit_neighbors": "Inquadra vicini",
         "zoom_in": "Ingrandisci",
         "zoom_out": "Riduci",
         "layout_flow": "Flusso",
@@ -705,12 +742,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dipendenti",
         "cells": "celle",
         "ai_doc": "🤖 Documentazione IA (generata)",
-        "ai_vision": "🤖 IA — letto dalla schermata",
+        "ai_vision": "🤖 Descrizione IA — verificare sulla schermata",
         "ai_overview": "🤖 Panoramica generata dall'IA",
         "ai_overview_desc": (
-            "Questa panoramica è stata redatta da un modello di IA a partire "
-            "dalla derivazione deterministica dei calcoli. I fatti presentati "
-            "provengono dalle formule e dai dati della cartella di lavoro."
+            "Questa panoramica IA si basa sulle informazioni estratte dalla "
+            "cartella di lavoro. Verificate le affermazioni con le formule, i valori "
+            "e la cartella originale; non costituisce una prova indipendente."
         ),
         "fallback": (
             "Impossibile caricare Cytoscape (è necessario l'accesso al CDN). "
@@ -769,17 +806,24 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "pt": {
+        "sheet_scope": "Planilha",
+        "graph_controls": "Controles do grafo",
+        "zoom_level": "Nível de zoom",
+        "search_scope": (
+            "Pesquisa no grafo visível, incluindo células ligadas de outras planilhas."
+        ),
         "graph": "Grafo",
         "overview": "Visão geral da pasta",
         "visual": "Pré-visualização",
         "search": "Pesquisar…",
-        "search_label": "Pesquisar células e fórmulas (Enter)",
+        "search_label": "Pesquisar células e fórmulas visíveis (Enter)",
         "search_matches": "Resultados: {count}",
         "search_none": "Sem resultados",
         "search_clear": "Limpar a pesquisa",
         "theme_dark": "Tema escuro",
-        "fit_all": "Ajustar",
-        "fit_sel": "Ajustar seleção",
+        "fit_all": "Ajustar grafo",
+        "fit_sel": "Focar seleção",
+        "fit_neighbors": "Ajustar vizinhos",
         "zoom_in": "Ampliar",
         "zoom_out": "Reduzir",
         "layout_flow": "Fluxo",
@@ -852,12 +896,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Dependentes",
         "cells": "células",
         "ai_doc": "🤖 Documentação de IA (gerada)",
-        "ai_vision": "🤖 IA — lido na captura",
+        "ai_vision": "🤖 Descrição IA — verificar na captura",
         "ai_overview": "🤖 Visão geral gerada por IA",
         "ai_overview_desc": (
-            "Esta visão geral foi redigida por um modelo de IA a partir da "
-            "linhagem determinista dos cálculos. As informações apresentadas "
-            "provêm das fórmulas e dos dados da pasta de trabalho."
+            "Esta visão geral de IA baseia-se nas informações extraídas da pasta "
+            "de trabalho. Verifique as afirmações nas fórmulas, nos valores e na "
+            "pasta original; não constitui uma prova independente."
         ),
         "fallback": (
             "Não foi possível carregar o Cytoscape (é necessário acesso ao "
@@ -916,17 +960,24 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "nl": {
+        "sheet_scope": "Blad",
+        "graph_controls": "Graafbediening",
+        "zoom_level": "Zoomniveau",
+        "search_scope": (
+            "Doorzoekt de zichtbare graaf, inclusief verbonden cellen op andere bladen."
+        ),
         "graph": "Graaf",
         "overview": "Werkmapoverzicht",
         "visual": "Visuele weergave",
         "search": "Zoeken…",
-        "search_label": "Cellen en formules doorzoeken (Enter)",
+        "search_label": "Zichtbare cellen en formules zoeken (Enter)",
         "search_matches": "Resultaten: {count}",
         "search_none": "Geen resultaten",
         "search_clear": "Zoekopdracht wissen",
         "theme_dark": "Donker thema",
-        "fit_all": "Passend maken",
-        "fit_sel": "Selectie passend maken",
+        "fit_all": "Graaf passend",
+        "fit_sel": "Selectie centreren",
+        "fit_neighbors": "Buren passend maken",
         "zoom_in": "Inzoomen",
         "zoom_out": "Uitzoomen",
         "layout_flow": "Stroom",
@@ -1001,12 +1052,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "Afhankelijken",
         "cells": "cellen",
         "ai_doc": "🤖 AI-documentatie (gegenereerd)",
-        "ai_vision": "🤖 AI — van de schermafbeelding",
+        "ai_vision": "🤖 AI-beschrijving — controleer op de schermafbeelding",
         "ai_overview": "🤖 Door AI gegenereerd overzicht",
         "ai_overview_desc": (
-            "Dit overzicht is geschreven door een AI-model op basis van de "
-            "deterministische herkomst van de berekeningen. De weergegeven "
-            "gegevens komen uit de formules en gegevens van de werkmap."
+            "Dit AI-overzicht is gebaseerd op informatie uit de werkmap. "
+            "Controleer de beweringen aan de hand van de formules, waarden en "
+            "oorspronkelijke werkmap; het is geen onafhankelijk bewijs."
         ),
         "fallback": (
             "Cytoscape kon niet worden geladen (CDN-toegang vereist). De "
@@ -1065,17 +1116,24 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "ja": {
+        "sheet_scope": "シート",
+        "graph_controls": "グラフ操作",
+        "zoom_level": "ズーム倍率",
+        "search_scope": (
+            "他のシートの接続されたセルを含む、表示中のグラフを検索します。"
+        ),
         "graph": "グラフ",
         "overview": "ブック概要",
         "visual": "ビジュアルプレビュー",
         "search": "検索…",
-        "search_label": "セルと数式を検索（Enter キー）",
+        "search_label": "表示中のセルと数式を検索（Enter）",
         "search_matches": "{count} 件",
         "search_none": "該当なし",
         "search_clear": "検索をクリア",
         "theme_dark": "ダークテーマ",
-        "fit_all": "全体表示",
-        "fit_sel": "選択範囲を表示",
+        "fit_all": "全体を表示",
+        "fit_sel": "選択を表示",
+        "fit_neighbors": "隣接ノードを表示",
         "zoom_in": "拡大",
         "zoom_out": "縮小",
         "layout_flow": "フロー",
@@ -1145,11 +1203,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "参照先",
         "cells": "セル",
         "ai_doc": "🤖 AI ドキュメント（生成）",
-        "ai_vision": "🤖 AI — スクリーンショットから",
+        "ai_vision": "🤖 AIの説明 — スクリーンショットで確認してください",
         "ai_overview": "🤖 AI が生成した概要",
         "ai_overview_desc": (
-            "この概要は、決定論的に抽出された計算系統に基づいて AI モデルが"
-            "作成したものです。記載内容はブックの数式とデータに由来します。"
+            "この AI 概要は、ブックから抽出した情報に基づいています。"
+            "記載内容を数式、値、元のブックと照合してください。"
+            "この概要は独立した証拠にはなりません。"
         ),
         "fallback": (
             "Cytoscape を読み込めませんでした（CDN へのアクセスが必要です）。"
@@ -1205,17 +1264,22 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "zh": {
+        "sheet_scope": "工作表",
+        "graph_controls": "图形控件",
+        "zoom_level": "缩放比例",
+        "search_scope": ("搜索当前可见图形，包括其他工作表中相连的单元格。"),
         "graph": "图谱",
         "overview": "工作簿概览",
         "visual": "可视化预览",
         "search": "搜索…",
-        "search_label": "搜索单元格与公式（回车）",
+        "search_label": "搜索可见单元格和公式（Enter）",
         "search_matches": "{count} 个匹配",
         "search_none": "无匹配结果",
         "search_clear": "清除搜索",
         "theme_dark": "深色主题",
-        "fit_all": "适应窗口",
-        "fit_sel": "适应所选",
+        "fit_all": "显示全图",
+        "fit_sel": "聚焦选中项",
+        "fit_neighbors": "显示相邻节点",
         "zoom_in": "放大",
         "zoom_out": "缩小",
         "layout_flow": "流向",
@@ -1280,11 +1344,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "dependents": "从属单元格",
         "cells": "个单元格",
         "ai_doc": "🤖 AI 文档（自动生成）",
-        "ai_vision": "🤖 AI — 读自截图",
+        "ai_vision": "🤖 AI 描述 — 请对照截图核实",
         "ai_overview": "🤖 AI 生成的概览",
         "ai_overview_desc": (
-            "本概览由 AI 模型根据确定性的计算血缘生成。"
-            "所述内容均来自工作簿的公式与数据。"
+            "本 AI 概览基于从工作簿中提取的信息。"
+            "请对照公式、数值和源工作簿核实其中的说法；"
+            "本概览不构成独立证据。"
         ),
         "fallback": (
             "无法加载 Cytoscape（需要访问 CDN）。"
