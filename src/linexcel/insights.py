@@ -6,15 +6,18 @@ import datetime
 import io
 import math
 import os
+import posixpath
 import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format, is_datetime
@@ -27,6 +30,7 @@ PREVIEW_COLUMNS = 8
 MAX_COMMENTS_PER_SHEET = 20
 MAX_COMMENT_SCAN_CELLS = 100_000
 MAX_COMMENT_CHARS = 1_000
+MAX_CONTEXT_XML_BYTES = 20 * 1024 * 1024
 MAX_MERGED_RANGES = 30
 MAX_TABLES_PER_SHEET = 50
 MAX_STATIC_TABLES_PER_SHEET = 10
@@ -84,38 +88,59 @@ def extract_workbook_context(
     row is a header. Comments and sheet layout markers complement formula
     lineage with the cues users usually see when opening a workbook.
     """
+    # Rich openpyxl worksheets materialize every formatted cell, including
+    # empty ones. Large exports can have millions of them and only ten formulas.
+    # Keep the viewer's optional context bounded before allocating that tree.
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        context_bytes = sum(
+            part.file_size
+            for part in package.infolist()
+            if part.filename.startswith("xl/worksheets/")
+            and part.filename.endswith(".xml")
+        )
+    bounded = context_bytes > MAX_CONTEXT_XML_BYTES
     workbook = load_workbook(
         io.BytesIO(data),
-        read_only=False,
+        read_only=bounded,
         data_only=False,
         keep_vba=filename.lower().endswith((".xlsm", ".xltm")),
     )
     warnings: list[str] = []
+    if bounded:
+        warnings.append(
+            "Large workbook: sheet context uses bounded previews; comments, "
+            "tables, merged ranges, frozen panes and hidden columns were not scanned"
+        )
     sheets: list[dict[str, Any]] = []
     total_comments = 0
     try:
         for worksheet in workbook.worksheets:
-            max_row = max(worksheet.max_row or 1, 1)
-            max_column = max(worksheet.max_column or 1, 1)
+            max_row = max(worksheet.max_row or preview_rows, 1)
+            max_column = max(worksheet.max_column or preview_columns, 1)
             row_limit = min(max_row, preview_rows)
             column_limit = min(max_column, preview_columns)
             preview = [
                 {
-                    "row": row[0].row,
+                    "row": row_number,
                     "values": [
                         _safe_value(cell.value, getattr(cell, "number_format", None))
                         for cell in row
                     ],
                 }
-                for row in worksheet.iter_rows(
-                    min_row=1,
-                    max_row=row_limit,
-                    min_col=1,
-                    max_col=column_limit,
+                for row_number, row in enumerate(
+                    worksheet.iter_rows(
+                        min_row=1,
+                        max_row=row_limit,
+                        min_col=1,
+                        max_col=column_limit,
+                    ),
+                    start=1,
                 )
             ]
-            comments, comments_truncated = _extract_comments(
-                worksheet, max_row, max_column
+            comments, comments_truncated = (
+                ([], False)
+                if bounded
+                else _extract_comments(worksheet, max_row, max_column)
             )
             total_comments += len(comments)
             if comments_truncated:
@@ -126,21 +151,26 @@ def extract_workbook_context(
                 {
                     "name": worksheet.title,
                     "visibility": worksheet.sheet_state,
-                    "dimensions": {"rows": max_row, "columns": max_column},
+                    "dimensions": {
+                        "rows": worksheet.max_row,
+                        "columns": worksheet.max_column,
+                    },
                     "preview_range": f"A1:{num_to_col(column_limit)}{row_limit}",
                     "preview": preview,
                     "freeze_panes": str(worksheet.freeze_panes)
-                    if worksheet.freeze_panes
+                    if not bounded and worksheet.freeze_panes
                     else None,
                     "merged_ranges": [
                         str(cell_range)
-                        for cell_range in list(worksheet.merged_cells.ranges)[
-                            :MAX_MERGED_RANGES
-                        ]
+                        for cell_range in (
+                            [] if bounded else list(worksheet.merged_cells.ranges)
+                        )[:MAX_MERGED_RANGES]
                     ],
-                    "hidden_columns": _hidden_columns(worksheet, column_limit),
+                    "hidden_columns": []
+                    if bounded
+                    else _hidden_columns(worksheet, column_limit),
                     "comments": comments,
-                    "tables": detect_tables(worksheet),
+                    "tables": [] if bounded else detect_tables(worksheet),
                 }
             )
     finally:
@@ -476,17 +506,145 @@ def render_workbook_screenshots(
 def _sheet_names(data: bytes) -> list[str]:
     """Sheet names in workbook order — the order LibreOffice paginates in.
 
-    Hidden sheets included: LibreOffice gives them a page like any other, so
-    dropping them here would shift every name onto the wrong image.
+    Hidden sheets and chartsheets included: LibreOffice gives them a page like
+    any other, so dropping them here would shift names or lose the mapping.
     """
     try:
         workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     except Exception:
         return []
     try:
-        return [worksheet.title for worksheet in workbook.worksheets]
+        return workbook.sheetnames
     finally:
         workbook.close()
+
+
+def empty_sheet_render_exemptions(data: bytes) -> dict[str, str]:
+    """Name only sheets proven empty enough to omit a rendered screenshot.
+
+    This is a conservative validation aid, not an estimate from dimensions or
+    cached values. Chartsheets, styled cells, comments, drawings, relationships,
+    unknown XML and oversized parts remain expected. Unsupported or malformed
+    packages return no exemptions. No workbook cells are materialized.
+    """
+    namespaces = {
+        "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "http://purl.oclc.org/ooxml/spreadsheetml/main",
+    }
+    structural = {
+        "worksheet",
+        "sheetPr",
+        "outlinePr",
+        "pageSetUpPr",
+        "dimension",
+        "sheetViews",
+        "sheetView",
+        "selection",
+        "pane",
+        "sheetFormatPr",
+        "sheetData",
+        "pageMargins",
+        "printOptions",
+        "pageSetup",
+        "headerFooter",
+        "oddHeader",
+        "oddFooter",
+        "evenHeader",
+        "evenFooter",
+        "firstHeader",
+        "firstFooter",
+    }
+
+    scanned_bytes = 0
+
+    def xml(package: zipfile.ZipFile, name: str) -> ElementTree.Element:
+        nonlocal scanned_bytes
+        scanned_bytes += package.getinfo(name).file_size
+        if scanned_bytes > MAX_CONTEXT_XML_BYTES:
+            raise ValueError("Part too large to prove empty")
+        raw = package.read(name)
+        if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+            raise ValueError("Unexpected XML declaration")
+        return ElementTree.fromstring(raw)
+
+    exemptions: dict[str, str] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as package:
+            # Duplicate members make even a valid relationship ambiguous.
+            members = package.namelist()
+            if len(members) != len(set(members)):
+                return {}
+            workbook = xml(package, "xl/workbook.xml")
+            rels = xml(package, "xl/_rels/workbook.xml.rels")
+            relationships = {rel.get("Id"): rel for rel in rels}
+            if len(relationships) != len(rels):
+                return {}
+            for sheet in workbook.findall("{*}sheets/{*}sheet"):
+                rid = next(
+                    (v for k, v in sheet.attrib.items() if k.endswith("}id")), None
+                )
+                rel = relationships.get(rid)
+                if rel is None or rel.get("TargetMode") == "External":
+                    continue
+                if not (rel.get("Type") or "").endswith("/worksheet"):
+                    continue
+                target = rel.get("Target", "")
+                if not target or "\\" in target or ":" in target:
+                    continue
+                part = posixpath.normpath(posixpath.join("xl", target))
+                if target.startswith("/"):
+                    part = posixpath.normpath(target.lstrip("/"))
+                if not part.startswith("xl/"):
+                    continue
+                try:
+                    root = xml(package, part)
+                    relation_part = posixpath.join(
+                        posixpath.dirname(part),
+                        "_rels",
+                        posixpath.basename(part) + ".rels",
+                    )
+                    if relation_part in members:
+                        sheet_rels = xml(package, relation_part)
+                        if not sheet_rels.tag.endswith("}Relationships") or len(
+                            sheet_rels
+                        ):
+                            continue
+                    if any(
+                        not node.tag.startswith("{")
+                        or node.tag[1:].split("}", 1)[0] not in namespaces
+                        or node.tag.rsplit("}", 1)[-1] not in structural
+                        or (node.text or "").strip()
+                        or (node.tail or "").strip()
+                        for node in root.iter()
+                    ):
+                        continue
+                    if root.tag.rsplit("}", 1)[-1] != "worksheet":
+                        continue
+                    print_options = root.find("{*}printOptions")
+                    if print_options is not None and any(
+                        print_options.get(option, "false") not in {"false", "0"}
+                        for option in ("headings", "gridLines")
+                    ):
+                        continue
+                except (KeyError, ValueError, ElementTree.ParseError):
+                    continue
+                name = sheet.get("name")
+                if name:
+                    exemptions[name] = (
+                        "Worksheet XML contains only empty structural metadata; "
+                        "no cells, formatting rows/columns or related content"
+                    )
+    except (
+        KeyError,
+        ValueError,
+        ElementTree.ParseError,
+        zipfile.BadZipFile,
+        OSError,
+        RuntimeError,
+        NotImplementedError,
+    ):
+        return {}
+    return exemptions
 
 
 def _place_pages(pages: list[Path], target: Path, stem: str) -> list[Path]:

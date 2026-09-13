@@ -163,6 +163,14 @@ comments, frozen panes, merged ranges and hidden columns.
 
 ![Sheet context tab](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_sheets_context.png)
 
+## Contributing
+
+Run the [local acceptance workflow](docs/manual_validation.md) before delivering
+changes: both fixtures, local Ollama documentation and image analysis, followed
+by inspection of dashboard tabs and sampled nodes. The script preserves each
+run and reports incomplete coverage as a failure. See [AGENTS.md](AGENTS.md) for
+the repository's validation requirements.
+
 ## Security
 
 Analysis is entirely local. AI documentation sends dossiers only to the provider

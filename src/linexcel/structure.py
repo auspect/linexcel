@@ -16,6 +16,7 @@ from typing import Any
 from openpyxl import load_workbook
 
 from linexcel.external import read_external_links
+from linexcel.limits import limit_or_default
 from linexcel.loader import MAX_CELLS_PER_SHEET, MAX_DENSE_CELLS, declared_cells
 from linexcel.tables import _collect_defined_names, _force_dimensions
 
@@ -109,7 +110,14 @@ def estimate_seconds(data: bytes) -> float:
     return seconds + count_formulas(data) * SECONDS_PER_FORMULA
 
 
-def inspect_workbook(data: bytes) -> dict[str, Any]:
+def inspect_workbook(
+    data: bytes,
+    *,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_chain_depth: int | None = None,
+    max_dense_cells: int | None = None,
+) -> dict[str, Any]:
     """What the file says about itself, before anything analyses it.
 
     Everything here is read from the package headers — sheet dimensions and
@@ -121,6 +129,16 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
     Declared sizes, not real ones. A sheet claiming 17 billion cells holds
     nothing of the sort, and saying so is exactly the warning worth having.
     """
+    from linexcel.resolver import MAX_CHAIN_DEPTH
+
+    cell_limit = limit_or_default(
+        "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
+    )
+    node_limit = limit_or_default(
+        "max_nodes_per_sheet", max_nodes_per_sheet, MAX_NODES_PER_SHEET
+    )
+    dense_limit = limit_or_default("max_dense_cells", max_dense_cells, MAX_DENSE_CELLS)
+    chain_limit = limit_or_default("max_chain_depth", max_chain_depth, MAX_CHAIN_DEPTH)
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
     try:
         sheets = []
@@ -136,7 +154,7 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
                     "cols": cols,
                     "cells": rows * cols,
                     "state": ws.sheet_state,
-                    "truncated": rows * cols > MAX_CELLS_PER_SHEET,
+                    "truncated": rows * cols > cell_limit,
                 }
             )
     finally:
@@ -150,10 +168,11 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
         "sheets": sheets,
         "declaredCells": sum(s["cells"] for s in sheets),
         "externalWorkbooks": [b.name for b in books.values()],
-        "densePathRefused": declared_cells(data) > MAX_DENSE_CELLS,
+        "densePathRefused": declared_cells(data) > dense_limit,
+        "recoveryDepth": chain_limit,
         "ceilings": {
-            "cellsPerSheet": MAX_CELLS_PER_SHEET,
-            "nodesPerSheet": MAX_NODES_PER_SHEET,
-            "denseCells": MAX_DENSE_CELLS,
+            "cellsPerSheet": cell_limit,
+            "nodesPerSheet": node_limit,
+            "denseCells": dense_limit,
         },
     }

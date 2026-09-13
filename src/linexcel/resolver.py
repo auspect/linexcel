@@ -17,10 +17,10 @@ from typing import Any
 import formualizer as fz
 
 from linexcel.decompose import (
-    SCRATCH_SENTINEL,
     SCRATCH_SHEET,
     _guard_fallback_expr,
     _scratch_eval,
+    _scratch_marker,
 )
 from linexcel.engine import is_too_deep
 from linexcel.external import (
@@ -29,6 +29,7 @@ from linexcel.external import (
     parse_external_refs,
     read_workbook_values,
 )
+from linexcel.limits import limit_or_default
 from linexcel.loader import CachedValues
 from linexcel.refs import a1, parse_ref, parse_ref_detailed
 from linexcel.rewrite import qualify_sheet
@@ -173,7 +174,15 @@ class _ValueResolver:
         reachable: set[tuple[str, int, int]] | None = None,
         quarantined: dict[tuple[str, int, int], str] | None = None,
         unavailable: set[tuple[str, int, int]] | None = None,
+        max_chain_depth: int | None = None,
+        max_dense_cells: int | None = None,
     ):
+        self.max_chain_depth = limit_or_default(
+            "max_chain_depth", max_chain_depth, MAX_CHAIN_DEPTH
+        )
+        self.max_dense_cells = max_dense_cells
+        self._chain_limit_warned = False
+        self._incomplete_recovery: set[tuple[str, str]] = set()
         self.engine = engine
         self.engine_sheets = engine_sheets
         self.cached = cached
@@ -368,7 +377,9 @@ class _ValueResolver:
             path = self.refs_files.get(key)
             if path is not None:
                 try:
-                    book.values = read_workbook_values(path)
+                    book.values = read_workbook_values(
+                        path, max_dense_cells=self.max_dense_cells
+                    )
                     book.path = path
                 except Exception as exc:
                     self.warnings.append(
@@ -452,6 +463,7 @@ class _ValueResolver:
             if e not in seen:
                 seen.add(e)
                 unique.append(e)
+        marker = _scratch_marker()
         targets: list[tuple[str, int, int]] = []
         valid: list[str] = []
         for i, e in enumerate(unique):
@@ -466,9 +478,7 @@ class _ValueResolver:
                 # no-op rather than raise, and the cell then still holds the
                 # step value *another node* left in that column. Reported as
                 # this step's own result, that is a value from elsewhere.
-                self.engine.set_formula(
-                    SCRATCH_SHEET, 2, i + 1, f'="{SCRATCH_SENTINEL}"'
-                )
+                self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, f'="{marker}"')
                 self.engine.set_formula(SCRATCH_SHEET, 2, i + 1, qualified)
             except Exception:
                 continue
@@ -487,7 +497,7 @@ class _ValueResolver:
         except Exception:
             return  # a broken reference poisons the batch — fall back
         for e, val in zip(valid, results):
-            if val is not None and val != SCRATCH_SENTINEL and not _is_uncomputed(val):
+            if val is not None and val != marker and not _is_uncomputed(val):
                 self._step_cache[e] = (_jsonable(val), True)
             else:
                 self._step_cache[e] = (None, False)
@@ -529,6 +539,8 @@ class _ValueResolver:
                 self._engine_alive = False
         expr = formula if formula.startswith("=") else "=" + formula
         result = self._eval_formula(sheet, expr, 0)
+        if (sheet, expr) in self._incomplete_recovery:
+            self.unavailable.add((sheet, row, col))
         if result[0] is None and uncomputed is not None:
             result = uncomputed, None
         return self._remember(sheet, row, col, result)
@@ -549,7 +561,21 @@ class _ValueResolver:
         if is_too_deep(expr):
             return None, None
         if not self._engine_alive:
-            self._resolve_precedents(sheet, expr, depth)
+            try:
+                complete = self._resolve_precedents(sheet, expr, depth)
+            except RecursionError:
+                complete = False
+            if not complete:
+                self._incomplete_recovery.add((sheet, expr))
+                if not self._chain_limit_warned:
+                    self.warnings.append(
+                        "Formula recovery stopped before all precedents "
+                        "were available (recovery depth, range, cycle or "
+                        "evaluation budget); dependent scratch values "
+                        "and error-guard fallbacks were not treated as recalculated"
+                    )
+                    self._chain_limit_warned = True
+                return None, None
         # A value that came out of another workbook is not the engine's own
         # reading of this file, and the card has to be able to say so.
         computed = "external" if parse_external_refs(expr) else "engine"
@@ -568,14 +594,12 @@ class _ValueResolver:
             return uncomputed, None
         return None, None
 
-    def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
-        """Recover every formula cell the expression reads, deepest first."""
-        if depth >= MAX_CHAIN_DEPTH:
-            return
+    def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> bool:
+        """Recover all formula precedents, or refuse a partial scratch result."""
         try:
             ast_dict = fz.parse(expr).to_dict()
         except Exception:
-            return
+            return False
         for ref in _collect_ref_strings(ast_dict):
             detail = parse_ref_detailed(ref, default_sheet=sheet)
             if detail is None or detail.rect.sheet not in self.engine_sheets:
@@ -587,35 +611,43 @@ class _ValueResolver:
                 if clipped is None:
                     continue
                 rect = clipped
-            if rect.ncells > MAX_CHAIN_RANGE_CELLS or rect.sheet is None:
+            if rect.ncells > MAX_CHAIN_RANGE_CELLS:
+                return False
+            if rect.sheet is None:
                 continue
             for r in range(rect.r1, rect.r2 + 1):
                 for c in range(rect.c1, rect.c2 + 1):
-                    self._resolve_chain(rect.sheet, r, c, depth + 1)
+                    if not self._resolve_chain(rect.sheet, r, c, depth + 1):
+                        return False
+        return True
 
-    def _resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> None:
+    def _resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> bool:
         key = (sheet, row, col)
-        # ``_resolving`` breaks the self-referencing formula (=B1+B2 in B2):
-        # the cell stays unresolved and reads as blank, as it did before.
-        if key in self._resolved or key in self._resolving:
-            return
-        if depth >= MAX_CHAIN_DEPTH or self.budget.left <= 0:
-            return
+        if key in self.unavailable or key in self._resolving:
+            return False
+        if key in self._resolved:
+            raw, source = self._resolved[key]
+            return raw is not None and source is not None
         try:
             if self.engine.get_value(sheet, row, col) is not None:
-                return  # constant: the engine already resolves it on its own
+                return True
         except Exception:
             pass
         formula = self._formula_at(sheet, row, col)
         if not formula:
-            return
+            return True
+        if depth >= self.max_chain_depth or self.budget.left <= 0:
+            return False
         expr = formula if formula.startswith("=") else "=" + formula
         self._resolving.add(key)
         try:
             result = self._eval_formula(sheet, expr, depth)
         finally:
             self._resolving.discard(key)
-        self._remember(sheet, row, col, result)
+        if (sheet, expr) in self._incomplete_recovery:
+            self.unavailable.add(key)
+        raw, source = self._remember(sheet, row, col, result)
+        return raw is not None and source is not None
 
     def _remember(
         self, sheet: str, row: int, col: int, result: tuple[Any, str | None]

@@ -1,4 +1,5 @@
 Documente uma pasta de trabalho do Excel para um leitor de negócio.
+Uma diferença entre recálculo e cache não identifica o valor correto nem sua causa. Não afirme que o arquivo está desatualizado ou modificado, ou que o motor está errado, sem evidências independentes no dossiê. A convergência iterativa não prova um resultado único. Metadados não inspecionados não estão ausentes da pasta; informe os limites do contexto.
 Redija uma síntese concisa em Markdown com estas secções:
 1. **Finalidade** — o papel aparente da pasta, apenas se o dossiê o confirmar;
 2. **Estrutura** — as suas folhas e a distribuição dos cálculos;
@@ -14,3 +15,4 @@ partir dos nomes. Escreva «não determinado pela linhagem» quando faltar
 informação.
 Tabelas: nunca escrevas tabelas Markdown com barras verticais. Quando uma tabela ajudar, coloca um marcador {{T1}}, {{T2}}… na sua própria linha e, depois do Markdown, adiciona um bloco ```json_tables — um array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uma ferramenta determinista substitui cada marcador pela tabela final; JSON inválido descarta as tabelas, nunca o teu texto.
 Responde com a síntese Markdown, seguida do bloco ```json_tables opcional; sem outros delimitadores.
+Use source_defined_names para as definições originais e seu âmbito: os nomes no grafo não são um inventário completo.

@@ -22,6 +22,7 @@ import formualizer as fz
 from linexcel.decompose import _collect_step_exprs, _decompose
 from linexcel.engine import is_too_deep
 from linexcel.external import macro_files, parse_external_refs
+from linexcel.limits import limit_or_default
 from linexcel.loader import _stepped
 from linexcel.powerquery import Query, QuerySource
 from linexcel.refs import Rect, a1, parse_ref, parse_ref_detailed, stretch_ref
@@ -134,7 +135,12 @@ class GraphBuilder:
         defined_names: dict[str, list],
         warnings: list[str],
         reporter: Any,
+        *,
+        max_nodes_per_sheet: int | None = None,
     ) -> None:
+        self.max_nodes_per_sheet = limit_or_default(
+            "max_nodes_per_sheet", max_nodes_per_sheet, MAX_NODES_PER_SHEET
+        )
         self.resolver = resolver
         self.sheet_dims = sheet_dims
         self.table_index = table_index
@@ -168,8 +174,8 @@ class GraphBuilder:
 
         for sheet, sheet_groups in per_sheet_groups.items():
             sheet_groups.sort(key=lambda g: (-len(g.cells), g.rep))
-            kept = sheet_groups[:MAX_NODES_PER_SHEET]
-            dropped = sheet_groups[MAX_NODES_PER_SHEET:]
+            kept = sheet_groups[: self.max_nodes_per_sheet]
+            dropped = sheet_groups[self.max_nodes_per_sheet :]
             for grp in kept:
                 rep_r, rep_c = grp.rep
                 if len(grp.cells) == 1:
@@ -192,7 +198,7 @@ class GraphBuilder:
                 }
                 self.warnings.append(
                     f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
-                    f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
+                    f"into a 'misc' node (limit {self.max_nodes_per_sheet})"
                 )
                 for grp in dropped:
                     for cell in grp.cells:

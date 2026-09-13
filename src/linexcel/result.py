@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from linexcel.analyzer import analyze_workbook
+from linexcel.limits import validate_limits
 from linexcel.viewer import render_html, wrap_iframe
 
 if TYPE_CHECKING:  # aidoc stays lazily imported at runtime
@@ -68,6 +69,10 @@ def analyze(
     refs_dir: str | Path | None = None,
     step_seconds: float | None = None,
     targets: Sequence[str] | None = None,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_chain_depth: int | None = None,
+    max_dense_cells: int | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -98,7 +103,24 @@ def analyze(
         the rest of the workbook is omitted from the lineage. No global
         recalculation is requested, but dynamic references or a truncated
         trace can make the engine evaluate precedents omitted from the graph.
+    max_cells_per_sheet, max_nodes_per_sheet : int, optional
+    max_chain_depth, max_dense_cells : int, optional
+        Non-negative integers; None keeps the default and zero is a real
+        ceiling. Cells bounds cache retention and formula extraction in row-major
+        order per sheet (targeted mode counts traced cells and rejects an
+        incomplete closure). Nodes bounds detailed formula groups, with excess
+        groups aggregated in a misc node; inputs and names are additional nodes.
+        Chain depth bounds only fallback precedent recovery. Dense cells controls
+        admission to the dense cache reader, including external files; external
+        reads also retain their separate 200,000-cell ceiling per sheet.
+        These are not global limits on native engine memory, work or runtime.
     """
+    validate_limits(
+        max_cells_per_sheet=max_cells_per_sheet,
+        max_nodes_per_sheet=max_nodes_per_sheet,
+        max_chain_depth=max_chain_depth,
+        max_dense_cells=max_dense_cells,
+    )
     data, name = _read_source(source, filename)
     try:
         kwargs = {} if step_seconds is None else {"step_seconds": step_seconds}
@@ -108,6 +130,10 @@ def analyze(
             verbose=verbose,
             refs_dir=refs_dir,
             targets=list(targets) if targets else None,
+            max_cells_per_sheet=max_cells_per_sheet,
+            max_nodes_per_sheet=max_nodes_per_sheet,
+            max_chain_depth=max_chain_depth,
+            max_dense_cells=max_dense_cells,
             **kwargs,
         )
     except Exception as exc:
@@ -529,6 +555,12 @@ class LineageResult:
                     for name, s_list in by_sheet.items()
                 }
             else:
+                # Keep the identity used by describe_screenshots before paths
+                # become anonymous data URIs, so page prose follows its image.
+                meta["screenshotNames"] = [
+                    None if str(s).startswith("data:") else Path(s).stem
+                    for s in screenshots
+                ]
                 meta["screenshots"] = [_embed(s) for s in screenshots]
 
         if screenshot_docs:

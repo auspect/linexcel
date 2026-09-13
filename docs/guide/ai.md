@@ -18,15 +18,27 @@ result.save_html("out.html", docs=docs)
 
 ## Why the output is checkable
 
-The model is never asked what a formula does. It is handed the node's dossier —
+The model receives the node's dossier —
 the exact formula, its step-by-step evaluation, its precedents and their values,
 its dependents, the extent of a stretched group, any VBA link — and the system
 prompt forbids asserting anything absent from it. Missing information must be
 written as "not determined by lineage" rather than guessed.
 
-So every claim in a card traces back to a formula or a value read from the
-workbook, and the card sits next to that same evidence in the report. A reader
-who doubts a sentence can check it without leaving the page.
+The card sits next to that evidence in the report, so a reader can check a
+sentence against its formula and values. A prompt is not an accuracy guarantee:
+local reviews have found incorrect explanations despite complete responses.
+
+Source name definitions include constants and worksheet scope, independently of
+which names become graph nodes. A missing graph edge or a `#NAME?` result does
+not establish that the source definition is absent. Metadata too large to
+inspect or include is marked incomplete. Group values explicitly identify their
+representative cell; they are not group totals or values for unsampled members.
+
+For literal `AGGREGATE` selectors, the dossier records their
+[Excel meanings](https://support.microsoft.com/en-us/excel/functions/aggregate-function).
+For example, function 9 selects SUM and option 6 excludes errors, not hidden
+rows. Dynamic selectors remain undetermined. These facts describe the formula;
+they do not independently verify the engine's implementation or result.
 
 ## Node cards
 
@@ -211,14 +223,24 @@ raises `ValueError`; to send nothing at all, do not call `document()`.
 !!! tip "Estimating before you spend"
 
     A dry run costs nothing: point `provider=` at a callable that records its
-    prompt and returns `""`. `result.token_usage` then holds the estimated input
-    cost of the whole workbook, which is the bulk of the bill for
-    documentation-shaped work.
+    prompt and returns `""`. Empty documents are rejected, so this deliberately
+    raises `AiDocError` after processing the nodes. `result.token_usage` still
+    holds the estimated input cost of those calls.
 
     ```python
-    result.document(provider=lambda system, user, *, temperature=0.2: "")
+    from linexcel.aidoc import AiDocError
+
+    try:
+        result.document(provider=lambda system, user, *, temperature=0.2: "")
+    except AiDocError:
+        pass  # Expected: an empty response is not valid documentation.
     print(result.token_usage)  # ~ input cost of documenting this workbook
     ```
+
+Empty replies and responses that the endpoint marks as truncated or filtered
+are failures. Reported token usage from rejected replies remains counted toward
+the budget. Partial node or image batches still return completed documents with
+a warning, so acceptance checks must compare their keys with the requested set.
 
 ## Language
 
