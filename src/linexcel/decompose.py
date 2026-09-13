@@ -13,6 +13,7 @@ decomposition — it is the engine sheet where guarded evaluations happen.
 from __future__ import annotations
 
 import itertools
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import formualizer as fz
@@ -30,7 +31,7 @@ SCRATCH_SHEET = "__lineage_scratch__"
 # Written into the scratch cell before each guarded evaluation: when the engine
 # fails to compute an expression it silently keeps the previous cell value
 # instead of raising, so an unchanged marker is how we detect that failure.
-SCRATCH_SENTINEL = "__linexcel_no_value__"
+SCRATCH_SENTINEL = f"__linexcel_no_value_{uuid.uuid4().hex}__"
 GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
 
 MAX_STEPS_PER_FORMULA = 48

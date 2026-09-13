@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 import io
 import re
+import xml.etree.ElementTree as ET
 import zipfile
 from typing import Any
 
@@ -129,6 +130,9 @@ def load_cached_values(
     data: bytes,
     warnings: list[str] | None = None,
     reporter: Reporter | None = None,
+    *,
+    max_cells_per_sheet: int | None = None,
+    max_dense_cells: int | None = None,
 ) -> CachedValues:
     """Read the file's cached values once, keyed by (sheet, row, col).
 
@@ -146,19 +150,29 @@ def load_cached_values(
     not an exception, and no ``try`` around this call would see it. openpyxl's
     read-only reader is lazy and already bounded, so it takes the file instead.
     """
+    cells_limit = (
+        MAX_CELLS_PER_SHEET
+        if max_cells_per_sheet is None
+        else max_cells_per_sheet
+    )
+    dense_limit = MAX_DENSE_CELLS if max_dense_cells is None else max_dense_cells
     declared = declared_cells(data)
-    if declared > MAX_DENSE_CELLS:
+    if declared > dense_limit:
         if warnings is not None:
             warnings.append(
                 f"A sheet declares a used range of {declared:,} cells. Values "
                 f"were read the slow way, and only the first "
-                f"{MAX_CELLS_PER_SHEET:,} cells of each sheet were kept, so "
+                f"{cells_limit:,} cells of each sheet were kept, so "
                 f"some may be missing from the report. If the sheet does not "
                 f"really hold that much: {STRAY_CORNER_ADVICE}"
             )
-        return _load_cached_values_openpyxl(data, reporter)
+        if max_cells_per_sheet is None:
+            return _load_cached_values_openpyxl(data, reporter)
+        return _load_cached_values_openpyxl(data, reporter, cells_limit)
     try:
-        return _load_cached_values_calamine(data, reporter)
+        if max_cells_per_sheet is None:
+            return _load_cached_values_calamine(data, reporter)
+        return _load_cached_values_calamine(data, reporter, cells_limit)
     except Exception as exc:
         # Not silent: the slow reader detects dates from the number format
         # rather than from the type, which is a different answer on an edge
@@ -170,7 +184,9 @@ def load_cached_values(
                 f"cell whose date is stored as a plain number may read "
                 f"differently."
             )
-        return _load_cached_values_openpyxl(data, reporter)
+        if max_cells_per_sheet is None:
+            return _load_cached_values_openpyxl(data, reporter)
+        return _load_cached_values_openpyxl(data, reporter, cells_limit)
 
 
 #: A cached formula error, ``<c r="A1" t="e"><f>…</f><v>#DIV/0!</v></c>``. The
@@ -242,7 +258,9 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
 
 
 def _load_cached_values_calamine(
-    data: bytes, reporter: Reporter | None = None
+    data: bytes,
+    reporter: Reporter | None = None,
+    max_cells_per_sheet: int | None = None,
 ) -> CachedValues:
     """Fast path: read cached values via python-calamine.
 
@@ -260,6 +278,9 @@ def _load_cached_values_calamine(
     """
     from python_calamine import CalamineWorkbook
 
+    cells_limit = (
+        MAX_CELLS_PER_SHEET if max_cells_per_sheet is None else max_cells_per_sheet
+    )
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = _detect_epoch_1904(data)
@@ -273,7 +294,7 @@ def _load_cached_values_calamine(
             scanned = 0
             for r_idx, row in enumerate(rows):
                 scanned += len(row)
-                if scanned > MAX_CELLS_PER_SHEET:
+                if scanned > cells_limit:
                     break
                 for c_idx, v in enumerate(row):
                     if v is None or v == "":
@@ -319,11 +340,16 @@ def _label_of(item) -> str:
 
 
 def _load_cached_values_openpyxl(
-    data: bytes, reporter: Reporter | None = None
+    data: bytes,
+    reporter: Reporter | None = None,
+    max_cells_per_sheet: int | None = None,
 ) -> CachedValues:
     """Fallback: read cached values via openpyxl with number_format date detection."""
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
+    cells_limit = (
+        MAX_CELLS_PER_SHEET if max_cells_per_sheet is None else max_cells_per_sheet
+    )
     epoch_1904 = False
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
@@ -336,7 +362,7 @@ def _load_cached_values_openpyxl(
             scanned = 0
             for row in ws.iter_rows():
                 scanned += len(row)
-                if scanned > MAX_CELLS_PER_SHEET:
+                if scanned > cells_limit:
                     break
                 for cell in row:
                     # read-only sheets pad gaps with EmptyCell (no coordinates)
@@ -370,7 +396,18 @@ def _detect_epoch_1904(data: bytes) -> bool:
             xml = zf.read("xl/workbook.xml").decode("utf-8", "ignore")
     except Exception:
         return False
-    return bool(re.search(r"""date1904=["']1""", xml))
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] != "workbookPr":
+            continue
+        return any(
+            key.rsplit("}", 1)[-1] == "date1904" and value.strip() in {"1", "true"}
+            for key, value in element.attrib.items()
+        )
+    return False
 
 
 def _is_date_format(number_format: Any) -> bool:

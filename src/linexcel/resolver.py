@@ -173,6 +173,8 @@ class _ValueResolver:
         reachable: set[tuple[str, int, int]] | None = None,
         quarantined: dict[tuple[str, int, int], str] | None = None,
         unavailable: set[tuple[str, int, int]] | None = None,
+        max_chain_depth: int | None = None,
+        max_dense_cells: int | None = None,
     ):
         self.engine = engine
         self.engine_sheets = engine_sheets
@@ -191,6 +193,10 @@ class _ValueResolver:
         self.reachable = reachable
         self.quarantined = quarantined or {}
         self.unavailable = unavailable or set()
+        self.max_chain_depth = (
+            MAX_CHAIN_DEPTH if max_chain_depth is None else max_chain_depth
+        )
+        self.max_dense_cells = max_dense_cells
         self._compared: set[tuple[str, int, int]] = set()
         self._n_mismatches = 0
         self._resolved: dict[tuple[str, int, int], tuple[Any, str | None]] = {}
@@ -368,7 +374,9 @@ class _ValueResolver:
             path = self.refs_files.get(key)
             if path is not None:
                 try:
-                    book.values = read_workbook_values(path)
+                    book.values = read_workbook_values(
+                        path, max_dense_cells=self.max_dense_cells
+                    )
                     book.path = path
                 except Exception as exc:
                     self.warnings.append(
@@ -570,7 +578,7 @@ class _ValueResolver:
 
     def _resolve_precedents(self, sheet: str, expr: str, depth: int) -> None:
         """Recover every formula cell the expression reads, deepest first."""
-        if depth >= MAX_CHAIN_DEPTH:
+        if depth >= self.max_chain_depth:
             return
         try:
             ast_dict = fz.parse(expr).to_dict()
@@ -599,7 +607,7 @@ class _ValueResolver:
         # the cell stays unresolved and reads as blank, as it did before.
         if key in self._resolved or key in self._resolving:
             return
-        if depth >= MAX_CHAIN_DEPTH or self.budget.left <= 0:
+        if depth >= self.max_chain_depth or self.budget.left <= 0:
             return
         try:
             if self.engine.get_value(sheet, row, col) is not None:

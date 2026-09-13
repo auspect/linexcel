@@ -3,6 +3,7 @@
 import datetime
 import io
 import json
+import zipfile
 from typing import Any
 
 import formualizer as fz
@@ -443,6 +444,26 @@ class TestDates:
         cached = load_cached_values(buf.getvalue())
         assert cached.epoch_1904 is True
         assert _detect_epoch_1904(buf.getvalue()) is True
+
+    def test_epoch_1904_detection_accepts_xml_namespaces_and_spacing(self):
+        from linexcel.loader import _detect_epoch_1904
+
+        data = build({"A1": 1}, {})
+        source = io.BytesIO(data)
+        output = io.BytesIO()
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(
+            output, "w"
+        ) as rewritten:
+            for item in original.infolist():
+                content = original.read(item.filename)
+                if item.filename == "xl/workbook.xml":
+                    content = (
+                        b'<workbook xmlns="urn:workbook" '
+                        b'xmlns:x="urn:props"><x:workbookPr x:date1904 = "1"/>'
+                        b"</workbook>"
+                    )
+                rewritten.writestr(item, content)
+        assert _detect_epoch_1904(output.getvalue()) is True
 
     def test_error_cached_values_handles_attribute_ordering_and_leading_slashes(self):
         from linexcel.loader import _parse_sheet_targets
