@@ -125,6 +125,8 @@
   .lin-theme .lin-ico-sun { display: none; }
   .lin-root[data-theme="dark"] .lin-theme .lin-ico-moon { display: none; }
   .lin-root[data-theme="dark"] .lin-theme .lin-ico-sun { display: block; }
+  .lin-ico { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1; }
+  .lin-ico svg { width: 1rem; height: 1rem; display: block; flex-shrink: 0; }
 
   /* --- brand mark: the package signs its report ------------------ */
   .lin-brand {
@@ -453,11 +455,17 @@
   .lin-overview { flex: 1; overflow-y: auto; padding: 1.4rem clamp(1rem, 4vw, 4rem) 3rem; }
   .lin-overview-inner { max-width: 880px; }
   .lin-context-warnings {
-    margin-bottom: 1rem; padding: .6rem .8rem; border-radius: 6px;
+    display: flex; align-items: flex-start; gap: .65rem;
+    margin-bottom: 1rem; padding: .65rem .85rem; border-radius: 6px;
     border: 1px solid var(--warn-line); background: var(--warn-bg);
-    color: var(--warn-fg); font-size: .82rem;
+    color: var(--warn-fg); font-size: .82rem; line-height: 1.45;
   }
-  .lin-context-warnings p { margin: .25rem 0; }
+  .lin-context-warnings .lin-ico { margin-top: .15rem; flex-shrink: 0; }
+  .lin-context-warnings .lin-ico svg { width: 16px; height: 16px; }
+  .lin-context-warnings-body { flex: 1; min-width: 0; }
+  .lin-context-warnings p { margin: .2rem 0; }
+  .lin-context-warnings p:first-child { margin-top: 0; }
+  .lin-context-warnings p:last-child { margin-bottom: 0; }
   .lin-overview h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
   .lin-overview .lin-doc { font-size: .92rem; line-height: 1.55; }
   .lin-ai-box {
@@ -1573,15 +1581,42 @@
         row.appendChild(badge);
       }
 
+      function sheetWarnings(sheet) {
+        var relevant = [];
+        var allSheets = (ctx.sheets || []).map(function (s) { return s.name; });
+        (ctx.warnings || []).forEach(function (w) {
+          var mentionsOther = false;
+          for (var i = 0; i < allSheets.length; i++) {
+            var other = allSheets[i];
+            if (other !== sheet.name && w.indexOf("'" + other + "'") !== -1) {
+              mentionsOther = true;
+              break;
+            }
+          }
+          if (!mentionsOther) relevant.push(w);
+        });
+        if (sheet.warnings && sheet.warnings.length) {
+          sheet.warnings.forEach(function (sw) {
+            if (relevant.indexOf(sw) === -1) relevant.push(sw);
+          });
+        }
+        return relevant;
+      }
+
       function showSheetDetails(sheet) {
         detailsContainer.innerHTML = '';
-        if (ctx.warnings && ctx.warnings.length) {
+        var sheetBody = document.querySelector('.lin-sheet-body');
+        if (sheetBody) sheetBody.scrollTop = 0;
+        var noticesList = sheetWarnings(sheet);
+        if (noticesList.length) {
           var notices = el('div', 'lin-context-warnings');
           notices.setAttribute('role', 'note');
           notices.appendChild(icon('warn'));
-          ctx.warnings.forEach(function (warning) {
-            notices.appendChild(el('p', null, warning));
+          var body = el('div', 'lin-context-warnings-body');
+          noticesList.forEach(function (warning) {
+            body.appendChild(el('p', null, warning));
           });
+          notices.appendChild(body);
           detailsContainer.appendChild(notices);
         }
 

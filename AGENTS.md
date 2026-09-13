@@ -24,7 +24,9 @@ of factual correctness. Record discrepancies and remaining limits honestly.
 
 A unit-test-only run, `--no-ai`, `--no-vision`, `--max-nodes`, missing captures,
 empty/truncated AI responses, or a partial language run does not satisfy this
-acceptance requirement. Preserve each run separately and inspect its
+acceptance requirement. Always verify visually at desktop (1440×900) and mobile
+(390×844) viewports with an independent AI reviewer agent, checking bounding
+boxes and notice scoping across tabs. Preserve each run separately and inspect its
 `validation.json`. Include relevant changelog entries and independent review
 before delivering a PR. If a required local dependency prevents completion,
 report the failed stage explicitly instead of declaring validation successful.

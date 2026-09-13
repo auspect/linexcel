@@ -372,6 +372,102 @@ def test_sheet_context_limits_are_visible_and_escaped(report):
     assert not errors
 
 
+def test_sheet_warnings_are_scoped_and_icon_is_compact(report):
+    graph = rich_graph()
+    context = graph["meta"]["workbookContext"]
+    context["sheets"] = [
+        {
+            "name": "FirstSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 10, "columns": 5},
+            "preview_range": "A1:E10",
+            "preview": [{"row": 1, "values": [1, 2, 3, 4, 5]}],
+        },
+        {
+            "name": "SecondSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 20, "columns": 8},
+            "preview_range": "A1:H20",
+            "preview": [{"row": 1, "values": [10, 20]}],
+        },
+    ]
+    context["warnings"] = [
+        "Large workbook: sheet context uses bounded previews",
+        "Comments on 'FirstSheet' were truncated for inspection",
+    ]
+    page, errors = report(graph)
+    page.click("#lin-tab-sheets")
+
+    # First sheet is active by default
+    first_note = page.locator(".lin-context-warnings")
+    assert first_note.is_visible()
+    first_text = first_note.inner_text()
+    assert "Large workbook: sheet context uses bounded previews" in first_text
+    assert "Comments on 'FirstSheet' were truncated for inspection" in first_text
+
+    # The warning icon must be compact and aligned, not an unbounded giant SVG
+    icon_box = page.locator(".lin-context-warnings svg").bounding_box()
+    assert icon_box is not None
+    assert 0 < icon_box["width"] <= 24
+    assert 0 < icon_box["height"] <= 24
+
+    # Switch to SecondSheet
+    page.locator("#lin-sheets-sidebar button").nth(1).click()
+    second_note = page.locator(".lin-context-warnings")
+    assert second_note.is_visible()
+    second_text = second_note.inner_text()
+    # Global warning is present on SecondSheet, but FirstSheet-specific warning is NOT
+    assert "Large workbook: sheet context uses bounded previews" in second_text
+    assert "Comments on 'FirstSheet' were truncated for inspection" not in second_text
+
+    assert not errors
+
+
+def test_sheet_without_warnings_has_no_notice_and_scroll_resets(report):
+    graph = rich_graph()
+    context = graph["meta"]["workbookContext"]
+    context["sheets"] = [
+        {
+            "name": "TruncatedSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 50, "columns": 5},
+            "preview_range": "A1:E50",
+            "preview": [{"row": i, "values": [i]} for i in range(1, 51)],
+        },
+        {
+            "name": "CleanSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 10, "columns": 5},
+            "preview_range": "A1:E10",
+            "preview": [{"row": 1, "values": [1]}],
+        },
+    ]
+    context["warnings"] = [
+        "Comments on 'TruncatedSheet' were truncated for inspection",
+    ]
+    page, errors = report(graph)
+    page.click("#lin-tab-sheets")
+
+    assert page.locator(".lin-context-warnings").count() == 1
+
+    # Scroll down on the first sheet
+    page.evaluate(
+        "() => { document.querySelector('.lin-sheet-body').scrollTop = 200; }"
+    )
+    assert (
+        page.evaluate("() => document.querySelector('.lin-sheet-body').scrollTop") > 0
+    )
+
+    # Switch to CleanSheet: no notice rendered, and scroll resets to 0
+    page.locator("#lin-sheets-sidebar button").nth(1).click()
+    assert page.locator(".lin-context-warnings").count() == 0
+    assert (
+        page.evaluate("() => document.querySelector('.lin-sheet-body').scrollTop") == 0
+    )
+
+    assert not errors
+
+
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 def test_flat_page_vision_follows_explicit_identity_and_native_zoom(
     report, width, height
