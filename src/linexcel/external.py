@@ -181,7 +181,11 @@ def find_workbooks(folder: Path) -> dict[str, Path]:
 
 
 def resolve_books(
-    books: dict[str, ExternalBook], folder: Path, warnings: list[str]
+    books: dict[str, ExternalBook],
+    folder: Path,
+    warnings: list[str],
+    *,
+    max_dense_cells: int | None = None,
 ) -> None:
     """Read every declared workbook that the folder actually holds."""
     available = find_workbooks(folder)
@@ -194,7 +198,7 @@ def resolve_books(
             )
             continue
         try:
-            entry.values = read_workbook_values(path)
+            entry.values = read_workbook_values(path, max_dense_cells=max_dense_cells)
             entry.path = path
         except Exception as exc:
             warnings.append(
@@ -202,7 +206,9 @@ def resolve_books(
             )
 
 
-def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
+def read_workbook_values(
+    path: Path, *, max_dense_cells: int | None = None
+) -> dict[tuple[str, int, int], Any]:
     """Every value of a workbook, by ``(sheet, row, col)``.
 
     Only values: a referenced workbook is read for what the formulas above it
@@ -216,7 +222,8 @@ def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
     # exception, so the caller's try/except would never see it. A file that
     # claims more than any sheet can hold is refused by name instead.
     declared = declared_cells(path.read_bytes())
-    if declared > MAX_DENSE_CELLS:
+    dense_limit = MAX_DENSE_CELLS if max_dense_cells is None else max_dense_cells
+    if declared > dense_limit:
         raise ValueError(
             f"it declares a used range of {declared:,} cells, more than can be "
             f"read; open it, delete the empty rows below and columns right of "

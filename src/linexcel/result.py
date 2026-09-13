@@ -68,6 +68,10 @@ def analyze(
     refs_dir: str | Path | None = None,
     step_seconds: float | None = None,
     targets: Sequence[str] | None = None,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_chain_depth: int | None = None,
+    max_dense_cells: int | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -108,6 +112,10 @@ def analyze(
             verbose=verbose,
             refs_dir=refs_dir,
             targets=list(targets) if targets else None,
+            max_cells_per_sheet=max_cells_per_sheet,
+            max_nodes_per_sheet=max_nodes_per_sheet,
+            max_chain_depth=max_chain_depth,
+            max_dense_cells=max_dense_cells,
             **kwargs,
         )
     except Exception as exc:

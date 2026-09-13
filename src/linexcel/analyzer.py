@@ -161,6 +161,10 @@ def analyze_workbook(
     refs_dir: str | Path | None = None,
     step_seconds: float | None = DEFAULT_STEP_SECONDS,
     targets: list[str] | None = None,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_chain_depth: int | None = None,
+    max_dense_cells: int | None = None,
 ) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine.
 
@@ -195,13 +199,24 @@ def analyze_workbook(
     if refs_dir is not None:
         refs_files = find_workbooks(Path(refs_dir))
         if externals:
-            resolve_books(externals, Path(refs_dir), warnings)
+            resolve_books(
+                externals,
+                Path(refs_dir),
+                warnings,
+                max_dense_cells=max_dense_cells,
+            )
     _v("structure", _t)
 
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
     _t = time.perf_counter()
-    cached = load_cached_values(data, warnings, reporter)
+    cached = load_cached_values(
+        data,
+        warnings,
+        reporter,
+        max_cells_per_sheet=max_cells_per_sheet,
+        max_dense_cells=max_dense_cells,
+    )
 
     # --- 2. computation engine -------------------------------------------
     session = boot_engine(data, warnings, reporter, targets=target_cells)
@@ -233,6 +248,8 @@ def analyze_workbook(
         reachable=reachable,
         quarantined=quarantined,
         unavailable=session.unavailable,
+        max_chain_depth=max_chain_depth,
+        max_dense_cells=max_dense_cells,
     )
 
     # --- 3. extraction + grouping ------------------------------------------
@@ -244,6 +261,7 @@ def analyze_workbook(
         warnings,
         reporter,
         reachable=reachable,
+        max_cells_per_sheet=max_cells_per_sheet,
     )
     groups = sweep.groups
     formula_count = sweep.formula_count
@@ -252,7 +270,13 @@ def analyze_workbook(
     # --- 4. nodes + edges: names, formulas, VBA, Power Query ---------------
     _t = time.perf_counter()
     builder = GraphBuilder(
-        resolver, sheet_dims, table_index, defined_names, warnings, reporter
+        resolver,
+        sheet_dims,
+        table_index,
+        defined_names,
+        warnings,
+        reporter,
+        max_nodes_per_sheet=max_nodes_per_sheet,
     )
     builder.select_nodes(groups)
     nodes = builder.nodes

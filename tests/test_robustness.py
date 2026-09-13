@@ -195,6 +195,22 @@ class TestTheTwoCeilings:
         load_cached_values(workbook({"A1": 1, "J40": 2}), warnings)
         assert warnings == []
 
+    def test_analysis_ceilings_can_be_overridden(self):
+        result = analyze(
+            workbook({"A1": "=1"}),
+            max_nodes_per_sheet=0,
+            max_chain_depth=0,
+            max_dense_cells=0,
+        )
+        assert any("limit 0" in warning for warning in result.warnings)
+        warnings: list[str] = []
+        cached = load_cached_values(
+            workbook({"A1": 1, "A2": 2}),
+            warnings,
+            max_cells_per_sheet=0,
+        )
+        assert len(cached) == 0
+
 
 class TestTheDecompositionIsBoundedInTime:
     """A count of evaluations cannot bound a run. Only a clock can.

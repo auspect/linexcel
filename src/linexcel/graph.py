@@ -134,6 +134,8 @@ class GraphBuilder:
         defined_names: dict[str, list],
         warnings: list[str],
         reporter: Any,
+        *,
+        max_nodes_per_sheet: int | None = None,
     ) -> None:
         self.resolver = resolver
         self.sheet_dims = sheet_dims
@@ -141,6 +143,11 @@ class GraphBuilder:
         self.defined_names = defined_names
         self.warnings = warnings
         self.reporter = reporter
+        self.max_nodes_per_sheet = (
+            MAX_NODES_PER_SHEET
+            if max_nodes_per_sheet is None
+            else max_nodes_per_sheet
+        )
         self._reachable_by_sheet: dict[str, list[tuple[int, int]]] = defaultdict(list)
         if resolver.reachable is not None:
             for sheet, row, col in resolver.reachable:
@@ -168,8 +175,8 @@ class GraphBuilder:
 
         for sheet, sheet_groups in per_sheet_groups.items():
             sheet_groups.sort(key=lambda g: (-len(g.cells), g.rep))
-            kept = sheet_groups[:MAX_NODES_PER_SHEET]
-            dropped = sheet_groups[MAX_NODES_PER_SHEET:]
+            kept = sheet_groups[: self.max_nodes_per_sheet]
+            dropped = sheet_groups[self.max_nodes_per_sheet :]
             for grp in kept:
                 rep_r, rep_c = grp.rep
                 if len(grp.cells) == 1:
@@ -192,7 +199,7 @@ class GraphBuilder:
                 }
                 self.warnings.append(
                     f"Sheet '{sheet}': {len(dropped)} formula patterns aggregated "
-                    f"into a 'misc' node (limit {MAX_NODES_PER_SHEET})"
+                    f"into a 'misc' node (limit {self.max_nodes_per_sheet})"
                 )
                 for grp in dropped:
                     for cell in grp.cells:

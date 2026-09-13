@@ -99,7 +99,13 @@ def sweep_sheets(
     reporter: Reporter,
     *,
     reachable: set[tuple[str, int, int]] | None = None,
+    max_cells_per_sheet: int | None = None,
 ) -> SweepResult:
+    cells_limit = (
+        MAX_CELLS_PER_SHEET
+        if max_cells_per_sheet is None
+        else max_cells_per_sheet
+    )
     groups: dict[tuple[str, str], FormulaGroup] = {}
     formula_count = 0
     sheet_stats: list[dict[str, Any]] = []
@@ -164,11 +170,11 @@ def sweep_sheets(
                 # what is left rather than dropped whole: dropping it stopped a
                 # 4,000,000-cell budget at 3,600,000 and lost every row of the
                 # chunk that would have overshot.
-                rows_left = (MAX_CELLS_PER_SHEET - scanned) // max_col
+                rows_left = (cells_limit - scanned) // max_col
                 if rows_left <= 0:
                     warnings.append(
                         f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
-                        f"({MAX_CELLS_PER_SHEET:,} cell ceiling): formulas below "
+                        f"({cells_limit:,} cell ceiling): formulas below "
                         f"that row are missing from the lineage"
                     )
                     break

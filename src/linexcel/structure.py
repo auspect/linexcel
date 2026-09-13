@@ -109,7 +109,13 @@ def estimate_seconds(data: bytes) -> float:
     return seconds + count_formulas(data) * SECONDS_PER_FORMULA
 
 
-def inspect_workbook(data: bytes) -> dict[str, Any]:
+def inspect_workbook(
+    data: bytes,
+    *,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_dense_cells: int | None = None,
+) -> dict[str, Any]:
     """What the file says about itself, before anything analyses it.
 
     Everything here is read from the package headers — sheet dimensions and
@@ -121,6 +127,17 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
     Declared sizes, not real ones. A sheet claiming 17 billion cells holds
     nothing of the sort, and saying so is exactly the warning worth having.
     """
+    cells_limit = (
+        MAX_CELLS_PER_SHEET
+        if max_cells_per_sheet is None
+        else max_cells_per_sheet
+    )
+    nodes_limit = (
+        MAX_NODES_PER_SHEET
+        if max_nodes_per_sheet is None
+        else max_nodes_per_sheet
+    )
+    dense_limit = MAX_DENSE_CELLS if max_dense_cells is None else max_dense_cells
     owb = load_workbook(io.BytesIO(data), read_only=True, data_only=False)
     try:
         sheets = []
@@ -136,7 +153,7 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
                     "cols": cols,
                     "cells": rows * cols,
                     "state": ws.sheet_state,
-                    "truncated": rows * cols > MAX_CELLS_PER_SHEET,
+                    "truncated": rows * cols > cells_limit,
                 }
             )
     finally:
@@ -150,10 +167,10 @@ def inspect_workbook(data: bytes) -> dict[str, Any]:
         "sheets": sheets,
         "declaredCells": sum(s["cells"] for s in sheets),
         "externalWorkbooks": [b.name for b in books.values()],
-        "densePathRefused": declared_cells(data) > MAX_DENSE_CELLS,
+        "densePathRefused": declared_cells(data) > dense_limit,
         "ceilings": {
-            "cellsPerSheet": MAX_CELLS_PER_SHEET,
-            "nodesPerSheet": MAX_NODES_PER_SHEET,
-            "denseCells": MAX_DENSE_CELLS,
+            "cellsPerSheet": cells_limit,
+            "nodesPerSheet": nodes_limit,
+            "denseCells": dense_limit,
         },
     }
