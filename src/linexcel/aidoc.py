@@ -9,11 +9,9 @@ chosen for you. There are exactly two ways in:
 - ``provider=`` — your own callable or :class:`LLMProvider` object, for an API
   that speaks something else entirely
 
-The model doesn't guess: each node is presented with its deterministic dossier
-from the graph (exact formula, step-by-step evaluation, precedents and their
-values, dependents, stretched group extent, VBA links). The system prompt
-enforces citing only these facts, making the documentation "provable": every
-claim traces back to a formula or a workbook value.
+Each node is presented with deterministic evidence from the graph and source
+metadata. Prompts ask the model to cite this evidence; generated claims still
+require review and are not a proof of calculation correctness.
 """
 
 from __future__ import annotations
@@ -29,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from linexcel.doc_evidence import formula_evidence, relevant_names
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
 # No DEFAULT_MODEL: naming one would make a vendor's model the implicit choice,
@@ -553,6 +552,7 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
         return None
     precedents = incoming.get(node_id, [])
     dependents = outgoing.get(node_id, [])
+    facts = formula_evidence(node.get("formula"))
     dossier = {
         "node_id": node_id,
         "kind": node.get("kind"),
@@ -572,6 +572,13 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
         **_value_evidence(node),
         "value_samples": node.get("samples"),
         "decomposition": _compact_steps(node.get("steps")),
+        "formula_facts": facts,
+        "source_defined_names": relevant_names(
+            meta.get("definedNameEvidence", {}),
+            facts.get("references", []),
+            node.get("sheet"),
+        ),
+        "direct_self_edge_observed": any(e["source"] == node_id for e in precedents),
         "precedents": [
             _neighbor(nodes.get(e["source"], {}), e) for e in precedents[:30]
         ],
@@ -596,13 +603,21 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
 
 
 def _value_evidence(node: dict) -> dict:
-    return {
+    evidence = {
         "displayed_value": node.get("value"),
         "value_source": node.get("valueSource", "unknown"),
         "cached_value": node.get("cachedValue"),
         "cached_agreement": node.get("cachedAgreement"),
         "group_cached_agreement": node.get("groupCachedAgreement"),
     }
+    if node.get("kind") == "group":
+        evidence["value_role"] = "representative cell, not an aggregate of the group"
+        evidence["representative_cell"] = {
+            "sheet": node.get("sheet"),
+            "address": node.get("addr"),
+        }
+        evidence["group_members"] = node.get("count")
+    return evidence
 
 
 def _fit_node_dossier(dossier: dict) -> str:
@@ -622,6 +637,10 @@ def _fit_node_dossier(dossier: dict) -> str:
             )
         if len(encoded()) <= MAX_DOSSIER_CHARS:
             return encoded()
+    names = dossier.get("source_defined_names", {})
+    if len(names.get("definitions", [])) > 4:
+        names["omitted_for_size"] = len(names["definitions"]) - 4
+        names["definitions"] = names["definitions"][:4]
     samples = dossier.get("value_samples") or []
     if samples:
         dossier["value_samples_omitted"] = len(samples)
@@ -766,6 +785,10 @@ def build_workbook_dossier(
         "sheets": sheets,
         "formula_patterns": formula_patterns,
         "defined_names": defined_names,
+        "source_defined_names": dict(
+            meta.get("definedNameEvidence", {"status": "not_inspected"})
+        ),
+        "defined_names_in_graph_are_not_source_inventory": True,
         "vba_procedures": vba,
         "external_or_unresolved_references": opaque_references,
         "warnings": [
@@ -851,7 +874,26 @@ def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
         sheet.pop("preview", None)
         sheet.pop("preview_range", None)
         sheet.pop("comments", None)
-    return json.dumps(dossier, ensure_ascii=False, default=str)
+    blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    for limit in (20, 5, 0):
+        if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
+            return blob
+        for key in ("defined_names", "external_or_unresolved_references"):
+            items = dossier.get(key, [])
+            dossier[key + "_omitted"] = dossier.get(key + "_omitted", 0) + max(
+                0, len(items) - limit
+            )
+            dossier[key] = items[:limit]
+        names = dossier.get("source_defined_names", {})
+        items = names.get("definitions", [])
+        names["omitted_for_size"] = names.get("omitted_for_size", 0) + max(
+            0, len(items) - limit
+        )
+        names["definitions"] = items[:limit]
+        blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
+        raise AiDocError("Workbook dossier exceeds size limit after explicit omissions")
+    return blob
 
 
 def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

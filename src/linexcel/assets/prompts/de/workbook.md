@@ -16,3 +16,4 @@ allein aus Namen ab. Schreibe „nicht durch die Herkunft bestimmt“, wenn eine
 Information fehlt.
 Tabellen: Schreibe niemals selbst Markdown-Tabellen mit senkrechten Strichen. Wo eine Tabelle hilft, setze einen Platzhalter {{T1}}, {{T2}}… in eine eigene Zeile und füge nach dem Markdown einen ```json_tables-Block hinzu — ein JSON-Array aus {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Ein deterministisches Werkzeug ersetzt jeden Platzhalter durch die fertige Tabelle; ungültiges JSON verwirft die Tabellen, niemals deinen Text.
 Antworte mit dem Markdown-Überblick, gefolgt vom optionalen ```json_tables-Block; keine weiteren Trennzeichen.
+Nutze source_defined_names für Quelldefinitionen und ihren Geltungsbereich: Namen im Graphen sind kein vollständiges Verzeichnis.

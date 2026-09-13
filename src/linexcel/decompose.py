@@ -13,6 +13,7 @@ decomposition — it is the engine sheet where guarded evaluations happen.
 from __future__ import annotations
 
 import itertools
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import formualizer as fz
@@ -31,6 +32,13 @@ SCRATCH_SHEET = "__lineage_scratch__"
 # fails to compute an expression it silently keeps the previous cell value
 # instead of raising, so an unchanged marker is how we detect that failure.
 SCRATCH_SENTINEL = "__linexcel_no_value__"
+
+
+def _scratch_marker() -> str:
+    """A fresh marker cannot collide with a normal, stable formula string."""
+    return f"{SCRATCH_SENTINEL}{uuid.uuid4().hex}"
+
+
 GUARD_FUNCTIONS = {"IFERROR", "IFNA"}
 
 MAX_STEPS_PER_FORMULA = 48
@@ -275,16 +283,17 @@ def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
         qualified = qualify_sheet(expr, sheet)
     except Exception:
         return None, False
+    marker = _scratch_marker()
     for _ in range(2):
         try:
-            engine.set_formula(SCRATCH_SHEET, 1, 1, f'="{SCRATCH_SENTINEL}"')
-            if engine.evaluate_cell(SCRATCH_SHEET, 1, 1) != SCRATCH_SENTINEL:
+            engine.set_formula(SCRATCH_SHEET, 1, 1, f'="{marker}"')
+            if engine.evaluate_cell(SCRATCH_SHEET, 1, 1) != marker:
                 continue
             engine.set_formula(SCRATCH_SHEET, 1, 1, qualified)
             value = engine.evaluate_cell(SCRATCH_SHEET, 1, 1)
         except Exception:
             continue
-        if value == SCRATCH_SENTINEL:
+        if value == marker:
             return None, False
         return value, True
     return None, False

@@ -30,12 +30,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "en": {
         "sheet_scope": "Sheet",
         "graph_controls": "Graph controls",
+        "graph_options": "Graph options",
+        "graph_options_short": "Options",
         "zoom_level": "Zoom level",
         "search_scope": (
             "Searches the visible graph, including connected cells from other sheets."
         ),
         "graph": "Graph",
         "overview": "Workbook overview",
+        "overview_short": "Overview",
         "visual": "Visual preview",
         "search": "Search…",
         "search_label": "Search visible cells and formulas (Enter)",
@@ -185,6 +188,8 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "fr": {
         "sheet_scope": "Feuille",
         "graph_controls": "Commandes du graphe",
+        "graph_options": "Options du graphe",
+        "graph_options_short": "Options",
         "zoom_level": "Niveau de zoom",
         "search_scope": (
             "Recherche dans le graphe visible, y compris les cellules "
@@ -192,6 +197,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "graph": "Graphe",
         "overview": "Synthèse générale",
+        "overview_short": "Synthèse",
         "visual": "Aperçu visuel",
         "search": "Rechercher…",
         "search_label": "Rechercher cellules et formules visibles (Entrée)",
@@ -340,12 +346,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "es": {
         "sheet_scope": "Hoja",
         "graph_controls": "Controles del grafo",
+        "graph_options": "Opciones del grafo",
+        "graph_options_short": "Opciones",
         "zoom_level": "Nivel de zoom",
         "search_scope": (
             "Busca en el grafo visible, incluidas las celdas conectadas de otras hojas."
         ),
         "graph": "Grafo",
         "overview": "Resumen del libro",
+        "overview_short": "Resumen",
         "visual": "Vista previa visual",
         "search": "Buscar…",
         "search_label": "Buscar celdas y fórmulas visibles (Enter)",
@@ -495,6 +504,8 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "de": {
         "sheet_scope": "Blatt",
         "graph_controls": "Graphsteuerung",
+        "graph_options": "Graphoptionen",
+        "graph_options_short": "Optionen",
         "zoom_level": "Zoomstufe",
         "search_scope": (
             "Durchsucht den sichtbaren Graphen einschließlich "
@@ -502,6 +513,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "graph": "Graph",
         "overview": "Arbeitsmappen-Überblick",
+        "overview_short": "Übersicht",
         "visual": "Visuelle Vorschau",
         "search": "Suchen…",
         "search_label": "Sichtbare Zellen und Formeln suchen (Enter)",
@@ -652,12 +664,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "it": {
         "sheet_scope": "Foglio",
         "graph_controls": "Controlli del grafo",
+        "graph_options": "Opzioni del grafo",
+        "graph_options_short": "Opzioni",
         "zoom_level": "Livello di zoom",
         "search_scope": (
             "Cerca nel grafo visibile, incluse le celle collegate di altri fogli."
         ),
         "graph": "Grafo",
         "overview": "Panoramica della cartella",
+        "overview_short": "Panoramica",
         "visual": "Anteprima visiva",
         "search": "Cerca…",
         "search_label": "Cerca celle e formule visibili (Invio)",
@@ -808,12 +823,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "pt": {
         "sheet_scope": "Planilha",
         "graph_controls": "Controles do grafo",
+        "graph_options": "Opções do grafo",
+        "graph_options_short": "Opções",
         "zoom_level": "Nível de zoom",
         "search_scope": (
             "Pesquisa no grafo visível, incluindo células ligadas de outras planilhas."
         ),
         "graph": "Grafo",
         "overview": "Visão geral da pasta",
+        "overview_short": "Visão geral",
         "visual": "Pré-visualização",
         "search": "Pesquisar…",
         "search_label": "Pesquisar células e fórmulas visíveis (Enter)",
@@ -962,12 +980,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "nl": {
         "sheet_scope": "Blad",
         "graph_controls": "Graafbediening",
+        "graph_options": "Graafopties",
+        "graph_options_short": "Opties",
         "zoom_level": "Zoomniveau",
         "search_scope": (
             "Doorzoekt de zichtbare graaf, inclusief verbonden cellen op andere bladen."
         ),
         "graph": "Graaf",
         "overview": "Werkmapoverzicht",
+        "overview_short": "Overzicht",
         "visual": "Visuele weergave",
         "search": "Zoeken…",
         "search_label": "Zichtbare cellen en formules zoeken (Enter)",
@@ -1118,12 +1139,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "ja": {
         "sheet_scope": "シート",
         "graph_controls": "グラフ操作",
+        "graph_options": "グラフの設定",
+        "graph_options_short": "設定",
         "zoom_level": "ズーム倍率",
         "search_scope": (
             "他のシートの接続されたセルを含む、表示中のグラフを検索します。"
         ),
         "graph": "グラフ",
         "overview": "ブック概要",
+        "overview_short": "概要",
         "visual": "ビジュアルプレビュー",
         "search": "検索…",
         "search_label": "表示中のセルと数式を検索（Enter）",
@@ -1266,10 +1290,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
     "zh": {
         "sheet_scope": "工作表",
         "graph_controls": "图形控件",
+        "graph_options": "图形选项",
+        "graph_options_short": "选项",
         "zoom_level": "缩放比例",
         "search_scope": ("搜索当前可见图形，包括其他工作表中相连的单元格。"),
         "graph": "图谱",
         "overview": "工作簿概览",
+        "overview_short": "概览",
         "visual": "可视化预览",
         "search": "搜索…",
         "search_label": "搜索可见单元格和公式（Enter）",

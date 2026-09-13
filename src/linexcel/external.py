@@ -33,6 +33,7 @@ from typing import Any
 from urllib.parse import unquote
 from xml.etree import ElementTree
 
+from linexcel.limits import limit_or_default
 from linexcel.loader import MAX_DENSE_CELLS, declared_cells
 
 #: Suffixes searched in a reference folder. The macro-enabled ones are also
@@ -181,7 +182,11 @@ def find_workbooks(folder: Path) -> dict[str, Path]:
 
 
 def resolve_books(
-    books: dict[str, ExternalBook], folder: Path, warnings: list[str]
+    books: dict[str, ExternalBook],
+    folder: Path,
+    warnings: list[str],
+    *,
+    max_dense_cells: int | None = None,
 ) -> None:
     """Read every declared workbook that the folder actually holds."""
     available = find_workbooks(folder)
@@ -194,7 +199,7 @@ def resolve_books(
             )
             continue
         try:
-            entry.values = read_workbook_values(path)
+            entry.values = read_workbook_values(path, max_dense_cells=max_dense_cells)
             entry.path = path
         except Exception as exc:
             warnings.append(
@@ -202,7 +207,9 @@ def resolve_books(
             )
 
 
-def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
+def read_workbook_values(
+    path: Path, *, max_dense_cells: int | None = None
+) -> dict[tuple[str, int, int], Any]:
     """Every value of a workbook, by ``(sheet, row, col)``.
 
     Only values: a referenced workbook is read for what the formulas above it
@@ -215,8 +222,9 @@ def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
     # for 512 GiB and *aborts the process* — a Rust allocation failure, not an
     # exception, so the caller's try/except would never see it. A file that
     # claims more than any sheet can hold is refused by name instead.
+    dense_limit = limit_or_default("max_dense_cells", max_dense_cells, MAX_DENSE_CELLS)
     declared = declared_cells(path.read_bytes())
-    if declared > MAX_DENSE_CELLS:
+    if declared > dense_limit:
         raise ValueError(
             f"it declares a used range of {declared:,} cells, more than can be "
             f"read; open it, delete the empty rows below and columns right of "
@@ -231,7 +239,11 @@ def read_workbook_values(path: Path) -> dict[tuple[str, int, int], Any]:
         for r_index, row in enumerate(rows):
             scanned += len(row)
             if scanned > MAX_EXTERNAL_CELLS:
-                break
+                raise ValueError(
+                    f"sheet {name!r} exceeds the external read ceiling of "
+                    f"{MAX_EXTERNAL_CELLS:,} cells; partial external "
+                    f"values were not used"
+                )
             for c_index, value in enumerate(row):
                 if value is None or value == "":
                     continue

@@ -24,8 +24,8 @@ def build() -> bytes:
     ws["B1"] = 2
     # Long dependency chain: each row reads the row above it.
     for r in range(2, ROWS + 1):
-        ws.cell(row=r, column=1).value = f"=A{r-1}*1.0001+B{r-1}"
-        ws.cell(row=r, column=2).value = f"=B{r-1}+MOD(A{r},7)"
+        ws.cell(row=r, column=1).value = f"=A{r - 1}*1.0001+B{r - 1}"
+        ws.cell(row=r, column=2).value = f"=B{r - 1}+MOD(A{r},7)"
     # Cross-sheet references: every row reads the other sheet.
     ws2 = wb.create_sheet("Cross")
     for r in range(1, ROWS + 1):

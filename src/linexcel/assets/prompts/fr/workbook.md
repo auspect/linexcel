@@ -13,3 +13,4 @@ peuvent être invoqués ; le seul nom d'une feuille n'en est pas une, n'infère 
 jamais un rôle à partir des seuls noms. Écris « non déterminé par le lignage »
 lorsqu'une information manque. Tableaux : n'écris jamais de tableau Markdown toi-même. Quand un tableau aide, place un repère {{T1}}, {{T2}}… sur sa propre ligne, puis après le Markdown ajoute un bloc ```json_tables — un tableau JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Un outil déterministe remplace chaque repère par le tableau final ; un JSON invalide supprime les tableaux, jamais ton texte.
 Réponds avec la synthèse Markdown, suivie du bloc ```json_tables optionnel ; aucun autre délimiteur.
+Utilise source_defined_names pour les définitions du fichier et leur portée : les noms du graphe ne forment pas un inventaire complet.

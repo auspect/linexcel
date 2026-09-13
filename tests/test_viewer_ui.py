@@ -95,7 +95,7 @@ class TestTopBarGroups:
         """The toolbar holds only what makes sense above a graph; the search
         stays in the header, the layout switch lives in the rail."""
         html = render_html(demo_graph())
-        tools = html.split('id="lin-tools"', 1)[1].split('id="lin-legend"', 1)[0]
+        tools = html.split('id="lin-tools"', 1)[1].split('id="lin-cy"', 1)[0]
         for control in (
             "lin-sheet-filter",
             "lin-zoom-in",
@@ -231,7 +231,7 @@ class TestDarkTheme:
     def test_light_is_the_default_whatever_the_os_prefers(self):
         html = render_html(demo_graph())
         assert "@media (prefers-color-scheme" not in html
-        assert "matchMedia" not in script_of(html)
+        assert not re.search(r"matchMedia\([^)]*prefers-color-scheme", script_of(html))
         assert "<meta name='color-scheme' content='light'>" in html
         assert '<div class="lin-root" data-theme="light">' in html
 

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Analysis resource ceilings can be configured through both public APIs.**
+  Validated limits are recorded in metadata and propagated to workbook loading,
+  graph construction, recovery and external workbook reads. A targeted closure
+  that exceeds its cell budget is rejected rather than silently truncated.
+- **AI dossiers retain source name definitions and worksheet scope**, including
+  constants absent from reference-only graph nodes. Group values identify their
+  representative cell, and literal AGGREGATE selectors have deterministic
+  meanings. Oversized or locally scoped evidence is explicitly qualified.
+- **Small-screen graph options have a dedicated keyboard-accessible dialog.**
+  Views stay visible while filters and layout remain reachable without covering
+  nodes with a permanent legend.
+
 - **Graph navigation uses a dedicated responsive toolbar** with a labeled sheet
   selector, grouped zoom controls and a live zoom percentage, and explicit
   framing actions. Search has a visible submit action and describes its scope.
@@ -48,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selections, and desktop/mobile controls in light and dark themes.
 
 ### Fixed
+
+- **Cache ceilings also apply to error overlays and styled empty columns.**
+  Recovery that runs out of depth does not publish an incomplete scratch result.
+- **Scratch markers are unique per operation**, avoiding collisions with valid
+  formula results that happen to equal a former fixed marker.
+- **Optional documentation parsing rejects structurally complex formulas before
+  entering the native AST conversion**, and local LET/LAMBDA bindings are not
+  mistaken for workbook name references.
 
 - **Visual preview is hidden when its content is already available in Sheets.**
   Standalone image pages and descriptions without sheet context remain reachable.

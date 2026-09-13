@@ -20,6 +20,7 @@ from typing import Any
 import formualizer as fz
 
 from linexcel.engine import _chunk_rows
+from linexcel.limits import limit_or_default
 from linexcel.loader import MAX_CELLS_PER_SHEET
 from linexcel.progress import Reporter
 from linexcel.rewrite import canonical_r1c1
@@ -99,7 +100,11 @@ def sweep_sheets(
     reporter: Reporter,
     *,
     reachable: set[tuple[str, int, int]] | None = None,
+    max_cells_per_sheet: int | None = None,
 ) -> SweepResult:
+    cell_limit = limit_or_default(
+        "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
+    )
     groups: dict[tuple[str, str], FormulaGroup] = {}
     formula_count = 0
     sheet_stats: list[dict[str, Any]] = []
@@ -107,6 +112,14 @@ def sweep_sheets(
     if reachable is not None:
         for sheet, row, col in reachable:
             wanted_by_sheet[sheet].append((row, col))
+        for sheet, cells in wanted_by_sheet.items():
+            if len(cells) > cell_limit:
+                raise ValueError(
+                    f"Targeted lineage on sheet '{sheet}' needs "
+                    f"{len(cells):,} traced cells, exceeding "
+                    f"max_cells_per_sheet={cell_limit:,}; raise the limit "
+                    f"to preserve the complete traced lineage"
+                )
 
     def record(sheet: str, r: int, c: int, formula: str | None) -> int:
         formula = formula or quarantined.get((sheet, r, c))
@@ -164,22 +177,30 @@ def sweep_sheets(
                 # what is left rather than dropped whole: dropping it stopped a
                 # 4,000,000-cell budget at 3,600,000 and lost every row of the
                 # chunk that would have overshot.
-                rows_left = (MAX_CELLS_PER_SHEET - scanned) // max_col
-                if rows_left <= 0:
+                remaining = cell_limit - scanned
+                rows_left = remaining // max_col
+                if remaining <= 0:
                     warnings.append(
                         f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
-                        f"({MAX_CELLS_PER_SHEET:,} cell ceiling): formulas below "
-                        f"that row are missing from the lineage"
+                        f"({cell_limit:,} cell ceiling): remaining formulas "
+                        f"are missing from the lineage"
                     )
                     break
-                r1 = min(r0 + chunk_rows - 1, max_row, r0 + rows_left - 1)
-                ra = fz.RangeAddress(sheet, r0, 1, r1, max_col)
+                r1 = min(r0 + chunk_rows - 1, max_row, r0 + max(rows_left, 1) - 1)
+                end_col = max_col if rows_left else remaining
+                ra = fz.RangeAddress(sheet, r0, 1, r1, end_col)
                 try:
                     rows = fsheet.get_formulas(ra)
                 except Exception as exc:
                     warnings.append(f"Could not read formulas on {sheet}: {exc}")
                     break
-                scanned += (r1 - r0 + 1) * max_col
+                scanned += (r1 - r0 + 1) * end_col
+                if end_col < max_col:
+                    warnings.append(
+                        f"Sheet '{sheet}' formula extraction reached its "
+                        f"{cell_limit:,} cell ceiling partway through row "
+                        f"{r0:,}; remaining formulas are missing from the lineage"
+                    )
                 for i, row_vals in enumerate(rows):
                     r = r0 + i
                     for j, f in enumerate(row_vals):

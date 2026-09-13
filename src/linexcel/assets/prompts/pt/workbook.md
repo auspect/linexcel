@@ -15,3 +15,4 @@ partir dos nomes. Escreva «não determinado pela linhagem» quando faltar
 informação.
 Tabelas: nunca escrevas tabelas Markdown com barras verticais. Quando uma tabela ajudar, coloca um marcador {{T1}}, {{T2}}… na sua própria linha e, depois do Markdown, adiciona um bloco ```json_tables — um array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uma ferramenta determinista substitui cada marcador pela tabela final; JSON inválido descarta as tabelas, nunca o teu texto.
 Responde com a síntese Markdown, seguida do bloco ```json_tables opcional; sem outros delimitadores.
+Use source_defined_names para as definições originais e seu âmbito: os nomes no grafo não são um inventário completo.

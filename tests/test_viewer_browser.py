@@ -229,7 +229,11 @@ def test_neighbor_action_fits_the_visible_neighborhood(report, width, height):
         ],
     }
     page, errors = report(graph, width=width, height=height)
+    if width <= 900:
+        page.click("#lin-options-toggle")
     page.click("#lin-lay-dagre")
+    if width <= 900:
+        page.click("#lin-options-close")
     page.evaluate("() => { cy.getElementById('hub').emit('tap'); }")
     page.click("#lin-fit-neighbors")
     page.wait_for_function("""() => {
@@ -633,6 +637,7 @@ def test_search_button_stands_down_with_unavailable_graph(
         page.goto(path.as_uri())
         assert page.locator("#lin-search").is_disabled()
         assert page.locator("#lin-search-submit").is_disabled()
+        assert page.locator("#lin-options-toggle").is_hidden()
         assert not errors
     finally:
         page.close()
@@ -664,4 +669,112 @@ def test_inline_code_preserves_operators_and_literal_markup_inside_emphasis(repo
     assert page.locator("#lin-overview em").inner_text() == "before x after"
     assert page.locator("#lin-overview img").count() == 0
     assert page.evaluate("window.injected === undefined")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(320, 700), (390, 844), (844, 390)])
+def test_graph_options_dialog_keyboard_and_camera_state(report, width, height):
+    graph = rich_graph()
+    graph["meta"]["screenshots"] = {"Out": [graph["meta"]["screenshots"][0]]}
+    page, errors = report(graph, width=width, height=height, language="fr")
+    page.select_option("#lin-sheet-filter", "Out")
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.click("#lin-fit-sel")
+    page.wait_for_timeout(650)
+    state = page.evaluate(
+        "({zoom:cy.zoom(),pan:cy.pan(),selected:cy.nodes(':selected').map(n=>n.id())})"
+    )
+    assert page.locator(".lin-legend").count() == 0
+    assert (
+        page.locator("#lin-tab-overview").get_attribute("aria-label")
+        == "Synthèse générale"
+    )
+    tabs = page.locator("[role=tab]:visible")
+    assert tabs.count() == 3
+    for tab in tabs.all():
+        rect = tab.bounding_box()
+        assert rect["x"] >= 0 and rect["x"] + rect["width"] <= width
+    page.get_by_role("button", name="Options du graphe", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Options du graphe")
+    assert dialog.is_visible()
+    assert page.evaluate("document.activeElement.parentElement.id") == "lin-rail-kinds"
+    assert dialog.locator("#lin-rail-kinds .lin-sw").count() == 2
+    for _ in range(12):
+        page.keyboard.press("Tab")
+        assert page.evaluate(
+            "document.activeElement.closest('#lin-options-dialog') !== null"
+        )
+    page.keyboard.press("/")
+    assert page.evaluate(
+        "document.activeElement.closest('#lin-options-dialog') !== null"
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_function("!document.querySelector('#lin-options-dialog').open")
+    assert page.evaluate("document.activeElement.id") == "lin-options-toggle"
+    assert page.locator("#lin-sheet-filter").input_value() == "Out"
+    assert (
+        page.evaluate(
+            "({zoom:cy.zoom(),pan:cy.pan(),selected:cy.nodes(':selected').map(n=>n.id())})"
+        )
+        == state
+    )
+    assert page.evaluate("cy.height()") >= (101 if width == 844 else 80)
+    page.click("#lin-tab-overview")
+    assert page.locator("#lin-options-toggle").is_hidden()
+    page.click("#lin-tab-graph")
+    assert page.locator("#lin-options-toggle").is_visible()
+    assert not errors
+
+
+def test_graph_options_filters_survive_reopen_and_desktop_resize(report):
+    page, errors = report(filtered_graph(), width=390, height=844)
+    page.click("#lin-options-toggle")
+    page.locator("#lin-rail-kinds button", has_text="Source data").click()
+    page.click("#lin-options-close")
+    assert visible_ids(page) == ["c"]
+    page.click("#lin-options-toggle")
+    assert (
+        page.locator("#lin-rail-kinds button", has_text="Source data").get_attribute(
+            "aria-pressed"
+        )
+        == "false"
+    )
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.wait_for_function("!document.querySelector('#lin-options-dialog').open")
+    assert page.locator("#lin-options-toggle").is_hidden()
+    page.locator("#lin-options-host #lin-rail-kinds").wait_for(state="visible")
+    assert page.locator("#lin-options-host #lin-rail-kinds").is_visible()
+    assert visible_ids(page) == ["c"]
+    page.locator("#lin-rail-kinds button", has_text="Source data").click()
+    page.wait_for_function("cy.getElementById('i').visible()")
+    assert visible_ids(page) == ["c", "i", "u"]
+    assert not errors
+
+
+def test_graph_options_immediate_reopen_keeps_content_and_focus(report):
+    page, errors = report(filtered_graph(), width=390, height=844)
+    page.click("#lin-options-toggle")
+    page.evaluate("""() => {
+        const dialog = document.querySelector('#lin-options-dialog');
+        window.previousCloseDelivered = false;
+        dialog.addEventListener('close', () => {
+            window.previousCloseDelivered = true;
+        }, {once: true});
+        document.querySelector('#lin-options-close').click();
+        document.querySelector('#lin-options-toggle').click();
+    }""")
+    page.wait_for_function("window.previousCloseDelivered")
+    assert page.locator("#lin-options-dialog").is_visible()
+    assert page.locator("#lin-options-dialog #lin-rail-kinds").is_visible()
+    assert page.evaluate(
+        "document.activeElement.closest('#lin-options-dialog') !== null"
+    )
+    page.locator("#lin-rail-kinds button", has_text="Source data").click()
+    assert visible_ids(page) == ["c"]
+    page.keyboard.press("Escape")
+    page.wait_for_function(
+        "document.querySelector('#lin-options-body').parentElement.id"
+        " === 'lin-options-host'"
+    )
+    assert page.evaluate("document.activeElement.id") == "lin-options-toggle"
     assert not errors

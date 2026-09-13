@@ -15,21 +15,25 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from linexcel.doc_evidence import read_defined_name_evidence
 from linexcel.engine import CHAIN_LAYERS_WARNING, boot_engine
 from linexcel.external import find_workbooks, read_external_links, resolve_books
 from linexcel.graph import GraphBuilder
-from linexcel.loader import load_cached_values
+from linexcel.limits import validate_limits
+from linexcel.loader import MAX_CELLS_PER_SHEET, MAX_DENSE_CELLS, load_cached_values
 from linexcel.powerquery import query_warning, read_queries
 from linexcel.progress import Reporter
 from linexcel.refs import Rect, a1, parse_ref
 from linexcel.resolver import (
     DEFAULT_STEP_SECONDS,
+    MAX_CHAIN_DEPTH,
     MAX_SCRATCH_EVALS,
     _Budget,
     _external_warning,
     _ValueResolver,
 )
 from linexcel.structure import (
+    MAX_NODES_PER_SHEET,
     inspect_workbook,  # noqa: F401  (re-exported: public API)
     read_structure,
 )
@@ -161,6 +165,10 @@ def analyze_workbook(
     refs_dir: str | Path | None = None,
     step_seconds: float | None = DEFAULT_STEP_SECONDS,
     targets: list[str] | None = None,
+    max_cells_per_sheet: int | None = None,
+    max_nodes_per_sheet: int | None = None,
+    max_chain_depth: int | None = None,
+    max_dense_cells: int | None = None,
 ) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine.
 
@@ -174,6 +182,12 @@ def analyze_workbook(
     the rest of the workbook is omitted from the lineage rather than
     evaluated. Without it the whole workbook is analysed, as before.
     """
+    validate_limits(
+        max_cells_per_sheet=max_cells_per_sheet,
+        max_nodes_per_sheet=max_nodes_per_sheet,
+        max_chain_depth=max_chain_depth,
+        max_dense_cells=max_dense_cells,
+    )
     warnings: list[str] = []
     _t0 = time.perf_counter()
     reporter = Reporter(verbose)
@@ -195,13 +209,21 @@ def analyze_workbook(
     if refs_dir is not None:
         refs_files = find_workbooks(Path(refs_dir))
         if externals:
-            resolve_books(externals, Path(refs_dir), warnings)
+            resolve_books(
+                externals, Path(refs_dir), warnings, max_dense_cells=max_dense_cells
+            )
     _v("structure", _t)
 
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
     _t = time.perf_counter()
-    cached = load_cached_values(data, warnings, reporter)
+    cached = load_cached_values(
+        data,
+        warnings,
+        reporter,
+        max_cells_per_sheet=max_cells_per_sheet,
+        max_dense_cells=max_dense_cells,
+    )
 
     # --- 2. computation engine -------------------------------------------
     session = boot_engine(data, warnings, reporter, targets=target_cells)
@@ -233,6 +255,8 @@ def analyze_workbook(
         reachable=reachable,
         quarantined=quarantined,
         unavailable=session.unavailable,
+        max_chain_depth=max_chain_depth,
+        max_dense_cells=max_dense_cells,
     )
 
     # --- 3. extraction + grouping ------------------------------------------
@@ -244,6 +268,7 @@ def analyze_workbook(
         warnings,
         reporter,
         reachable=reachable,
+        max_cells_per_sheet=max_cells_per_sheet,
     )
     groups = sweep.groups
     formula_count = sweep.formula_count
@@ -252,7 +277,13 @@ def analyze_workbook(
     # --- 4. nodes + edges: names, formulas, VBA, Power Query ---------------
     _t = time.perf_counter()
     builder = GraphBuilder(
-        resolver, sheet_dims, table_index, defined_names, warnings, reporter
+        resolver,
+        sheet_dims,
+        table_index,
+        defined_names,
+        warnings,
+        reporter,
+        max_nodes_per_sheet=max_nodes_per_sheet,
     )
     builder.select_nodes(groups)
     nodes = builder.nodes
@@ -317,6 +348,21 @@ def analyze_workbook(
             "analyzedAt": datetime.datetime.now(datetime.UTC).isoformat(),
             "engine": "formualizer (Rust)",
             "warnings": warnings,
+            "definedNameEvidence": read_defined_name_evidence(data),
+            "analysisLimits": {
+                "cellsPerSheet": MAX_CELLS_PER_SHEET
+                if max_cells_per_sheet is None
+                else max_cells_per_sheet,
+                "nodesPerSheet": MAX_NODES_PER_SHEET
+                if max_nodes_per_sheet is None
+                else max_nodes_per_sheet,
+                "recoveryDepth": MAX_CHAIN_DEPTH
+                if max_chain_depth is None
+                else max_chain_depth,
+                "denseCells": MAX_DENSE_CELLS
+                if max_dense_cells is None
+                else max_dense_cells,
+            },
             "stats": {
                 "sheets": sheet_stats,
                 "totalFormulas": formula_count,
