@@ -1,5 +1,4 @@
 # Changelog
-# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -14,8 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   triangles no longer expand to the viewport width, and comments truncation
   warnings for other sheets are not shown when viewing an unaffected sheet.
   Switching sheets resets the body scroll position to the top.
-
-## [1.9.0] — 2026-09-13
 
 ### Added
 
