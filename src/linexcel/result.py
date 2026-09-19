@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from linexcel.analyzer import analyze_workbook
+from linexcel.execution import ExecutionPolicy
 from linexcel.limits import validate_limits
 from linexcel.viewer import render_html, wrap_iframe
 
@@ -73,6 +74,7 @@ def analyze(
     max_nodes_per_sheet: int | None = None,
     max_chain_depth: int | None = None,
     max_dense_cells: int | None = None,
+    execution: ExecutionPolicy | None = None,
 ) -> LineageResult:
     """Analyze an Excel workbook and return a :class:`LineageResult`.
 
@@ -84,6 +86,13 @@ def analyze(
         Logical name (used for labels and VBA detection).
     verbose : bool, optional
         Print per-phase timing to stderr.
+    execution : ExecutionPolicy, optional
+        Default: isolated analysis with a 120-second budget and 2 GiB memory
+        limit. Source reading, AI, screenshots and exports are separate.
+        In isolated mode ``result.engine`` is None. Explicitly use
+        ``ExecutionPolicy(isolated=False)`` for the legacy live engine without
+        hard resource guarantees. Interrupted analysis returns a report whose
+        ``graph['meta']['execution']['status']`` explains the incomplete result.
     step_seconds : float, optional
         Wall-clock ceiling on the step-by-step decomposition, in seconds
         (default 300). Past it, cells keep their values and lose only their
@@ -121,6 +130,8 @@ def analyze(
         max_chain_depth=max_chain_depth,
         max_dense_cells=max_dense_cells,
     )
+    if execution is not None and not isinstance(execution, ExecutionPolicy):
+        raise TypeError("execution must be an ExecutionPolicy")
     data, name = _read_source(source, filename)
     try:
         kwargs = {} if step_seconds is None else {"step_seconds": step_seconds}
@@ -134,6 +145,7 @@ def analyze(
             max_nodes_per_sheet=max_nodes_per_sheet,
             max_chain_depth=max_chain_depth,
             max_dense_cells=max_dense_cells,
+            execution=execution,
             **kwargs,
         )
     except Exception as exc:
@@ -530,7 +542,10 @@ class LineageResult:
         # than by catching RuntimeError, which would also swallow a genuine
         # extraction failure (WorkbookRenderError subclasses it).
         meta["workbookContext"] = (
-            self.workbook_context if self._source_data is not None else None
+            self.workbook_context
+            if self._source_data is not None
+            and meta.get("execution", {}).get("status", "completed") == "completed"
+            else None
         )
 
         if workbook_doc:

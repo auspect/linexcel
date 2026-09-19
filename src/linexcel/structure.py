@@ -22,18 +22,6 @@ from linexcel.tables import _collect_defined_names, _force_dimensions
 
 MAX_NODES_PER_SHEET = 400
 
-#: Seconds per megabyte of uncompressed sheet XML, for everything that reads
-#: the file: parsing, sweeping, grouping. Measured across workbooks from a
-#: thousand cells to two hundred thousand formulas.
-SECONDS_PER_SHEET_MB = 0.5
-#: Seconds of evaluation per formula cell. Measured near 15 µs on chained
-#: formulas; doubled here because a real workbook mixes in cross-sheet
-#: references and lookups, and an estimate reads better slightly high than
-#: an order of magnitude low.
-SECONDS_PER_FORMULA = 30e-6
-#: Below this the estimate is noise and nobody was going to wait anyway.
-WORTH_MENTIONING_SECONDS = 5.0
-
 _SHEET_PART_RE = re.compile(r"xl/worksheets/sheet\d+\.xml")
 
 
@@ -95,19 +83,16 @@ def count_formulas(data: bytes) -> int:
         return 0
 
 
-def estimate_seconds(data: bytes) -> float:
-    """How long analysing this file is likely to take, in seconds.
+def estimate_seconds(data: bytes) -> None:
+    """Deprecated: workbook size does not establish execution duration."""
+    import warnings
 
-    Two terms: reading the file scales with the weight of the sheet parts,
-    and evaluating it scales with the number of formulas. The count costs an
-    unpack of the sheets, so it is only paid when the weight alone already
-    says the run will be long — a small file gets the cheap floor, which is
-    all the warning it needs.
-    """
-    seconds = sheet_bytes(data) / 1_048_576 * SECONDS_PER_SHEET_MB
-    if seconds < WORTH_MENTIONING_SECONDS:
-        return seconds
-    return seconds + count_formulas(data) * SECONDS_PER_FORMULA
+    warnings.warn(
+        "estimate_seconds is deprecated; duration is unknown",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return None
 
 
 def inspect_workbook(
@@ -164,7 +149,8 @@ def inspect_workbook(
     return {
         "bytes": len(data),
         "sheetBytes": weight,
-        "estimatedSeconds": round(estimate_seconds(data), 1),
+        "estimatedSeconds": None,
+        "estimateStatus": "deprecated_unavailable",
         "sheets": sheets,
         "declaredCells": sum(s["cells"] for s in sheets),
         "externalWorkbooks": [b.name for b in books.values()],

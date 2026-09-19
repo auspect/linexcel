@@ -53,8 +53,14 @@ class TestInlineStylesLiftedToCss:
     """
 
     def test_only_data_driven_style_assignments_survive(self):
-        props = set(re.findall(r"\.style\.(\w+) =", render_html(demo_graph())))
-        assert props == {"background", "color", "marginLeft"}, props
+        html = render_html(demo_graph())
+        props = set(re.findall(r"\.style\.(\w+) =", html))
+        # Search results follow the measured header height, which varies with
+        # viewport and language. Fixed clipboard positioning stays in CSS.
+        assert props == {"background", "color", "marginLeft", "top"}, props
+        assert "resultsBox.style.top = (document.querySelector('.lin-bar')" in html
+        assert ".getBoundingClientRect().bottom + 6) + 'px'" in html
+        assert ".lin-copy-fallback { position: fixed; left: -9999px; }" in html
 
     def test_the_screenshot_pane_no_longer_injects_a_stylesheet(self):
         html = render_html(demo_graph())

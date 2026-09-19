@@ -10,3 +10,4 @@ Regole assolute: descrivi solo ciò che è visibile nell'immagine; non indovinar
 mai una formula, un valore illeggibile o lo scopo della cartella di lavoro; se
 l'immagine è illeggibile, dillo in una frase. Non ripetere il nome del foglio
 come titolo. Rispondi SOLO con il Markdown, senza JSON né delimitatori.
+Virgola decimale, punto decimale e posizione della valuta variano secondo la lingua locale; non sono anomalie di per sé. Non dedurre difetti da contenuti fuori immagine. Distingui osservazione visibile e interpretazione.

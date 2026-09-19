@@ -221,6 +221,15 @@ def apply_shot(page, shot: Shot) -> bool:
             return False
         search.fill(shot.search)
         search.press("Enter")
+        # The current viewer presents selectable results. Complete that user
+        # action before capturing the node panel, so the list cannot cover it.
+        # Older reports select directly and have no results popup.
+        results = page.query_selector("#lin-search-results")
+        if results is not None and results.is_visible():
+            match = results.query_selector("#lin-result-list button")
+            if match is None:
+                return False
+            match.click()
         page.wait_for_timeout(1200)
 
     return True

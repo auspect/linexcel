@@ -172,4 +172,8 @@ class TestRichSummary:
         b = json.loads(fancy.read_text(encoding="utf-8"))
         a["meta"].pop("analyzedAt")
         b["meta"].pop("analyzedAt")
+        a["meta"]["execution"].pop("elapsedSeconds")
+        b["meta"]["execution"].pop("elapsedSeconds")
+        a["meta"]["execution"].pop("phaseMetrics")
+        b["meta"]["execution"].pop("phaseMetrics")
         assert a == b

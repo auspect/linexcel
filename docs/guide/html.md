@@ -8,6 +8,31 @@ result.save_html("lineage.html")
 
 Fully offline — Cytoscape.js embedded, no internet needed.
 
+## Investigating a result
+
+Search returns a list of matching references, formulas and labels. Choose
+whether to search the visible graph or all nodes in the analyzed workbook;
+the latter includes nodes hidden by the current filters. It does not search
+cells omitted from analysis. Use the arrow keys to choose a result, Enter to
+open it and Escape to close the results.
+
+The selected-cell panel keeps the formula, value provenance, decomposition,
+connections and AI explanation together. Copy actions preserve the exact
+reference or formula. Previous/next selection history and selection links
+help return to a finding. “See sheet” opens its presentation context, and the
+return action restores the graph selection, filters and camera.
+
+On dense graphs, start with the immediate neighborhood and expand when
+needed. Hidden-connection counts and the connection list make the reduced
+view explicit. Coverage categories open their corresponding nodes; their
+counts describe graph nodes, including grouped formulas, not individual
+workbook cells. “Export visible view” saves a PNG of the current graph view.
+
+Graph layout, zoom and filtering controls belong to the Graph tab. On narrow
+screens, additional options are in the Options dialog. Formula values and
+source evidence remain separate from AI prose, whose factual claims still
+require verification.
+
 ## With AI documentation
 
 ```python

@@ -4,13 +4,14 @@ import io
 import json
 import re
 import struct
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from openpyxl.comments import Comment
 
-from linexcel import LineageResult, analyze
+from linexcel import ExecutionPolicy, LineageResult, analyze
 from linexcel import viewer as viewer_module
 from linexcel.analyzer import analyze_workbook
 from linexcel.refs import (
@@ -511,7 +512,9 @@ class TestPackageApi:
         monkeypatch.setattr("linexcel.insights._launcher_install_paths", lambda: ())
         monkeypatch.setattr("linexcel.insights._pdftoppm_install_paths", lambda: ())
         with pytest.raises(WorkbookRenderError, match="LibreOffice, pdftoppm"):
-            analyze(lineage_excel).save_screenshots(tmp_path)
+            partial(analyze, execution=ExecutionPolicy(isolated=False))(
+                lineage_excel
+            ).save_screenshots(tmp_path)
 
     def test_renderer_is_found_in_a_standard_install_outside_path(
         self, monkeypatch, tmp_path
@@ -552,7 +555,9 @@ class TestPackageApi:
         commands = {"libreoffice": "libreoffice", "pdftoppm": "pdftoppm"}
         monkeypatch.setattr("linexcel.insights.shutil.which", commands.get)
         monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
-        screenshots = analyze(lineage_excel).save_screenshots(tmp_path)
+        screenshots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         assert isinstance(screenshots, list)
         assert [path.name for path in screenshots] == ["workbook-1.png"]
         assert calls[0][2:5] == ["--headless", "--norestore", "--convert-to"]
@@ -576,7 +581,9 @@ class TestPackageApi:
         commands = {"libreoffice": "libreoffice", "pdftoppm": "pdftoppm"}
         monkeypatch.setattr("linexcel.insights.shutil.which", commands.get)
         monkeypatch.setattr("linexcel.insights.subprocess.run", fake_run)
-        analyze(lineage_excel).save_screenshots(tmp_path)
+        partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         profile = calls[0][1]
         assert profile.startswith("-env:UserInstallation=file://")
         assert "linexcel-render-" in profile
@@ -690,7 +697,9 @@ class TestPackageApi:
         from linexcel.aidoc import AiDocError
 
         _clear_ai_env(monkeypatch)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         try:
             result.document()
         except AiDocError as exc:
@@ -790,7 +799,9 @@ class TestAiProviders:
         from linexcel.aidoc import AiDocError
 
         _clear_ai_env(monkeypatch)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         with pytest.raises(AiDocError, match="No AI provider selected"):
             result.document_workbook()
 
@@ -799,7 +810,9 @@ class TestAiProviders:
         from linexcel.aidoc import AiDocError
 
         _clear_ai_env(monkeypatch)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         with pytest.raises(AiDocError, match="No AI provider selected"):
             result.document(model="some-model-name")
 
@@ -808,7 +821,9 @@ class TestAiProviders:
         from linexcel.aidoc import AiDocError
 
         _clear_ai_env(monkeypatch)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         with pytest.raises(AiDocError, match="No AI provider selected"):
             result.document_workbook(api_key="some-key")
 
@@ -817,7 +832,9 @@ class TestAiProviders:
         from linexcel.aidoc import AiDocError
 
         _clear_ai_env(monkeypatch)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         with pytest.raises(AiDocError, match="No model named for the endpoint"):
             result.document_workbook(base_url="http://localhost:11434/v1")
 
@@ -840,7 +857,9 @@ class TestAiProviders:
 
         _clear_ai_env(monkeypatch)
         monkeypatch.setattr(aidoc, "_OpenAICompatProvider", StubClient)
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         assert (
             result.document_workbook(
                 base_url="http://localhost:11434/v1", model="qwen3.8"
@@ -872,7 +891,9 @@ class TestAiProviders:
         monkeypatch.setattr(aidoc, "_OpenAICompatProvider", StubClient)
         monkeypatch.setenv("LINEXCEL_AI_BASE_URL", "https://openrouter.ai/api/v1")
         monkeypatch.setenv("LINEXCEL_AI_MODEL", "some-org/some-model")
-        result = analyze(lineage_excel)
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        )
         node_id = self._calc_ids(result)[0]
         assert result.document([node_id]) == {node_id: "# card"}
         assert captured["base_url"] == "https://openrouter.ai/api/v1"
@@ -1655,7 +1676,9 @@ class TestVbaGraph:
             "linexcel.graph.extract_vba_modules",
             lambda data, filename, warnings=None: dict(modules),
         )
-        return analyze_workbook(workbook, "macro.xlsm")["graph"]
+        return partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
+            workbook, "macro.xlsm"
+        )["graph"]
 
     def test_call_edge_links_the_two_procedures(self, lineage_excel, monkeypatch):
         graph = self._graph(
@@ -1838,7 +1861,9 @@ class TestScreenshotsPerSheet:
         self, lineage_excel, monkeypatch, tmp_path
     ):
         self._renderer(monkeypatch, [png_bytes()] * 3)
-        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         assert isinstance(shots, dict)
         assert list(shots) == ["Sales", "Summary", "Params"]
         assert [p.name for pages in shots.values() for p in pages] == [
@@ -1851,14 +1876,18 @@ class TestScreenshotsPerSheet:
         self, lineage_excel, monkeypatch, tmp_path
     ):
         calls = self._renderer(monkeypatch, [png_bytes()] * 3)
-        analyze(lineage_excel).save_screenshots(tmp_path)
+        partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         assert "SinglePageSheets" in calls[0][calls[0].index("--convert-to") + 1]
 
     def test_print_pages_are_a_flat_list_under_the_workbook_layout(
         self, lineage_excel, monkeypatch, tmp_path
     ):
         calls = self._renderer(monkeypatch, [png_bytes()] * 2)
-        shots = analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path, per_sheet=False)
         assert isinstance(shots, list)
         assert calls[0][calls[0].index("--convert-to") + 1] == "pdf"
         assert [p.name for p in shots] == ["workbook-1.png", "workbook-2.png"]
@@ -1872,7 +1901,9 @@ class TestScreenshotsPerSheet:
         may not show, so the flat list is returned instead.
         """
         self._renderer(monkeypatch, [png_bytes()] * 5)  # 5 pages, 3 sheets
-        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         assert isinstance(shots, list)
         assert [p.name for p in shots] == [f"workbook-{n}.png" for n in range(1, 6)]
 
@@ -1882,7 +1913,9 @@ class TestScreenshotsPerSheet:
         """An empty sheet renders one pixel tall and would read as a broken
         image; the sheet is simply left without one."""
         self._renderer(monkeypatch, [png_bytes(), png_bytes(97, 1), png_bytes()])
-        shots = analyze(lineage_excel).save_screenshots(tmp_path)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path)
         assert isinstance(shots, dict)
         assert list(shots) == ["Sales", "Params"]
 
@@ -1892,9 +1925,13 @@ class TestScreenshotsPerSheet:
         """pdftoppm pads the page number to the width of the page count, so a
         reused directory holds both "-1.png" and "-01.png"."""
         self._renderer(monkeypatch, [png_bytes()] * 12)
-        analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path, per_sheet=False)
         self._renderer(monkeypatch, [png_bytes()] * 2)
-        shots = analyze(lineage_excel).save_screenshots(tmp_path, per_sheet=False)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            lineage_excel
+        ).save_screenshots(tmp_path, per_sheet=False)
         assert isinstance(shots, list)
         assert [p.name for p in shots] == ["workbook-1.png", "workbook-2.png"]
 
@@ -1910,7 +1947,9 @@ class TestScreenshotsPerSheet:
         workbook.save(buffer)
 
         self._renderer(monkeypatch, [png_bytes()] * 2)
-        shots = analyze(buffer.getvalue(), filename="w.xlsx").save_screenshots(tmp_path)
+        shots = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            buffer.getvalue(), filename="w.xlsx"
+        ).save_screenshots(tmp_path)
         assert isinstance(shots, dict)
         assert list(shots) == ["O'Brien & Café", "O Brien  Caf"]
         assert [p.name for pages in shots.values() for p in pages] == [
@@ -2076,9 +2115,9 @@ class TestScreenshotDescriptions:
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
         with pytest.raises(aidoc.AiDocError, match="Sales"):
-            analyze(lineage_excel).describe_screenshots(
-                {"Sales": [shot]}, provider=vision
-            )
+            partial(analyze, execution=ExecutionPolicy(isolated=False))(
+                lineage_excel
+            ).describe_screenshots({"Sales": [shot]}, provider=vision)
         assert vision.calls == []
 
     def test_one_failure_does_not_discard_the_others(self, lineage_excel, tmp_path):
@@ -2238,7 +2277,9 @@ class TestVbaExtraction:
     ):
         """A macro workbook showing no VBA must not do so silently."""
         stub_olevba.fail_on_open = True
-        graph = analyze_workbook(lineage_excel, "macro.xlsm")["graph"]
+        graph = analyze_workbook(
+            lineage_excel, "macro.xlsm", execution=ExecutionPolicy(isolated=False)
+        )["graph"]
         assert graph["meta"]["stats"]["vbaProcs"] == 0
         assert any(
             "VBA project could not be opened" in w for w in graph["meta"]["warnings"]
@@ -2255,7 +2296,9 @@ class TestVbaExtraction:
                 "End Sub\n",
             ),
         )
-        graph = analyze_workbook(lineage_excel, "macro.xlsm")["graph"]
+        graph = analyze_workbook(
+            lineage_excel, "macro.xlsm", execution=ExecutionPolicy(isolated=False)
+        )["graph"]
         assert graph["meta"]["stats"]["vbaModules"] == 1
         assert graph["meta"]["stats"]["vbaProcs"] == 1
         assert [n["label"] for n in graph["nodes"] if n["kind"] == "vba"] == [
@@ -2657,7 +2700,7 @@ class TestScanCeiling:
     def test_a_sheet_under_the_ceiling_is_swept_whole(self):
         graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
         assert graph["meta"]["stats"]["totalFormulas"] == 60
-        assert graph["meta"]["warnings"] == []
+        assert graph["meta"]["analysisCoverage"]["omissions"] == []
 
     def test_the_last_chunk_is_clipped_to_the_ceiling_not_dropped(self, monkeypatch):
         """Dropping it stopped a 4,000,000-cell budget at 3,600,000."""
@@ -2665,7 +2708,9 @@ class TestScanCeiling:
 
         monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
-        graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
+        graph = partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
+            self.sheet_of(30, 3), "scan.xlsx"
+        )["graph"]
         # 30 cells of budget over 3 columns: rows 1-10, two formulas each
         assert graph["meta"]["stats"]["totalFormulas"] == 20
 
@@ -2674,8 +2719,10 @@ class TestScanCeiling:
 
         monkeypatch.setattr(sweep, "MAX_CELLS_PER_SHEET", 30)
         monkeypatch.setattr(engine, "SCAN_CHUNK_ROWS", 100)
-        graph = analyze_workbook(self.sheet_of(30, 3), "scan.xlsx")["graph"]
-        (warning,) = graph["meta"]["warnings"]
+        graph = partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
+            self.sheet_of(30, 3), "scan.xlsx"
+        )["graph"]
+        (warning,) = [w for w in graph["meta"]["warnings"] if "scanned to row" in w]
         assert "scanned to row 10 of 30" in warning
         assert "missing from the lineage" in warning
 

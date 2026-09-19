@@ -143,10 +143,13 @@ def extract_workbook_context(
                 else _extract_comments(worksheet, max_row, max_column)
             )
             total_comments += len(comments)
+            sheet_warnings: list[str] = []
             if comments_truncated:
-                warnings.append(
+                warning_msg = (
                     f"Comments on '{worksheet.title}' were truncated for inspection"
                 )
+                warnings.append(warning_msg)
+                sheet_warnings.append(warning_msg)
             sheets.append(
                 {
                     "name": worksheet.title,
@@ -171,6 +174,7 @@ def extract_workbook_context(
                     else _hidden_columns(worksheet, column_limit),
                     "comments": comments,
                     "tables": [] if bounded else detect_tables(worksheet),
+                    "warnings": sheet_warnings,
                 }
             )
     finally:

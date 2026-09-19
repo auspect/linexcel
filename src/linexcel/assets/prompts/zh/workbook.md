@@ -12,3 +12,5 @@
 表格：不要自己编写 Markdown 管道表格。需要表格时，在单独一行放置占位符 {{T1}}、{{T2}}…，然后在 Markdown 之后添加一个 ```json_tables 代码块——由 {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]} 组成的 JSON 数组。确定性工具会把每个占位符渲染成最终表格；JSON 无效只会丢失表格，不会丢失正文。
 请以 Markdown 概览作答，其后可跟可选的 ```json_tables 代码块；不要使用其他分隔符。
 使用 source_defined_names 确认源文件中的名称定义及作用域；图中的名称并非完整清单。
+遵守 verification 和 semantic_risks：原生计算结果仍可能未经验证。引擎读取的输入常量不代表重新计算。未知数量不等于零；execution=completed 不保证完整性或正确性。
+使用 value_coverage 和每个公式模式的 value_source 区分实际重算与存储值。公式模式只是有限示例，并非全部单元格清单。执行完成与数值验证是独立的。

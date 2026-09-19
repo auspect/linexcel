@@ -13,6 +13,7 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel import analyze
+from linexcel.execution import ExecutionPolicy
 from linexcel.powerquery import (
     Query,
     QuerySource,
@@ -182,7 +183,10 @@ class TestChainedQueries:
             "shared Clean = Table.SelectRows(Raw, each true);"
         )
         monkeypatch.setattr(analyzer, "read_queries", _queries_from(section))
-        graph = analyzer.analyze_workbook(plain_workbook(), "main.xlsx")["graph"]
+        # The patched query reader belongs to this process, not an isolated worker.
+        graph = analyzer.analyze_workbook(
+            plain_workbook(), "main.xlsx", execution=ExecutionPolicy(isolated=False)
+        )["graph"]
         edges = {(e["source"], e["target"]) for e in graph["edges"]}
         assert ("q:Raw", "q:Clean") in edges
 
@@ -192,7 +196,9 @@ class TestChainedQueries:
 
         section = "section Section1;\nshared Sales = 1;\nshared sales = 2;"
         monkeypatch.setattr(analyzer, "read_queries", _queries_from(section))
-        graph = analyzer.analyze_workbook(plain_workbook(), "main.xlsx")["graph"]
+        graph = analyzer.analyze_workbook(
+            plain_workbook(), "main.xlsx", execution=ExecutionPolicy(isolated=False)
+        )["graph"]
         labels = {n["label"] for n in graph["nodes"] if n["kind"] == "query"}
         assert labels == {"Sales", "sales"}
 

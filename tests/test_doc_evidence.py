@@ -127,3 +127,73 @@ def test_vision_card_unwraps_only_the_complete_markdown_envelope():
     assert describe_images({"Sheet": b"synthetic image"}, provider=Provider()) == {
         "Sheet": "**Layout**: two columns."
     }
+
+
+def test_no_matching_names_does_not_mean_no_workbook_names():
+    from linexcel.doc_evidence import relevant_names
+
+    evidence = {
+        "status": "complete",
+        "total": 1,
+        "definitions": [{"name": "Threshold", "scope": "workbook"}],
+    }
+    facts = relevant_names(evidence, ["A1"], "S")
+    assert facts["definitions"] == []
+    assert facts["selection_scope"] == "names_referenced_by_this_formula_only"
+    assert facts["workbook_definition_count"] == 1
+
+
+def test_overview_retains_recalculation_evidence_without_live_api_details():
+    from linexcel.aidoc import build_workbook_dossier
+    from linexcel.execution import add_coverage
+
+    graph = {
+        "meta": {"execution": {"status": "completed", "engineAvailable": False}},
+        "nodes": [
+            {
+                "id": "g:S!A1#100",
+                "kind": "group",
+                "formula": "=1+2",
+                "sheet": "S",
+                "addr": "A1",
+                "count": 100,
+                "value": 3,
+                "valueSource": "engine",
+            }
+        ],
+        "edges": [],
+    }
+    add_coverage(graph)
+    dossier = build_workbook_dossier(graph)
+    assert "engineAvailable" not in dossier["execution"]
+    assert dossier["value_coverage"]["counts"]["engine"] == 1
+    (pattern,) = dossier["formula_patterns"]
+    assert pattern["displayed_value"] == 3
+    assert pattern["value_source"] == "engine"
+    assert pattern["representative_cell"] == {"sheet": "S", "address": "A1"}
+    assert graph["meta"]["execution"]["engineAvailable"] is False
+
+
+def test_name_metadata_reader_status_is_not_a_failed_engine_evaluation():
+    from linexcel.aidoc import build_dossier, build_workbook_dossier
+
+    definition = {
+        "name": "Threshold",
+        "scope": "workbook",
+        "expression": "S!$B$1",
+        "expression_evaluated": False,
+    }
+    graph = {
+        "meta": {
+            "definedNameEvidence": {"status": "complete", "definitions": [definition]}
+        },
+        "nodes": [{"id": "c:S!A1", "sheet": "S", "formula": "=Threshold"}],
+        "edges": [],
+    }
+    for dossier in (build_dossier(graph, "c:S!A1"), build_workbook_dossier(graph)):
+        facts = dossier["source_defined_names"]
+        assert facts["definition_provenance"] == "source_workbook_metadata"
+        (name,) = facts["definitions"]
+        assert name["expression"] == "S!$B$1"
+        assert "expression_evaluated" not in name
+    assert definition["expression_evaluated"] is False

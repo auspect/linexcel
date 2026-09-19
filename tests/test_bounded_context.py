@@ -58,3 +58,25 @@ def test_missing_dimensions_still_reads_bounded_preview(monkeypatch):
     sheet = context["sheets"][0]
     assert sheet["preview"][3]["values"][2] == "Visible without dimensions"
     assert sheet["dimensions"] == {"rows": None, "columns": None}
+
+
+def test_truncated_comments_populate_sheet_specific_warnings(monkeypatch):
+    workbook = Workbook()
+    first = workbook.active
+    first.title = "First"
+    first["A1"].comment = Comment("First note", "Analyst")
+    first["A2"].comment = Comment("Second note", "Analyst")
+    second = workbook.create_sheet("Second")
+    second["A1"] = "Clean"
+    output = io.BytesIO()
+    workbook.save(output)
+
+    monkeypatch.setattr(insights, "MAX_COMMENTS_PER_SHEET", 1)
+    context = insights.extract_workbook_context(output.getvalue())
+
+    assert context["warnings"] == ["Comments on 'First' were truncated for inspection"]
+    assert context["sheets"][0]["comments"] == [
+        {"cell": "A1", "author": "Analyst", "text": "First note"}
+    ]
+    assert context["sheets"][0]["warnings"] == context["warnings"]
+    assert context["sheets"][1]["warnings"] == []

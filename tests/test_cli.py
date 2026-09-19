@@ -119,149 +119,33 @@ class TestDryRun:
         assert "ceilings:" in capsys.readouterr().out
 
 
-class TestSayingHowLongItWillTake:
-    """A big workbook announces itself before the wait, not after.
-
-    The estimate comes from the uncompressed size of the sheet parts, which
-    the zip index carries — so asking costs about a twentieth of a
-    millisecond, and every run can afford to ask.
-    """
-
-    def test_the_index_gives_the_weight_without_unpacking_anything(self, workbook_path):
-        from linexcel.structure import sheet_bytes
-
-        assert sheet_bytes(workbook_path.read_bytes()) > 0
-
-    def test_something_that_is_not_a_package_weighs_nothing(self):
-        from linexcel.structure import sheet_bytes
-
-        assert sheet_bytes(b"not a zip") == 0
-
-    def test_a_small_workbook_says_nothing(self, workbook_path, capsys):
-        main(["analyze", str(workbook_path), "--no-html"])
-        assert "should take" not in capsys.readouterr().err
-
-    def test_a_large_one_says_how_long_before_it_starts(
-        self, workbook_path, monkeypatch, capsys
-    ):
-        from linexcel import structure
-
-        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
-        main(["analyze", str(workbook_path), "--no-html"])
-        err = capsys.readouterr().err
-        assert "200 MB of worksheet XML" in err
-        assert "about 2 minutes" in err
-        assert "an estimate, not a promise" in err
-
-    def test_it_goes_to_stderr_so_a_piped_report_stays_clean(
-        self, workbook_path, monkeypatch, capsys
-    ):
-        from linexcel import structure
-
-        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
-        main(["analyze", str(workbook_path), "--no-html", "--json", "-"])
-        captured = capsys.readouterr()
-        assert "should take" in captured.err
-        assert "should take" not in captured.out
-
-    def test_it_names_the_ways_out(self, workbook_path, monkeypatch, capsys):
-        """Someone told a run will be long wants to know what else they can do."""
-        from linexcel import structure
-
-        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
-        main(["analyze", str(workbook_path), "--no-html"])
-        err = capsys.readouterr().err
-        assert "--time-budget" in err and "-v" in err
-
-    def test_the_dry_run_states_it_too(self, workbook_path, capsys):
-        main(["analyze", str(workbook_path), "--dry-run"])
-        assert "should take" in capsys.readouterr().out
+def test_cli_no_heuristic_duration(workbook_path, capsys):
+    assert main(["analyze", str(workbook_path), "--no-html"]) == 0
+    assert "should take" not in capsys.readouterr().err
 
 
-class TestTheEstimateReadsAsAnOrderOfMagnitude:
-    """Quoting seconds would claim a precision it does not have."""
-
-    from linexcel.cli import _format_duration as _fmt
-
-    def test_seconds_are_rounded_to_five(self):
-        from linexcel.cli import _format_duration
-
-        assert _format_duration(12) == "about 10 seconds"
-        assert _format_duration(0.2) == "about 5 seconds"
-
-    def test_past_a_minute_and_a_half_it_speaks_in_minutes(self):
-        from linexcel.cli import _format_duration
-
-        assert _format_duration(100) == "about 2 minutes"
-        assert _format_duration(600) == "about 10 minutes"
+def test_dry_run_states_unknown_duration(workbook_path, capsys):
+    assert main(["analyze", str(workbook_path), "--dry-run"]) == 0
+    assert "duration is unknown" in capsys.readouterr().out
 
 
-class TestTheEstimateCountsFormulas:
-    """Weight alone could not see a small file of expensive formulas."""
-
-    def test_formulas_are_counted_in_the_sheet_xml(self, workbook_path):
-        from linexcel.structure import count_formulas
-
-        assert count_formulas(workbook_path.read_bytes()) > 0
-
-    def test_something_that_is_not_a_package_has_no_formulas(self):
-        from linexcel.structure import count_formulas
-
-        assert count_formulas(b"not a zip") == 0
-
-    def test_a_small_workbook_skips_the_count(self, workbook_path, monkeypatch):
-        """Counting unpacks the sheets; a quick run is not worth that."""
-        from linexcel import structure
-
-        def _boom(data):
-            raise AssertionError("count_formulas should not run under the floor")
-
-        monkeypatch.setattr(structure, "count_formulas", _boom)
-        assert structure.estimate_seconds(workbook_path.read_bytes()) >= 0
-
-    def test_a_heavy_one_pays_the_count(self, workbook_path, monkeypatch):
-        from linexcel import structure
-
-        monkeypatch.setattr(structure, "sheet_bytes", lambda data: 200 * 1_048_576)
-        monkeypatch.setattr(structure, "count_formulas", lambda data: 1_000_000)
-        estimate = structure.estimate_seconds(workbook_path.read_bytes())
-        # 100 s of reading + 30 s of evaluation
-        assert estimate == pytest.approx(130.0)
-
-
-class TestOverrunNotice:
-    """A run that sails past its estimate says so while there is still time
-    to act on it, not in a post-mortem."""
-
-    def test_it_fires_when_the_run_overruns(self, monkeypatch, capsys):
-        import time
-
-        from linexcel import cli
-
-        monkeypatch.setattr(cli, "OVERRUN_NOTICE_FLOOR_SECONDS", 0.05)
-        with cli._overrun_notice(0.0):
-            time.sleep(0.3)
-        err = capsys.readouterr().err
-        assert "still running" in err
-        assert "--time-budget" in err
-
-    def test_it_names_the_estimate_it_overran(self, monkeypatch, capsys):
-        import time
-
-        from linexcel import cli
-
-        monkeypatch.setattr(cli, "OVERRUN_NOTICE_FLOOR_SECONDS", 0.0)
-        monkeypatch.setattr(cli, "OVERRUN_FACTOR", 0.01)
-        with cli._overrun_notice(10.0):
-            time.sleep(0.3)
-        assert "estimate" in capsys.readouterr().err
-
-    def test_a_run_that_finishes_in_time_says_nothing(self, capsys):
-        from linexcel import cli
-
-        with cli._overrun_notice(0.0):
-            pass
-        assert capsys.readouterr().err == ""
+def test_budget_expiry_returns_partial_report(workbook_path, tmp_path):
+    out = tmp_path / "partial.json"
+    assert (
+        main(
+            [
+                "analyze",
+                str(workbook_path),
+                "--no-html",
+                "--json",
+                str(out),
+                "--analysis-seconds",
+                "0",
+            ]
+        )
+        == 3
+    )
+    assert json.loads(out.read_text())["meta"]["execution"]["status"] == "timed_out"
 
 
 class TestTargetOption:

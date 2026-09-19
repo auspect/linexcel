@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import warnings
@@ -368,6 +369,9 @@ class _OpenAICompatProvider:
             ) from exc
         # Local runtimes ignore the key but the client refuses to start without
         # one, so a placeholder stands in rather than a hosted key being needed.
+        timeout = float(os.getenv("LINEXCEL_AI_TIMEOUT_SECONDS", "300"))
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("LINEXCEL_AI_TIMEOUT_SECONDS must be finite and positive")
         self._client = OpenAI(
             api_key=(
                 api_key
@@ -376,6 +380,8 @@ class _OpenAICompatProvider:
                 or "not-needed"
             ),
             base_url=base_url,
+            timeout=timeout,
+            max_retries=0,
         )
         self._model = model
 
@@ -573,10 +579,12 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
         "value_samples": node.get("samples"),
         "decomposition": _compact_steps(node.get("steps")),
         "formula_facts": facts,
-        "source_defined_names": relevant_names(
-            meta.get("definedNameEvidence", {}),
-            facts.get("references", []),
-            node.get("sheet"),
+        "source_defined_names": _document_name_evidence(
+            relevant_names(
+                meta.get("definedNameEvidence", {}),
+                facts.get("references", []),
+                node.get("sheet"),
+            )
         ),
         "direct_self_edge_observed": any(e["source"] == node_id for e in precedents),
         "precedents": [
@@ -602,6 +610,18 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
     return dossier
 
 
+def _document_name_evidence(evidence: dict) -> dict:
+    """Keep definitions, without confusing metadata reading with evaluation."""
+    return {
+        **evidence,
+        "definition_provenance": "source_workbook_metadata",
+        "definitions": [
+            {key: value for key, value in item.items() if key != "expression_evaluated"}
+            for item in evidence.get("definitions", [])
+        ],
+    }
+
+
 def _value_evidence(node: dict) -> dict:
     evidence = {
         "displayed_value": node.get("value"),
@@ -609,6 +629,8 @@ def _value_evidence(node: dict) -> dict:
         "cached_value": node.get("cachedValue"),
         "cached_agreement": node.get("cachedAgreement"),
         "group_cached_agreement": node.get("groupCachedAgreement"),
+        "verification": node.get("verification", "not_independently_verified"),
+        "semantic_risks": node.get("semanticRisks", []),
     }
     if node.get("kind") == "group":
         evidence["value_role"] = "representative cell, not an aggregate of the group"
@@ -735,7 +757,7 @@ def build_workbook_dossier(
         {
             "name": sheet.get("name"),
             "dimensions": {"rows": sheet.get("rows"), "columns": sheet.get("cols")},
-            "formula_cells": sheet.get("formulaCells", 0),
+            "formula_cells": sheet.get("formulaCells"),
             "lineage_nodes": nodes_by_sheet.get(sheet.get("name"), {}),
         }
         for sheet in sheet_stats
@@ -745,11 +767,13 @@ def build_workbook_dossier(
     formula_patterns = sorted(
         (
             {
+                "node_id": node.get("id"),
                 "sheet": node.get("sheet"),
                 "address": node.get("addr"),
                 "formula": node.get("formula"),
                 "cells": node.get("count", 1),
                 "extent": node.get("bbox"),
+                **_value_evidence(node),
             }
             for node in nodes
             if node.get("kind") in {"cell", "group"}
@@ -776,8 +800,32 @@ def build_workbook_dossier(
     ]
     return {
         "filename": meta.get("filename"),
+        # Live native handles are intentionally not returned from an isolated
+        # worker. Their API availability says nothing about recalculation.
+        "execution": {
+            key: value
+            for key, value in meta.get("execution", {"status": "unknown"}).items()
+            if key in {"status", "phase", "completedPhases", "elapsedSeconds"}
+        },
+        "recalculation_engine": meta.get("engine", "unspecified"),
+        "value_coverage": {
+            "scope": meta.get("coverage", {}).get("scope", "not_provided"),
+            "total_nodes": meta.get("coverage", {}).get("totalNodes"),
+            "counts": {
+                key: value.get("count")
+                for key, value in meta.get("coverage", {}).get("categories", {}).items()
+            },
+            "interpretation": (
+                "Counts describe graph nodes, not workbook cells. Engine formula "
+                "values were recalculated in the worker; they remain independently "
+                "unverified. Cache values are separate. A group represents several "
+                "cells but counts once; its displayed value belongs to one member."
+            ),
+        },
+        "coverage": meta.get("analysisCoverage", {"status": "not_inspected"}),
         "analysis": {
-            "formula_cells": stats.get("totalFormulas", 0),
+            "formula_cells": stats.get("totalFormulas"),
+            "count_scope": "extracted_formula_cells_not_workbook_total",
             "lineage_nodes": stats.get("totalNodes", 0),
             "lineage_edges": stats.get("totalEdges", 0),
             "grouped_patterns": stats.get("groupedPatterns", 0),
@@ -785,7 +833,7 @@ def build_workbook_dossier(
         "sheets": sheets,
         "formula_patterns": formula_patterns,
         "defined_names": defined_names,
-        "source_defined_names": dict(
+        "source_defined_names": _document_name_evidence(
             meta.get("definedNameEvidence", {"status": "not_inspected"})
         ),
         "defined_names_in_graph_are_not_source_inventory": True,
@@ -815,7 +863,12 @@ def _merge_presentation(
             continue
         target = by_name.get(name)
         if target is None:
-            target = {"name": name, "formula_cells": 0, "lineage_nodes": {}}
+            target = {
+                "name": name,
+                "formula_cells": None,
+                "lineage_nodes": {},
+                "inspection": "not_inspected",
+            }
             merged.append(target)
         target.update(_presentation_of(ctx_sheet))
     return merged

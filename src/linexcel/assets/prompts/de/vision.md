@@ -10,3 +10,4 @@ Absolute Regeln: beschreibe nur, was im Bild sichtbar ist; rate nie eine Formel,
 einen unlesbaren Wert oder den Zweck der Arbeitsmappe; ist das Bild unlesbar,
 sage es in einem Satz. Wiederhole den Blattnamen nicht als Überschrift.
 Antworte AUSSCHLIESSLICH mit dem Markdown, ohne JSON, ohne Trennzeichen.
+Dezimalkomma, Dezimalpunkt und Währungsposition hängen vom Gebietsschema ab und sind allein keine Fehler. Leite keinen Darstellungsfehler aus Inhalten außerhalb des Bildes ab. Trenne sichtbare Beobachtung und Interpretation.

@@ -122,6 +122,99 @@ def test_search_does_not_select_hidden_results(report):
     assert not errors
 
 
+def test_portrait_flow_stays_readable_and_respects_explicit_layout(report):
+    graph = {
+        "nodes": [
+            {"id": "input1", "label": "Inputs!A1:A100", "kind": "input"},
+            {"id": "input2", "label": "Inputs!B1:B100", "kind": "input"},
+            {"id": "parameter", "label": "Params!C4", "kind": "input"},
+            {"id": "name", "label": "TargetRate", "kind": "name"},
+            {"id": "group", "label": "Sales!E4", "kind": "group", "count": 100},
+            {"id": "total", "label": "Summary!C5", "kind": "cell"},
+            {"id": "mean", "label": "Summary!C6", "kind": "cell"},
+            {"id": "status", "label": "Summary!C7", "kind": "cell"},
+        ],
+        "edges": [
+            {"id": f"edge{i}", "source": source, "target": target, "kind": "ref"}
+            for i, (source, target) in enumerate(
+                [
+                    ("input1", "group"),
+                    ("input2", "group"),
+                    ("group", "total"),
+                    ("group", "mean"),
+                    ("group", "status"),
+                    ("total", "status"),
+                    ("parameter", "name"),
+                    ("name", "status"),
+                ]
+            )
+        ],
+    }
+    page, errors = report(graph, width=390, height=844)
+    assert page.locator("#lin-lay-dagre").get_attribute("aria-pressed") == "true"
+    metrics = page.evaluate("""() => ({
+        pixels:parseFloat(cy.nodes().first().style('font-size'))*cy.zoom(),
+        before:cy.getElementById('input1').position('y'),
+        after:cy.getElementById('group').position('y'),
+        framed:cy.nodes().every(n=>{
+            const b=n.renderedBoundingBox();
+            return b.x1>=0&&b.y1>=0&&b.x2<=cy.width()&&b.y2<=cy.height();
+        }),edges:cy.edges(':visible').length})""")
+    assert metrics["pixels"] >= 10
+    assert metrics["before"] < metrics["after"]
+    assert metrics["framed"] and metrics["edges"] == 8
+    page.click("#lin-options-toggle")
+    page.click("#lin-lay-fcose")
+    page.keyboard.press("Escape")
+    page.set_viewport_size({"width": 844, "height": 390})
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.locator("#lin-lay-fcose").get_attribute("aria-pressed") == "true"
+    assert not errors
+
+
+def test_readme_capture_selects_result_before_photographing(report):
+    import runpy
+
+    capture = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts" / "capture_viewer.py")
+    )
+
+    graph = filtered_graph()
+    graph["nodes"][1]["label"] = "Summary!C5"
+    page, errors = report(graph)
+    assert capture["apply_shot"](page, capture["SHOTS"][1])
+    assert page.locator("#lin-search-results").is_hidden()
+    assert page.locator("#lin-panel h2").inner_text() == "Summary!C5"
+    assert not errors
+
+
+def test_dense_mobile_local_view_starts_with_three_readable_neighbors(report):
+    graph = {
+        "nodes": [{"id": "hub", "label": "Lookups!B21", "kind": "cell", "value": 10}]
+        + [
+            {"id": str(i), "label": f"'Sales Data'!E{i}", "kind": "input", "value": i}
+            for i in range(100)
+        ],
+        "edges": [
+            {"id": f"edge{i}", "source": str(i), "target": "hub", "kind": "ref"}
+            for i in range(100)
+        ],
+    }
+    page, errors = report(graph, width=390, height=844)
+    page.evaluate("() => {cy.getElementById('hub').emit('tap');}")
+    page.click("#lin-explore")
+    page.wait_for_function("cy.nodes(':visible').length === 4")
+    assert (
+        page.evaluate("parseFloat(cy.nodes().first().style('font-size'))*cy.zoom()")
+        >= 11
+    )
+    assert "4/101" in page.locator("#lin-explore-status").inner_text()
+    page.click("#lin-explore-more")
+    page.wait_for_function("cy.nodes(':visible').length === 7")
+    assert "7/101" in page.locator("#lin-explore-status").inner_text()
+    assert not errors
+
+
 def test_group_discrepancy_preserves_the_representative_reading(report):
     group = {
         "id": "g",
@@ -305,6 +398,271 @@ def rich_graph():
     return graph
 
 
+def test_workbook_search_reveals_hidden_result_only_when_chosen(report):
+    page, errors = report(filtered_graph())
+    page.select_option("#lin-sheet-filter", "Out")
+    page.fill("#lin-search", "Unrelated")
+    page.press("#lin-search", "Enter")
+    assert page.locator("#lin-search-status").inner_text() == "No matches"
+    page.select_option("#lin-search-scope", "workbook")
+    assert visible_ids(page) == ["c", "i"]
+    assert "reset filters" in page.locator("#lin-result-list").inner_text()
+    page.press("#lin-search", "ArrowDown")
+    assert page.evaluate("document.activeElement.dataset.nodeId") == "u"
+    page.keyboard.press("Enter")
+    assert page.locator("#lin-sheet-filter").input_value() == "__all__"
+    assert page.evaluate("cy.nodes(':selected').map(n => n.id())") == ["u"]
+    assert page.locator("#lin-search-results").is_hidden()
+    assert not errors
+
+
+def test_search_results_keyboard_and_safe_formula_excerpt(report):
+    graph = filtered_graph()
+    graph["nodes"][0]["formula"] = "=<img onerror=alert(1)>"
+    page, errors = report(graph)
+    page.fill("#lin-search", "")
+    page.click("#lin-search-submit")
+    page.select_option("#lin-search-scope", "workbook")
+    page.fill("#lin-search", "i")
+    page.press("#lin-search", "Enter")
+    assert page.locator("#lin-result-list img").count() == 0
+    page.press("#lin-search", "ArrowDown")
+    page.keyboard.press("End")
+    assert page.evaluate("document.activeElement.dataset.nodeId") == "c"
+    page.keyboard.press("Home")
+    assert page.evaluate("document.activeElement.dataset.nodeId") == "i"
+    page.keyboard.press("Escape")
+    assert page.locator("#lin-search-results").is_hidden()
+    assert page.locator("#lin-search").evaluate("e => e === document.activeElement")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_sheet_roundtrip_preserves_graph_and_hides_graph_only_controls(
+    report, width, height
+):
+    page, errors = report(rich_graph(), width=width, height=height)
+    page.select_option("#lin-sheet-filter", "Out")
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.wait_for_timeout(100)
+    page.evaluate("() => { cy.stop(); cy.zoom(.8); cy.pan({x: 42, y: 63}); }")
+    before = page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})")
+    page.click("#lin-see-sheet")
+    assert "Output" in page.locator("#lin-back-graph").inner_text()
+    assert page.locator("#lin-options-host").is_hidden()
+    assert page.locator("#lin-tools").is_hidden()
+    page.click("#lin-back-graph")
+    assert page.locator("#lin-sheet-filter").input_value() == "Out"
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    assert page.evaluate("cy.nodes(':selected').map(n => n.id())") == ["c"]
+    capture(page, f"investigation-{width}")
+    assert not errors
+
+
+def test_history_restores_filters_and_camera_after_revealing_result(report):
+    page, errors = report(filtered_graph())
+    page.select_option("#lin-sheet-filter", "Out")
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.evaluate("() => { cy.stop(); cy.zoom(.8); cy.pan({x: 42, y: 63}); }")
+    before = page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})")
+    page.fill("#lin-search", "Unrelated")
+    page.select_option("#lin-search-scope", "workbook")
+    page.locator("#lin-result-list button").click()
+    page.click("#lin-history-back")
+    assert page.locator("#lin-sheet-filter").input_value() == "Out"
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    assert page.locator("#lin-panel h2").inner_text() == "Output"
+    page.click("#lin-history-forward")
+    assert page.locator("#lin-panel h2").inner_text() == "Unrelated"
+    assert page.locator("#lin-sheet-filter").input_value() == "__all__"
+    assert not errors
+
+
+def test_copy_formula_and_local_selection_link_are_exact(report):
+    graph = filtered_graph()
+    formula = '=LET(x,"<tag>&value", A1*B1 + C1*D1)'
+    graph["nodes"][1]["formula"] = formula
+    page, errors = report(graph)
+    page.evaluate("""() => {
+      window.copied = [];
+      Object.defineProperty(navigator, 'clipboard', {value: {
+        writeText: value => { window.copied.push(value); return Promise.resolve(); }
+      }});
+      cy.getElementById('c').emit('tap');
+    }""")
+    page.locator("#lin-panel details summary").click()
+    page.click("#lin-copy-formula")
+    page.click("#lin-copy-link")
+    values = page.evaluate("window.copied")
+    assert values[0] == formula
+    assert values[1].endswith("#node=c")
+    page.goto(values[1])
+    page.reload()
+    page.wait_for_function(
+        "document.querySelector('#lin-panel h2')?.textContent === 'Output'"
+    )
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_progressive_exploration_bounds_hub_and_restores_layout(report, width, height):
+    graph = {
+        "nodes": [{"id": "hub", "label": "Hub", "kind": "cell", "sheet": "S"}]
+        + [
+            {"id": f"n{i:03}", "label": f"Input {i}", "kind": "input", "sheet": "S"}
+            for i in range(40)
+        ],
+        "edges": [
+            {"id": f"e{i}", "source": f"n{i:03}", "target": "hub", "kind": "ref"}
+            for i in range(40)
+        ],
+    }
+    page, errors = report(graph, width=width, height=height)
+    page.evaluate("() => { cy.getElementById('hub').emit('tap'); cy.stop(); }")
+    before = page.evaluate("cy.nodes().map(n => ({id:n.id(), p:n.position()}))")
+    page.click("#lin-explore")
+    initial_count = 7 if width < 900 else 13
+    page.wait_for_function("n => cy.nodes(':visible').length === n", arg=initial_count)
+    assert len(visible_ids(page)) == initial_count
+    assert f"{initial_count}/41" in page.locator("#lin-explore-status").inner_text()
+    capture(page, f"exploration-initial-{width}")
+    page.click("#lin-explore-more")
+    page.wait_for_function(
+        "n => cy.nodes(':visible').length === n", arg=13 if width < 900 else 25
+    )
+    assert len(visible_ids(page)) == (13 if width < 900 else 25)
+    capture(page, f"exploration-{width}")
+    page.click("#lin-explore-exit")
+    page.wait_for_function("cy.nodes(':visible').length === 41")
+    assert len(visible_ids(page)) == 41
+    assert page.evaluate("cy.nodes().map(n => ({id:n.id(), p:n.position()}))") == before
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_coverage_counts_graph_nodes_and_opens_drilldown(report, width, height):
+    graph = filtered_graph()
+    graph["meta"] = {
+        "coverage": {
+            "scope": "graph_nodes",
+            "totalNodes": 3,
+            "categories": {
+                "engine": {"count": 1, "nodeIds": ["c"]},
+                "other": {"count": 2, "nodeIds": ["i", "u"]},
+                "divergent": {"count": 1, "nodeIds": ["c"]},
+            },
+            "omissions": {
+                "status": "not_certified",
+                "warnings": ["Trace incomplete: source omitted"],
+            },
+        }
+    }
+    page, errors = report(graph, width=width, height=height)
+    if width < 900:
+        page.click("#lin-options-toggle")
+    assert "groups count as one node" in page.locator("#lin-coverage").inner_text()
+    assert "do not certify" in page.locator("#lin-coverage").inner_text()
+    page.locator("#lin-coverage summary").click()
+    assert "Trace incomplete" in page.locator("#lin-coverage").inner_text()
+    page.locator('[data-coverage="divergent"]').click()
+    page.wait_for_function("document.activeElement.id === 'lin-panel'")
+    page.wait_for_function("""() => {
+        const b=cy.getElementById('c').renderedBoundingBox();
+        return b.x1>=0 && b.y1>=0 && b.x2<=cy.width() && b.y2<=cy.height();
+    }""")
+    page.locator("#lin-panel .lin-result").click()
+    assert page.locator("#lin-panel h2").inner_text() == "Output"
+    if width < 900:
+        page.click("#lin-options-toggle")
+    with page.expect_download() as download:
+        page.click("#lin-export-view")
+    assert download.value.suggested_filename == "linexcel-view.png"
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(320, 844), (768, 900), (844, 390)])
+def test_investigation_controls_remain_bounded_in_french(report, width, height):
+    graph = rich_graph()
+    graph["meta"]["screenshots"] = {"Out": graph["meta"]["screenshots"][:1]}
+    page, errors = report(graph, width=width, height=height, language="fr")
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.click("#lin-explore")
+    assert page.locator("#lin-cy").bounding_box()["height"] >= 100
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    capture(page, f"investigation-fr-{width}x{height}")
+    page.fill("#lin-search", "Output")
+    page.press("#lin-search", "Enter")
+    bounds = page.locator("#lin-search-results").bounding_box()
+    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
+    page.click("#lin-theme")
+    page.click("#lin-options-toggle")
+    assert page.locator("#lin-options-dialog").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    capture(page, f"options-fr-{width}x{height}")
+    page.keyboard.press("Escape")
+    assert not errors
+
+
+def test_semantic_limitation_is_scoped_and_never_declares_value_incorrect(report):
+    graph = filtered_graph()
+    graph["nodes"][1].update(
+        verification="unverified_engine_semantics",
+        semanticRisks=[{"feature": "<img onerror=alert(1)>", "origin": "dependency"}],
+        doc="## A generated explanation",
+    )
+    page, errors = report(graph)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    notice = page.locator("#lin-semantic-notice")
+    assert "Potentially affected" in notice.inner_text()
+    assert "not independently verified" in notice.inner_text()
+    assert notice.locator("img").count() == 0
+    assert notice.bounding_box()["y"] < page.locator(".lin-ai-box").bounding_box()["y"]
+    page.evaluate("() => { cy.getElementById('i').emit('tap'); }")
+    assert page.locator("#lin-semantic-notice").count() == 0
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_interrupted_empty_report_notice_persists_across_tabs(
+    browser, tmp_path, width, height
+):
+    graph = rich_graph()
+    graph["nodes"] = []
+    graph["edges"] = []
+    graph["meta"]["stats"] = {"totalNodes": 0, "totalEdges": 0, "totalFormulas": None}
+    graph["meta"]["execution"] = {
+        "status": "timed_out",
+        "phase": "<img onerror=alert(1)>",
+        "elapsedSeconds": 1.3,
+        "budgetSeconds": 1,
+        "isolated": True,
+    }
+    path = tmp_path / "interrupted.html"
+    path.write_text(render_html(graph, language="fr"), encoding="utf-8")
+    page = browser.new_page(viewport={"width": width, "height": height})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.goto(path.as_uri())
+        assert "— formules" in page.locator("#lin-stats").inner_text()
+        assert page.locator(".lin-emptygraph-title").inner_text() == (
+            "Aucun nœud de lignage disponible dans ce rapport."
+        )
+        for tab in ("graph", "sheets", "overview"):
+            page.click(f"#lin-tab-{tab}")
+            notice = page.locator("#lin-execution-notice")
+            assert notice.is_visible()
+            assert "Résultats incomplets" in notice.inner_text()
+            assert notice.locator("img").count() == 0
+            assert page.locator("#lin-options-host").is_hidden()
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= window.innerWidth"
+            )
+        assert not errors
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 def test_all_rich_tabs_and_search_navigation(report, width, height):
     page, errors = report(rich_graph(), width=width, height=height)
@@ -369,6 +727,102 @@ def test_sheet_context_limits_are_visible_and_escaped(report):
     assert note.locator("img").count() == 0
     assert "— rows × — columns" in page.locator("#lin-sheet-details").inner_text()
     assert page.evaluate("window.injected === undefined")
+    assert not errors
+
+
+def test_sheet_warnings_are_scoped_and_icon_is_compact(report):
+    graph = rich_graph()
+    context = graph["meta"]["workbookContext"]
+    context["sheets"] = [
+        {
+            "name": "FirstSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 10, "columns": 5},
+            "preview_range": "A1:E10",
+            "preview": [{"row": 1, "values": [1, 2, 3, 4, 5]}],
+        },
+        {
+            "name": "SecondSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 20, "columns": 8},
+            "preview_range": "A1:H20",
+            "preview": [{"row": 1, "values": [10, 20]}],
+        },
+    ]
+    context["warnings"] = [
+        "Large workbook: sheet context uses bounded previews",
+        "Comments on 'FirstSheet' were truncated for inspection",
+    ]
+    page, errors = report(graph)
+    page.click("#lin-tab-sheets")
+
+    # First sheet is active by default
+    first_note = page.locator(".lin-context-warnings")
+    assert first_note.is_visible()
+    first_text = first_note.inner_text()
+    assert "Large workbook: sheet context uses bounded previews" in first_text
+    assert "Comments on 'FirstSheet' were truncated for inspection" in first_text
+
+    # The warning icon must be compact and aligned, not an unbounded giant SVG
+    icon_box = page.locator(".lin-context-warnings svg").bounding_box()
+    assert icon_box is not None
+    assert 0 < icon_box["width"] <= 24
+    assert 0 < icon_box["height"] <= 24
+
+    # Switch to SecondSheet
+    page.locator("#lin-sheets-sidebar button").nth(1).click()
+    second_note = page.locator(".lin-context-warnings")
+    assert second_note.is_visible()
+    second_text = second_note.inner_text()
+    # Global warning is present on SecondSheet, but FirstSheet-specific warning is NOT
+    assert "Large workbook: sheet context uses bounded previews" in second_text
+    assert "Comments on 'FirstSheet' were truncated for inspection" not in second_text
+
+    assert not errors
+
+
+def test_sheet_without_warnings_has_no_notice_and_scroll_resets(report):
+    graph = rich_graph()
+    context = graph["meta"]["workbookContext"]
+    context["sheets"] = [
+        {
+            "name": "TruncatedSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 50, "columns": 5},
+            "preview_range": "A1:E50",
+            "preview": [{"row": i, "values": [i]} for i in range(1, 51)],
+        },
+        {
+            "name": "CleanSheet",
+            "visibility": "visible",
+            "dimensions": {"rows": 10, "columns": 5},
+            "preview_range": "A1:E10",
+            "preview": [{"row": 1, "values": [1]}],
+        },
+    ]
+    context["warnings"] = [
+        "Comments on 'TruncatedSheet' were truncated for inspection",
+    ]
+    page, errors = report(graph)
+    page.click("#lin-tab-sheets")
+
+    assert page.locator(".lin-context-warnings").count() == 1
+
+    # Scroll down on the first sheet
+    page.evaluate(
+        "() => { document.querySelector('.lin-sheet-body').scrollTop = 200; }"
+    )
+    assert (
+        page.evaluate("() => document.querySelector('.lin-sheet-body').scrollTop") > 0
+    )
+
+    # Switch to CleanSheet: no notice rendered, and scroll resets to 0
+    page.locator("#lin-sheets-sidebar button").nth(1).click()
+    assert page.locator(".lin-context-warnings").count() == 0
+    assert (
+        page.evaluate("() => document.querySelector('.lin-sheet-body').scrollTop") == 0
+    )
+
     assert not errors
 
 

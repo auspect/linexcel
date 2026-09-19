@@ -17,6 +17,7 @@ from typing import Any
 
 from linexcel.doc_evidence import read_defined_name_evidence
 from linexcel.engine import CHAIN_LAYERS_WARNING, boot_engine
+from linexcel.execution import ExecutionPolicy, add_coverage, run_isolated
 from linexcel.external import find_workbooks, read_external_links, resolve_books
 from linexcel.graph import GraphBuilder
 from linexcel.limits import validate_limits
@@ -169,6 +170,7 @@ def analyze_workbook(
     max_nodes_per_sheet: int | None = None,
     max_chain_depth: int | None = None,
     max_dense_cells: int | None = None,
+    execution: ExecutionPolicy | None = None,
 ) -> dict[str, Any]:
     """Full analysis: returns the JSON-serializable graph and the engine.
 
@@ -188,6 +190,25 @@ def analyze_workbook(
         max_chain_depth=max_chain_depth,
         max_dense_cells=max_dense_cells,
     )
+    policy = execution if execution is not None else ExecutionPolicy()
+    if not isinstance(policy, ExecutionPolicy):
+        raise TypeError("execution must be an ExecutionPolicy")
+    if policy.isolated:
+        return run_isolated(
+            data,
+            {
+                "filename": filename,
+                "verbose": verbose,
+                "refs_dir": refs_dir,
+                "step_seconds": step_seconds,
+                "targets": targets,
+                "max_cells_per_sheet": max_cells_per_sheet,
+                "max_nodes_per_sheet": max_nodes_per_sheet,
+                "max_chain_depth": max_chain_depth,
+                "max_dense_cells": max_dense_cells,
+            },
+            policy,
+        )
     warnings: list[str] = []
     _t0 = time.perf_counter()
     reporter = Reporter(verbose)
@@ -198,6 +219,7 @@ def analyze_workbook(
 
     # --- 1. structure -----------------------------------------------------
     _t = time.perf_counter()
+    reporter.start_phase("structure")
     structure = read_structure(data)
     sheet_dims = structure.sheet_dims
     defined_names = structure.defined_names
@@ -213,6 +235,18 @@ def analyze_workbook(
                 externals, Path(refs_dir), warnings, max_dense_cells=max_dense_cells
             )
     _v("structure", _t)
+    reporter.checkpoint(
+        "structure",
+        {
+            "sheets": list(sheet_dims),
+            "sourceEvidence": {
+                "sheetDimensions": {
+                    sheet: {"rows": size[0], "columns": size[1], "scope": "declared"}
+                    for sheet, size in sheet_dims.items()
+                }
+            },
+        },
+    )
 
     # values the file itself carries: last resort, and the only source of
     # dates and of what the user actually saw on screen
@@ -224,9 +258,16 @@ def analyze_workbook(
         max_cells_per_sheet=max_cells_per_sheet,
         max_dense_cells=max_dense_cells,
     )
+    reporter.checkpoint("cached values")
 
     # --- 2. computation engine -------------------------------------------
-    session = boot_engine(data, warnings, reporter, targets=target_cells)
+    session = boot_engine(
+        data,
+        warnings,
+        reporter,
+        targets=target_cells,
+        max_cells_per_sheet=max_cells_per_sheet,
+    )
     engine = session.engine
     engine_sheets = session.engine_sheets
     engine_alive = session.engine_alive
@@ -237,8 +278,10 @@ def analyze_workbook(
     # Tables: declared ones from the package parts, static ones from a small
     # window the engine already holds. A per-cell lookup enriching the nodes.
     _t = time.perf_counter()
+    reporter.start_phase("tables")
     table_index = _build_table_index(data, engine, sheet_dims, engine_sheets)
     _v("tables", _t)
+    reporter.checkpoint("tables")
 
     budget = _Budget(MAX_SCRATCH_EVALS, step_seconds)
     resolver = _ValueResolver(
@@ -314,17 +357,21 @@ def analyze_workbook(
             warnings.append(chain_warning)
 
     # --- 5. VBA (oletools) ---------------------------------------------------
+    reporter.start_phase("VBA")
     builder.build_vba(data, filename, refs_dir)
+    reporter.checkpoint("VBA")
     vba_modules = builder.vba_modules
     vba_procs = builder.vba_procs
 
     # --- 6. Power Query -------------------------------------------------------
     # A range filled by a query has no formula above it, so without this the
     # graph shows where the data landed and nothing about where it came from.
+    reporter.start_phase("Power Query")
     queries = read_queries(data)
     builder.build_queries(queries)
     if target_cells:
         builder.retain_upstream(target_cells)
+    reporter.checkpoint("Power Query")
 
     pq_warning = query_warning(queries)
     if pq_warning:
@@ -342,12 +389,24 @@ def analyze_workbook(
     if external_warning:
         warnings.append(external_warning)
 
+    reporter.start_phase("graph assembly")
     graph = {
         "meta": {
             "filename": filename,
             "analyzedAt": datetime.datetime.now(datetime.UTC).isoformat(),
             "engine": "formualizer (Rust)",
             "warnings": warnings,
+            "analysisCoverage": {
+                "requested": "targeted_static_closure" if target_cells else "workbook",
+                "extractedFormulaCells": formula_count,
+                "omissions": sweep.omissions
+                + [
+                    {"phase": "cached values", "sheet": sheet, "reason": "cell_limit"}
+                    for sheet in sorted(cached.truncated_sheets)
+                ],
+                "dependencyCompleteness": "not_certified",
+                "groupValues": "representatives_and_bounded_samples",
+            },
             "definedNameEvidence": read_defined_name_evidence(data),
             "analysisLimits": {
                 "cellsPerSheet": MAX_CELLS_PER_SHEET
@@ -395,6 +454,31 @@ def analyze_workbook(
     exhausted = budget.warning()
     if exhausted:
         warnings.append(exhausted)
+        graph["meta"]["analysisCoverage"]["omissions"].append(
+            {
+                "phase": "decomposition",
+                "reason": "budget_exhausted",
+                "omittedStepCount": None,
+            }
+        )
+    if session.trace_incomplete:
+        graph["meta"]["analysisCoverage"]["dependencyCompleteness"] = "incomplete"
+        graph["meta"]["analysisCoverage"]["omissions"].append(
+            {
+                "phase": "trace",
+                "reason": "trace_budget",
+                "omittedCellCount": None,
+            }
+        )
+    aggregated = [node["id"] for node in graph["nodes"] if node.get("kind") == "misc"]
+    if aggregated:
+        graph["meta"]["analysisCoverage"]["omissions"].append(
+            {
+                "phase": "graph",
+                "reason": "node_limit",
+                "nodeIds": aggregated,
+            }
+        )
     _v("graph", _t)
     if verbose:
         print(
@@ -403,4 +487,18 @@ def analyze_workbook(
             f"{formula_count:,} formulas",
             file=sys.stderr,
         )
+    graph["meta"]["execution"] = {
+        "status": "completed",
+        "isolated": False,
+        "budgetSeconds": None,
+        "elapsedSeconds": round(time.perf_counter() - _t0, 3),
+        "engineAvailable": True,
+    }
+    from linexcel.semantic_checks import annotate_semantic_risks
+
+    reporter.checkpoint("graph assembly")
+    with reporter.phase("semantic checks"):
+        annotate_semantic_risks(graph)
+    graph["meta"]["execution"]["elapsedSeconds"] = round(time.perf_counter() - _t0, 3)
+    add_coverage(graph)
     return {"graph": graph, "engine": engine, "analysisId": uuid.uuid4().hex[:16]}

@@ -8,12 +8,18 @@ after a failed retry instead of paying a third ``from_bytes`` blindly.
 """
 
 import io
+from functools import partial
 
 import pytest
 from openpyxl import Workbook
 
-from linexcel import analyze
+from linexcel import ExecutionPolicy
+from linexcel import analyze as _analyze
+
+# These tests inspect the live engine or instrument native calls.
 from linexcel.analyzer import analyze_workbook
+
+analyze = partial(_analyze, execution=ExecutionPolicy(isolated=False))
 
 
 def workbook(cells: dict[str, object], sheet: str = "S") -> bytes:
@@ -176,7 +182,9 @@ class TestTargetedWithABrokenPrecedent:
 class TestTruncatedTrace:
     def test_a_truncated_trace_says_the_subgraph_is_partial(self, monkeypatch):
         monkeypatch.setattr("linexcel.engine.TRACE_MAX_NODES", 1)
-        result = analyze(two_sheet_workbook(), filename="t.xlsx", targets=["Out!C1"])
+        result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+            two_sheet_workbook(), filename="t.xlsx", targets=["Out!C1"]
+        )
         assert any("trace of the target" in w for w in result.warnings)
 
 
@@ -223,7 +231,9 @@ class TestQuarantineRetryCosts:
         monkeypatch.setattr(
             eng, "_find_unresolvable", lambda data, sheets: {("S", 1, 2): "=A1*3"}
         )
-        graph = analyze_workbook(self._workbook(), "t.xlsx")["graph"]
+        graph = partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
+            self._workbook(), "t.xlsx"
+        )["graph"]
         formulas = {n.get("formula") for n in graph["nodes"] if "formula" in n}
         assert "=NoSheet!A1+1" in formulas
         assert "=A1*3" in formulas

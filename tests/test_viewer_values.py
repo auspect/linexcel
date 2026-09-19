@@ -660,10 +660,16 @@ class TestSearchAll:
         assert "var matched = GRAPH.nodes.filter(function (n) {" in html
         assert "GRAPH.nodes.find(function (n) {" not in html
 
-    def test_the_predicate_still_reads_label_and_formula(self):
+    def test_the_predicate_reads_label_id_and_formula_with_explicit_scope(self):
         html = render_html(search_graph())
-        assert "cy.getElementById(n.id).visible() && (" in html
+        # Hidden nodes are searchable only after opting into workbook scope;
+        # the existing visible scope must still compose with graph filters.
+        assert (
+            "(scopeSelect.value === 'workbook' || "
+            "cy.getElementById(n.id).visible()) && ("
+        ) in html
         assert "(n.label || '').toLowerCase().indexOf(q) >= 0" in html
+        assert "|| n.id.toLowerCase().indexOf(q) >= 0" in html
         assert "|| (n.formula || '').toLowerCase().indexOf(q) >= 0);" in html
 
     def test_the_searchable_text_of_every_node_ships(self):

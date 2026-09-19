@@ -1,13 +1,19 @@
 """Targeted evaluation must keep its cost and side effects inside the closure."""
 
 import io
+from functools import partial
 
 from openpyxl import Workbook
 from openpyxl.workbook.defined_name import DefinedName
 
-from linexcel import analyze
+from linexcel import ExecutionPolicy
+from linexcel import analyze as _analyze
+
+# These tests inspect the live engine or instrument native calls.
 from linexcel.progress import Reporter
 from linexcel.sweep import sweep_sheets
+
+analyze = partial(_analyze, execution=ExecutionPolicy(isolated=False))
 
 
 def test_unrelated_defined_name_does_not_recalculate_its_formula():
