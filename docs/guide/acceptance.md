@@ -1,5 +1,9 @@
 # Acceptance evidence and remaining limits
 
+This section records the PR #98 acceptance baseline. Subsequent calculation
+experiments are described separately in [Calculation investigation](calculation-investigation.md);
+they do not replace these recorded results or establish acceptance of later code.
+
 Status on 19 September 2026: **review complete with known limits**. Complete
 generation, source checks and desktop/mobile investigation passed their stated
 checks. Independent factual review found remaining errors in generated prose

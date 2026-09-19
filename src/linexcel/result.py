@@ -355,6 +355,7 @@ class LineageResult:
         max_workers: int = 4,
         max_tokens: int | None = None,
         token_budget: int | None = None,
+        validation_results: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
@@ -389,6 +390,8 @@ class LineageResult:
             ... # doctest: +SKIP
 
         Tokens consumed are added to :attr:`token_usage`.
+        Supply ``validation_results`` to retain quotation-check reports and raw
+        responses, keyed by node ID. These checks do not certify general prose.
         """
         from linexcel.aidoc import document_nodes
 
@@ -408,6 +411,7 @@ class LineageResult:
             usage=self.token_usage,
             max_tokens=max_tokens,
             token_budget=token_budget,
+            validation_results=validation_results,
         )
 
     def document_workbook(
@@ -421,6 +425,7 @@ class LineageResult:
         max_tokens: int | None = None,
         token_budget: int | None = None,
         include_context: bool = True,
+        validation_results: dict[str, Any] | None = None,
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
 
@@ -440,6 +445,8 @@ class LineageResult:
         output length (approximate; provider-dependent), while ``token_budget``
         caps cumulative spend on this result and raises :class:`AiDocError` if
         earlier calls already exhausted it.
+        ``validation_results`` receives the quotation-check report and raw
+        response under ``workbook``. No unqualified factual verdict is implied.
         """
         from linexcel.aidoc import document_workbook
 
@@ -461,6 +468,7 @@ class LineageResult:
             max_tokens=max_tokens,
             token_budget=token_budget,
             context=context,
+            validation_results=validation_results,
         )
 
     def describe_screenshots(

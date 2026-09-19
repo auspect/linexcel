@@ -24,6 +24,82 @@ LANGUAGES = ("en", "fr", "es", "de", "it", "pt", "nl", "ja", "zh")
 
 DEFAULT_LANGUAGE = "en"
 
+# Server-rendered notices for the bounded documentation quotation check.
+AI_VALIDATION_OMITTED = {
+    "en": "Quotation {number}: excerpt omitted (Markdown delimiters).",
+    "fr": "Citation {number} : extrait omis (délimiteurs Markdown).",
+    "es": "Cita {number}: extracto omitido (delimitadores Markdown).",
+    "de": "Zitat {number}: Auszug ausgelassen (Markdown-Begrenzer).",
+    "it": "Citazione {number}: estratto omesso (delimitatori Markdown).",
+    "pt": "Citação {number}: trecho omitido (delimitadores Markdown).",
+    "nl": "Citaat {number}: fragment weggelaten (Markdown-scheidingstekens).",
+    "ja": "引用 {number}：抜粋を省略（Markdown区切り文字）。",
+    "zh": "引用 {number}：摘录已省略（Markdown 分隔符）。",
+}
+
+AI_VALIDATION_NOTICES = {
+    "en": (
+        "AI formula quotations need review: some are not supported by the "
+        "supplied source formulas or cannot be checked completely. "
+        "Examples using cell references may also trigger this "
+        "notice. The generated text below is retained; general prose has "
+        "not been fact-checked."
+    ),
+    "fr": (
+        "Citations de formules IA à vérifier : certaines ne sont pas "
+        "étayées par les formules source fournies ou ne peuvent pas être "
+        "vérifiées intégralement. Les exemples avec références de cellules "
+        "peuvent aussi déclencher cet avis. Le texte généré ci-dessous "
+        "est conservé ; la prose générale n'a pas été vérifiée "
+        "factuellement."
+    ),
+    "es": (
+        "Revise las fórmulas citadas por la IA: algunas no están "
+        "respaldadas por las fórmulas fuente proporcionadas o no pueden "
+        "comprobarse por completo. Los ejemplos con referencias de celdas "
+        "también pueden activar este aviso. El texto generado "
+        "se conserva; no se ha verificado la prosa general."
+    ),
+    "de": (
+        "KI-Formelzitate prüfen: Einige sind nicht durch die "
+        "bereitgestellten Quellformeln belegt oder nicht vollständig "
+        "prüfbar. Auch Beispiele mit Zellbezügen können diesen "
+        "Hinweis auslösen. Der generierte Text bleibt erhalten; "
+        "allgemeine Aussagen wurden nicht auf Fakten geprüft."
+    ),
+    "it": (
+        "Verificare le formule citate dall'IA: alcune non sono supportate "
+        "dalle formule sorgente fornite o non sono verificabili "
+        "integralmente. Anche esempi con riferimenti a celle possono "
+        "attivare questo avviso. Il testo generato è conservato; la prosa "
+        "generale non è stata verificata."
+    ),
+    "pt": (
+        "Reveja as fórmulas citadas pela IA: algumas não são sustentadas "
+        "pelas fórmulas de origem fornecidas ou não podem ser verificadas "
+        "integralmente. Exemplos com referências a células também podem "
+        "gerar este aviso. O texto gerado foi preservado; o texto geral "
+        "não foi verificado factualmente."
+    ),
+    "nl": (
+        "Controleer de formulecitaten van de AI: sommige worden niet "
+        "ondersteund door de aangeleverde bronformules of zijn niet "
+        "volledig te controleren. Ook voorbeelden met celverwijzingen "
+        "kunnen deze melding veroorzaken. De gegenereerde "
+        "tekst blijft behouden; algemene beweringen zijn niet op feiten "
+        "gecontroleerd."
+    ),
+    "ja": (
+        "AIが引用した数式を確認してください。一部は提供された元の数式で裏付けられないか、完全には確認できません。"
+        "セル参照を含む例でもこの注意が表示されます。生成された本文は保持されています。一般的な文章の事実確認は行っていません。"
+    ),
+    "zh": (
+        "请核查 AI "
+        "引用的公式：部分引用未获所提供源公式的支持，或无法完整核查。含单元格引用的示例也可能触发此提示。下方生成文本已保留；一般性"
+        "文字尚未进行事实核查。"
+    ),
+}
+
 #: Viewer interface strings. Every language carries the same key set; ``{name}``
 #: placeholders are substituted client-side and must be preserved verbatim.
 UI_STRINGS: dict[str, dict[str, str]] = {

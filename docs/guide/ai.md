@@ -40,6 +40,42 @@ For example, function 9 selects SUM and option 6 excludes errors, not hidden
 rows. Dynamic selectors remain undetermined. These facts describe the formula;
 they do not independently verify the engine's implementation or result.
 
+## Formula quotation checks
+
+Documentation checks complete formula quotations in Markdown against source
+formulas in the exact dossier sent to the model. An unsupported quotation adds
+a visible notice identifying the quotation; the generated explanation is not
+silently corrected. Literal illustrations and incomplete snippets can remain
+uncheckable. Processing limits are reported explicitly.
+
+This is a bounded lexical check, not a factual verdict. A supported quotation
+does not establish correct attribution, arithmetic, causality, value provenance
+or the truth of surrounding prose. Screenshot descriptions require separate
+visual review.
+
+Both documentation APIs accept an optional evidence collector:
+
+```python
+checks = {}
+docs = result.document(base_url=..., model=..., validation_results=checks)
+overview = result.document_workbook(
+    base_url=..., model=..., validation_results=checks,
+)
+```
+
+Entries are keyed by node ID, with `workbook` reserved for the overview. Each
+entry retains the raw model response, quotation checks, limitations and a
+`qualified` or `unverified` status; neither means factually approved. Keep this
+evidence private when its source workbook is private. The manual validation
+runner saves it alongside the generated documentation for independent review.
+
+In local review, this check exposed a quoted `/100` where the source used
+`/1000`. It also qualified conceptual shorthand such as `=C{row} * D{row}`:
+that is not a literal source formula, but is not necessarily a false
+explanation. Separately, generated prose miscounted sampled cells and described
+a complete group as potentially containing gaps. Those prose errors are
+outside this check's scope and still require comparison with source evidence.
+
 ## Node cards
 
 ```python
