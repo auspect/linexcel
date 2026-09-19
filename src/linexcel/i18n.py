@@ -28,6 +28,52 @@ DEFAULT_LANGUAGE = "en"
 #: placeholders are substituted client-side and must be preserved verbatim.
 UI_STRINGS: dict[str, dict[str, str]] = {
     "en": {
+        "coverage_limit": "These counts do not certify complete workbook analysis.",
+        "execution_interrupted": (
+            "Analysis interrupted: {status} · {phase}. Results are incomplete."
+        ),
+        "execution_timed_out": "Time limit",
+        "execution_memory_limit": "Memory limit",
+        "execution_crashed": "Worker stopped",
+        "execution_cancelled": "Cancelled",
+        "semantic_unverified": (
+            "Potentially affected by known engine limitations. "
+            "These values are not independently verified."
+        ),
+        "semantic_dependency": "Dependency",
+        "search_scope_label": "Scope",
+        "search_visible": "Visible graph",
+        "search_workbook": "Workbook",
+        "search_results": "Search results",
+        "search_reveal": "Hidden by filters · select to reveal and reset filters",
+        "show_more": "Show more",
+        "export_view": "Export visible view (PNG)",
+        "copy_done": "Copied",
+        "copy_failed": "Copy failed",
+        "back_graph": "Back to graph",
+        "history_back": "Previous",
+        "history_forward": "Next",
+        "see_sheet": "See sheet",
+        "explore_local": "Explore locally",
+        "explore_status": (
+            "{shown}/{available} nodes within {depth} steps · {hidden} hidden in graph"
+        ),
+        "explore_depth": "Switch 1 / 2 steps",
+        "explore_exit": "Exit local view",
+        "copy_share": "Copy and share",
+        "copy_reference": "Copy reference",
+        "copy_formula": "Copy formula",
+        "copy_value": "Copy value",
+        "copy_link": "Copy selection link",
+        "coverage_title": "Analysis coverage",
+        "coverage_scope": "{count} graph nodes; groups count as one node.",
+        "coverage_engine": "Engine value",
+        "coverage_cache": "File cache only",
+        "coverage_unavailable": "Value unavailable",
+        "coverage_other": "Other nodes",
+        "coverage_divergent": "Divergent values",
+        "coverage_overlap": "Divergences overlap the categories above.",
+        "coverage_omissions": "Reported limitations",
         "sheet_scope": "Sheet",
         "graph_controls": "Graph controls",
         "graph_options": "Graph options",
@@ -147,10 +193,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Discrepancies only",
         "external_unresolved": "external · unresolved",
         "placeholder_title": "Select a node",
-        "graph_empty": (
-            "No formulas were found in this workbook, so there is no lineage "
-            "graph to display."
-        ),
+        "graph_empty": "No lineage nodes are available in this report.",
         "placeholder_desc": (
             "Select a node in the graph to inspect its formula, computed "
             "value, step-by-step evaluation, and AI-generated documentation."
@@ -186,6 +229,58 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "fr": {
+        "coverage_limit": (
+            "Ces comptes ne garantissent pas une analyse complète du classeur."
+        ),
+        "execution_interrupted": (
+            "Analyse interrompue : {status} · {phase}. Résultats incomplets."
+        ),
+        "execution_timed_out": "Limite de temps",
+        "execution_memory_limit": "Limite de mémoire",
+        "execution_crashed": "Processus arrêté",
+        "execution_cancelled": "Annulée",
+        "semantic_unverified": (
+            "Ces valeurs sont potentiellement affectées par des limites "
+            "connues du moteur. Elles ne sont pas vérifiées indépendamment."
+        ),
+        "semantic_dependency": "Dépendance",
+        "search_scope_label": "Portée",
+        "search_visible": "Graphe visible",
+        "search_workbook": "Classeur",
+        "search_results": "Résultats de recherche",
+        "search_reveal": (
+            "Masqué par les filtres · sélectionner "
+            "pour révéler et réinitialiser les filtres"
+        ),
+        "show_more": "Afficher plus",
+        "export_view": "Exporter la vue visible (PNG)",
+        "copy_done": "Copié",
+        "copy_failed": "Échec de copie",
+        "back_graph": "Retour au graphe",
+        "history_back": "Précédent",
+        "history_forward": "Suivant",
+        "see_sheet": "Voir la feuille",
+        "explore_local": "Explorer localement",
+        "explore_status": (
+            "{shown}/{available} nœuds à {depth} "
+            "étapes · {hidden} masqués dans le graphe"
+        ),
+        "explore_depth": "Basculer 1 / 2 étapes",
+        "explore_exit": "Quitter la vue locale",
+        "copy_share": "Copier et partager",
+        "copy_reference": "Copier la référence",
+        "copy_formula": "Copier la formule",
+        "copy_value": "Copier la valeur",
+        "copy_link": "Copier le lien de sélection",
+        "coverage_title": "Couverture de l’analyse",
+        "coverage_scope": "{count} nœuds du graphe ; un groupe compte pour un nœud.",
+        "coverage_engine": "Valeur du moteur",
+        "coverage_cache": "Cache du fichier seul",
+        "coverage_unavailable": "Valeur indisponible",
+        "coverage_other": "Autres nœuds",
+        "coverage_divergent": "Valeurs divergentes",
+        "coverage_overlap": "Les divergences recoupent les catégories ci-dessus.",
+        "coverage_omissions": "Limites signalées",
         "sheet_scope": "Feuille",
         "graph_controls": "Commandes du graphe",
         "graph_options": "Options du graphe",
@@ -305,10 +400,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Écarts seulement",
         "external_unresolved": "externe · non résolu",
         "placeholder_title": "Sélectionner un nœud",
-        "graph_empty": (
-            "Aucune formule trouvée dans ce classeur : il n'y a donc aucun graphe de"
-            "lignage à afficher."
-        ),
+        "graph_empty": "Aucun nœud de lignage disponible dans ce rapport.",
         "placeholder_desc": (
             "Sélectionnez un nœud dans le graphe pour afficher sa formule, sa "
             "valeur calculée, sa décomposition pas à pas et sa documentation IA."
@@ -344,6 +436,58 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "es": {
+        "coverage_limit": (
+            "Estos recuentos no garantizan un análisis completo del libro."
+        ),
+        "execution_interrupted": (
+            "Análisis interrumpido: {status} · {phase}. Resultados incompletos."
+        ),
+        "execution_timed_out": "Límite de tiempo",
+        "execution_memory_limit": "Límite de memoria",
+        "execution_crashed": "Proceso detenido",
+        "execution_cancelled": "Cancelado",
+        "semantic_unverified": (
+            "Estos valores pueden verse afectados por limitaciones "
+            "conocidas del motor. No están verificados de forma independiente."
+        ),
+        "semantic_dependency": "Dependencia",
+        "search_scope_label": "Ámbito",
+        "search_visible": "Grafo visible",
+        "search_workbook": "Libro",
+        "search_results": "Resultados de búsqueda",
+        "search_reveal": (
+            "Oculto por filtros · seleccionar para mostrar y restablecer filtros"
+        ),
+        "show_more": "Mostrar más",
+        "export_view": "Exportar vista visible (PNG)",
+        "copy_done": "Copiado",
+        "copy_failed": "Error al copiar",
+        "back_graph": "Volver al grafo",
+        "history_back": "Anterior",
+        "history_forward": "Siguiente",
+        "see_sheet": "Ver hoja",
+        "explore_local": "Explorar localmente",
+        "explore_status": (
+            "{shown}/{available} nodos a {depth} pasos · {hidden} ocultos en el grafo"
+        ),
+        "explore_depth": "Cambiar 1 / 2 pasos",
+        "explore_exit": "Salir de vista local",
+        "copy_share": "Copiar y compartir",
+        "copy_reference": "Copiar referencia",
+        "copy_formula": "Copiar fórmula",
+        "copy_value": "Copiar valor",
+        "copy_link": "Copiar enlace de selección",
+        "coverage_title": "Cobertura del análisis",
+        "coverage_scope": "{count} nodos del grafo; cada grupo cuenta como un nodo.",
+        "coverage_engine": "Valor del motor",
+        "coverage_cache": "Solo caché del archivo",
+        "coverage_unavailable": "Valor no disponible",
+        "coverage_other": "Otros nodos",
+        "coverage_divergent": "Valores divergentes",
+        "coverage_overlap": (
+            "Las divergencias se superponen a las categorías anteriores."
+        ),
+        "coverage_omissions": "Limitaciones indicadas",
         "sheet_scope": "Hoja",
         "graph_controls": "Controles del grafo",
         "graph_options": "Opciones del grafo",
@@ -462,10 +606,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Solo discrepancias",
         "external_unresolved": "externo · sin resolver",
         "placeholder_title": "Seleccione un nodo",
-        "graph_empty": (
-            "No se encontraron fórmulas en este libro; por tanto, no hay gráfico de"
-            "linaje que mostrar."
-        ),
+        "graph_empty": "No hay nodos de linaje disponibles en este informe.",
         "placeholder_desc": (
             "Seleccione un nodo del grafo para consultar su fórmula, su valor "
             "calculado, su evaluación paso a paso y su documentación generada "
@@ -502,6 +643,60 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "de": {
+        "coverage_limit": (
+            "Diese Zahlen bestätigen keine vollständige Analyse der Arbeitsmappe."
+        ),
+        "execution_interrupted": (
+            "Analyse unterbrochen: {status} · {phase}. Ergebnisse unvollständig."
+        ),
+        "execution_timed_out": "Zeitlimit",
+        "execution_memory_limit": "Speicherlimit",
+        "execution_crashed": "Prozess beendet",
+        "execution_cancelled": "Abgebrochen",
+        "semantic_unverified": (
+            "Diese Werte können von bekannten Engine-Einschränkungen "
+            "betroffen sein. Sie wurden nicht unabhängig geprüft."
+        ),
+        "semantic_dependency": "Abhängigkeit",
+        "search_scope_label": "Bereich",
+        "search_visible": "Sichtbarer Graph",
+        "search_workbook": "Arbeitsmappe",
+        "search_results": "Suchergebnisse",
+        "search_reveal": (
+            "Durch Filter ausgeblendet · auswählen, "
+            "um Filter zurückzusetzen und anzuzeigen"
+        ),
+        "show_more": "Mehr anzeigen",
+        "export_view": "Sichtbare Ansicht exportieren (PNG)",
+        "copy_done": "Kopiert",
+        "copy_failed": "Kopieren fehlgeschlagen",
+        "back_graph": "Zurück zum Graph",
+        "history_back": "Zurück",
+        "history_forward": "Weiter",
+        "see_sheet": "Blatt anzeigen",
+        "explore_local": "Lokal erkunden",
+        "explore_status": (
+            "{shown}/{available} Knoten in {depth} "
+            "Schritten · {hidden} im Graph ausgeblendet"
+        ),
+        "explore_depth": "1 / 2 Schritte wechseln",
+        "explore_exit": "Lokale Ansicht verlassen",
+        "copy_share": "Kopieren und teilen",
+        "copy_reference": "Referenz kopieren",
+        "copy_formula": "Formel kopieren",
+        "copy_value": "Wert kopieren",
+        "copy_link": "Auswahllink kopieren",
+        "coverage_title": "Analyseabdeckung",
+        "coverage_scope": "{count} Graphknoten; Gruppen zählen als ein Knoten.",
+        "coverage_engine": "Engine-Wert",
+        "coverage_cache": "Nur Datei-Cache",
+        "coverage_unavailable": "Wert nicht verfügbar",
+        "coverage_other": "Andere Knoten",
+        "coverage_divergent": "Abweichende Werte",
+        "coverage_overlap": (
+            "Abweichungen überschneiden sich mit den obigen Kategorien."
+        ),
+        "coverage_omissions": "Gemeldete Einschränkungen",
         "sheet_scope": "Blatt",
         "graph_controls": "Graphsteuerung",
         "graph_options": "Graphoptionen",
@@ -622,10 +817,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Nur Abweichungen",
         "external_unresolved": "extern · nicht aufgelöst",
         "placeholder_title": "Knoten auswählen",
-        "graph_empty": (
-            "In dieser Arbeitsmappe wurden keine Formeln gefunden — daher ist kein"
-            "Abhängigkeitsgraph anzuzeigen."
-        ),
+        "graph_empty": "In diesem Bericht sind keine Herkunftsknoten verfügbar.",
         "placeholder_desc": (
             "Wählen Sie einen Knoten im Graphen aus, um seine Formel, seinen "
             "berechneten Wert, seine schrittweise Auswertung und seine "
@@ -662,6 +854,56 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "it": {
+        "coverage_limit": (
+            "Questi conteggi non garantiscono un’analisi completa della cartella."
+        ),
+        "execution_interrupted": (
+            "Analisi interrotta: {status} · {phase}. Risultati incompleti."
+        ),
+        "execution_timed_out": "Limite di tempo",
+        "execution_memory_limit": "Limite di memoria",
+        "execution_crashed": "Processo arrestato",
+        "execution_cancelled": "Annullata",
+        "semantic_unverified": (
+            "Questi valori possono essere influenzati da limiti noti "
+            "del motore. Non sono verificati in modo indipendente."
+        ),
+        "semantic_dependency": "Dipendenza",
+        "search_scope_label": "Ambito",
+        "search_visible": "Grafo visibile",
+        "search_workbook": "Cartella di lavoro",
+        "search_results": "Risultati della ricerca",
+        "search_reveal": (
+            "Nascosto dai filtri · seleziona per mostrare e reimpostare i filtri"
+        ),
+        "show_more": "Mostra altro",
+        "export_view": "Esporta vista visibile (PNG)",
+        "copy_done": "Copiato",
+        "copy_failed": "Copia non riuscita",
+        "back_graph": "Torna al grafo",
+        "history_back": "Precedente",
+        "history_forward": "Successivo",
+        "see_sheet": "Vedi foglio",
+        "explore_local": "Esplora localmente",
+        "explore_status": (
+            "{shown}/{available} nodi entro {depth} passi · {hidden} nascosti nel grafo"
+        ),
+        "explore_depth": "Alterna 1 / 2 passi",
+        "explore_exit": "Esci dalla vista locale",
+        "copy_share": "Copia e condividi",
+        "copy_reference": "Copia riferimento",
+        "copy_formula": "Copia formula",
+        "copy_value": "Copia valore",
+        "copy_link": "Copia link della selezione",
+        "coverage_title": "Copertura dell’analisi",
+        "coverage_scope": "{count} nodi del grafo; ogni gruppo conta come un nodo.",
+        "coverage_engine": "Valore del motore",
+        "coverage_cache": "Solo cache del file",
+        "coverage_unavailable": "Valore non disponibile",
+        "coverage_other": "Altri nodi",
+        "coverage_divergent": "Valori divergenti",
+        "coverage_overlap": "Le divergenze si sovrappongono alle categorie sopra.",
+        "coverage_omissions": "Limitazioni segnalate",
         "sheet_scope": "Foglio",
         "graph_controls": "Controlli del grafo",
         "graph_options": "Opzioni del grafo",
@@ -781,10 +1023,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Solo discrepanze",
         "external_unresolved": "esterno · non risolto",
         "placeholder_title": "Seleziona un nodo",
-        "graph_empty": (
-            "Nessuna formula trovata in questa cartella di lavoro: non c'è "
-            "alcun grafico di derivazione da mostrare."
-        ),
+        "graph_empty": "Nessun nodo di derivazione disponibile in questo rapporto.",
         "placeholder_desc": (
             "Seleziona un nodo nel grafo per consultarne la formula, il valore "
             "calcolato, la valutazione passo passo e la documentazione "
@@ -821,6 +1060,56 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "pt": {
+        "coverage_limit": (
+            "Estas contagens não garantem uma análise completa da pasta de trabalho."
+        ),
+        "execution_interrupted": (
+            "Análise interrompida: {status} · {phase}. Resultados incompletos."
+        ),
+        "execution_timed_out": "Limite de tempo",
+        "execution_memory_limit": "Limite de memória",
+        "execution_crashed": "Processo parado",
+        "execution_cancelled": "Cancelada",
+        "semantic_unverified": (
+            "Estes valores podem ser afetados por limitações conhecidas "
+            "do motor. Não foram verificados de forma independente."
+        ),
+        "semantic_dependency": "Dependência",
+        "search_scope_label": "Âmbito",
+        "search_visible": "Grafo visível",
+        "search_workbook": "Pasta de trabalho",
+        "search_results": "Resultados da pesquisa",
+        "search_reveal": (
+            "Oculto por filtros · selecionar para mostrar e redefinir filtros"
+        ),
+        "show_more": "Mostrar mais",
+        "export_view": "Exportar vista visível (PNG)",
+        "copy_done": "Copiado",
+        "copy_failed": "Falha ao copiar",
+        "back_graph": "Voltar ao grafo",
+        "history_back": "Anterior",
+        "history_forward": "Seguinte",
+        "see_sheet": "Ver folha",
+        "explore_local": "Explorar localmente",
+        "explore_status": (
+            "{shown}/{available} nós em {depth} passos · {hidden} ocultos no grafo"
+        ),
+        "explore_depth": "Alternar 1 / 2 passos",
+        "explore_exit": "Sair da vista local",
+        "copy_share": "Copiar e partilhar",
+        "copy_reference": "Copiar referência",
+        "copy_formula": "Copiar fórmula",
+        "copy_value": "Copiar valor",
+        "copy_link": "Copiar ligação da seleção",
+        "coverage_title": "Cobertura da análise",
+        "coverage_scope": "{count} nós do grafo; cada grupo conta como um nó.",
+        "coverage_engine": "Valor do motor",
+        "coverage_cache": "Apenas cache do ficheiro",
+        "coverage_unavailable": "Valor indisponível",
+        "coverage_other": "Outros nós",
+        "coverage_divergent": "Valores divergentes",
+        "coverage_overlap": "As divergências sobrepõem-se às categorias acima.",
+        "coverage_omissions": "Limitações comunicadas",
         "sheet_scope": "Planilha",
         "graph_controls": "Controles do grafo",
         "graph_options": "Opções do grafo",
@@ -938,10 +1227,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Apenas discrepâncias",
         "external_unresolved": "externo · não resolvido",
         "placeholder_title": "Selecione um nó",
-        "graph_empty": (
-            "Nenhuma fórmula foi encontrada neste livro; portanto, não há gráfico de"
-            "linhagem para exibir."
-        ),
+        "graph_empty": "Não há nós de linhagem disponíveis neste relatório.",
         "placeholder_desc": (
             "Selecione um nó no grafo para consultar a sua fórmula, o valor "
             "calculado, a avaliação passo a passo e a documentação gerada por "
@@ -978,6 +1264,57 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "nl": {
+        "coverage_limit": (
+            "Deze aantallen garanderen geen volledige analyse van de werkmap."
+        ),
+        "execution_interrupted": (
+            "Analyse onderbroken: {status} · {phase}. Resultaten onvolledig."
+        ),
+        "execution_timed_out": "Tijdslimiet",
+        "execution_memory_limit": "Geheugenlimiet",
+        "execution_crashed": "Proces gestopt",
+        "execution_cancelled": "Geannuleerd",
+        "semantic_unverified": (
+            "Deze waarden kunnen worden beïnvloed door bekende "
+            "enginebeperkingen. Ze zijn niet onafhankelijk geverifieerd."
+        ),
+        "semantic_dependency": "Afhankelijkheid",
+        "search_scope_label": "Bereik",
+        "search_visible": "Zichtbare graaf",
+        "search_workbook": "Werkmap",
+        "search_results": "Zoekresultaten",
+        "search_reveal": (
+            "Verborgen door filters · selecteer om filters te wissen en te tonen"
+        ),
+        "show_more": "Meer tonen",
+        "export_view": "Zichtbare weergave exporteren (PNG)",
+        "copy_done": "Gekopieerd",
+        "copy_failed": "Kopiëren mislukt",
+        "back_graph": "Terug naar graaf",
+        "history_back": "Vorige",
+        "history_forward": "Volgende",
+        "see_sheet": "Blad bekijken",
+        "explore_local": "Lokaal verkennen",
+        "explore_status": (
+            "{shown}/{available} knopen binnen {depth} "
+            "stappen · {hidden} verborgen in graaf"
+        ),
+        "explore_depth": "Wissel 1 / 2 stappen",
+        "explore_exit": "Lokale weergave sluiten",
+        "copy_share": "Kopiëren en delen",
+        "copy_reference": "Verwijzing kopiëren",
+        "copy_formula": "Formule kopiëren",
+        "copy_value": "Waarde kopiëren",
+        "copy_link": "Selectielink kopiëren",
+        "coverage_title": "Analysedekking",
+        "coverage_scope": "{count} graafknopen; groepen tellen als één knoop.",
+        "coverage_engine": "Enginewaarde",
+        "coverage_cache": "Alleen bestandscache",
+        "coverage_unavailable": "Waarde niet beschikbaar",
+        "coverage_other": "Andere knopen",
+        "coverage_divergent": "Afwijkende waarden",
+        "coverage_overlap": "Afwijkingen overlappen de bovenstaande categorieën.",
+        "coverage_omissions": "Gemelde beperkingen",
         "sheet_scope": "Blad",
         "graph_controls": "Graafbediening",
         "graph_options": "Graafopties",
@@ -1097,10 +1434,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "Alleen afwijkingen",
         "external_unresolved": "extern · onopgelost",
         "placeholder_title": "Selecteer een knoop",
-        "graph_empty": (
-            "Geen formules gevonden in deze werkmap, dus er is geen "
-            "afstammingsgrafiek om weer te geven."
-        ),
+        "graph_empty": "Er zijn geen herkomstknopen beschikbaar in dit rapport.",
         "placeholder_desc": (
             "Selecteer een knoop in de graaf om de formule, de berekende "
             "waarde, de stapsgewijze evaluatie en de door AI gegenereerde "
@@ -1137,6 +1471,50 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "ja": {
+        "coverage_limit": "これらの件数はブック全体の分析完了を保証しません。",
+        "execution_interrupted": "分析中断：{status} · {phase}。結果は不完全です。",
+        "execution_timed_out": "制限時間",
+        "execution_memory_limit": "メモリ制限",
+        "execution_crashed": "プロセス停止",
+        "execution_cancelled": "キャンセル",
+        "semantic_unverified": (
+            "既知のエンジン制限の影響を受ける可能性があります。"
+            "これらの値は独立に検証されていません。"
+        ),
+        "semantic_dependency": "依存関係",
+        "search_scope_label": "検索範囲",
+        "search_visible": "表示中のグラフ",
+        "search_workbook": "ブック",
+        "search_results": "検索結果",
+        "search_reveal": "フィルターで非表示 · 選択するとフィルターを解除して表示",
+        "show_more": "さらに表示",
+        "export_view": "表示中のビューを出力 (PNG)",
+        "copy_done": "コピーしました",
+        "copy_failed": "コピー失敗",
+        "back_graph": "グラフに戻る",
+        "history_back": "前へ",
+        "history_forward": "次へ",
+        "see_sheet": "シートを見る",
+        "explore_local": "周辺を探索",
+        "explore_status": (
+            "{depth}ステップ以内の{shown}/{available}ノード · グラフ内{hidden}件非表示"
+        ),
+        "explore_depth": "1 / 2ステップを切り替え",
+        "explore_exit": "局所表示を終了",
+        "copy_share": "コピーと共有",
+        "copy_reference": "参照をコピー",
+        "copy_formula": "数式をコピー",
+        "copy_value": "値をコピー",
+        "copy_link": "選択リンクをコピー",
+        "coverage_title": "分析範囲",
+        "coverage_scope": "グラフの{count}ノード。グループは1ノードとして数えます。",
+        "coverage_engine": "エンジンの値",
+        "coverage_cache": "ファイルキャッシュのみ",
+        "coverage_unavailable": "値なし",
+        "coverage_other": "その他のノード",
+        "coverage_divergent": "相違する値",
+        "coverage_overlap": "相違は上記の分類と重複します。",
+        "coverage_omissions": "報告された制限",
         "sheet_scope": "シート",
         "graph_controls": "グラフ操作",
         "graph_options": "グラフの設定",
@@ -1251,9 +1629,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "差異のみ",
         "external_unresolved": "外部 · 未解決",
         "placeholder_title": "ノードを選択してください",
-        "graph_empty": (
-            "このブックに数式が見つからなかったため、表示する系統グラフはありません。"
-        ),
+        "graph_empty": "このレポートに表示できるリネージノードはありません。",
         "placeholder_desc": (
             "グラフ内のノードを選択すると、数式、計算結果、ステップごとの"
             "評価、AI が生成したドキュメントを確認できます。"
@@ -1288,6 +1664,47 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "zh": {
+        "coverage_limit": "这些计数不能证明工作簿已被完整分析。",
+        "execution_interrupted": "分析中断：{status} · {phase}。结果不完整。",
+        "execution_timed_out": "时间限制",
+        "execution_memory_limit": "内存限制",
+        "execution_crashed": "进程停止",
+        "execution_cancelled": "已取消",
+        "semantic_unverified": "这些值可能受到已知引擎限制的影响，尚未经过独立验证。",
+        "semantic_dependency": "依赖项",
+        "search_scope_label": "范围",
+        "search_visible": "可见图谱",
+        "search_workbook": "工作簿",
+        "search_results": "搜索结果",
+        "search_reveal": "被筛选器隐藏 · 选择以重置筛选器并显示",
+        "show_more": "显示更多",
+        "export_view": "导出可见视图 (PNG)",
+        "copy_done": "已复制",
+        "copy_failed": "复制失败",
+        "back_graph": "返回图谱",
+        "history_back": "上一个",
+        "history_forward": "下一个",
+        "see_sheet": "查看工作表",
+        "explore_local": "探索附近",
+        "explore_status": (
+            "{depth}步内显示{shown}/{available}个节点 · 图中隐藏{hidden}个"
+        ),
+        "explore_depth": "切换1 / 2步",
+        "explore_exit": "退出局部视图",
+        "copy_share": "复制与分享",
+        "copy_reference": "复制引用",
+        "copy_formula": "复制公式",
+        "copy_value": "复制值",
+        "copy_link": "复制选择链接",
+        "coverage_title": "分析覆盖范围",
+        "coverage_scope": "图谱共{count}个节点；每组计为一个节点。",
+        "coverage_engine": "引擎值",
+        "coverage_cache": "仅文件缓存",
+        "coverage_unavailable": "值不可用",
+        "coverage_other": "其他节点",
+        "coverage_divergent": "差异值",
+        "coverage_overlap": "差异与上述类别重叠。",
+        "coverage_omissions": "已报告的限制",
         "sheet_scope": "工作表",
         "graph_controls": "图形控件",
         "graph_options": "图形选项",
@@ -1395,7 +1812,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "diffs_only": "仅显示差异",
         "external_unresolved": "外部 · 未解析",
         "placeholder_title": "请选择一个节点",
-        "graph_empty": "此工作簿中未找到公式，因此没有可显示的谱系图。",
+        "graph_empty": "此报告中没有可用的血缘节点。",
         "placeholder_desc": (
             "在图谱中选择一个节点，即可查看其公式、计算值、逐步求值过程"
             "以及 AI 生成的文档。"

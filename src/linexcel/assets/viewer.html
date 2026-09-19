@@ -84,6 +84,33 @@
     border-bottom: 1px solid var(--hair); font-size: .8rem;
   }
   .lin-tools[hidden] { display: none; }
+  #lin-options-host[hidden] { display: none; }
+  .lin-search-results {
+    position: fixed; z-index: 45; top: 64px; right: 12px;
+    width: min(440px, calc(100vw - 24px)); max-height: min(480px, 65vh);
+    overflow: auto; padding: .75rem; border: 1px solid var(--line);
+    border-radius: 10px; background: var(--surface); color: var(--ink);
+    box-shadow: 0 10px 35px #0002;
+  }
+  .lin-search-results[hidden] { display: none; }
+  .lin-search-scope { display: flex; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+  .lin-search-scope select { min-width: 0; flex: 1; padding: .45rem; color: var(--ink); background: var(--surface2); border: 1px solid var(--line); border-radius: 6px; }
+  .lin-result { display: block; width: 100%; text-align: left; padding: .65rem; border: 0;
+    border-bottom: 1px solid var(--hair); background: transparent; color: var(--ink); cursor: pointer; }
+  .lin-result:hover, .lin-result:focus-visible { background: var(--surface2); }
+  .lin-result strong, .lin-result small { display: block; overflow-wrap: anywhere; }
+  .lin-result small { color: var(--ink2); margin-top: .2rem; }
+  .lin-investigate { display: flex; flex-wrap: wrap; gap: .4rem; margin: .65rem 0; }
+  .lin-investigate .lin-chip { min-height: 36px; }
+  .lin-investigate .lin-chip:disabled { opacity: .45; cursor: default; }
+  .lin-investigate details { width: 100%; }
+  .lin-investigate summary { cursor: pointer; color: var(--ink2); font-size: .8rem; padding: .5rem 0; }
+  .lin-investigate-status { width: 100%; font-size: .78rem; color: var(--ink2); }
+  .lin-coverage { margin-top: 1rem; }
+  .lin-copy-fallback { position: fixed; left: -9999px; }
+  .lin-execution-notice { margin: 0; padding: .55rem .8rem; flex-shrink: 0;
+    color: var(--ink); background: var(--warn-bg); border-bottom: 1px solid var(--warn-line); font-size: .8rem; }
+  .lin-execution-notice[hidden] { display: none; }
   .lin-group { display: inline-flex; gap: .35rem; align-items: center; }
   .lin-sheet-control {
     display: flex; align-items: center; gap: .6rem; min-width: 0;
@@ -683,6 +710,13 @@
         </button>
       </div>
       <span class="lin-search-status" id="lin-search-status" role="status" aria-live="polite" hidden></span>
+      <div id="lin-search-results" class="lin-search-results" hidden>
+        <label class="lin-search-scope"><span id="lin-search-scope-label"></span>
+          <select id="lin-search-scope"><option value="visible"></option><option value="workbook"></option></select>
+        </label>
+        <div id="lin-result-list" role="group"></div>
+        <button type="button" class="lin-chip" id="lin-results-more" hidden></button>
+      </div>
       <button type="button" id="lin-theme" class="lin-theme" aria-pressed="false">
         <svg class="lin-ico-moon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
           <path d="M13.4 10.1A5.8 5.8 0 0 1 5.9 2.6 6 6 0 1 0 13.4 10.1Z" fill="currentColor"></path>
@@ -694,6 +728,7 @@
       </button>
     </div>
   </header>
+  <div id="lin-execution-notice" class="lin-execution-notice" role="note" hidden></div>
   <div class="lin-shell">
     <nav class="lin-rail">
       <div class="lin-views">
@@ -737,6 +772,8 @@
           </button>
         </div>
       </div>
+      <div id="lin-coverage" class="lin-coverage"></div>
+      <button type="button" id="lin-export-view" class="lin-chip"></button>
       </div>
       </div>
     </nav>
@@ -922,6 +959,239 @@
   // server-side, CUR_SHEET is what the graph is currently narrowed to.
   var ALL_SHEETS = '__all__';
   var CUR_SHEET = ALL_SHEETS;
+  var sheetOpeners = Object.create(null);
+  var navigation = [], navigationIndex = -1, restoringNavigation = false;
+  var exploration = null;
+  var revealingNode = false;
+  var resetSearchUI = function () {};
+  var restoreLayoutChoice = function () {};
+  var optionsFocusTarget = null;
+
+  function graphSnapshot(cy) {
+    return { sheet: CUR_SHEET, zoom: cy.zoom(), pan: Object.assign({}, cy.pan()),
+      layout: document.getElementById('lin-lay-dagre').getAttribute('aria-pressed') === 'true' ? 'dagre' : 'fcose',
+      exploration: exploration && Object.assign({}, exploration),
+      nodes: cy.nodes().map(function (node) {
+        return {id: node.id(), position: Object.assign({}, node.position()),
+          off: ['kind-off', 'sheet-off', 'diff-off', 'explore-off'].filter(function (c) { return node.hasClass(c); })};
+      }),
+      buttons: Array.prototype.map.call(document.querySelectorAll('#lin-options-body button[aria-pressed]'),
+        function (b) { return b.getAttribute('aria-pressed'); }) };
+  }
+  function restoreSnapshot(cy, state) {
+    cy.stop(true, false);
+    CUR_SHEET = state.sheet;
+    exploration = state.exploration && Object.assign({}, state.exploration);
+    document.getElementById('lin-sheet-filter').value = state.sheet;
+    restoreLayoutChoice(state.layout);
+    cy.batch(function () {
+      state.nodes.forEach(function (saved) {
+        cy.getElementById(saved.id).removeClass('kind-off sheet-off diff-off explore-off')
+          .addClass(saved.off.join(' ')).position(saved.position);
+      });
+    });
+    document.querySelectorAll('#lin-options-body button[aria-pressed]').forEach(function (b, i) {
+      if (state.buttons[i] != null) b.setAttribute('aria-pressed', state.buttons[i]);
+    });
+    cy.resize(); cy.viewport({zoom: state.zoom, pan: state.pan});
+  }
+  function rememberSelection(cy, id) {
+    if (restoringNavigation) return;
+    if (navigationIndex >= 0 && !revealingNode) navigation[navigationIndex].state = graphSnapshot(cy);
+    if (navigationIndex >= 0 && navigation[navigationIndex].id === id) return;
+    navigation = navigation.slice(0, navigationIndex + 1);
+    navigation.push({id: id, state: graphSnapshot(cy)});
+    if (navigation.length > 30) navigation.shift();
+    navigationIndex = navigation.length - 1;
+  }
+  function travel(cy, direction) {
+    var index = navigationIndex + direction;
+    if (index < 0 || index >= navigation.length) return;
+    navigation[navigationIndex].state = graphSnapshot(cy);
+    navigationIndex = index;
+    var item = navigation[index];
+    restoreSnapshot(cy, item.state);
+    restoringNavigation = true;
+    select(cy, item.id);
+    restoringNavigation = false;
+    resetSearchUI();
+  }
+  function revealNode(cy, id) {
+    if (navigationIndex >= 0) navigation[navigationIndex].state = graphSnapshot(cy);
+    revealingNode = true;
+    var target = cy.getElementById(id);
+    if (!target.visible()) {
+      clearExploration(cy);
+      CUR_SHEET = ALL_SHEETS;
+      document.getElementById('lin-sheet-filter').value = ALL_SHEETS;
+      cy.nodes().removeClass('kind-off sheet-off diff-off explore-off');
+      exploration = null;
+      document.querySelectorAll('#lin-rail-kinds button').forEach(function (b) { b.setAttribute('aria-pressed', 'true'); });
+      document.getElementById('lin-diffs-only').setAttribute('aria-pressed', 'false');
+    }
+    switchTab(document.getElementById('lin-tab-graph'), document.getElementById('lin-graph-main'));
+    select(cy, id); revealingNode = false; frameEles(cy, target, 0);
+  }
+  function copyExact(button, text) {
+    function fallback() {
+      var field = el('textarea', 'lin-copy-fallback'); field.value = text;
+      document.body.appendChild(field);
+      field.select();
+      var copied = false;
+      try { copied = document.execCommand('copy'); } catch (error) { /* show failure below */ }
+      field.remove(); button.focus();
+      button.textContent = _t(copied ? 'copy_done' : 'copy_failed');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { button.textContent = _t('copy_done'); }, fallback);
+    } else fallback();
+  }
+  function setupCoverage(cy) {
+    var coverage = GRAPH.meta.coverage;
+    var host = document.getElementById('lin-coverage');
+    if (!coverage || coverage.scope !== 'graph_nodes') { host.hidden = true; return; }
+    host.appendChild(el('div', 'lin-rail-label', _t('coverage_title')));
+    host.appendChild(el('p', 'lin-hint', _t('coverage_scope', {count: coverage.totalNodes})));
+    var labels = {engine: _t('coverage_engine'), cache: _t('coverage_cache'),
+      unavailable: _t('coverage_unavailable'), other: _t('coverage_other'), divergent: _t('coverage_divergent')};
+    ['engine', 'cache', 'unavailable', 'other', 'divergent'].forEach(function (key) {
+      var category = (coverage.categories || {})[key]; if (!category) return;
+      var ids = (category.nodeIds || []).filter(function (id) { return !!byId[id]; });
+      var button = el('button', 'lin-kind', labels[key]); button.type = 'button';
+      button.dataset.coverage = key;
+      button.appendChild(el('span', 'lin-kind-n', String(category.count)));
+      button.disabled = !ids.length;
+      button.onclick = function () {
+        var fromOptions = document.getElementById('lin-options-dialog').open;
+        switchTab(document.getElementById('lin-tab-graph'), document.getElementById('lin-graph-main'));
+        clearSel(cy);
+        var panel = document.getElementById('lin-panel');
+        panel.classList.remove('hidden', 'lin-empty'); panel.replaceChildren();
+        panel.appendChild(el('h2', null, labels[key] + ' · ' + category.count));
+        panel.appendChild(el('p', 'lin-hint', _t('coverage_scope', {count: coverage.totalNodes})));
+        var list = el('div'); panel.appendChild(list);
+        var limit = 0;
+        var more = el('button', 'lin-chip', _t('show_more')); more.type = 'button';
+        function appendPage() {
+          ids.slice(limit, limit + 50).forEach(function (id) {
+            var n = byId[id], item = el('button', 'lin-result', n.label || id); item.type = 'button';
+            item.onclick = function () { revealNode(cy, id); }; list.appendChild(item);
+          });
+          limit += 50; more.hidden = limit >= ids.length;
+        }
+        more.onclick = appendPage; panel.appendChild(more); appendPage();
+        optionsFocusTarget = fromOptions ? panel : null; panel.focus();
+        var matching = cy.collection(ids.map(function (id) { return cy.getElementById(id); })).filter(':visible');
+        frameEles(cy, matching.length ? matching : cy.nodes(':visible'), 0);
+      };
+      host.appendChild(button);
+    });
+    host.appendChild(el('p', 'lin-hint', _t('coverage_overlap')));
+    host.appendChild(el('p', 'lin-hint', _t('coverage_limit')));
+    var omissions = coverage.omissions;
+    if (omissions && (omissions.warnings || []).length) {
+      var details = el('details'); details.appendChild(el('summary', null, _t('coverage_omissions')));
+      (omissions.warnings || []).forEach(function (warning) { details.appendChild(el('p', 'lin-hint', String(warning))); });
+      host.appendChild(details);
+    }
+  }
+  function explore(cy, rootId, depth, limit) {
+    var base = exploration ? exploration.base : graphSnapshot(cy);
+    exploration = {root: rootId, depth: depth, limit: limit, base: base};
+    var eligible = cy.nodes().filter(function (n) {
+      return !n.hasClass('kind-off') && !n.hasClass('sheet-off') && !n.hasClass('diff-off');
+    });
+    var root = cy.getElementById(rootId), visited = root, frontier = root;
+    var candidates = [rootId];
+    for (var step = 0; step < depth; step++) {
+      frontier = frontier.neighborhood().nodes().intersection(eligible).not(visited);
+      var layer = frontier.map(function (n) { return n.id(); }).sort();
+      candidates = candidates.concat(layer); visited = visited.union(frontier);
+    }
+    var allowed = new Set(candidates.slice(0, limit));
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) { node.toggleClass('explore-off', !allowed.has(node.id())); });
+    });
+    var visibleNodes = eligible.filter(function (n) { return allowed.has(n.id()); });
+    var visible = visibleNodes.union(visibleNodes.edgesWith(visibleNodes));
+    // Keep the first neighborhood readable on a short mobile canvas. A radial
+    // layout wastes most of that rectangle and drives labels below the LOD limit.
+    cy.resize();
+    var others = visible.nodes().not(root);
+    var columns = Math.max(1, Math.ceil(Math.sqrt(others.length * cy.width() / Math.max(cy.height(), 80) * .45)));
+    var dx = Math.max.apply(null, visible.nodes().map(function (n) { return n.data('w'); })) + 28;
+    var dy = Math.max.apply(null, visible.nodes().map(function (n) { return n.data('h'); })) + 28;
+    root.position({x: (columns - 1) * dx / 2, y: 0});
+    others.forEach(function (n, i) { n.position({x: (i % columns) * dx, y: (1 + Math.floor(i / columns)) * dy}); });
+    exploration.available = candidates.length;
+    exploration.shown = visibleNodes.length;
+    select(cy, rootId);
+    cy.stop(true, false); cy.resize(); cy.fit(visible, 16);
+    if (cy.zoom() > FOCUS_MAX_ZOOM) {
+      cy.zoom({level: FOCUS_MAX_ZOOM, renderedPosition: {x: cy.width() / 2, y: cy.height() / 2}});
+    }
+  }
+  function clearExploration(cy) {
+    if (!exploration) return;
+    var base = exploration.base;
+    exploration = null;
+    cy.batch(function () {
+      cy.nodes().removeClass('explore-off');
+      if (base) base.nodes.forEach(function (saved) { cy.getElementById(saved.id).position(saved.position); });
+    });
+  }
+  function appendInvestigation(cy, panel, node) {
+    var row = el('div', 'lin-investigate');
+    function action(id, key, fn, disabled) {
+      var button = el('button', 'lin-chip', _t(key)); button.type = 'button'; button.id = id;
+      button.disabled = !!disabled; button.onclick = function () {
+        fn();
+        if (document.getElementById('lin-graph-main').classList.contains('hidden')) return;
+        var current = document.getElementById(id);
+        if (current && !current.disabled) current.focus(); else panel.focus();
+      }; row.appendChild(button); return button;
+    }
+    action('lin-history-back', 'history_back', function () { travel(cy, -1); }, navigationIndex <= 0);
+    action('lin-history-forward', 'history_forward', function () { travel(cy, 1); }, navigationIndex >= navigation.length - 1);
+    if (sheetOpeners[node.sheet]) action('lin-see-sheet', 'see_sheet', function () { sheetOpeners[node.sheet](node); });
+    action('lin-explore', 'explore_local', function () {
+      var narrow = window.matchMedia('(max-width: 900px)').matches;
+      explore(cy, node.id, 1, narrow ? (GRAPH.nodes.length > 80 ? 4 : 7) : 13);
+    });
+    if (exploration) {
+      var status = el('span', 'lin-investigate-status', _t('explore_status', {
+        shown: exploration.shown, available: exploration.available,
+        hidden: cy.nodes().length - exploration.shown, depth: exploration.depth}));
+      status.id = 'lin-explore-status'; status.setAttribute('role', 'status'); row.appendChild(status);
+      action('lin-explore-more', 'show_more', function () {
+        explore(cy, exploration.root, exploration.depth,
+          exploration.limit + (window.matchMedia('(max-width: 900px)').matches
+            ? (GRAPH.nodes.length > 80 ? 3 : 6) : 12));
+      }, exploration.limit >= exploration.available);
+      action('lin-explore-depth', 'explore_depth', function () {
+        explore(cy, exploration.root, exploration.depth === 1 ? 2 : 1, exploration.limit);
+      });
+      action('lin-explore-exit', 'explore_exit', function () {
+        var base = exploration.base;
+        clearExploration(cy);
+        if (base) restoreSnapshot(cy, base);
+        select(cy, node.id);
+      });
+    }
+    var details = el('details'); details.appendChild(el('summary', null, _t('copy_share')));
+    var actions = el('div', 'lin-investigate');
+    function copyButton(id, key, value) {
+      var b = el('button', 'lin-chip', _t(key)); b.id = id; b.type = 'button';
+      b.onclick = function () { copyExact(b, value); }; actions.appendChild(b);
+    }
+    copyButton('lin-copy-reference', 'copy_reference', node.label || node.id);
+    if (node.formula) copyButton('lin-copy-formula', 'copy_formula', node.formula);
+    if (node.value !== undefined && node.value !== null) copyButton('lin-copy-value', 'copy_value',
+      typeof node.value === 'object' ? JSON.stringify(node.value) : String(node.value));
+    var link = new URL(window.location.href); link.hash = new URLSearchParams({node: node.id}).toString();
+    copyButton('lin-copy-link', 'copy_link', link.href);
+    details.appendChild(actions); row.appendChild(details); panel.appendChild(row);
+  }
 
   // --- theme ---------------------------------------------------------------
   // Light is the default whatever the operating system prefers. Dark is opt-in
@@ -971,6 +1241,7 @@
     label('lin-options-title', _t('graph_options'));
     label('lin-options-close', _t('close'));
     toggle.onclick = function () {
+      optionsFocusTarget = null;
       dialog.appendChild(body);
       dialog.showModal();
       var first = body.querySelector('button:not([disabled])');
@@ -992,6 +1263,10 @@
       // Native close is queued: a newer opening must retain its content and focus.
       if (dialog.open) return;
       host.appendChild(body);
+      if (optionsFocusTarget && optionsFocusTarget.getClientRects().length) {
+        optionsFocusTarget.focus(); optionsFocusTarget = null; return;
+      }
+      optionsFocusTarget = null;
       // Restore focus after keyboard dismissal, including a viewport change.
       if (narrow.matches && !toggle.hidden) toggle.focus();
       else {
@@ -1049,6 +1324,15 @@
     named('lin-zoom-level', _t('zoom_level'));
     named('lin-search-submit', _t('search_label'));
     document.getElementById('lin-search-hint').textContent = _t('search_scope');
+    label('lin-search-scope-label', _t('search_scope_label'));
+    var scopeSelect = document.getElementById('lin-search-scope');
+    scopeSelect.options[0].textContent = _t('search_visible');
+    scopeSelect.options[1].textContent = _t('search_workbook');
+    label('lin-results-more', _t('show_more'));
+    named('lin-result-list', _t('search_results'));
+    search.setAttribute('aria-controls', 'lin-result-list');
+    search.setAttribute('aria-expanded', 'false');
+    label('lin-export-view', _t('export_view'));
     var panel = document.getElementById('lin-panel');
     panel.setAttribute('aria-label', _t('details_panel'));
     var sheetSel = document.getElementById('lin-sheet-filter');
@@ -1060,15 +1344,25 @@
     // states (Cytoscape missing, or a workbook with no formula-driven nodes),
     // which would otherwise leave the bandeau's line blank.
     var stats = GRAPH.meta.stats;
+    var execution = GRAPH.meta.execution;
+    if (execution && execution.status !== 'completed') {
+      var notice = document.getElementById('lin-execution-notice');
+      notice.hidden = false;
+      var statuses = {timed_out: _t('execution_timed_out'), memory_limit: _t('execution_memory_limit'),
+        crashed: _t('execution_crashed'), cancelled: _t('execution_cancelled')};
+      notice.textContent = _t('execution_interrupted', {
+        status: statuses[execution.status] || execution.status, phase: execution.phase || '—'
+      });
+    }
     // One tail for everything the workbook holds beside formulas. The
     // placeholder is still called {vba} in the nine locales; what it carries
     // is whatever this file actually has.
     var extraText = (stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '')
       + (stats.queries ? ' · ' + stats.queries + ' Power Query' : '');
     document.getElementById('lin-stats').textContent = _t('stats', {
-      formulas: stats.totalFormulas.toLocaleString(LANG),
-      nodes: stats.totalNodes,
-      edges: stats.totalEdges,
+      formulas: stats.totalFormulas == null ? '—' : stats.totalFormulas.toLocaleString(LANG),
+      nodes: stats.totalNodes == null ? '—' : stats.totalNodes,
+      edges: stats.totalEdges == null ? '—' : stats.totalEdges,
       vba: extraText
     });
 
@@ -1142,9 +1436,10 @@
     // hierarchical flow instead. The rail toggle keeps both one click away —
     // the reader can still force Organic on a dense graph.
     var ORGANIC_MAX_NODES = 300;
-    var initial = (hasFcose && GRAPH.nodes.length <= ORGANIC_MAX_NODES)
+    var initial = compactPortraitGraph() && hasDagre ? 'dagre' : (hasFcose && GRAPH.nodes.length <= ORGANIC_MAX_NODES)
       ? 'fcose' : (hasDagre ? 'dagre' : 'cose');
     var curLayout = initial;
+    restoreLayoutChoice = function (name) { curLayout = name; };
     var cy = cytoscape({
       container: cyContainer, elements: elements,
       minZoom: 0.05, maxZoom: 4, wheelSensitivity: 0.75,
@@ -1152,6 +1447,13 @@
       style: buildStyle(big), layout: layoutOpts(initial, hasFcose)
     });
     activeCy = cy;
+    setupCoverage(cy);
+    document.getElementById('lin-export-view').onclick = function () {
+      // Rasterize the current viewport, not the private workbook or off-screen nodes.
+      var png = cy.png({full: false, scale: 2,
+        bg: getComputedStyle(document.querySelector('.lin-root')).getPropertyValue('--surface').trim()});
+      var a = el('a'); a.href = png; a.download = 'linexcel-view.png'; a.click();
+    };
 
     cy.on('tap', 'node', function (ev) { select(cy, ev.target.id()); });
     cy.on('tap', function (ev) { if (ev.target === cy) clearSel(cy); });
@@ -1281,7 +1583,66 @@
       search.value = '';
       searchClear.hidden = true;
       setStatus('', false);
+      closeResults();
     }
+    resetSearchUI = resetSearch;
+    var resultsBox = document.getElementById('lin-search-results');
+    var resultsList = document.getElementById('lin-result-list');
+    var resultsMore = document.getElementById('lin-results-more');
+    var searchMatches = [], resultLimit = 50;
+    function closeResults() {
+      resultsBox.hidden = true;
+      search.setAttribute('aria-expanded', 'false');
+    }
+    function openResults() {
+      resultsBox.hidden = false;
+      resultsBox.style.top = (document.querySelector('.lin-bar').getBoundingClientRect().bottom + 6) + 'px';
+      search.setAttribute('aria-expanded', 'true');
+    }
+    function showResults(matches) {
+      searchMatches = matches;
+      resultsList.replaceChildren();
+      matches.slice(0, resultLimit).forEach(function (n) {
+        var visible = cy.getElementById(n.id).visible();
+        var result = el('button', 'lin-result'); result.type = 'button';
+        result.dataset.nodeId = n.id;
+        result.appendChild(el('strong', null, n.label || n.id));
+        result.appendChild(el('small', null, (n.sheet || '') + (n.formula ? ' · ' + n.formula.slice(0, 180) : '')));
+        if (!visible) result.appendChild(el('small', null, _t('search_reveal')));
+        result.onclick = function () {
+          revealNode(cy, n.id); closeResults(); document.getElementById('lin-panel').focus();
+        };
+        resultsList.appendChild(result);
+      });
+      if (!matches.length) resultsList.appendChild(el('p', 'lin-hint', _t('search_none')));
+      resultsMore.hidden = matches.length <= resultLimit;
+      openResults();
+    }
+    resultsMore.onclick = function () {
+      var oldLimit = resultLimit; resultLimit += 50; showResults(searchMatches);
+      var next = resultsList.querySelectorAll('button')[oldLimit]; if (next) next.focus();
+    };
+    resultsBox.addEventListener('keydown', function (event) {
+      var items = Array.from(resultsList.querySelectorAll('button'));
+      var index = items.indexOf(document.activeElement);
+      if (index >= 0 && ['ArrowDown', 'ArrowUp', 'Home', 'End'].indexOf(event.key) >= 0) {
+        event.preventDefault();
+        var next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+          : Math.max(0, Math.min(items.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        items[next].focus();
+      }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeResults(); search.focus(); }
+    });
+    document.addEventListener('pointerdown', function (event) {
+      if (!resultsBox.contains(event.target) && !searchBox.contains(event.target)) closeResults();
+    });
+    scopeSelect.onchange = function () {
+      var scopeName = _t(scopeSelect.value === 'workbook' ? 'search_workbook' : 'search_visible');
+      search.setAttribute('aria-label', _t('search_results') + ' · ' + scopeName);
+      document.getElementById('lin-search-hint').textContent = scopeSelect.value === 'workbook'
+        ? _t('search_reveal') : _t('search_scope');
+      resultLimit = 50; runSearch();
+    };
     // Clearing restores the whole graph: selection, dimming and viewport.
     function restoreGraph() {
       resetSearch();
@@ -1290,13 +1651,18 @@
     }
     function runSearch() {
       var q = search.value.trim().toLowerCase();
-      if (!q) { setStatus('', false); return; }
+      if (!q) { setStatus('', false); searchMatches = []; resultsList.replaceChildren(); openResults(); return; }
       var matched = GRAPH.nodes.filter(function (n) {
-        return cy.getElementById(n.id).visible() && (
+        return (scopeSelect.value === 'workbook' || cy.getElementById(n.id).visible()) && (
           (n.label || '').toLowerCase().indexOf(q) >= 0
+          || n.id.toLowerCase().indexOf(q) >= 0
           || (n.formula || '').toLowerCase().indexOf(q) >= 0);
       });
+      showResults(matched);
       if (!matched.length) { clearSel(cy); setStatus(_t('search_none'), true); return; }
+      if (scopeSelect.value === 'workbook') {
+        setStatus(_t('search_matches', { count: matched.length }), false); return;
+      }
       // Search lives in the shared header on every tab. Bring its result into
       // view before selecting it, including when documentation is open.
       switchTab(document.getElementById('lin-tab-graph'),
@@ -1319,9 +1685,14 @@
     search.addEventListener('input', function () {
       searchClear.hidden = !search.value;
       setStatus('', false);
+      resultsList.replaceChildren(); resultLimit = 50; openResults();
     });
     search.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+      else if (e.key === 'ArrowDown') {
+        e.preventDefault(); if (resultsBox.hidden || !resultsList.querySelector('button')) runSearch();
+        var first = resultsList.querySelector('button'); if (first) first.focus();
+      }
       else if (e.key === 'Escape') {
         e.preventDefault();
         // Escape ends an *active* search: clear its matches and re-frame. With
@@ -1338,6 +1709,12 @@
     setupDiffsFilter(cy, layoutOpts, function () { return curLayout; }, hasFcose);
     document.getElementById('lin-rail-kinds').addEventListener('click', resetSearch);
     document.getElementById('lin-diffs-only').addEventListener('click', resetSearch);
+    try {
+      var linked = new URLSearchParams(window.location.hash.slice(1)).get('node');
+      if (linked && byId[linked]) {
+        cy.ready(function () { setTimeout(function () { revealNode(cy, linked); }, 0); });
+      }
+    } catch (error) { /* a malformed local fragment does not invalidate a report */ }
   }
 
   // "Discrepancies only": keep just the nodes whose recalculated value differs
@@ -1352,6 +1729,7 @@
     // it stands down rather than promising a view that cannot exist.
     if (!count) { btn.disabled = true; return; }
     btn.onclick = function () {
+      clearExploration(cy);
       var on = btn.getAttribute('aria-pressed') !== 'true';
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
       cy.batch(function () {
@@ -1390,6 +1768,8 @@
     document.getElementById('lin-tools').hidden =
       activeMain.id !== 'lin-graph-main' || !activeCy;
     document.getElementById('lin-options-toggle').hidden =
+      activeMain.id !== 'lin-graph-main' || !activeCy;
+    document.getElementById('lin-options-host').hidden =
       activeMain.id !== 'lin-graph-main' || !activeCy;
     var options = document.getElementById('lin-options-dialog');
     if (options.open) options.close();
@@ -1757,6 +2137,20 @@
           sBtn.setAttribute('aria-current', 'true');
           showSheetDetails(sheet);
         };
+        sheetOpeners[sheet.name] = function (node) {
+          sBtn.click();
+          if (node) {
+            var back = el('button', 'lin-chip', _t('back_graph') + ' · ' + (node.label || node.id));
+            back.id = 'lin-back-graph'; back.type = 'button';
+            back.onclick = function () {
+              switchTab(graphButton, graphMain);
+              activeCy.resize(); document.getElementById('lin-panel').focus();
+            };
+            detailsContainer.prepend(back);
+          }
+          switchTab(sheetsButton, sheetsMain);
+          if (node) document.getElementById('lin-back-graph').focus();
+        };
         sidebar.appendChild(sBtn);
         if (idx === 0) showSheetDetails(sheet);
       });
@@ -1826,9 +2220,9 @@
     lines.forEach(function (l) { maxLen = Math.max(maxLen, l.length); });
     return {
       label: lines.join('\n'),
-      // ~5.6px per 9px sans glyph, plus the card's inner padding.
-      w: Math.max(46, Math.min(150, 14 + maxLen * 5.6)),
-      h: lines.length > 1 ? 32 : 22
+      // Match the 13px canvas font so larger labels stay inside their cards.
+      w: Math.max(64, Math.min(216, 18 + maxLen * 7.8)),
+      h: lines.length > 1 ? 42 : 28
     };
   }
   // An external reference the analysis named but never read: no value could
@@ -1851,6 +2245,10 @@
     }
     return false;
   }
+  function compactPortraitGraph() {
+    return GRAPH.nodes.length <= 80
+      && window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
+  }
   function layoutOpts(name, hasFcose) {
     // Without dependencies there are no ranks to communicate. Dagre puts
     // every isolated node in one column, reducing a large report to a thin
@@ -1858,10 +2256,14 @@
     if (name === 'dagre' && !GRAPH.edges.length) return {
       name: 'grid', avoidOverlap: true, condense: true, spacingFactor: 1.4
     };
-    if (name === 'dagre') return { name: 'dagre', rankDir: 'LR', nodeSep: 36,
-      rankSep: 96, edgeSep: 12, animate: false };
+    if (name === 'dagre') {
+      var portrait = compactPortraitGraph();
+      return { name: 'dagre', rankDir: portrait ? 'TB' : 'LR',
+        nodeSep: portrait ? 28 : 36, rankSep: portrait ? 60 : 96,
+        edgeSep: 12, animate: false, padding: 24 };
+    }
     if (name === 'fcose' && hasFcose) return { name: 'fcose', quality: 'default',
-      animate: false, nodeRepulsion: 5500, idealEdgeLength: 90, packComponents: true };
+      animate: false, nodeRepulsion: 5500, idealEdgeLength: 90, packComponents: true, padding: 24 };
     return { name: 'cose', animate: false };
   }
   function buildStyle(big) {
@@ -1872,7 +2274,7 @@
       // from the fill, so a coloured card never gets a low-contrast label.
       { selector: 'node', style: {
         label: 'data(label)', width: 'data(w)', height: 'data(h)',
-        'font-size': 9, 'min-zoomed-font-size': 8, 'text-valign': 'center',
+        'font-size': 13, 'min-zoomed-font-size': 8, 'text-valign': 'center',
         'text-halign': 'center', 'text-wrap': 'wrap', 'line-height': 1.25,
         color: t.ink2, 'border-width': 1.5, 'border-color': t.nodeBorder } },
       { selector: 'node[degree <= 1]', style: { 'opacity': 0.55 } },
@@ -1922,6 +2324,7 @@
       // "Discrepancies only" hides a node the same way, under its own class so
       // the two filters compose instead of clobbering each other.
       { selector: '.diff-off', style: { 'display': 'none' } },
+      { selector: '.explore-off', style: { 'display': 'none' } },
       { selector: 'edge.hl', style: { width: 2.6, opacity: 1 } }
     ];
     Object.keys(KIND).forEach(function (k) {
@@ -1949,6 +2352,7 @@
       btn.appendChild(document.createTextNode(_t(KIND[k].labelKey)));
       btn.appendChild(el('span', 'lin-kind-n', counts[k].toLocaleString(LANG)));
       btn.onclick = function () {
+        clearExploration(cy);
         var off = btn.getAttribute('aria-pressed') === 'true';
         btn.setAttribute('aria-pressed', off ? 'false' : 'true');
         cy.batch(function () {
@@ -1984,6 +2388,7 @@
   // when an edge ties them to the selected one, because a formula that reads
   // from elsewhere is only readable if that "elsewhere" is on screen.
   function applySheetFilter(cy, sheet, layoutName, hasFcose) {
+    clearExploration(cy);
     var before = cy.nodes(':visible').length;
     CUR_SHEET = sheet || ALL_SHEETS;
     cy.batch(function () {
@@ -2044,6 +2449,7 @@
 
   function select(cy, id) {
     var n = byId[id]; if (!n) return;
+    rememberSelection(cy, id);
     var ele = cy.getElementById(id);
     cy.elements().removeClass('dimmed hl');
     var hood = ele.closedNeighborhood();
@@ -2105,6 +2511,7 @@
   // A workbook with no formula-driven cells: the canvas area states the
   // absence in the reader's language instead of sitting blank.
   function standDownGraphGroups() {
+    document.getElementById('lin-options-host').hidden = true;
     document.getElementById('lin-options-toggle').hidden = true;
     // The rail's Node types and Layout groups act only on a rendered graph;
     // when there is none (zero formulas, or Cytoscape missing) they are hidden
@@ -2285,6 +2692,18 @@
     close.onclick = function () { clearSel(cy); };
     head.appendChild(close); p.appendChild(head);
     p.appendChild(el('h2', null, n.label));
+    appendInvestigation(cy, p, n);
+    if (n.verification === 'unverified_engine_semantics') {
+      var semantic = el('div', 'lin-context-warnings'); semantic.id = 'lin-semantic-notice';
+      semantic.setAttribute('role', 'note'); semantic.appendChild(icon('warn'));
+      var semanticBody = el('div', 'lin-context-warnings-body');
+      semanticBody.appendChild(el('p', null, _t('semantic_unverified')));
+      (n.semanticRisks || []).forEach(function (risk) {
+        semanticBody.appendChild(el('p', null, String(risk.feature || '') + ' · '
+          + _t(risk.origin === 'dependency' ? 'semantic_dependency' : 'formula')));
+      });
+      semantic.appendChild(semanticBody); p.appendChild(semantic);
+    }
 
     if (n.formula) {
       var sf = section(_t('formula'));
@@ -2621,7 +3040,7 @@
       dot.style.background = (KIND[it.node.kind] || {}).color || PALETTE.grey;
       btn.appendChild(dot); btn.appendChild(document.createTextNode(it.node.label));
       btn.onclick = (function (id) { return function () {
-        select(cy, id);
+        revealNode(cy, id);
         // The button that carried focus is about to be replaced: hand focus to
         // the panel so the keyboard path continues and the new content is read.
         document.getElementById('lin-panel').focus();
