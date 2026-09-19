@@ -373,6 +373,8 @@ class GraphBuilder:
             wanted_names = set()
             for _, grp in self.kept_groups:
                 for formula in grp.formulas.values():
+                    if is_too_deep(formula):
+                        continue
                     try:
                         expr = formula if formula.startswith("=") else "=" + formula
                         refs = _collect_ref_strings(fz.parse(expr).to_dict())

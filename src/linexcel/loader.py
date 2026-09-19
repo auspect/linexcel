@@ -23,6 +23,7 @@ import re
 import zipfile
 from typing import Any
 from xml.etree import ElementTree
+from xml.sax.saxutils import unescape
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format
@@ -204,7 +205,8 @@ def load_cached_values(
 #: A cached formula error, ``<c r="A1" t="e"><f>…</f><v>#DIV/0!</v></c>``. The
 #: ``<c …>…</c>`` element never nests another ``<c>``, so ``.*?</c>`` is safe.
 _ERROR_CELL_RE = re.compile(
-    rb'<c(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"[^>]*>(.*?)</c>', re.S
+    rb'<c\b(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"[^>]*(?<!/)>(.*?)</c>',
+    re.S,
 )
 
 
@@ -229,7 +231,8 @@ def _parse_sheet_targets(wb_xml: str, rels_xml: str) -> dict[str, str]:
         if name_m and rid_m:
             rid = rid_m.group(1)
             if rid in targets:
-                sheet_paths[name_m.group(1)] = targets[rid]
+                name = unescape(name_m.group(1), {"&quot;": '"', "&apos;": "'"})
+                sheet_paths[name] = targets[rid]
     return sheet_paths
 
 
@@ -254,6 +257,11 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
                 try:
                     sheet_xml = zf.read(zpath)
                 except KeyError:
+                    continue
+                # Most sheets contain no cached Excel errors. Avoid a regex
+                # lookahead for every ordinary cell; this preserves exactly
+                # the error type spelling the matcher below already accepts.
+                if b't="e"' not in sheet_xml:
                     continue
                 for cell in _ERROR_CELL_RE.finditer(sheet_xml):
                     value = re.search(rb"<v>([^<]*)</v>", cell.group(3))

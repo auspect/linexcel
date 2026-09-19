@@ -51,6 +51,7 @@ class SweepResult:
     groups: dict[tuple[str, str], FormulaGroup]
     formula_count: int
     sheet_stats: list[dict[str, Any]]
+    omissions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _target_ranges(cells: list[tuple[int, int]]):
@@ -106,6 +107,7 @@ def sweep_sheets(
         "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
     )
     groups: dict[tuple[str, str], FormulaGroup] = {}
+    omissions: list[dict[str, Any]] = []
     formula_count = 0
     sheet_stats: list[dict[str, Any]] = []
     wanted_by_sheet: dict[str, list[tuple[int, int]]] = defaultdict(list)
@@ -140,6 +142,14 @@ def sweep_sheets(
     with reporter.phase("extraction+grouping", total=len(sheet_dims)) as _bar:
         for sheet, (max_row, max_col) in sheet_dims.items():
             if sheet not in engine_sheets:
+                omissions.append(
+                    {
+                        "phase": "extraction",
+                        "sheet": sheet,
+                        "reason": "sheet_not_loaded",
+                        "omittedFormulaCount": None,
+                    }
+                )
                 warnings.append(f"Sheet '{sheet}' skipped (not loaded by engine)")
                 continue
             if reachable is not None:
@@ -151,6 +161,14 @@ def sweep_sheets(
                             fz.RangeAddress(sheet, r1, c1, r2, c2)
                         )
                     except Exception as exc:
+                        omissions.append(
+                            {
+                                "phase": "extraction",
+                                "sheet": sheet,
+                                "reason": "formula_read_failed",
+                                "omittedFormulaCount": None,
+                            }
+                        )
                         warnings.append(f"Could not read formulas on {sheet}: {exc}")
                         continue
                     for i, row_vals in enumerate(rows):
@@ -180,6 +198,15 @@ def sweep_sheets(
                 remaining = cell_limit - scanned
                 rows_left = remaining // max_col
                 if remaining <= 0:
+                    omissions.append(
+                        {
+                            "phase": "extraction",
+                            "sheet": sheet,
+                            "reason": "cell_limit",
+                            "afterRow": r0 - 1,
+                            "omittedFormulaCount": None,
+                        }
+                    )
                     warnings.append(
                         f"Sheet '{sheet}' scanned to row {r0 - 1:,} of {max_row:,} "
                         f"({cell_limit:,} cell ceiling): remaining formulas "
@@ -192,10 +219,28 @@ def sweep_sheets(
                 try:
                     rows = fsheet.get_formulas(ra)
                 except Exception as exc:
+                    omissions.append(
+                        {
+                            "phase": "extraction",
+                            "sheet": sheet,
+                            "reason": "formula_read_failed",
+                            "omittedFormulaCount": None,
+                        }
+                    )
                     warnings.append(f"Could not read formulas on {sheet}: {exc}")
                     break
                 scanned += (r1 - r0 + 1) * end_col
                 if end_col < max_col:
+                    omissions.append(
+                        {
+                            "phase": "extraction",
+                            "sheet": sheet,
+                            "reason": "cell_limit",
+                            "afterRow": r0,
+                            "afterColumn": end_col,
+                            "omittedFormulaCount": None,
+                        }
+                    )
                     warnings.append(
                         f"Sheet '{sheet}' formula extraction reached its "
                         f"{cell_limit:,} cell ceiling partway through row "
@@ -217,4 +262,4 @@ def sweep_sheets(
             )
             _bar.step(f"sweeping {sheet}")
 
-    return SweepResult(groups, formula_count, sheet_stats)
+    return SweepResult(groups, formula_count, sheet_stats, omissions)

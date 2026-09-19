@@ -22,6 +22,10 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
+
+# Private worker hook; the ordinary library never installs one.
+_observer: Any = None
 
 
 def _rich_console():
@@ -51,8 +55,12 @@ class Reporter:
     @contextmanager
     def phase(self, label: str, total: int | None = None) -> Iterator[Phase]:
         """One named phase, timed, optionally with a known number of steps."""
+        if _observer is not None:
+            _observer(label)
         if not self.enabled:
             yield _SILENT_PHASE
+            if _observer is not None:
+                _observer(label, True)
             return
         started = time.perf_counter()
         if self._live:
@@ -78,11 +86,23 @@ class Reporter:
         else:
             yield _SILENT_PHASE
         self._say(f"{label}: {time.perf_counter() - started:.1f}s")
+        if _observer is not None:
+            _observer(label, True)
 
     def note(self, message: str) -> None:
         """Something worth saying that is not a phase."""
         if self.enabled:
             self._say(message)
+
+    def checkpoint(self, label: str, evidence: dict | None = None) -> None:
+        """Record completed evidence without claiming native-call progress."""
+        if _observer is not None:
+            _observer(label, True, evidence)
+
+    def start_phase(self, label: str) -> None:
+        """Name work that cannot provide a meaningful item counter."""
+        if _observer is not None:
+            _observer(label)
 
     def _say(self, message: str) -> None:
         if self._console is not None:

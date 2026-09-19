@@ -2,11 +2,15 @@
 
 import datetime
 import io
+from functools import partial
 
 import pytest
 from openpyxl import Workbook
 
-from linexcel import analyze
+from linexcel import ExecutionPolicy
+from linexcel import analyze as _analyze
+
+# These tests inspect the live engine or instrument native calls.
 from linexcel.analyzer import _longest_dep_chain, _parse_targets
 from linexcel.values import readings_agree
 
@@ -32,6 +36,9 @@ def test_targets_preserve_excel_sheet_names(target, sheet):
 def test_empty_or_malformed_targets_are_rejected(target):
     with pytest.raises(ValueError, match="Invalid target"):
         _parse_targets([target])
+
+
+analyze = partial(_analyze, execution=ExecutionPolicy(isolated=False))
 
 
 def test_quoted_target_is_evaluated_end_to_end():
@@ -138,6 +145,8 @@ def test_truncated_trace_does_not_claim_omitted_cells_were_not_evaluated(monkeyp
     ws["B1"] = "=A1*2"
     buf = io.BytesIO()
     wb.save(buf)
-    result = analyze(buf.getvalue(), targets=["Sheet!B1"])
+    result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
+        buf.getvalue(), targets=["Sheet!B1"]
+    )
     assert any("hit its budget" in warning for warning in result.warnings)
     assert not any("were not recomputed" in warning for warning in result.warnings)

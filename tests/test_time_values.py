@@ -4,10 +4,12 @@ import datetime
 import io
 import re
 import zipfile
+from functools import partial
 
 import pytest
 from openpyxl import Workbook
 
+from linexcel import ExecutionPolicy
 from linexcel.analyzer import analyze_workbook
 from linexcel.loader import load_cached_values
 from linexcel.values import readings_agree, serial_to_time_text
@@ -87,7 +89,9 @@ def test_real_in_memory_formula_time_cache_is_not_a_divergence(
         monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
     data = _time_workbook(serial, serial, epoch_1904)
     assert isinstance(load_cached_values(data).get("Clock", 1, 2), datetime.time)
-    graph = analyze_workbook(data)["graph"]
+    graph = partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(data)[
+        "graph"
+    ]
     node = next(node for node in graph["nodes"] if node["id"] == "c:Clock!B1")
     assert node["value"] == pytest.approx(serial)
     assert node["valueSource"] == "engine"

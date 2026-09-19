@@ -22,6 +22,7 @@ from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _installed_version
 
 from linexcel.analyzer import analyze_workbook
+from linexcel.execution import ExecutionPolicy
 from linexcel.insights import WorkbookRenderError
 from linexcel.result import LineageResult, analyze
 
@@ -32,6 +33,7 @@ except _PackageNotFoundError:  # pragma: no cover - source tree without install
 
 __all__ = [
     "analyze",
+    "ExecutionPolicy",
     "LineageResult",
     "WorkbookRenderError",
     "analyze_workbook",

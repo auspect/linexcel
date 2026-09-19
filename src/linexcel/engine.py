@@ -24,7 +24,8 @@ from xml.sax.saxutils import unescape
 import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
-from linexcel.loader import _detect_epoch_1904
+from linexcel.limits import limit_or_default
+from linexcel.loader import MAX_CELLS_PER_SHEET, _detect_epoch_1904
 from linexcel.progress import Reporter
 from linexcel.refs import a1, col_to_num, parse_ref, quote_sheet
 
@@ -104,6 +105,7 @@ class EngineSession:
     #: means the whole workbook was evaluated, as before.
     reachable: set[tuple[str, int, int]] | None = None
     unavailable: set[tuple[str, int, int]] = field(default_factory=set)
+    trace_incomplete: bool = False
 
 
 def _open_workbook(data: bytes, parallel: bool):
@@ -207,6 +209,7 @@ def boot_engine(
     max_ast_depth: int = MAX_AST_DEPTH,
     parallel: bool = PARALLEL_EVALUATION,
     targets: list[tuple[str, int, int]] | None = None,
+    max_cells_per_sheet: int | None = None,
 ) -> EngineSession:
     """Instantiate the engine and run its evaluation.
 
@@ -241,34 +244,44 @@ def boot_engine(
                 f"holds a chart and no cells, and the engine refuses a whole "
                 f"workbook that contains one"
             )
-        engine = _open_workbook(data, parallel)
+        # Import also parses formulas. Inspect the package before the first
+        # native call, not after loading the dangerous expression once.
+        too_deep, deepest = _find_too_deep(data, None, max_ast_depth)
+        engine = _open_workbook(
+            _blank_formulas_in_package(data, too_deep) if too_deep else data,
+            parallel,
+        )
         engine_sheets = set(engine.sheet_names)
         engine_alive = True
         quarantined: dict[tuple[str, int, int], str] = {}
-        too_deep, deepest = _find_too_deep(data, engine_sheets, max_ast_depth)
         unavailable: set[tuple[str, int, int]] = set()
         if too_deep:
             progress.step(f"quarantining {len(too_deep)} over-deep formula(s)")
             quarantined = too_deep
-            engine = _open_workbook(
-                _blank_formulas_in_package(data, quarantined), parallel
-            )
             unavailable = _uncached_dependents(engine, data, too_deep, warnings)
             _mark_uncached_quarantine(engine, quarantined)
             sheet, row, col = deepest
             warnings.append(
                 f"{len(too_deep)} cell(s) hold a formula nested deeper than the "
-                f"engine can safely evaluate (parse tree over {max_ast_depth} "
-                f"levels; evaluating one has aborted the process outright on such "
+                f"engine can safely inspect or evaluate (conservative lexical "
+                f"complexity guard or parse tree over {max_ast_depth} levels; "
+                f"native conversion or evaluation can abort outright on such "
                 f"input — https://github.com/PSU3D0/formualizer/issues/411). They "
                 f"were quarantined before evaluation and keep the value stored in "
                 f"the file, if any; without a cached value, dependent formulas "
-                f"also remain uncomputed. Deepest: "
+                f"also remain uncomputed. First affected cell: "
                 f"{sheet}!{a1(row, col)}"
             )
         if targets is not None:
+            trace_evidence: dict[str, bool] = {}
             reachable, target_alive = _evaluate_targets(
-                engine, engine_sheets, targets, warnings, progress
+                engine,
+                engine_sheets,
+                targets,
+                warnings,
+                progress,
+                max_cells_per_sheet=max_cells_per_sheet,
+                trace_evidence=trace_evidence,
             )
             unavailable |= _cycle_unavailable(
                 engine,
@@ -287,6 +300,7 @@ def boot_engine(
                 scratch_ready,
                 reachable,
                 unavailable,
+                trace_incomplete=trace_evidence.get("incomplete", False),
             )
         try:
             progress.step("evaluating formulas")
@@ -477,6 +491,8 @@ def _static_cycle_dependents(data, cells):
     indegree = dict.fromkeys(cells, 0)
     work = 0
     for destination, formula in cells.items():
+        if is_too_deep(formula):
+            return set(cells)
         try:
             refs = _collect_ref_strings(fz.parse(formula).to_dict())
         except Exception:
@@ -581,6 +597,9 @@ def _evaluate_targets(
     targets: list[tuple[str, int, int]],
     warnings: list[str],
     progress,
+    *,
+    max_cells_per_sheet: int | None = None,
+    trace_evidence: dict[str, bool] | None = None,
 ) -> tuple[set[tuple[str, int, int]], bool]:
     """Evaluate only the upstream subgraph of ``targets``; return its cells.
 
@@ -594,6 +613,9 @@ def _evaluate_targets(
     time — the cells the user actually asked for — and leaves the rest to
     the per-cell recovery, which is what a global failure would have got.
     """
+    cell_limit = limit_or_default(
+        "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
+    )
     unknown = sorted({sheet for sheet, _, _ in targets} - engine_sheets)
     if unknown:
         raise ValueError(
@@ -616,7 +638,20 @@ def _evaluate_targets(
         rect = parse_ref(key)
         if rect is not None and rect.ncells == 1 and rect.sheet in engine_sheets:
             reachable.add((rect.sheet, rect.r1, rect.c1))
+    counts: dict[str, int] = {}
+    for sheet, _row, _col in reachable:
+        counts[sheet] = counts.get(sheet, 0) + 1
+    for sheet, count in counts.items():
+        if count > cell_limit:
+            raise ValueError(
+                f"Targeted lineage on sheet '{sheet}' needs {count:,} traced "
+                f"cells, exceeding max_cells_per_sheet={cell_limit:,}; raise "
+                f"the limit to preserve the complete traced lineage. "
+                f"Target evaluation was not started"
+            )
     if trace.truncation.incomplete:
+        if trace_evidence is not None:
+            trace_evidence["incomplete"] = True
         warnings.append(
             "The upstream trace of the target cell(s) hit its budget: part of "
             "the subgraph is missing from the lineage. The engine may still "
@@ -768,14 +803,83 @@ def _iter_formulas_xml(data: bytes):
         return
 
 
+def _lexical_depth_bound(formula: str) -> int:
+    """Conservative nesting bound without invoking a native formula parser.
+
+    Operators in an argument can form a chain; sibling function arguments
+    cannot. Frames retain the longest argument and deepest child. Strings,
+    quoted sheet names and structured references are atomic. Whitespace is
+    counted conservatively because it can denote reference intersection.
+    This is an admission guard, not a measurement of actual AST depth.
+    """
+    # Each frame: operators, deepest child, completed argument, separator flag.
+    frames = [[0, 1, 0, False]]
+    index = 1 if formula.startswith("=") else 0
+    while index < len(formula):
+        char = formula[index]
+        if char in {'"', "'"}:
+            quote = char
+            index += 1
+            while index < len(formula):
+                if formula[index] == quote:
+                    index += 1
+                    if index < len(formula) and formula[index] == quote:
+                        index += 1
+                        continue
+                    break
+                index += 1
+            continue
+        if char == "[":
+            nesting = 1
+            index += 1
+            while index < len(formula) and nesting:
+                nesting += (formula[index] == "[") - (formula[index] == "]")
+                if nesting > MAX_AST_DEPTH:
+                    return MAX_AST_DEPTH + 1
+                index += 1
+            continue
+        frame = frames[-1]
+        if char in "({":
+            previous = index - 1
+            while previous >= 0 and formula[previous].isspace():
+                previous -= 1
+            is_function = previous >= 0 and (
+                formula[previous].isalnum() or formula[previous] in "_."
+            )
+            frames.append([0, 1, 0, char == "{" or is_function])
+        elif char in ")}" and len(frames) > 1:
+            depth = max(frame[2], frame[0] + frame[1]) + 2
+            frames.pop()
+            frames[-1][1] = max(frames[-1][1], depth)
+        elif char in ",;" and frame[3]:
+            frame[2] = max(frame[2], frame[0] + frame[1])
+            frame[0], frame[1] = 0, 1
+        elif char in "+-*/^&=<>%:,;" or char.isspace():
+            frame[0] += 1
+            if char.isspace():
+                while index + 1 < len(formula) and formula[index + 1].isspace():
+                    index += 1
+        # Bound unfinished nesting as well; very deep parentheses must never
+        # reach even parse(), regardless of how to_dict() represents them.
+        if (
+            len(frames) * 2 > MAX_AST_DEPTH
+            or max(frames[-1][2], frames[-1][0] + frames[-1][1]) > MAX_AST_DEPTH
+        ):
+            return MAX_AST_DEPTH + 1
+        index += 1
+    return max(frames[0][2], frames[0][0] + frames[0][1])
+
+
 def ast_depth(formula: str) -> int | None:
-    """Depth of ``formula``'s parse tree, or ``None`` when it does not parse.
+    """AST depth, or ``None`` when parsing is unsafe or unsuccessful.
 
     The walk is iterative: a recursive one would hit Python's own recursion
     limit on exactly the formulas this exists to measure. ``fz.parse`` itself
-    holds up at those depths — it is the evaluator, not the parser, that
-    overflows.
+    and its ``to_dict`` conversion can themselves abort on long chains.
+    A lexical guard runs before either native operation.
     """
+    if _lexical_depth_bound(formula) > MAX_AST_DEPTH:
+        return None
     try:
         root = fz.parse(formula if formula.startswith("=") else "=" + formula).to_dict()
     except Exception:
@@ -802,14 +906,16 @@ def is_too_deep(formula: str, max_depth: int = MAX_AST_DEPTH) -> bool:
     at least one character — so the parse is paid only for formulas long
     enough to be dangerous.
     """
-    if len(formula) <= max_depth:
+    if len(formula) <= min(max_depth, MAX_AST_DEPTH):
         return False
+    if _lexical_depth_bound(formula) > MAX_AST_DEPTH:
+        return True
     depth = ast_depth(formula)
     return depth is not None and depth > max_depth
 
 
 def _find_too_deep(
-    data: bytes, engine_sheets: set[str], max_depth: int = MAX_AST_DEPTH
+    data: bytes, engine_sheets: set[str] | None, max_depth: int = MAX_AST_DEPTH
 ) -> tuple[dict[tuple[str, int, int], str], tuple[str, int, int]]:
     """The cells whose formula is too deep to evaluate safely, keyed by cell.
 
@@ -821,7 +927,9 @@ def _find_too_deep(
     suspects: dict[tuple[str, int, int], str] = {}
     first: tuple[str, int, int] | None = None
     for sheet, row, col, formula in _iter_formulas_xml(data):
-        if sheet not in engine_sheets or not is_too_deep(formula, max_depth):
+        if (
+            engine_sheets is not None and sheet not in engine_sheets
+        ) or not is_too_deep(formula, max_depth):
             continue
         suspects[(sheet, row, col)] = formula
         if first is None:
