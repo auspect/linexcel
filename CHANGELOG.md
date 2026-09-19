@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Documentation dossiers distinguish represented group membership from sampled
+  values, range dimensions from cell counts, and engine input reads from formula
+  results. Bounded directed connections ground workbook calculation-flow prose.
 - Bounded checks of formula quotations in AI documentation against the exact
   source dossier. Unsupported quotations receive a visible qualification;
   optional API evidence retains the original response and individual checks.
@@ -34,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Render AI quotation notices as escaped quote blocks instead of exposing their
+  Markdown markers, and use singular wording for one exploration step.
+- Documentation omissions explicitly concern the supplied dossier; missing step
+  values no longer imply that evaluation was never attempted.
 - Reject dangerous formula structures before native import/AST conversion while
   retaining source formulas and stored values. Flat functions remain admissible.
 - Check targeted cell budgets before evaluation, preserve XML-escaped sheet
@@ -48,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation
 
+- Completed both generated-workbook runs with Qwen3.8: 75 node cards, three
+  overviews and 15 sheet-image descriptions, plus desktop/mobile browser checks.
+  Independent review observed corrected group/topology/provenance explanations
+  but retained false external-cache and visual claims. Generation and response
+  integrity are not factual certification.
+- Compared 71 documentation dossiers before and after at the same 6,000-character
+  node budget: no additional formula, decomposition, neighbor or sample omissions
+  in that corpus. This is a retention measurement, not a runtime speedup.
 - Repeated complete local Qwen3.8 documentation and vision generation for the
   quotation-checking changes. Raw responses and source checks remain separate
   from factual review: conceptual formula shorthand can trigger notices, and

@@ -37,6 +37,7 @@ from linexcel.i18n import LANGUAGES as _LANGUAGES
 # and a name that suits a hosted API is wrong for a local runtime. The model is
 # always supplied by the caller, via model= or an environment variable.
 MAX_DOSSIER_CHARS = 6_000
+MAX_DOCUMENT_CONNECTIONS = 24
 # Raised from 12k when the workbook dossier gained the presentation context
 # (sheet previews and comments); _fit_workbook_dossier() sheds that part first
 # if a workbook still exceeds it, so a graph-only dossier is unaffected.
@@ -561,7 +562,7 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
     precedents = incoming.get(node_id, [])
     dependents = outgoing.get(node_id, [])
     facts = formula_evidence(node.get("formula"))
-    dossier = {
+    dossier: dict[str, Any] = {
         "node_id": node_id,
         "kind": node.get("kind"),
         "sheet": node.get("sheet"),
@@ -596,12 +597,18 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
             _neighbor(nodes.get(e["target"], {}), e) for e in dependents[:30]
         ],
         "neighbor_coverage": {
+            "scope": "supplied_graph_edges",
+            "omissions_scope": "dossier_only",
             "precedents_total": len(precedents),
             "dependents_total": len(dependents),
             "precedents_omitted": max(0, len(precedents) - 30),
             "dependents_omitted": max(0, len(dependents) - 30),
         },
     }
+    if node.get("kind") == "group":
+        dossier["group_coverage"]["value_samples_in_dossier"] = len(
+            node.get("samples") or []
+        )
     if node.get("kind") == "vba":
         dossier["vba"] = {
             "module": node.get("module"),
@@ -625,9 +632,25 @@ def _document_name_evidence(evidence: dict) -> dict:
 
 
 def _value_evidence(node: dict) -> dict:
+    origin = node.get("valueSource", "unknown")
+    if origin == "engine":
+        if node.get("formula"):
+            origin_kind = "formula_result"
+        elif node.get("kind") == "input":
+            origin_kind = "input_read"
+        elif node.get("kind") == "name":
+            origin_kind = "name_resolution"
+        else:
+            origin_kind = "engine_value_without_formula"
+    else:
+        origin_kind = {
+            "file": "file_cache",
+            "volatile": "volatile_cache",
+        }.get(origin, "unknown")
     evidence = {
         "displayed_value": node.get("value"),
         "value_source": node.get("valueSource", "unknown"),
+        "value_origin_kind": origin_kind,
         "cached_value": node.get("cachedValue"),
         "cached_agreement": node.get("cachedAgreement"),
         "group_cached_agreement": node.get("groupCachedAgreement"),
@@ -641,7 +664,134 @@ def _value_evidence(node: dict) -> dict:
             "address": node.get("addr"),
         }
         evidence["group_members"] = node.get("count")
+        evidence["group_coverage"] = _group_coverage(node)
     return evidence
+
+
+def _range_dimensions(reference: Any) -> dict[str, int] | None:
+    """A1 rectangle geometry only; no resolution of names/dynamic expressions."""
+    bounds = _range_bounds(reference)
+    if bounds is None:
+        return None
+    row1, col1, row2, col2 = bounds
+    rows, columns = row2 - row1 + 1, col2 - col1 + 1
+    return {"rows": rows, "columns": columns, "cells": rows * columns}
+
+
+def _range_bounds(reference: Any) -> tuple[int, int, int, int] | None:
+    """Only local or single-sheet A1 rectangles, never 3-D/external references."""
+    if not isinstance(reference, str):
+        return None
+    address = reference
+    if "!" in reference:
+        qualified = re.fullmatch(
+            r"(?:'((?:[^']|'')+)'|([\w.]+))!([A-Za-z$0-9:]+)", reference
+        )
+        if not qualified or any(
+            char in (qualified[1] or qualified[2]) for char in ":[]"
+        ):
+            return None
+        address = qualified[3]
+    address = address.upper()
+    bounds = address.split(":")
+    if len(bounds) not in (1, 2):
+        return None
+
+    def endpoint(text: str) -> tuple[int | None, int | None] | None:
+        match = re.fullmatch(r"(\$?[A-Z]{1,3})?(\$?[1-9][0-9]{0,6})?", text)
+        if not match or not any(match.groups()):
+            return None
+        col = 0
+        for char in (match[1] or "").lstrip("$"):
+            col = col * 26 + ord(char) - ord("A") + 1
+        row = int(match[2].lstrip("$")) if match[2] else None
+        if col > 16384 or (row is not None and row > 1048576):
+            return None
+        return row, col or None
+
+    first, last = endpoint(bounds[0]), endpoint(bounds[-1])
+    if first is None or last is None:
+        return None
+    if len(bounds) == 1 and None in first:
+        return None  # A bare column/row token can instead be a defined name.
+    if (first[0] is None) != (last[0] is None) or (
+        (first[1] is None) != (last[1] is None)
+    ):
+        return None
+    rows = (last[0] or 1048576) - (first[0] or 1) + 1
+    columns = (last[1] or 16384) - (first[1] or 1) + 1
+    if rows <= 0 or columns <= 0:
+        return None
+    return first[0] or 1, first[1] or 1, last[0] or 1048576, last[1] or 16384
+
+
+def _group_coverage(node: dict) -> dict:
+    """Membership geometry and bounded value sampling are separate evidence."""
+    bounds = _range_bounds(node.get("bbox"))
+    dimensions = None
+    if bounds:
+        rows, columns = bounds[2] - bounds[0] + 1, bounds[3] - bounds[1] + 1
+        dimensions = {"rows": rows, "columns": columns, "cells": rows * columns}
+    count = node.get("count")
+    valid_count = isinstance(count, int) and not isinstance(count, bool) and count > 0
+    area = dimensions["cells"] if dimensions else None
+    membership = "unknown"
+    samples = node.get("samples")
+    addresses = None
+    conflicts = []
+
+    def local_member(address: Any) -> bool:
+        if not isinstance(address, str) or not re.fullmatch(
+            r"\$?[A-Za-z]{1,3}\$?[1-9][0-9]*", address
+        ):
+            return False
+        cell = _range_bounds(address)
+        return bool(
+            bounds
+            and cell
+            and bounds[0] <= cell[0] <= bounds[2]
+            and bounds[1] <= cell[1] <= bounds[3]
+        )
+
+    representative = node.get("addr")
+    if representative is not None and not local_member(representative):
+        conflicts.append("representative_outside_or_invalid_bbox")
+    if isinstance(samples, list) and all(
+        isinstance(sample, dict) and local_member(sample.get("addr"))
+        for sample in samples
+    ):
+        addresses = {sample["addr"].replace("$", "").upper() for sample in samples}
+        if len(addresses) != len(samples) or (valid_count and len(addresses) > count):
+            conflicts.append("inconsistent_sample_count")
+    elif samples is not None:
+        conflicts.append("sample_outside_or_invalid_bbox")
+    if valid_count and area and count > area:
+        conflicts.append("member_count_exceeds_bbox")
+    if not conflicts and valid_count and area and local_member(representative):
+        membership = "complete_bbox" if count == area else "partial_bbox"
+    if conflicts:
+        addresses = None
+    representative = (
+        representative.replace("$", "").upper()
+        if isinstance(representative, str)
+        else ""
+    )
+    sampled = len(addresses) if addresses is not None else None
+    return {
+        "basis": "graph_membership",
+        "conflicts": conflicts,
+        "member_cells": count,
+        "bbox_dimensions": dimensions,
+        "membership": membership,
+        "sampled_cells_in_graph": sampled,
+        "representative_in_samples": representative in addresses
+        if addresses is not None
+        else None,
+        "other_sampled_cells_in_graph": len(addresses - {representative})
+        if addresses is not None
+        else None,
+        "value_samples_in_dossier": 0,
+    }
 
 
 def _fit_node_dossier(dossier: dict) -> str:
@@ -669,6 +819,8 @@ def _fit_node_dossier(dossier: dict) -> str:
     if samples:
         dossier["value_samples_omitted"] = len(samples)
         dossier["value_samples"] = []
+        if "group_coverage" in dossier:
+            dossier["group_coverage"]["value_samples_in_dossier"] = 0
     if len(encoded()) > MAX_DOSSIER_CHARS:
         dossier["decomposition"] = (
             "omitted: dossier size limit; not a calculation proof"
@@ -713,11 +865,25 @@ def _compact_steps(step: dict | None) -> dict | None:
     out = {
         "expression": step.get("expr"),
         "operation": step.get("label"),
-        "value": step.get("value") if step.get("evaluated") else "not evaluated",
+        "value": step.get("value")
+        if step.get("evaluated")
+        else "no evaluated value recorded",
         "evaluated": bool(step.get("evaluated")),
     }
+    if not step.get("evaluated"):
+        out["evaluation_attempt"] = "unknown"
     if step.get("inputs"):
-        out["inputs"] = step["inputs"]
+        out["inputs"] = []
+        for item in step["inputs"]:
+            documented = dict(item)
+            value = item.get("value")
+            if isinstance(value, dict) and "range" in value:
+                documented["value"] = {
+                    **value,
+                    "n_unit": "cells",
+                    "dimensions": _range_dimensions(value["range"]),
+                }
+            out["inputs"].append(documented)
     if step.get("evaluationReason"):
         out["evaluation_reason"] = step["evaluationReason"]
     children = [_compact_steps(c) for c in step.get("children", [])]
@@ -782,7 +948,9 @@ def build_workbook_dossier(
         ),
         key=lambda item: item["cells"],
         reverse=True,
-    )[:20]
+    )
+    pattern_total = len(formula_patterns)
+    formula_patterns = formula_patterns[:20]
     defined_names = [
         {"name": node.get("label"), "targets": node.get("targets", [])}
         for node in nodes
@@ -834,6 +1002,13 @@ def build_workbook_dossier(
         },
         "sheets": sheets,
         "formula_patterns": formula_patterns,
+        "formula_pattern_coverage": {
+            "scope": "graph_formula_nodes",
+            "total": pattern_total,
+            "shown": len(formula_patterns),
+            "omitted": pattern_total - len(formula_patterns),
+        },
+        "graph_connections": _document_connections(graph),
         "defined_names": defined_names,
         "source_defined_names": _document_name_evidence(
             meta.get("definedNameEvidence", {"status": "not_inspected"})
@@ -845,6 +1020,32 @@ def build_workbook_dossier(
             *meta.get("warnings", []),
             *(context.get("warnings", []) if context else []),
         ],
+    }
+
+
+def _document_connections(graph: dict) -> dict:
+    """Preserve direction and disclose the bound; do not infer a linear chain."""
+    edges = graph.get("edges", [])
+    connections = []
+    destinations: dict[str, set[str]] = {}
+    origins: dict[str, set[str]] = {}
+    for edge in edges:
+        source, target = edge.get("source"), edge.get("target")
+        if not isinstance(source, str) or not isinstance(target, str):
+            continue
+        destinations.setdefault(source, set()).add(target)
+        origins.setdefault(target, set()).add(source)
+        if len(connections) < MAX_DOCUMENT_CONNECTIONS:
+            connections.append({"source": source, "target": target})
+    return {
+        "scope": "supplied_graph_not_complete_workbook",
+        "edges": connections,
+        "total_edges": len(edges),
+        "omitted_from_dossier": len(edges) - len(connections),
+        "branching_observed": any(
+            len(targets) > 1 for targets in destinations.values()
+        ),
+        "merging_observed": any(len(sources) > 1 for sources in origins.values()),
     }
 
 
@@ -920,6 +1121,10 @@ def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
         return blob
 
     dossier["formula_patterns"] = dossier["formula_patterns"][:5]
+    if "formula_pattern_coverage" in dossier:
+        coverage = dossier["formula_pattern_coverage"]
+        coverage["shown"] = len(dossier["formula_patterns"])
+        coverage["omitted"] = coverage["total"] - coverage["shown"]
     dossier["vba_procedures"] = dossier["vba_procedures"][:10]
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:

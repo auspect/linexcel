@@ -131,6 +131,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Next",
         "see_sheet": "See sheet",
         "explore_local": "Explore locally",
+        "explore_status_one": (
+            "{shown}/{available} nodes within {depth} step · {hidden} hidden in graph"
+        ),
         "explore_status": (
             "{shown}/{available} nodes within {depth} steps · {hidden} hidden in graph"
         ),
@@ -337,6 +340,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Suivant",
         "see_sheet": "Voir la feuille",
         "explore_local": "Explorer localement",
+        "explore_status_one": (
+            "{shown}/{available} nœuds à {depth} "
+            "étape · {hidden} masqués dans le graphe"
+        ),
         "explore_status": (
             "{shown}/{available} nœuds à {depth} "
             "étapes · {hidden} masqués dans le graphe"
@@ -543,6 +550,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Siguiente",
         "see_sheet": "Ver hoja",
         "explore_local": "Explorar localmente",
+        "explore_status_one": (
+            "{shown}/{available} nodos a {depth} paso · {hidden} ocultos en el grafo"
+        ),
         "explore_status": (
             "{shown}/{available} nodos a {depth} pasos · {hidden} ocultos en el grafo"
         ),
@@ -751,6 +761,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Weiter",
         "see_sheet": "Blatt anzeigen",
         "explore_local": "Lokal erkunden",
+        "explore_status_one": (
+            "{shown}/{available} Knoten in {depth} "
+            "Schritt · {hidden} im Graph ausgeblendet"
+        ),
         "explore_status": (
             "{shown}/{available} Knoten in {depth} "
             "Schritten · {hidden} im Graph ausgeblendet"
@@ -961,6 +975,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Successivo",
         "see_sheet": "Vedi foglio",
         "explore_local": "Esplora localmente",
+        "explore_status_one": (
+            "{shown}/{available} nodi entro {depth} passo · {hidden} nascosti nel grafo"
+        ),
         "explore_status": (
             "{shown}/{available} nodi entro {depth} passi · {hidden} nascosti nel grafo"
         ),
@@ -1167,6 +1184,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Seguinte",
         "see_sheet": "Ver folha",
         "explore_local": "Explorar localmente",
+        "explore_status_one": (
+            "{shown}/{available} nós em {depth} passo · {hidden} ocultos no grafo"
+        ),
         "explore_status": (
             "{shown}/{available} nós em {depth} passos · {hidden} ocultos no grafo"
         ),
@@ -1371,6 +1391,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "Volgende",
         "see_sheet": "Blad bekijken",
         "explore_local": "Lokaal verkennen",
+        "explore_status_one": (
+            "{shown}/{available} knopen binnen {depth} "
+            "stap · {hidden} verborgen in graaf"
+        ),
         "explore_status": (
             "{shown}/{available} knopen binnen {depth} "
             "stappen · {hidden} verborgen in graaf"
@@ -1572,6 +1596,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "次へ",
         "see_sheet": "シートを見る",
         "explore_local": "周辺を探索",
+        "explore_status_one": (
+            "{depth}ステップ以内の{shown}/{available}ノード · グラフ内{hidden}件非表示"
+        ),
         "explore_status": (
             "{depth}ステップ以内の{shown}/{available}ノード · グラフ内{hidden}件非表示"
         ),
@@ -1762,6 +1789,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "history_forward": "下一个",
         "see_sheet": "查看工作表",
         "explore_local": "探索附近",
+        "explore_status_one": (
+            "{depth}步内显示{shown}/{available}个节点 · 图中隐藏{hidden}个"
+        ),
         "explore_status": (
             "{depth}步内显示{shown}/{available}个节点 · 图中隐藏{hidden}个"
         ),
