@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Isolated analysis with a configurable 120-second default budget, memory
+  limits, cancellation and descendant cleanup. Structured execution and coverage
+  evidence distinguish completed pipelines from complete or verified workbooks.
+- Reproducible native capability probes preserve type-level discrepancies and
+  mark potentially affected formulas and represented dependents as unverified.
+- Keyboard-navigable search results, explicit search scope, cell/sheet return
+  navigation, history, exact copying, selection links and view export. Dense
+  neighborhoods expand progressively and coverage categories open their nodes.
+
+### Changed
+
+- Isolated API results no longer expose a live native engine. Use
+  `ExecutionPolicy(isolated=False)` explicitly for that legacy behavior, without
+  hard resource guarantees. HTML and AI documentation use the retained graph.
+- Removed heuristic duration announcements. `estimatedSeconds` now returns
+  null; the CLI reports actual phases and configured budgets.
+- AI HTTP requests use a separate configurable timeout and no automatic retries.
+
+### Fixed
+
+- Reject dangerous formula structures before native import/AST conversion while
+  retaining source formulas and stored values. Flat functions remain admissible.
+- Check targeted cell budgets before evaluation, preserve XML-escaped sheet
+  identities and avoid unnecessary error-overlay scans on clean sheets.
+- Interrupted analyses retain unknown counts and do not launch optional AI or
+  rendering. Group disagreements and range samples retain honest coverage.
+- Workbook AI dossiers distinguish actual recalculation from live API engine
+  availability and explicitly label formula-scoped name evidence as a filtered
+  selection. Prompts distinguish conservative risk warnings from causal evidence.
+- Larger graph labels and a vertical initial layout for small mobile graphs
+  improve legibility without hiding their nodes or connections.
+
+### Validation
+
+- Completed both generated-workbook runs with local Qwen3.8, including all
+  expected language runs, node documentation, overviews, sheet captures and
+  vision. Desktop/mobile investigation and an independent reviewer checked
+  the final artifacts. The acceptance guide records known native discrepancies,
+  remaining AI factual errors and the limited scope of performance measurements.
+
 ## [1.9.0] — 2026-09-13
 
 ### Fixed

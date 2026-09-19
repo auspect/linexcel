@@ -52,6 +52,9 @@ nav:
   - Home: index.md
   - Guide:
       - Quick start: guide/quickstart.md
+      - Execution budgets: guide/execution.md
+      - Engine safety: guide/engine-safety.md
+      - Acceptance evidence: guide/acceptance.md
       - Command line: guide/cli.md
       - Lineage coverage: guide/coverage.md
       - HTML export: guide/html.md

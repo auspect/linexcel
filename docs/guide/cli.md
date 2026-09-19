@@ -36,52 +36,21 @@ linexcel analyze workbook.xlsx --json - --no-html | jq '.meta.stats'
 
 ## Before committing to a long run
 
-A 50 MB workbook takes minutes, and the file itself says in milliseconds
-whether it is going to:
+`--dry-run` inspects declared dimensions, external links and extraction ceilings.
+Declared dimensions are not occupied-cell counts, and file size cannot predict
+execution time. No ETA is displayed.
 
 ```bash
 linexcel analyze workbook.xlsx --dry-run
+linexcel analyze workbook.xlsx --analysis-seconds 120 --memory-mb 2048 -v
 ```
 
-```
-Budget FY26.xlsx  47.3 MB
-12 sheet(s), 3,847,221 cells declared
-  Sales: 251,004 × 14 = 3,514,056 cells
-  Archive [hidden]: 1,048,576 × 16,384 = 17,179,869,184 cells  ← over the ceiling, will be cut short
-reads 2 other workbook(s): Rates.xlsx, Old.xlsx
-  pass --refs-dir DIR to resolve them against a folder
-ceilings: 64,000,000 cells and 400 nodes per sheet
-```
-
-The last line is an estimate, derived from how much formula the file holds.
-Treat it as a floor rather than a promise: it counts how much formula there
-is, not how much those formulas depend on one another, and that is what
-actually costs. A workbook of running totals — every cell summing everything
-above it — can take many times what it says, because each step evaluation
-makes the engine walk the whole dependency graph.
-
-That case is bounded rather than left to run: past `--time-budget` seconds
-(300 by default) the step-by-step decomposition stops, cells keep their values
-and lose only their breakdown, and the report says so. `-v` shows which node
-it is on, so a long run is visibly advancing rather than apparently stuck.
-
-Everything there is read from the package headers, so it costs nothing.
-Declared sizes, not real ones — a sheet claiming 17 billion cells holds
-nothing of the sort, and saying so is the point: one stray cell in the far
-corner is what makes an otherwise ordinary file slow.
-
-You do not have to ask, either. Any run whose estimate passes a few seconds
-says so before it starts:
-
-```
-16 MB of formulas: this should take about 10 seconds. --dry-run says what is
-in the file without analysing it; -v shows progress.
-```
-
-Smaller files say nothing — a notice on every run is a notice people learn to
-skip. It reads the zip index and nothing else, so it costs about a twentieth
-of a millisecond, and it goes to stderr like everything else that is not the
-report.
+Normal analysis is isolated with a configurable 120-second budget. AI,
+screenshots and export have separate limits. `--time-budget` remains the
+cooperative decomposition limit, not the hard analysis deadline. See
+[execution budgets](execution.md) for statuses, compatibility and platform
+memory semantics. Interrupted CLI analyses export diagnostics with exit code 3;
+cancellation exits 130 without starting optional stages.
 
 ## Watching it run
 

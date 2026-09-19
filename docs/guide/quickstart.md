@@ -5,6 +5,9 @@ Prefer a shell? The same analysis runs from the
 
 ## Analyze a workbook
 
+Analysis is isolated and bounded by default. See [execution and compatibility](execution.md)
+for budgets, incomplete results and explicit access to the live engine.
+
 ```python
 from linexcel import analyze
 
