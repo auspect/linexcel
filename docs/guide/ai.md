@@ -34,6 +34,18 @@ not establish that the source definition is absent. Metadata too large to
 inspect or include is marked incomplete. Group values explicitly identify their
 representative cell; they are not group totals or values for unsampled members.
 
+The dossier distinguishes group membership from value sampling. A represented
+group can fill its entire bounding rectangle while only a few member values are
+included. It also separates an input value read by the engine from a formula
+result, and gives range dimensions as rows, columns and cells. Missing evaluated
+step values do not by themselves establish whether evaluation was attempted.
+
+Omissions describe the bounded documentation payload. A neighbor removed to
+fit that payload can still exist in the graph. Workbook overviews receive
+directed connections with their own coverage counts; ordering formula examples
+does not establish a calculation chain. These facts help review the explanation,
+but do not prevent a model from misinterpreting them.
+
 For literal `AGGREGATE` selectors, the dossier records their
 [Excel meanings](https://support.microsoft.com/en-us/excel/functions/aggregate-function).
 For example, function 9 selects SUM and option 6 excludes errors, not hidden
@@ -75,6 +87,14 @@ that is not a literal source formula, but is not necessarily a false
 explanation. Separately, generated prose miscounted sampled cells and described
 a complete group as potentially containing gaps. Those prose errors are
 outside this check's scope and still require comparison with source evidence.
+
+A subsequent review using the explicit group, dimension and connection facts
+observed correct complete-group descriptions, branching topology, range row
+counts and input provenance in the selected cases. It still found false claims
+about external caches, ambiguous localized illustrative formulas and invented
+visual discrepancies. The six unsupported quotations in that run are lexical
+observations, not a count of proven factual errors. Neither the additional
+source facts nor a complete generation run certifies the explanation.
 
 ## Node cards
 

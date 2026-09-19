@@ -1126,6 +1126,82 @@ def test_inline_code_preserves_operators_and_literal_markup_inside_emphasis(repo
     assert not errors
 
 
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_qualification_quotes_are_readable_scoped_and_escaped(report, width, height):
+    graph = rich_graph()
+    qualification = (
+        "> **Qualification.** Check this formula quotation against the source.\n"
+        ">\n"
+        '> `=IF(A1>0,A1,0)` and <img src=x onerror="window.injected=true">\n\n'
+        "Ordinary prose with `A1 > 0` follows outside the qualification.\n\n"
+        "```text\n> literal code marker\n```"
+    )
+    graph["nodes"][1]["doc"] = qualification
+    graph["meta"]["workbookDoc"] = qualification
+    graph["meta"]["screenshots"] = {"Out": graph["meta"]["screenshots"]}
+    graph["meta"]["screenshotDocs"] = {"Out": qualification}
+    page, errors = report(graph, width=width, height=height)
+
+    for tab, container in (
+        ("overview", "#lin-overview"),
+        ("graph", "#lin-panel"),
+        ("sheets", "#lin-sheet-details"),
+    ):
+        page.click(f"#lin-tab-{tab}")
+        if tab == "graph":
+            page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+        quote = page.locator(f"{container} blockquote")
+        assert quote.count() == 1
+        assert quote.locator("strong").inner_text() == "Qualification."
+        assert quote.locator("p").count() == 2
+        assert quote.locator("code").inner_text() == "=IF(A1>0,A1,0)"
+        assert not any(line.startswith(">") for line in quote.inner_text().splitlines())
+        assert "Ordinary prose" not in quote.inner_text()
+        literal = page.locator(f"{container} pre code").inner_text()
+        assert literal == "> literal code marker"
+        assert quote.locator("img").count() == 0
+        assert page.evaluate("window.injected === undefined")
+        quote.scroll_into_view_if_needed()
+        geometry = quote.evaluate("""element => {
+            const box = element.getBoundingClientRect();
+            return {left: box.left, right: box.right,
+                overflow: element.scrollWidth > element.clientWidth + 1,
+                border: parseFloat(getComputedStyle(element).borderLeftWidth)};
+        }""")
+        assert geometry["left"] >= 0 and geometry["right"] <= width
+        assert not geometry["overflow"] and geometry["border"] > 0
+        capture(page, f"qualification-{tab}-{width}")
+    assert not errors
+
+
+@pytest.mark.parametrize(
+    "language,singular,plural",
+    [
+        ("en", "1 step ·", "2 steps ·"),
+        ("fr", "1 étape ·", "2 étapes ·"),
+        ("es", "1 paso ·", "2 pasos ·"),
+        ("de", "1 Schritt ·", "2 Schritten ·"),
+        ("it", "1 passo ·", "2 passi ·"),
+        ("pt", "1 passo ·", "2 passos ·"),
+        ("nl", "1 stap ·", "2 stappen ·"),
+        ("ja", "1ステップ", "2ステップ"),
+        ("zh", "1步", "2步"),
+    ],
+)
+def test_local_exploration_uses_localized_step_count(
+    report, language, singular, plural
+):
+    page, errors = report(filtered_graph(), language=language)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.click("#lin-explore")
+    assert singular in page.locator("#lin-explore-status").inner_text()
+    page.click("#lin-explore-depth")
+    assert plural in page.locator("#lin-explore-status").inner_text()
+    page.click("#lin-explore-depth")
+    assert singular in page.locator("#lin-explore-status").inner_text()
+    assert not errors
+
+
 @pytest.mark.parametrize("width,height", [(320, 700), (390, 844), (844, 390)])
 def test_graph_options_dialog_keyboard_and_camera_state(report, width, height):
     graph = rich_graph()

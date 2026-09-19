@@ -437,6 +437,9 @@
   .lin-doc { font-size: .82rem; line-height: 1.45; overflow-wrap: break-word; }
   .lin-doc h1,.lin-doc h2,.lin-doc h3 { font-size: .9rem; margin: .4rem 0 .2rem; }
   .lin-doc p { margin: .25rem 0; }
+  .lin-doc blockquote { margin: .4rem 0; padding: .3rem .65rem;
+    border-left: 3px solid var(--line); background: var(--surface);
+    overflow-wrap: anywhere; }
   .lin-doc ul,.lin-doc ol { padding-left: 1.2rem; margin: .25rem 0; }
   .lin-doc code { background: var(--code-bg); padding: .1rem .3rem; border-radius: 3px;
     font-family: ui-monospace, monospace; font-size: .78rem; }
@@ -1159,7 +1162,8 @@
       explore(cy, node.id, 1, narrow ? (GRAPH.nodes.length > 80 ? 4 : 7) : 13);
     });
     if (exploration) {
-      var status = el('span', 'lin-investigate-status', _t('explore_status', {
+      var statusKey = exploration.depth === 1 ? 'explore_status_one' : 'explore_status';
+      var status = el('span', 'lin-investigate-status', _t(statusKey, {
         shown: exploration.shown, available: exploration.available,
         hidden: cy.nodes().length - exploration.shown, depth: exploration.depth}));
       status.id = 'lin-explore-status'; status.setAttribute('role', 'status'); row.appendChild(status);
@@ -2548,7 +2552,7 @@
   function section(title) { var s = el('div'); s.appendChild(el('h3', null, title)); return s; }
 
   // Mini-markdown → HTML. Handles **bold**, *italic*, `code`, lists -, headings ###,
-  // and pipe tables. Enough for the AI cards, no external dep. Escapes & < >
+  // blockquote paragraphs and pipe tables. Enough for the AI cards, no external dep. Escapes & < >
   // first, so model output can never inject markup.
   function _md(src) {
     var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -2558,6 +2562,20 @@
     }
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i];
+      // Qualifications use consecutive quote paragraphs. The source is already
+      // escaped: remove only the leading Markdown marker, never inner operators.
+      if (/^ {0,3}&gt;/.test(l)) {
+        closeLists();
+        var quoted = [];
+        while (i < lines.length && /^ {0,3}&gt;/.test(lines[i])) {
+          var paragraph = lines[i].replace(/^ {0,3}&gt;[ \t]?/, '');
+          if (paragraph.trim()) quoted.push('<p>' + _mdInline(paragraph) + '</p>');
+          i++;
+        }
+        i--;
+        out.push('<blockquote>' + quoted.join('') + '</blockquote>');
+        continue;
+      }
       // Documentation commonly contains nested bullet lists and numbered
       // instructions. Keep child lists inside their parent list item.
       var item = /^(\s*)([-*+]|\d+[.)])\s+(.+)$/.exec(l);
