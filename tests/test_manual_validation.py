@@ -42,6 +42,7 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     image_module = pytest.importorskip("PIL.Image")
     image_module.new("RGB", (40, 30), "white").save(image)
     result = SimpleNamespace(
+        graph={"meta": {"execution": {"status": "completed"}}},
         nodes=[{"id": "S!A1", "kind": "cell", "sheet": "S"}],
         sheets=["S"],
         token_usage=SimpleNamespace(estimated=False),

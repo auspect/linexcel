@@ -9,3 +9,4 @@ Regras absolutas: descreva apenas o que está visível na imagem; nunca adivinhe
 uma fórmula, um valor ilegível ou a finalidade do livro; se a imagem estiver
 ilegível, diga-o numa frase. Não repita o nome da folha como título.
 Responda APENAS com o Markdown, sem JSON nem delimitadores.
+Vírgula decimal, ponto decimal e posição da moeda variam com a configuração regional; não são anomalias por si só. Não deduza defeitos de conteúdo fora da imagem. Distinga observação visível de interpretação.

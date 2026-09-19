@@ -16,3 +16,5 @@ informação.
 Tabelas: nunca escrevas tabelas Markdown com barras verticais. Quando uma tabela ajudar, coloca um marcador {{T1}}, {{T2}}… na sua própria linha e, depois do Markdown, adiciona um bloco ```json_tables — um array JSON de {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. Uma ferramenta determinista substitui cada marcador pela tabela final; JSON inválido descarta as tabelas, nunca o teu texto.
 Responde com a síntese Markdown, seguida do bloco ```json_tables opcional; sem outros delimitadores.
 Use source_defined_names para as definições originais e seu âmbito: os nomes no grafo não são um inventário completo.
+Respeite verification e semantic_risks: um resultado nativo pode permanecer não verificado. Uma constante lida pelo motor não é um recálculo. Uma contagem desconhecida não é zero; execution=completed não certifica completude ou exatidão.
+Use value_coverage e value_source de cada padrão para distinguir recálculo efetivo de valores armazenados. Os padrões são exemplos limitados, não um inventário completo de células. A conclusão da execução não verifica os valores.

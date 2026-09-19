@@ -10,3 +10,5 @@
 表格：不要自己编写 Markdown 管道表格。需要表格时，在单独一行放置占位符 {{T1}}、{{T2}}…，然后在 Markdown 之后添加一个 ```json_tables 代码块——由 {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]} 组成的 JSON 数组。确定性工具会把每个占位符渲染成最终表格；JSON 无效只会丢失表格，不会丢失正文。
 请以 Markdown 卡片作答，其后可跟可选的 ```json_tables 代码块；不要使用其他分隔符。
 使用 source_defined_names 确认源文件中的名称定义及作用域；图中的名称并非完整清单。representative_cell 只代表组内一个单元格，其值既不是组的总和，也不是所有成员的共同值。使用 formula_facts 解释字面量函数选择参数；未知参数仍应标为未知。易失性本身不意味着自引用。不要根据图中缺少节点推断 #NAME? 的原因。
+遵守 verification 和 semantic_risks：原生计算结果仍可能未经验证。引擎读取的输入常量不代表重新计算。未知数量不等于零；execution=completed 不保证完整性或正确性。
+source_defined_names 仅筛选与当前公式相关的名称；空列表不表示整个工作簿没有名称。semantic_risks 是对引擎能力的保守警告，不是操作数类型或结果成因的证据。不要为警告编造因果解释。

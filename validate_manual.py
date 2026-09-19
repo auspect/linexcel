@@ -614,11 +614,18 @@ def run_case(
     print(f"   Test workbook: {case.workbook.resolve()}")
 
     result = linexcel.analyze(data, filename=case.workbook.name)
+    outcome["execution"] = result.graph.get("meta", {}).get("execution", {})
     outcome["workbook_sha256"] = hashlib.sha256(data).hexdigest()
     outcome["workbook"] = str(case.workbook.resolve())
     (case.root / f"{case.name}-graph.json").write_text(
         result.to_json(indent=2), encoding="utf-8"
     )
+    if outcome["execution"].get("status", "completed") != "completed":
+        outcome["errors"].append(
+            "Analysis did not complete within its execution policy"
+        )
+        outcome["passed"] = False
+        return outcome
     report_structure(result)
     report_context(result)
     screenshots = render_screenshots(result, case)

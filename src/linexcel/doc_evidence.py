@@ -211,8 +211,13 @@ def relevant_names(evidence: dict, references: list[str], sheet: str | None) -> 
                 break
     return {
         "metadata_status": evidence.get("status", "not_inspected"),
+        "selection_scope": "names_referenced_by_this_formula_only",
+        "workbook_definition_count": evidence.get("total"),
         "definitions": definitions,
         "interpretation": (
+            "This filtered list is not the workbook name inventory or the names "
+            "used by neighboring formulas. An empty list does not mean the "
+            "workbook has no defined names. "
             "A sheet-local definition takes precedence over the same workbook name. "
             "A recorded definition does not prove engine support; a missing graph "
             "edge or #NAME? result does not establish that the source name is absent."

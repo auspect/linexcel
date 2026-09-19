@@ -13,3 +13,5 @@ missing information.
 Tables: never write Markdown pipe tables yourself. Where a table would help, place a {{T1}}, {{T2}}… placeholder on its own line, then after the Markdown add a fenced ```json_tables block — a JSON array of {"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]}. A deterministic tool renders each placeholder into the final table; malformed JSON drops the tables, never your text.
 Respond with the Markdown overview, followed by the optional ```json_tables block; no other delimiters.
 Use source_defined_names for source definitions and their scope: names in the graph are not a complete inventory.
+Respect verification and semantic_risks: a native result can remain unverified. Engine provenance on an input constant does not mean recalculation. Unknown counts are not zero; execution=completed does not certify completeness or correctness.
+Use value_coverage and each formula pattern’s value_source to describe actual recalculation versus stored values. Formula patterns are bounded examples, not an exhaustive cell inventory. Execution completion is independent of value verification.

@@ -10,3 +10,4 @@ Règles absolues : ne décris que ce qui est visible sur l'image ; ne devine
 jamais une formule, une valeur illisible ou la finalité du classeur ; si
 l'image est illisible, dis-le en une phrase. Ne répète pas le nom de la feuille
 en titre. Réponds UNIQUEMENT avec le Markdown, sans JSON ni délimiteur.
+Virgule décimale, point décimal et placement des devises varient selon la locale ; ils ne sont pas anormaux en eux-mêmes. Ne déduis pas un défaut de rendu d’un contenu hors image. Distingue observation visible et interprétation.
