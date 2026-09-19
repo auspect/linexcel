@@ -349,7 +349,11 @@ def render_screenshots(
 
 
 def document(
-    result: linexcel.LineageResult, args: argparse.Namespace, language: str
+    result: linexcel.LineageResult,
+    args: argparse.Namespace,
+    language: str,
+    *,
+    validation_results: dict | None = None,
 ) -> tuple[dict[str, str] | None, str | None]:
     """Document the workbook and its nodes, within the token budget."""
     provider = {"base_url": args.base_url, "model": args.model}
@@ -369,6 +373,7 @@ def document(
             language=language,
             token_budget=args.token_budget,
             max_tokens=args.max_tokens,
+            validation_results=validation_results,
             **provider,
         )
         print(f"   - {language}: node cards…")
@@ -378,6 +383,7 @@ def document(
             max_workers=args.max_workers,
             token_budget=args.token_budget,
             max_tokens=args.max_tokens,
+            validation_results=validation_results,
             **provider,
         )
     except AiDocError as exc:
@@ -662,8 +668,11 @@ def run_case(
     print("\n4. 💾 Reports")
     described = False
     for language in case.languages:
+        documentation_checks: dict = {}
         docs, workbook_doc = (
-            document(result, args, language) if use_ai else (None, None)
+            document(result, args, language, validation_results=documentation_checks)
+            if use_ai
+            else (None, None)
         )
         seen = describe(result, screenshots, args, language) if use_vision else None
         described = described or seen is not None
@@ -696,6 +705,7 @@ def run_case(
             "workbook_doc": workbook_doc,
             "screenshot_docs": seen,
             "coverage": status,
+            "documentation_checks": documentation_checks,
         }
         (case.root / f"{case.name}-{language}-ai.json").write_text(
             json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"

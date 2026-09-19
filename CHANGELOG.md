@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded checks of formula quotations in AI documentation against the exact
+  source dossier. Unsupported quotations receive a visible qualification;
+  optional API evidence retains the original response and individual checks.
+- Manual validation artifacts retain these quotation checks independently of
+  generation success and factual review.
 - Isolated analysis with a configurable 120-second default budget, memory
   limits, cancellation and descendant cleanup. Structured execution and coverage
   evidence distinguish completed pipelines from complete or verified workbooks.
@@ -43,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation
 
+- Repeated complete local Qwen3.8 documentation and vision generation for the
+  quotation-checking changes. Raw responses and source checks remain separate
+  from factual review: conceptual formula shorthand can trigger notices, and
+  topology, provenance and image-description errors remain documented limits.
+- Recorded two separately compiled native prototypes for scoped constants and
+  number/text comparisons, plus an isolated performance baseline. The installed
+  engine is unchanged; these experiments are not shipped numerical fixes.
 - Completed both generated-workbook runs with local Qwen3.8, including all
   expected language runs, node documentation, overviews, sheet captures and
   vision. Desktop/mobile investigation and an independent reviewer checked

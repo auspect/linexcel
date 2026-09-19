@@ -63,7 +63,11 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
         lambda *args: None if missing == "images" else {"S": [image]},
     )
 
-    def document(result, args, language):
+    def document(result, args, language, *, validation_results=None):
+        validation_results["S!A1"] = {
+            "status": "qualified",
+            "raw_response": "Unmatched formula example",
+        }
         return (
             {} if language == "en" and missing == "nodes" else {"S!A1": "Complete"},
             " " if language == "en" and missing == "overview" else "Overview",
@@ -90,6 +94,11 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     outcome = manual.run_case(case, args, True, True)
     assert outcome["passed"] is (missing is None)
     assert (tmp_path / "sample-en-ai.json").exists()
+    evidence = json.loads((tmp_path / "sample-en-ai.json").read_text())
+    assert evidence["documentation_checks"]["S!A1"]["status"] == "qualified"
+    assert evidence["documentation_checks"]["S!A1"]["raw_response"] == (
+        "Unmatched formula example"
+    )
     assert json.loads((tmp_path / "sample-validation.json").read_text())["passed"] is (
         missing is None
     )

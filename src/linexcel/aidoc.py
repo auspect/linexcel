@@ -28,7 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from linexcel.ai_validation import validate_documentation
 from linexcel.doc_evidence import formula_evidence, relevant_names
+from linexcel.i18n import AI_VALIDATION_NOTICES, AI_VALIDATION_OMITTED
 from linexcel.i18n import LANGUAGES as _LANGUAGES
 
 # No DEFAULT_MODEL: naming one would make a vendor's model the implicit choice,
@@ -1092,6 +1094,7 @@ def document_workbook(
     max_tokens: int | None = None,
     token_budget: int | None = None,
     context: dict[str, Any] | None = None,
+    validation_results: dict[str, Any] | None = None,
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
@@ -1108,6 +1111,11 @@ def document_workbook(
     If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
     accumulated into it. ``token_budget`` caps cumulative spend across that
     accumulator: an already-exhausted budget raises before anything is sent.
+
+    ``validation_results``, when supplied, receives the bounded quotation-check
+    report under ``workbook``, including the raw response. Unsupported comparable
+    quotations and processing limits add a visible qualification; ellipses and
+    numerical illustrations remain explicitly unverified without alerts.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
@@ -1132,7 +1140,34 @@ def document_workbook(
     rendered = _insert_tables(text) if text else ""
     if not rendered.strip():
         raise AiDocError("AI returned empty response")
-    return rendered
+    report = validate_documentation(text, json.loads(blob))
+    if validation_results is not None:
+        validation_results["workbook"] = report
+    return _qualify_documentation(rendered, report, language)
+
+
+def _qualify_documentation(text: str, report: dict, language: str) -> str:
+    if report["status"] == "qualified":
+        unsupported = [
+            check["quotation"]
+            for check in report["checks"]
+            if check["status"] == "not_source_supported"
+        ]
+        excerpts = []
+        for number, quotation in enumerate(unsupported[:3], 1):
+            # The viewer supports single-backtick spans only. Never substitute
+            # characters in a formula to imitate a faithful quotation.
+            if "`" in quotation:
+                excerpts.append(AI_VALIDATION_OMITTED[language].format(number=number))
+                continue
+            excerpt = " ".join(quotation.split())
+            excerpt = excerpt[:160] + "…" if len(excerpt) > 160 else excerpt
+            excerpts.append(f"` {excerpt} `")
+        detail = "\n>\n> " + " · ".join(excerpts) if excerpts else ""
+        if len(unsupported) > 3:
+            detail += f" (+{len(unsupported) - 3})"
+        return "> " + AI_VALIDATION_NOTICES[language] + detail + "\n\n" + text
+    return text
 
 
 def describe_images(
@@ -1264,6 +1299,7 @@ def document_nodes(
     usage: TokenUsage | None = None,
     max_tokens: int | None = None,
     token_budget: int | None = None,
+    validation_results: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
@@ -1290,6 +1326,11 @@ def document_nodes(
     finish, so the final tally can exceed the budget by up to ``max_workers``
     responses — set it as an order of magnitude, not to the token. Use
     ``max_tokens`` to bound each individual response instead.
+
+    ``validation_results``, when supplied, receives a bounded quotation-check
+    report keyed by node ID, including raw responses. Formula quotations without
+    source support are visibly qualified, not silently corrected. General prose
+    remains unverified even when every inspected quotation has source support.
     """
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
@@ -1311,14 +1352,20 @@ def document_nodes(
     if not dossiers:
         return docs
 
-    def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str, TokenUsage]:
+    def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str, TokenUsage, dict]:
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
         text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
         rendered = _insert_tables(text) if text else ""
         if not rendered.strip():
             raise AiDocError("AI returned empty response", usage=call_usage)
-        return nid, rendered, call_usage
+        report = validate_documentation(text, json.loads(blob))
+        return (
+            nid,
+            _qualify_documentation(rendered, report, language),
+            call_usage,
+            report,
+        )
 
     # The tally drives the budget, so it must exist even when the caller wants
     # no accumulator of their own; when they do pass one, it *is* the tally.
@@ -1326,7 +1373,7 @@ def document_nodes(
     failures: list[tuple[str, Exception]] = []
     queue = iter(dossiers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures: dict[Future[tuple[str, str, TokenUsage]], str] = {}
+        futures: dict[Future[tuple[str, str, TokenUsage, dict]], str] = {}
 
         def _submit_next() -> bool:
             """Queue one more node unless the budget is spent or none is left."""
@@ -1350,13 +1397,15 @@ def document_nodes(
             for fut in done:
                 node_id = futures.pop(fut)
                 try:
-                    nid, text, call_usage = fut.result()
+                    nid, text, call_usage, report = fut.result()
                 except Exception as exc:
                     if isinstance(exc, AiDocError) and exc.usage is not None:
                         tally.add(exc.usage)
                     failures.append((node_id, exc))
                     continue
                 docs[nid] = text
+                if validation_results is not None:
+                    validation_results[nid] = report
                 tally.add(call_usage)
             for _ in range(len(done)):
                 if not _submit_next():
