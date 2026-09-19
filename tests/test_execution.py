@@ -76,13 +76,23 @@ def test_native_exit_does_not_kill_caller_or_publish_values(monkeypatch):
 
 def test_cancellation_cleans_worker(monkeypatch):
     children = workload(monkeypatch, "time.sleep(30)")
+    real_sleep = time.sleep
+    interruptions = 0
 
     def interrupt(seconds):
-        raise KeyboardInterrupt
+        nonlocal interruptions
+        if interruptions == 0:
+            interruptions += 1
+            raise KeyboardInterrupt
+        # POSIX subprocess.wait also sleeps while cleanup reaps the worker.
+        # Inject one cancellation, not another interruption of that cleanup.
+        real_sleep(seconds)
 
     monkeypatch.setattr(time, "sleep", interrupt)
     result = run_isolated(b"", {}, ExecutionPolicy(seconds=5))
     assert result["graph"]["meta"]["execution"]["status"] == "cancelled"
+    assert interruptions == 1
+    assert len(children) == 1
     assert all(child.poll() is not None for child in children)
 
 
