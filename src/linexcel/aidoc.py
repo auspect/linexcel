@@ -616,6 +616,21 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
             "type": node.get("procKind"),
             "code": (node.get("code") or "")[:2500],
         }
+    if node.get("kind") == "opaque":
+        source = node.get("valueSource")
+        dossier["external_resolution"] = (
+            "read_from_disk"
+            if source == "external"
+            else "embedded_file_cache"
+            if source == "file"
+            else "unresolved"
+        )
+        dossier["external_resolution_interpretation"] = (
+            "read_from_disk means an external file was opened and read; "
+            "embedded_file_cache means values come from an internal cache "
+            "stored in this workbook; "
+            "unresolved means the external workbook was neither read nor cached."
+        )
     return dossier
 
 
@@ -642,6 +657,8 @@ def _value_evidence(node: dict) -> dict:
             origin_kind = "name_resolution"
         else:
             origin_kind = "engine_value_without_formula"
+    elif origin == "external":
+        origin_kind = "external_file_read"
     else:
         origin_kind = {
             "file": "file_cache",
@@ -849,7 +866,7 @@ def _fit_node_dossier(dossier: dict) -> str:
 
 
 def _neighbor(other: dict, edge: dict) -> dict:
-    return {
+    out = {
         "id": other.get("id"),
         "kind": other.get("kind"),
         "label": other.get("label"),
@@ -857,6 +874,16 @@ def _neighbor(other: dict, edge: dict) -> dict:
         **_value_evidence(other),
         "formula": other.get("formula"),
     }
+    if other.get("kind") == "opaque":
+        source = other.get("valueSource")
+        out["external_resolution"] = (
+            "read_from_disk"
+            if source == "external"
+            else "embedded_file_cache"
+            if source == "file"
+            else "unresolved"
+        )
+    return out
 
 
 def _compact_steps(step: dict | None) -> dict | None:
@@ -878,10 +905,23 @@ def _compact_steps(step: dict | None) -> dict | None:
             documented = dict(item)
             value = item.get("value")
             if isinstance(value, dict) and "range" in value:
+                bounds = _range_bounds(value["range"])
                 documented["value"] = {
                     **value,
                     "n_unit": "cells",
                     "dimensions": _range_dimensions(value["range"]),
+                    **(
+                        {
+                            "bounds": {
+                                "start_row": bounds[0],
+                                "start_col": bounds[1],
+                                "end_row": bounds[2],
+                                "end_col": bounds[3],
+                            }
+                        }
+                        if bounds is not None
+                        else {}
+                    ),
                 }
             out["inputs"].append(documented)
     if step.get("evaluationReason"):
@@ -968,6 +1008,18 @@ def build_workbook_dossier(
     opaque_references = [
         node.get("label") for node in nodes if node.get("kind") == "opaque"
     ]
+    ext_total = stats.get("externalWorkbooks", 0)
+    ext_read = stats.get("externalWorkbooksRead", 0)
+    external_workbooks = {
+        "workbooks_referenced": ext_total,
+        "workbooks_read_from_disk": ext_read,
+        "unread_workbooks": max(0, ext_total - ext_read),
+        "interpretation": (
+            "Workbooks not read from disk were not opened; dependent cells use "
+            "embedded file caches if present, or have no value. "
+            "A known cached value does not prove an external file was opened or read."
+        ),
+    }
     return {
         "filename": meta.get("filename"),
         # Live native handles are intentionally not returned from an isolated
@@ -1015,6 +1067,7 @@ def build_workbook_dossier(
         ),
         "defined_names_in_graph_are_not_source_inventory": True,
         "vba_procedures": vba,
+        "external_workbooks": external_workbooks,
         "external_or_unresolved_references": opaque_references,
         "warnings": [
             *meta.get("warnings", []),

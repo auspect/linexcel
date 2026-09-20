@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Grounded AI documentation safeguards (DEF-101-1..4 and DEF-VISION) in `src/linexcel/aidoc.py`
+  and localized prompts across all nine languages (`en`, `fr`, `de`, `es`, `it`, `pt`, `nl`,
+  `ja`, `zh`), enforcing verbatim backticks, preserving explicit non-zero formula lower bounds,
+  and requiring unopened external workbooks (`[Old.xlsx]`, `[Budget FY26.xlsx]`) to be identified
+  as author file cache snapshots rather than disk-read values.
+- Empirical performance and scalability benchmark suites for Issue #65:
+  - Dense workbook memory reading RSS comparing Calamine and Openpyxl across 1M to 19M cells,
+    empirically justifying the `MAX_DENSE_CELLS = 20M` threshold.
+  - Broken reference recovery costs across six pathological variants up to 80,200 edges, proving
+    sub-second traversal (<0.96s) and bounded memory (<85 MB RSS).
+  - Standalone HTML viewer scaling benchmarks on Desktop (1440×900) and Mobile (390×844) from
+    500 to 10,000+ nodes, identifying Cytoscape's in-browser Dagre layout complexity as the
+    operational threshold beyond 2,500 nodes.
+- Comprehensive numerical oracle qualification replaying the 40 diagnostic and 42 extension
+  observations with LibreOffice 26.2.4.2 across 1900 and 1904 epochs (Issues #29, #32, #55, #64, #73),
+  root-causing SUMPRODUCT string coercion (`Lookups!B8`) and range intersection `NImpl` (`Lookups!B12`).
+- Architectural evaluation for Issue #37 formally rejecting `formulas` as a mandatory core dependency
+  due to heavy binary dependencies (SciPy/NumPy >150 MB) in favor of lean native pure-Python fallbacks.
 - Documentation dossiers distinguish represented group membership from sampled
   values, range dimensions from cell counts, and engine input reads from formula
   results. Bounded directed connections ground workbook calculation-flow prose.

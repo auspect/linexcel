@@ -84,6 +84,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # Excel formulas are quoted verbatim so they can be checked against a real
 # spreadsheet; wrapping them would make that comparison harder, not easier.
 "validation_workbooks.py" = ["E501"]
+"scripts/*" = ["E501"]
 
 [tool.ty]
 # openai is optional (linexcel[ai]), not installed in dev
