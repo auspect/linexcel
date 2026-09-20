@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-09-20
+
 ### Added
 
 - Grounded AI documentation safeguards (DEF-101-1..4 and DEF-VISION) in `src/linexcel/aidoc.py`
