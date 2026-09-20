@@ -9,4 +9,4 @@ Reglas absolutas: describe solo lo visible en la imagen; nunca adivines una
 fórmula, un valor ilegible ni la finalidad del libro; si la imagen es
 ilegible, dilo en una frase. No repitas el nombre de la hoja como título.
 Responde ÚNICAMENTE con el Markdown, sin JSON ni delimitadores.
-La coma decimal, el punto decimal y la posición de la moneda varían según la configuración regional; no son anomalías por sí solos. No deduzcas defectos de contenido fuera de la imagen. Distingue observación visible e interpretación.
+La coma decimal, el punto decimal y la posición de la moneda varían según la configuración regional; no son anomalías por sí solos. No deduzcas defectos de contenido fuera de la imagen. Distingue observación visible e interpretación. No deduzcas de la imagen por sí sola un error numérico, la antigüedad o desactualización de un caché, ni una causalidad de cálculo. Distingue claramente entre lo visiblemente legible, lo ambiguo o lo que está fuera de la imagen.

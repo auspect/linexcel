@@ -225,6 +225,7 @@ def test_all_languages_request_the_explicit_facts(language):
             "value_origin_kind",
             "dimensions.rows/columns/cells",
             "evaluation_attempt",
+            "external_resolution",
         ]
     )
     assert all(
@@ -234,5 +235,96 @@ def test_all_languages_request_the_explicit_facts(language):
             "branching_observed",
             "omitted_from_dossier",
             "group_coverage.membership",
+            "external_workbooks",
         ]
     )
+
+
+def test_external_workbooks_resolution_distinguishes_cache_disk_and_unresolved():
+    graph = {
+        "nodes": [
+            {
+                "id": "x:unresolved",
+                "kind": "opaque",
+                "label": "[Old.xlsx]Sheet1!A1",
+                "valueSource": None,
+                "value": None,
+            },
+            {
+                "id": "x:cached",
+                "kind": "opaque",
+                "label": "[Budget.xlsx]Sheet1!B2",
+                "valueSource": "file",
+                "value": 42.0,
+            },
+            {
+                "id": "x:disk",
+                "kind": "opaque",
+                "label": "[Data.xlsx]Sheet1!C3",
+                "valueSource": "external",
+                "value": 100.0,
+            },
+            {
+                "id": "c:A1",
+                "kind": "cell",
+                "sheet": "Sheet1",
+                "addr": "A1",
+                "formula": "=[Budget.xlsx]Sheet1!B2+1",
+                "valueSource": "engine",
+                "value": 43.0,
+            },
+        ],
+        "edges": [
+            {"source": "x:cached", "target": "c:A1", "kind": "reference"},
+        ],
+        "meta": {
+            "stats": {
+                "externalWorkbooks": 3,
+                "externalWorkbooksRead": 1,
+            }
+        },
+    }
+    wb_dossier = aidoc.build_workbook_dossier(graph)
+    assert wb_dossier["external_workbooks"] == {
+        "workbooks_referenced": 3,
+        "workbooks_read_from_disk": 1,
+        "unread_workbooks": 2,
+        "interpretation": (
+            "Workbooks not read from disk were not opened; dependent cells use "
+            "embedded file caches if present, or have no value. "
+            "A known cached value does not prove an external file was opened or read."
+        ),
+    }
+
+    node_unresolved = aidoc.build_dossier(graph, "x:unresolved")
+    assert node_unresolved["external_resolution"] == "unresolved"
+
+    node_cached = aidoc.build_dossier(graph, "x:cached")
+    assert node_cached["external_resolution"] == "embedded_file_cache"
+    assert node_cached["value_origin_kind"] == "file_cache"
+
+    node_disk = aidoc.build_dossier(graph, "x:disk")
+    assert node_disk["external_resolution"] == "read_from_disk"
+    assert node_disk["value_origin_kind"] == "external_file_read"
+
+    node_cell = aidoc.build_dossier(graph, "c:A1")
+    assert node_cell["precedents"][0]["external_resolution"] == "embedded_file_cache"
+
+
+def test_step_inputs_include_range_bounds():
+    step = {
+        "expr": "SUM(D2:D10)",
+        "label": "SUM",
+        "evaluated": True,
+        "value": 45,
+        "inputs": [
+            {"range": "D2:D10", "value": {"range": "D2:D10", "n": 9}},
+        ],
+    }
+    compact = aidoc._compact_steps(step)
+    assert compact["inputs"][0]["value"]["bounds"] == {
+        "start_row": 2,
+        "start_col": 4,
+        "end_row": 10,
+        "end_col": 4,
+    }

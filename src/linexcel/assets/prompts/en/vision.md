@@ -9,4 +9,4 @@ Absolute rules: describe only what is visible in the image; never guess a
 formula, a value you cannot read, or the workbook's purpose; if the image is
 unreadable, say so in one sentence. Do not repeat the sheet name as a heading.
 Respond ONLY with the Markdown, no JSON, no delimiters.
-Decimal commas, decimal points and currency placement vary by locale; they are not anomalies on their own. Do not infer a rendering defect from content outside the image. Distinguish visible observations from interpretation.
+Decimal commas, decimal points and currency placement vary by locale; they are not anomalies on their own. Do not infer a rendering defect from content outside the image. Distinguish visible observations from interpretation. Do not deduce from the image alone a numerical error, the age or staleness of a cache, or a calculation causality. Distinguish clearly between what is visibly readable, ambiguous, or outside the visible frame.
