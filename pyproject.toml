@@ -57,7 +57,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-# version_source.py: the VERSION file when it holds a release number,
+# version_source.py: a clean release tag is the version source;
 # otherwise the last tag plus a +dev local segment derived from git.
 source = "code"
 path = "version_source.py"

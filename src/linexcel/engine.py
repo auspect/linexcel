@@ -237,6 +237,7 @@ def boot_engine(
     reporter = reporter or Reporter()
     with reporter.phase("engine evaluation") as progress:
         progress.step("loading workbook")
+        reporter.operation("engine evaluation", "preparing workbook package")
         data, chartsheets = _without_chartsheets(data)
         if chartsheets:
             warnings.append(
@@ -246,7 +247,9 @@ def boot_engine(
             )
         # Import also parses formulas. Inspect the package before the first
         # native call, not after loading the dangerous expression once.
+        reporter.operation("engine evaluation", "checking formula complexity")
         too_deep, deepest = _find_too_deep(data, None, max_ast_depth)
+        reporter.operation("engine evaluation", "importing workbook into native engine")
         engine = _open_workbook(
             _blank_formulas_in_package(data, too_deep) if too_deep else data,
             parallel,
@@ -256,6 +259,7 @@ def boot_engine(
         quarantined: dict[tuple[str, int, int], str] = {}
         unavailable: set[tuple[str, int, int]] = set()
         if too_deep:
+            reporter.operation("engine evaluation", "propagating formula quarantine")
             progress.step(f"quarantining {len(too_deep)} over-deep formula(s)")
             quarantined = too_deep
             unavailable = _uncached_dependents(engine, data, too_deep, warnings)
@@ -273,6 +277,7 @@ def boot_engine(
                 f"{sheet}!{a1(row, col)}"
             )
         if targets is not None:
+            reporter.operation("engine evaluation", "tracing and evaluating targets")
             trace_evidence: dict[str, bool] = {}
             reachable, target_alive = _evaluate_targets(
                 engine,
@@ -283,6 +288,7 @@ def boot_engine(
                 max_cells_per_sheet=max_cells_per_sheet,
                 trace_evidence=trace_evidence,
             )
+            reporter.operation("engine evaluation", "checking cycle provenance")
             unavailable |= _cycle_unavailable(
                 engine,
                 data,
@@ -291,6 +297,7 @@ def boot_engine(
                 reachable,
                 evaluation_failed=not target_alive,
             )
+            reporter.operation("engine evaluation", "creating scratch sheet")
             scratch_ready = _ensure_scratch(engine)
             return EngineSession(
                 engine,
@@ -304,18 +311,26 @@ def boot_engine(
             )
         try:
             progress.step("evaluating formulas")
+            reporter.operation("engine evaluation", "evaluating all formulas")
             engine.evaluate_all()
         except Exception as exc:  # graph remains useful without values
+            reporter.operation("engine evaluation", "finding unresolved references")
             unresolvable = _find_unresolvable(data, engine_sheets)
             retried = False
             if unresolvable:
                 quarantined |= unresolvable
                 progress.step(f"retrying without {len(quarantined)} blocked cell(s)")
                 try:
+                    reporter.operation(
+                        "engine evaluation", "reimporting quarantined workbook"
+                    )
                     engine = _open_workbook(
                         _blank_formulas_in_package(data, quarantined), parallel
                     )
                     _mark_uncached_quarantine(engine, quarantined)
+                    reporter.operation(
+                        "engine evaluation", "evaluating quarantined workbook"
+                    )
                     engine.evaluate_all()
                     retried = True
                 except Exception:
@@ -331,6 +346,9 @@ def boot_engine(
                 warnings.append(f"Global evaluation incomplete: {exc}")
                 # Values are recovered cell by cell further down.
                 engine_alive = False
+                reporter.operation(
+                    "engine evaluation", "checking formulas after failed evaluation"
+                )
                 if _formulas_gone(engine, data, engine_sheets, quarantined):
                     # formualizer 0.9.3 keeps the formula map readable after a
                     # failed evaluate_all, so the rebuild is usually wasted —
@@ -339,13 +357,16 @@ def boot_engine(
                     rebuilt_data = (
                         _blank_formulas_in_package(data, too_deep) if too_deep else data
                     )
+                    reporter.operation("engine evaluation", "rebuilding native engine")
                     engine = _open_workbook(rebuilt_data, parallel)
                     quarantined = too_deep.copy()
                     _mark_uncached_quarantine(engine, quarantined)
 
+        reporter.operation("engine evaluation", "checking cycle provenance")
         unavailable |= _cycle_unavailable(
             engine, data, engine_sheets, warnings, evaluation_failed=not engine_alive
         )
+        reporter.operation("engine evaluation", "creating scratch sheet")
         scratch_ready = _ensure_scratch(engine)
     return EngineSession(
         engine,

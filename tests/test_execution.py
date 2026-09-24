@@ -1,5 +1,7 @@
 """Real subprocess tests: monkeypatch only worker workload, not supervision."""
 
+import io
+import json
 import os
 import subprocess
 import sys
@@ -8,7 +10,7 @@ import time
 import pytest
 
 from linexcel import ExecutionPolicy, analyze
-from linexcel.execution import add_coverage, run_isolated
+from linexcel.execution import _failure_details, add_coverage, run_isolated
 
 
 def workload(monkeypatch, code):
@@ -72,6 +74,162 @@ def test_native_exit_does_not_kill_caller_or_publish_values(monkeypatch):
     assert result["graph"]["meta"]["execution"]["status"] == "crashed"
     assert result["graph"]["nodes"] == []
     assert children[0].returncode == 17
+
+
+def test_native_allocation_abort_is_reported_as_memory_failure(monkeypatch):
+    workload(
+        monkeypatch,
+        """
+(root/'checkpoint-000001.json').write_text(json.dumps({
+    'phase':'engine evaluation', 'operation':'evaluating all formulas'}))
+sys.stderr.write('memory allocation of 1048576 bytes failed\\n')
+sys.stderr.flush()
+os._exit(17)
+""",
+    )
+    result = run_isolated(b"", {}, ExecutionPolicy(seconds=5))
+    meta = result["graph"]["meta"]
+    execution = meta["execution"]
+    assert execution["status"] == "memory_limit"
+    assert execution["failure"]["kind"] == "memory_limit"
+    assert execution["operation"] == "evaluating all formulas"
+    assert "Native memory allocation failed" in meta["warnings"][0]
+    assert "evaluating all formulas" in meta["warnings"][0]
+    assert execution["exitCode"] == 17
+    assert execution["versions"]["formualizer"]
+    assert not execution["diagnosticTruncated"]
+    assert not result["graph"]["nodes"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Reproduced with Windows Job memory cap")
+def test_real_engine_allocation_failure_keeps_native_evidence():
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.active["A1"] = "=SUM(SEQUENCE(100000,100))"
+    data = io.BytesIO()
+    workbook.save(data)
+    result = analyze(
+        data.getvalue(), execution=ExecutionPolicy(seconds=30, memory_mb=128)
+    )
+    execution = result.graph["meta"]["execution"]
+    assert execution["status"] == "memory_limit", execution
+    assert execution["operation"] == "evaluating all formulas", execution
+    assert "memory allocation of" in execution["diagnostic"], execution
+    assert execution["failure"]["kind"] == "memory_limit"
+    assert not result.nodes
+
+
+@pytest.mark.parametrize(
+    "stderr,kind",
+    [
+        ("thread '<unknown>' has overflowed its stack", "stack_overflow"),
+        ("thread '<unnamed>' panicked at src/eval.rs:42:1:\nbad graph", "native_panic"),
+        ("pyo3_runtime.PanicException: bad graph", "native_panic"),
+        ("some formula contains memory allocation of 12 bytes failed", "unknown_exit"),
+        ("", "unknown_exit"),
+    ],
+)
+def test_crash_evidence_is_not_guessed(stderr, kind):
+    assert _failure_details("crashed", 17, stderr)["kind"] == kind
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows exit codes")
+@pytest.mark.parametrize(
+    "code,kind",
+    [
+        (0xC00000FD, "stack_overflow"),
+        (0xC0000005, "access_violation"),
+        (0xC0000017, "memory_limit"),
+        (0xC000012D, "memory_limit"),
+        (0xC0000409, "native_abort"),
+    ],
+)
+def test_windows_native_exit_codes(code, kind):
+    for value in (code, code - 2**32):
+        details = _failure_details("crashed", value, "")
+        assert details["kind"] == kind
+        assert details["exitCodeHex"] == f"0x{code:08X}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
+def test_sigkill_is_not_proof_of_oom():
+    details = _failure_details("crashed", -9, "")
+    assert details["signal"] == "SIGKILL"
+    assert details["kind"] == "native_signal"
+
+
+def test_diagnostic_tail_is_bounded_and_marked(monkeypatch):
+    workload(
+        monkeypatch, "sys.stderr.write('x'*20000); sys.stderr.flush(); os._exit(17)"
+    )
+    execution = run_isolated(b"", {}, ExecutionPolicy(seconds=5))["graph"]["meta"][
+        "execution"
+    ]
+    assert execution["diagnosticTruncated"]
+    assert execution["diagnostic"].count("x") == 16384
+    assert "diagnostic truncated" in execution["diagnostic"]
+
+
+@pytest.mark.parametrize(
+    "helper,operation",
+    [
+        ("_find_too_deep", "checking formula complexity"),
+        ("_open_workbook", "importing workbook into native engine"),
+    ],
+)
+def test_real_worker_retains_operation_before_native_exit(
+    monkeypatch, lineage_excel, helper, operation
+):
+    workload(
+        monkeypatch,
+        f"""
+from linexcel import engine
+from linexcel._worker import main
+def crash(*args, **kwargs):
+    sys.stderr.write('memory allocation of 1048576 bytes failed\\n' + 'x'*20000)
+    sys.stderr.flush()
+    os._exit(17)
+engine.{helper} = crash
+main()
+""",
+    )
+    result = run_isolated(lineage_excel, {}, ExecutionPolicy(seconds=10))
+    execution = result["graph"]["meta"]["execution"]
+    assert execution["phase"] == "engine evaluation"
+    assert execution["operation"] == operation
+    assert execution["status"] == "memory_limit"
+    assert execution["diagnosticTruncated"]
+    assert "engine evaluation" not in execution["completedPhases"]
+    assert not result["graph"]["nodes"]
+
+
+def test_cli_diagnostics_excludes_graph_and_keeps_stdout_clean(
+    monkeypatch, tmp_path, capsys
+):
+    import linexcel
+    from linexcel.cli import main
+
+    execution = {
+        "status": "crashed",
+        "exitCode": 17,
+        "operation": "evaluating all formulas",
+    }
+    graph = {
+        "meta": {"execution": execution, "warnings": []},
+        "nodes": [{"id": "private", "kind": "cell", "secret": "private"}],
+        "edges": [],
+    }
+    monkeypatch.setattr(
+        linexcel, "analyze", lambda *a, **k: linexcel.LineageResult(graph, None)
+    )
+    path = tmp_path / "diagnostics.json"
+    assert (
+        main(["analyze", "private.xlsx", "--no-html", "--diagnostics", str(path)]) == 3
+    )
+    assert json.loads(path.read_text(encoding="utf-8")) == execution
+    assert "private" not in path.read_text(encoding="utf-8")
+    assert capsys.readouterr().out == ""
 
 
 def test_cancellation_cleans_worker(monkeypatch):

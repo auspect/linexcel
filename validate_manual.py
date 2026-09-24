@@ -634,9 +634,13 @@ def run_case(
         return outcome
     report_structure(result)
     report_context(result)
-    screenshots = render_screenshots(result, case)
+    skip_screenshots = getattr(args, "no_screenshots", False)
+    screenshots = None if skip_screenshots else render_screenshots(result, case)
+    outcome["screenshots_skipped"] = skip_screenshots
     outcome["screenshots"] = screenshot_evidence(screenshots)
-    if not outcome["screenshots"] or not all(
+    if skip_screenshots:
+        outcome["errors"].append("Screenshots intentionally skipped (--no-screenshots)")
+    elif not outcome["screenshots"] or not all(
         item["passed"] for item in outcome["screenshots"]
     ):
         outcome["errors"].append("No valid screenshots, or invalid PNG headers")
@@ -654,11 +658,11 @@ def run_case(
     missing_images = set(outcome["sheets_without_mapped_image"]) - set(
         outcome["empty_sheet_exemptions"]
     )
-    if not isinstance(screenshots, dict):
+    if not skip_screenshots and not isinstance(screenshots, dict):
         outcome["errors"].append(
             "Page-to-sheet mapping is unavailable; complete sheet coverage is unproven"
         )
-    elif missing_images:
+    elif not skip_screenshots and missing_images:
         outcome["errors"].append(
             "Missing sheet screenshots: " + ", ".join(sorted(missing_images))
         )
@@ -833,6 +837,11 @@ def main() -> int:
     parser.add_argument(
         "--no-ai", action="store_true", help="skip AI documentation entirely"
     )
+    parser.add_argument(
+        "--no-screenshots",
+        action="store_true",
+        help="skip all sheet rendering (partial diagnostic run)",
+    )
     args = parser.parse_args()
     if args.max_nodes is not None and args.max_nodes < 1:
         parser.error("--max-nodes must be positive")
@@ -844,6 +853,9 @@ def main() -> int:
         parser.error(
             "--vision sends the screenshots to a model, which --no-ai rules out."
         )
+
+    if args.no_screenshots and "--vision" in sys.argv:
+        parser.error("--vision requires screenshots; remove --no-screenshots.")
 
     print("--- 📊 linexcel manual validation ---")
     if args.file is not None:
@@ -894,7 +906,7 @@ def main() -> int:
     save_manifest()
 
     use_ai = not args.no_ai
-    use_vision = args.vision and use_ai
+    use_vision = args.vision and use_ai and not args.no_screenshots
     if not use_ai:
         print("   AI skipped (--no-ai): reports keep every deterministic tab.")
     elif not check_local_provider(args.base_url, args.model):
@@ -923,7 +935,11 @@ def main() -> int:
         manifest["cases"].append(outcome)
         save_manifest()
     partial = (
-        args.no_ai or not args.vision or args.max_nodes is not None or args.no_recalc
+        args.no_ai
+        or not args.vision
+        or args.max_nodes is not None
+        or args.no_recalc
+        or args.no_screenshots
     )
     passed = all(item["passed"] for item in manifest["cases"]) and not partial
     manifest["status"] = "passed" if passed else "incomplete" if partial else "failed"

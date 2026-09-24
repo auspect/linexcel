@@ -8,6 +8,7 @@ OpenAI-compatible endpoint.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -45,6 +46,13 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         dest="json_path",
         help="Also write the graph as JSON. '-' writes to stdout.",
+    )
+    analyze.add_argument(
+        "--diagnostics",
+        type=Path,
+        metavar="FILE",
+        help="Write execution diagnostics without the graph. Native stderr may "
+        "contain private paths or formula text; review before sharing.",
     )
     analyze.add_argument(
         "--no-html",
@@ -331,7 +339,13 @@ def _run_analyze(args: argparse.Namespace) -> int:
             seconds=args.analysis_seconds, memory_mb=args.memory_mb
         ),
     )
-    execution_status = result.graph.get("meta", {}).get("execution", {}).get("status")
+    execution = result.graph.get("meta", {}).get("execution", {})
+    execution_status = execution.get("status")
+    if args.diagnostics:
+        args.diagnostics.write_text(
+            json.dumps(execution, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"Diagnostics: {args.diagnostics}", file=sys.stderr)
     if execution_status == "cancelled":
         print("Analysis cancelled; optional stages were not started.", file=sys.stderr)
         return 130
@@ -344,6 +358,12 @@ def _run_analyze(args: argparse.Namespace) -> int:
             "AI and rendering were not started.",
             file=sys.stderr,
         )
+        if not args.diagnostics:
+            print(
+                "hint: use --diagnostics FILE to retain the operation, exit code, "
+                "runtime versions and native stderr without exporting the graph.",
+                file=sys.stderr,
+            )
 
     screenshots = None
     screenshot_error: str | None = None

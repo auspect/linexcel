@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import platform
+import re
 import signal
 import subprocess
 import sys
@@ -13,8 +15,74 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
+
+DIAGNOSTIC_BYTES = 16_384
+
+
+def _runtime_versions() -> dict[str, str]:
+    versions = {"python": platform.python_version(), "platform": sys.platform}
+    for package in ("linexcel", "formualizer"):
+        try:
+            versions[package] = version(package)
+        except PackageNotFoundError:
+            versions[package] = "unknown"
+    return versions
+
+
+def _failure_details(status: str, code: int | None, stderr: str) -> dict:
+    """Interpret evidence, without guessing OOM from SIGKILL or every abort."""
+    details: dict[str, Any] = {"kind": status, "summary": ""}
+    unsigned = code & 0xFFFFFFFF if code is not None else None
+    if os.name == "nt" and unsigned is not None:
+        details["exitCodeHex"] = f"0x{unsigned:08X}"
+    if status == "memory_limit":
+        details["summary"] = "Memory allocation failed under the worker memory limit."
+    if status != "crashed":
+        return details
+    windows = {
+        0xC0000017: ("memory_limit", "Windows reported insufficient memory."),
+        0xC000012D: ("memory_limit", "Windows reported the commitment limit exceeded."),
+        0xC00000FD: ("stack_overflow", "Native stack overflow."),
+        0xC0000005: ("access_violation", "Native access violation."),
+        0xC0000409: (
+            "native_abort",
+            "Windows fast-fail; the root cause is not established.",
+        ),
+    }
+    if os.name == "nt" and unsigned in windows:
+        details["kind"], details["summary"] = windows[unsigned]
+    elif os.name != "nt" and code is not None and code < 0:
+        try:
+            details["signal"] = signal.Signals(-code).name
+        except ValueError:
+            details["signal"] = str(-code)
+        details["kind"] = "native_signal"
+        details["summary"] = f"Worker terminated by {details['signal']}."
+    # Rust's allocation handler aborts instead of raising Python MemoryError.
+    # An abort/fast-fail code alone does not establish memory exhaustion.
+    if re.search(r"(?m)^memory allocation of \d+ bytes failed\s*$", stderr):
+        details.update(
+            kind="memory_limit",
+            summary="Native memory allocation failed under the worker memory limit.",
+        )
+    elif "has overflowed its stack" in stderr:
+        details.update(kind="stack_overflow", summary="Native stack overflow.")
+    elif "pyo3_runtime.PanicException:" in stderr or re.search(
+        r"(?m)^thread .* panicked at ", stderr
+    ):
+        details.update(
+            kind="native_panic",
+            summary="Rust engine panic; inspect the diagnostic log.",
+        )
+    if not details["summary"]:
+        details["kind"] = "unknown_exit"
+        details["summary"] = (
+            "Worker exited without a result; the cause is not established."
+        )
+    return details
 
 
 @dataclass(frozen=True)
@@ -128,6 +196,7 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
     payload: dict = {}
     exit_code = None
     diagnostic = ""
+    diagnostic_truncated = False
     with _worker_directory() as directory:
         root = Path(directory)
         (root / "input.xlsx").write_bytes(data)
@@ -143,7 +212,14 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
         )
         if policy.seconds > time.monotonic() - started:
             with (root / "stderr.txt").open("w", encoding="utf-8") as log:
-                command = [sys.executable, "-m", "linexcel._worker", str(root)]
+                command = [
+                    sys.executable,
+                    "-X",
+                    "faulthandler",
+                    "-m",
+                    "linexcel._worker",
+                    str(root),
+                ]
                 if os.name != "nt":
                     # Apply the virtual-address limit before importing linexcel.
                     bootstrap = (
@@ -153,12 +229,22 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
                         "sys.argv=['linexcel._worker',sys.argv[1]]; "
                         "runpy.run_module('linexcel._worker',run_name='__main__')"
                     )
-                    command = [sys.executable, "-c", bootstrap, str(root)]
+                    command = [
+                        sys.executable,
+                        "-X",
+                        "faulthandler",
+                        "-c",
+                        bootstrap,
+                        str(root),
+                    ]
+                environment = os.environ.copy()
+                environment.setdefault("RUST_BACKTRACE", "1")
                 process = subprocess.Popen(
                     command,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=log,
+                    env=environment,
                     start_new_session=os.name != "nt",
                     # Suspend before Python imports anything; attach the Job first.
                     creationflags=(subprocess.CREATE_NO_WINDOW | 0x4)
@@ -226,14 +312,25 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
                 exit_code = process.returncode
                 if status != "completed":
                     with (root / "stderr.txt").open("rb") as errors:
-                        errors.seek(max(0, (root / "stderr.txt").stat().st_size - 4096))
-                        diagnostic = errors.read().decode("utf-8", errors="replace")
-                    if (
-                        status == "crashed"
-                        and exit_code is not None
-                        and (exit_code & 0xFFFFFFFF) in {0xC0000017, 0xC000012D}
-                    ):
-                        status = "memory_limit"
+                        size = (root / "stderr.txt").stat().st_size
+                        diagnostic_truncated = size > DIAGNOSTIC_BYTES
+                        if diagnostic_truncated:
+                            # Keep the panic/allocation headline as well as the
+                            # end of the trace; long Rust backtraces hide the
+                            # actual error if only their tail survives.
+                            head = errors.read(DIAGNOSTIC_BYTES // 2)
+                            errors.seek(size - DIAGNOSTIC_BYTES // 2)
+                            raw = (
+                                head
+                                + b"\n[... diagnostic truncated ...]\n"
+                                + errors.read()
+                            )
+                        else:
+                            raw = errors.read()
+                        diagnostic = raw.decode("utf-8", errors="replace")
+        failure = _failure_details(status, exit_code, diagnostic)
+        if status == "crashed" and failure["kind"] == "memory_limit":
+            status = "memory_limit"
         if status == "error":
             raise ValueError(payload.get("error", "Analysis worker failed"))
         graph: Any = payload.get("graph") if status == "completed" else None
@@ -256,9 +353,17 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
                     "sheets": checkpoint.get("sheets", []),
                 },
             )
+            context = ""
+            if checkpoint.get("operation"):
+                context += f"Operation: {checkpoint['operation']}. "
+            if exit_code is not None:
+                context += f"Worker exit: {failure.get('exitCodeHex', exit_code)}. "
+            if failure["summary"]:
+                context += failure["summary"] + " "
             graph["meta"].setdefault("warnings", []).append(
                 f"Analysis {status} during {checkpoint.get('phase', 'startup')}. "
-                "The requested analysis is incomplete; "
+                + context
+                + "The requested analysis is incomplete; "
                 "no unfinished engine values are published."
             )
             graph["meta"]["sourceEvidence"] = checkpoint.get("sourceEvidence", {})
@@ -287,6 +392,10 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
             "engineAvailable": False,
             "exitCode": exit_code,
             "diagnostic": diagnostic,
+            "diagnosticTruncated": diagnostic_truncated,
+            "operation": checkpoint.get("operation"),
+            "failure": failure if status != "completed" else None,
+            "versions": _runtime_versions(),
         }
         add_coverage(graph)
         return {"graph": graph, "engine": None, "analysisId": uuid.uuid4().hex[:16]}

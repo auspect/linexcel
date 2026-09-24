@@ -104,6 +104,11 @@ class Reporter:
         if _observer is not None:
             _observer(label)
 
+    def operation(self, phase: str, operation: str) -> None:
+        """Persist the next risky operation before entering native code."""
+        if _observer is not None:
+            _observer(phase, evidence={"operation": operation})
+
     def _say(self, message: str) -> None:
         if self._console is not None:
             self._console.print(f"[dim]\\[linexcel][/dim] {message}", highlight=False)

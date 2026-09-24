@@ -125,6 +125,63 @@ def test_missing_provider_is_nonzero_and_recorded(manual, monkeypatch, tmp_path)
     assert caught.value.code == 2
 
 
+def test_no_screenshots_and_no_ai_never_start_optional_stages(
+    manual, monkeypatch, tmp_path
+):
+    result = SimpleNamespace(
+        graph={"meta": {"execution": {"status": "completed"}}},
+        nodes=[],
+        sheets=["S"],
+        token_usage=SimpleNamespace(estimated=False),
+        to_json=lambda **kw: "{}",
+        save_html=lambda path, **kw: path.write_text("report", encoding="utf-8"),
+    )
+    monkeypatch.setattr(manual.linexcel, "analyze", lambda *a, **k: result)
+    for name in ("report_structure", "report_context"):
+        monkeypatch.setattr(manual, name, lambda *a: None)
+    monkeypatch.setattr(manual, "_sheet_names", lambda *a: ["S"])
+
+    def forbidden(*a, **k):
+        pytest.fail("Explicitly skipped stage was started")
+
+    for name in ("render_screenshots", "document", "describe", "check_local_provider"):
+        monkeypatch.setattr(manual, name, forbidden)
+    monkeypatch.setattr(
+        manual,
+        "CASES",
+        {
+            "sales": manual.Case(
+                "sample",
+                "test",
+                lambda: b"synthetic",
+                tmp_path / "source.xlsx",
+                ("en",),
+                generated=False,
+                root=tmp_path,
+            )
+        },
+    )
+    output = tmp_path / "run"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_manual.py",
+            "--no-ai",
+            "--no-vision",
+            "--no-screenshots",
+            "--no-recalc",
+            "--output-dir",
+            str(output),
+        ],
+    )
+    assert manual.main() == 1
+    evidence = json.loads((output / "validation.json").read_text())
+    assert evidence["status"] == "incomplete"
+    assert evidence["cases"][0]["execution"]["status"] == "completed"
+    assert evidence["cases"][0]["screenshots"] == []
+
+
 def test_placeholder_and_unexpected_keys_are_not_coverage(manual):
     assert not manual.coverage(["a"], {"a": "(AI returned empty response)"})["passed"]
     assert not manual.coverage(["a"], {"a": "ok", "b": "extra"})["passed"]
