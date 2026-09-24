@@ -6,6 +6,67 @@ two complementary protections: the public execution policy supervises the
 worker process, while the formula admission guard avoids known dangerous
 expressions before importing the workbook into the engine.
 
+## Investigating an analysis crash locally
+
+`Analysis crashed during engine evaluation` means the isolated worker exited
+without returning a result. The phase includes formula complexity checks, native
+workbook import, evaluation and recovery. It does not identify a particular cell
+or prove that a formula evaluation caused the exit.
+
+Keep a small execution report without exporting the workbook graph:
+
+```sh
+linexcel analyze private.xlsx --no-html --diagnostics diagnostic.json
+```
+
+This command uses no AI or screenshots. The report includes `operation`,
+`exitCode`, `failure`, runtime `versions`, budgets and native `diagnostic` output.
+It excludes the graph and source workbook, but native stderr may contain private
+paths, sheet names or formula text: inspect it before sharing. A normal graph JSON
+export also contains this evidence under `meta.execution`.
+
+Possible causes and the evidence that distinguishes them:
+
+| Evidence | Interpretation |
+| --- | --- |
+| `memory allocation of … bytes failed`, Windows insufficient-memory or commitment-limit status | Allocation failure under the configured memory cap (2,048 MiB by default). Large arrays/ranges can use much more memory than the compressed file. The evidence alone does not distinguish the worker cap from machine-wide exhaustion. |
+| `has overflowed its stack` or Windows `0xC00000FD` | Native stack overflow. The formula admission guard protects known deep expressions, but does not certify every parser/evaluator path. |
+| Rust panic message or `pyo3_runtime.PanicException` | Native engine panic; retain the message and backtrace for a synthetic reproducer. |
+| Windows `0xC0000005` or POSIX signal | Native access fault or termination signal; the specific input defect remains to be determined. |
+| Windows `0xC0000409`, `SIGKILL`, or another exit without supporting stderr | Exit evidence only. Do not infer memory exhaustion or a particular formula. |
+
+Rust's default [allocation error handler](https://doc.rust-lang.org/std/alloc/fn.handle_alloc_error.html)
+prints to stderr and aborts; it need not raise a Python `MemoryError`. A local
+Windows/formualizer 0.9.3 reproduction used `=SUM(SEQUENCE(100000,100))` with
+`ExecutionPolicy(memory_mb=128)`: native allocation failed during global evaluation
+and the worker exited with `0xC0000409`. Linexcel now classifies this as
+`memory_limit` from the allocation message, rather than from the exit code alone.
+This is a synthetic low-budget reproduction, not a diagnosis of every private
+workbook reporting a crash.
+
+For confirmed allocation failures, compare a second local run with a higher
+`--memory-mb` value that fits the machine. For evaluation-specific failures, a
+local `--target 'Sheet1!A1'` run can narrow the implicated dependency branch;
+it still imports the workbook, so it cannot isolate an import crash. Neither
+comparison disables process isolation. Increasing `--analysis-seconds` addresses
+`timed_out`, not a native crash. No automatic unbounded retry is performed.
+
+Python fault handling and Rust backtraces are enabled in the worker (an existing
+`RUST_BACKTRACE` setting is respected). At most 16 KiB of stderr bytes are retained
+plus a truncation marker, split between the beginning and end when necessary.
+`diagnosticTruncated` identifies omitted middle content. A fatal exit may still
+leave no trace, and the operation is the last checkpoint, not a native cell-level
+stack trace.
+
+For deterministic fixture checks without AI or rendering:
+
+```sh
+python validate_manual.py --workbook both --no-ai --no-vision --no-screenshots
+```
+
+This remains an incomplete acceptance run (exit 1). Its `validation.json` records
+the actual analysis status separately from the intentionally missing AI and images.
+
 ## Formula admission
 
 The guard scans worksheet XML before the first native workbook import. It

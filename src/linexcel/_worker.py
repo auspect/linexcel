@@ -40,10 +40,14 @@ def main() -> None:
         "phaseMetrics": {},
     }
     phase_starts = {}
+    checkpoint_index = 0
 
     def checkpoint(
         phase: str, completed: bool = False, evidence: dict | None = None
     ) -> None:
+        nonlocal checkpoint_index
+        if phase != state["phase"]:
+            state.pop("operation", None)
         state["phase"] = phase
         if completed:
             if phase not in state["completedPhases"]:
@@ -55,12 +59,12 @@ def main() -> None:
                     )
                 }
         else:
-            phase_starts[phase] = time.monotonic()
+            phase_starts.setdefault(phase, time.monotonic())
         if evidence:
             state.update(evidence)
         # Immutable files avoid Windows replace/read sharing races.
-        index = len(list(root.glob("checkpoint-*.json")))
-        atomic_json(root / f"checkpoint-{index:06d}.json", state)
+        atomic_json(root / f"checkpoint-{checkpoint_index:06d}.json", state)
+        checkpoint_index += 1
 
     progress._observer = checkpoint
     checkpoint("structure")

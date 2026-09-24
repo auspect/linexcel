@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] — 2026-09-24
+
+### Fixed
+
+- Recognize native Rust allocation failures as memory failures instead of generic
+  analysis crashes. Preserve the engine operation, interpreted exit code, runtime
+  versions and bounded native diagnostics, with Python fault handling and Rust
+  backtraces enabled in the isolated worker. Unknown exits remain unexplained;
+  an abort or SIGKILL alone is not treated as evidence of memory exhaustion.
+
+### Added
+
+- `linexcel analyze --diagnostics FILE` writes execution evidence without the
+  workbook graph. Native stderr can still contain private data and paths.
+- `validate_manual.py --no-screenshots` supports deterministic investigations
+  without rendering; these runs remain explicitly incomplete acceptance runs.
+
 ### Documentation
 
 - Surface worksheet filtering in the HTML report and explain its cross-sheet
