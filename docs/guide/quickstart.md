@@ -29,6 +29,49 @@ result.precedents("c:Summary!B4")
 result.dependents("c:Summary!B4")
 ```
 
+## Trace specific output cells
+
+Suppose you only need to explain two totals on `Summary`, in a workbook with
+many supporting sheets:
+
+```python
+result = analyze("workbook.xlsx", targets=["Summary!B4", "Summary!B8"])
+result.save_html("summary_lineage.html")
+print(result.warnings)
+```
+
+Use actual sheet names and single-cell references from your workbook. Targets
+must be sheet-qualified; ranges such as `Summary!B4:B8` are not supported.
+Static upstream dependencies are traced across sheets without requesting
+global recalculation. Unrelated calculations are omitted from the lineage.
+Dynamic references (`INDIRECT`, `OFFSET`) and truncated traces can leave
+dependencies out of the graph even when the engine evaluates them; inspect
+warnings before treating the graph as complete. Targeting does not guarantee
+that workbook loading or memory use is limited to the traced cells.
+
+For an already generated report, use the [sheet selector](html.md#focus-on-a-worksheet)
+to focus the display on a worksheet, or search all analyzed nodes to locate
+a result hidden by the current filters.
+
+## Follow inputs and assess downstream impact
+
+```python
+result = analyze("workbook.xlsx")  # whole-workbook analysis for impact review
+matches = result.find("Summary")
+for node in matches:
+    print(node["id"])
+
+if matches:
+    node_id = matches[0]["id"]
+    print(result.precedents(node_id))  # immediate inputs in the graph
+    print(result.dependents(node_id))  # immediate consumers in the graph
+```
+
+Use node IDs returned by the graph: repeated formulas may be represented by a
+group rather than individual cell nodes. For a downstream impact review,
+analyze the whole workbook; an output-targeted graph contains only its traced
+upstream lineage and can omit other consumers of the same input.
+
 ## Tune analysis limits
 
 The Python API accepts four optional non-negative integer ceilings. `None`

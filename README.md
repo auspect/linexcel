@@ -91,8 +91,40 @@ runtime, a gateway such as OpenRouter, a vendor's own API — and `provider=`
 takes any callable for anything else. See
 [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/).
 
+## Focus on what matters in a large workbook
+
+Open the HTML report's **Graph** tab and use the sheet selector to focus on
+one worksheet at a time. For example, select `Summary` to inspect its
+calculations: directly connected nodes from other sheets stay visible and
+dimmed, so you can still see where inputs come from and where results go.
+Switch back to all sheets to restore the broader view. This filters the
+display after analysis; it does not skip loading or analyzing worksheets.
+
+If you only need to explain a particular output, target that cell from the
+start instead:
+
+```Shell
+uvx linexcel analyze workbook.xlsx --target "Summary!B4" -o summary.html
+```
+
+```python
+result = analyze("workbook.xlsx", targets=["Summary!B4"])
+result.save_html("summary.html")
+```
+
+Targeted analysis traces the output's static upstream dependencies, including
+those on other sheets, without requesting global recalculation. It is useful
+when only a few results matter in a large workbook. It does not guarantee that
+only those cells are loaded; dynamic references such as `INDIRECT` and `OFFSET`
+can also reach dependencies missing from the graph. Check the report's warnings.
+
+See [filtering and investigation](https://auspect.github.io/linexcel/guide/html/#focus-on-a-worksheet)
+and [targeted analysis examples](https://auspect.github.io/linexcel/guide/cli/#trace-only-the-outputs-you-need).
+
 ## Features
 
+- **Sheet filtering** — focus the interactive graph on one worksheet while retaining its directly connected cross-sheet neighbors
+- **Targeted analysis** — trace selected output cells and their upstream dependencies with `--target` or `targets=`
 - **Formula extraction** via [formualizer](https://pypi.org/project/formualizer/) (Rust engine)
 - **Stretched pattern grouping** — 1000 identical formulas → 1 node
 - **Dependency graph** — cells, ranges, defined names, VBA procedures, Power Query queries

@@ -8,6 +8,27 @@ result.save_html("lineage.html")
 
 Fully offline — Cytoscape.js embedded, no internet needed.
 
+## Focus on a worksheet
+
+For a workbook with many sheets, use the sheet selector in the **Graph** tab
+to focus on one worksheet at a time:
+
+1. Generate a report with `linexcel analyze workbook.xlsx` and open the HTML file.
+2. Select `Summary` in the sheet selector (substitute a sheet from your workbook).
+3. Inspect the formulas on that sheet. Directly connected nodes from other
+   sheets remain visible and dimmed; unrelated nodes are hidden.
+4. Choose all sheets to restore the broader graph, subject to any other filters.
+
+For example, if `Summary!B4` reads `Sales!D10`, the `Sales` node remains as
+context when you select `Summary`. This keeps a large graph easier to navigate
+without hiding immediate cross-sheet connections. It does not display every
+transitive dependency automatically.
+
+The selector changes the report's display after analysis. It does not reduce
+workbook loading, change the Excel file, or exclude sheets from analysis.
+To restrict analysis to particular outputs and their upstream lineage, use
+[`--target` or `targets=`](quickstart.md#trace-specific-output-cells).
+
 ## Investigating a result
 
 Search returns a list of matching references, formulas and labels. Choose
