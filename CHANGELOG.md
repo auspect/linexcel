@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Surface worksheet filtering in the HTML report and explain its cross-sheet
+  context and display-only scope.
+- Add CLI and Python recipes for targeted output analysis, node exploration
+  and downstream impact review, with large-workbook limitations.
+
 ## [1.10.0] — 2026-09-20
 
 ### Added

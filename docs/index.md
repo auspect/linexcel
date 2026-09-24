@@ -32,6 +32,17 @@ uvx linexcel analyze workbook.xlsx        # -> workbook_lineage.html
 
 See the [command line reference](guide/cli.md).
 
+## What would you like to investigate?
+
+| Goal | Start here |
+| --- | --- |
+| Explore one sheet in a large report | Use the [Graph sheet selector](guide/html.md#focus-on-a-worksheet); directly connected cross-sheet nodes remain visible. |
+| Explain a particular total | [Target its output cell](guide/quickstart.md#trace-specific-output-cells) and trace its upstream calculations. |
+| Find what an input feeds | [Look up nodes and their dependents](guide/quickstart.md#follow-inputs-and-assess-downstream-impact) in a whole-workbook analysis. |
+| Resolve linked workbook inputs | Pass `--refs-dir ./linked`; see [lineage coverage](guide/coverage.md#other-workbooks). |
+| Share findings without installing a viewer | Export a [standalone offline HTML report](guide/html.md). |
+| Add explanations from your chosen model | Enable [optional AI documentation](guide/ai.md). |
+
 ## Guide
 
 - [Quick start](guide/quickstart.md) — analyse a workbook, explore it, export it

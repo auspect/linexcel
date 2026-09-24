@@ -52,6 +52,33 @@ cooperative decomposition limit, not the hard analysis deadline. See
 memory semantics. Interrupted CLI analyses export diagnostics with exit code 3;
 cancellation exits 130 without starting optional stages.
 
+## Trace only the outputs you need
+
+For a large workbook, start with the result you want to explain:
+
+```bash
+linexcel analyze workbook.xlsx --target "Summary!B4" -o summary.html
+```
+
+Trace several outputs by repeating the option. Quote references containing
+spaces; for sheet names containing commas, keep Excel's inner single quotes:
+
+```bash
+linexcel analyze workbook.xlsx --target "Summary!B4" --target "Summary!B8"
+linexcel analyze workbook.xlsx --target "'Costs, FY26'!A1" -o costs.html
+```
+
+Replace these example references with cells in your workbook. Each target must
+be a sheet-qualified single cell, not a range. The analysis follows static
+upstream dependencies across sheets without requesting global recalculation.
+It does not guarantee selective loading or a fixed reduction in memory use.
+Dynamic references and truncated traces can omit dependencies from the graph;
+check the report's warnings.
+
+To explore a complete report one worksheet at a time, use its
+[Graph sheet selector](html.md#focus-on-a-worksheet). That is a display filter,
+not a CLI option for excluding worksheets from analysis.
+
 ## Watching it run
 
 `--verbose` draws progress per sheet through the two phases that take the
