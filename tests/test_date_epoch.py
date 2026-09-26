@@ -55,8 +55,10 @@ def epoch_workbook(epoch_1904=False, *, boolean_text=None, broken_reference=Fals
 @pytest.mark.parametrize("epoch_1904", [False, True])
 def test_date_system_is_applied_before_the_engine_imports_cells(epoch_1904):
     engine = _open_workbook(epoch_workbook(epoch_1904), parallel=False)
-    assert engine.get_value("Dates", 1, 1) == datetime.date(2026, 2, 1)
     serial = 44592 if epoch_1904 else 46054
+    # The calculation boundary retains numeric Excel serials; display dates
+    # come from source formatting, without corrupting serial arithmetic.
+    assert engine.get_value("Dates", 1, 1) == serial
     assert engine.get_value("Dates", 1, 4) == serial
     engine.evaluate_all()
     assert engine.get_value("Dates", 1, 2) == 2026
@@ -82,8 +84,9 @@ def test_date_formulas_and_scratch_steps_use_the_same_epoch(epoch_1904, targeted
     steps = nodes["E1"]["steps"]
     assert steps["value"] == 4052
     assert [step["value"] for step in steps["children"]] == [2026, 2026]
-    assert steps["children"][0]["children"][0]["value"] == "2026-02-02"
-    assert steps["children"][1]["children"][0]["value"] == "2026-02-01"
+    serial = 44592 if epoch_1904 else 46054
+    assert steps["children"][0]["children"][0]["value"] == serial + 1
+    assert steps["children"][1]["children"][0]["value"] == serial
     assert not any("differs from file" in w for w in graph["meta"]["warnings"])
 
 
@@ -95,7 +98,7 @@ def test_xml_boolean_spellings_are_shared_by_loader_and_engine(text, expected):
     assert _detect_epoch_1904(data) is expected
     assert load_cached_values(data).epoch_1904 is expected
     engine = _open_workbook(data, parallel=False)
-    assert engine.get_value("Dates", 1, 1) == datetime.date(2026, 2, 1)
+    assert engine.get_value("Dates", 1, 1) == (44592 if expected else 46054)
 
 
 def test_quarantine_retry_preserves_the_workbook_epoch():

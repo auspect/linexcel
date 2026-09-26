@@ -35,8 +35,9 @@ from linexcel.refs import a1, parse_ref, parse_ref_detailed
 from linexcel.rewrite import qualify_sheet
 from linexcel.values import (
     EXCEL_EPOCH_1900,
-    EXCEL_ERRORS,
     _date_text_of,
+    _error_kind,
+    _excel_error_text,
     _fmt_value,
     _is_uncomputed,
     _jsonable,
@@ -208,6 +209,7 @@ class _ValueResolver:
         self.n_recovered = 0
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
+        self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
 
     # -- public API --------------------------------------------------------
     def value(
@@ -244,6 +246,7 @@ class _ValueResolver:
                 self._note_uncomputed(sheet, row, col)
                 return self._from_cache(sheet, row, col)
             date_text = self._date_text(sheet, row, col, raw)
+            self._result_is_error[(sheet, row, col)] = _error_kind(raw) is not None
             self._check_mismatch(sheet, row, col, raw, date_text)
             return _jsonable(raw), source, date_text
         if sheet not in self.engine_sheets:
@@ -265,6 +268,7 @@ class _ValueResolver:
         if raw is None:
             return self._from_cache(sheet, row, col)
         date_text = self._date_text(sheet, row, col, raw)
+        self._result_is_error[(sheet, row, col)] = _error_kind(raw) is not None
         self._check_mismatch(sheet, row, col, raw, date_text)
         return _jsonable(raw), source, date_text
 
@@ -281,7 +285,27 @@ class _ValueResolver:
             fields["cachedValue"] = cached
             # Decided here rather than in the viewer's JavaScript: the same
             # question was being answered twice, with two different answers.
-            fields["cachedAgreement"] = readings_agree(value, cached, date_text)
+            result_error = self._result_is_error.get((sheet, row, col))
+            cached_error = self.cached.is_error(sheet, row, col)
+            fields["cachedAgreement"] = readings_agree(
+                value,
+                cached,
+                date_text,
+                recalculated_is_error=result_error,
+                stored_is_error=cached_error,
+            )
+            if cached_error is not None:
+                fields["cachedValueKind"] = (
+                    "error"
+                    if cached_error
+                    else ("text" if isinstance(cached, str) else "value")
+                )
+            if result_error is not None:
+                fields["valueKind"] = (
+                    "error"
+                    if result_error
+                    else ("text" if isinstance(value, str) else "value")
+                )
         if date_text is not None:
             fields["valueDate"] = date_text
         return fields
@@ -468,7 +492,10 @@ class _ValueResolver:
         valid: list[str] = []
         for i, e in enumerate(unique):
             try:
-                qualified = qualify_sheet(self.substitute_externals(e), sheet)
+                expr = self.substitute_externals(e)
+                if hasattr(self.engine, "qualify_formula"):
+                    expr = self.engine.qualify_formula(expr, sheet)
+                qualified = qualify_sheet(expr, sheet)
             except Exception:
                 continue
             try:
@@ -679,6 +706,7 @@ class _ValueResolver:
         self, sheet: str, row: int, col: int
     ) -> tuple[Any, str | None, str | None]:
         raw = self.cached.get(sheet, row, col)
+        self._result_is_error[(sheet, row, col)] = self.cached.is_error(sheet, row, col)
         if raw is None:
             return None, None, None
         date_text = _date_text_of(raw)
@@ -703,7 +731,17 @@ class _ValueResolver:
             return
         self._compared.add(key)
         cached = self.cached.get(sheet, row, col)
-        if cached is None or readings_agree(raw, cached, date_text) != "differ":
+        if (
+            cached is None
+            or readings_agree(
+                raw,
+                cached,
+                date_text,
+                recalculated_is_error=_error_kind(raw) is not None,
+                stored_is_error=self.cached.is_error(sheet, row, col),
+            )
+            != "differ"
+        ):
             return
         self._n_mismatches += 1
         if self._n_mismatches > MAX_VALUE_WARNINGS:
@@ -847,8 +885,10 @@ def _external_warning(
             f"Neither read nor cached, so cells reading them have no value: "
             f"{', '.join(sorted(missing))}."
         )
-        if refs_dir is None:
-            parts.append("Pass refs_dir= (CLI: --refs-dir) to resolve them.")
+    if (cached or missing) and refs_dir is None:
+        parts.append(
+            "Pass refs_dir= (CLI: --refs-dir DIR) to read the referenced files."
+        )
     return " ".join(parts)
 
 
@@ -873,9 +913,10 @@ def _as_literal(value: Any) -> str:
         return repr(value)
     if isinstance(value, datetime.datetime):
         return repr(_serial_of(value))
+    error = _excel_error_text(value)
+    if error is not None:
+        return error
     text = str(value)
-    if text in EXCEL_ERRORS:
-        return text
     return '"' + text.replace('"', '""') + '"'
 
 

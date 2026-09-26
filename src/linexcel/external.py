@@ -35,6 +35,7 @@ from xml.etree import ElementTree
 
 from linexcel.limits import limit_or_default
 from linexcel.loader import MAX_DENSE_CELLS, declared_cells
+from linexcel.values import SpreadsheetError
 
 #: Suffixes searched in a reference folder. The macro-enabled ones are also
 #: where an add-in keeps the VBA a workbook calls into.
@@ -217,6 +218,8 @@ def read_workbook_values(
     """
     from python_calamine import CalamineWorkbook
 
+    from linexcel.loader import _error_cached_values
+
     # calamine builds a sheet as a dense rows × columns array before handing
     # anything back, so a workbook declaring A1:XFD1048576 asks the allocator
     # for 512 GiB and *aborts the process* — a Rust allocation failure, not an
@@ -232,9 +235,18 @@ def read_workbook_values(
         )
 
     values: dict[tuple[str, int, int], Any] = {}
+    errors = _error_cached_values(path.read_bytes())
     workbook = CalamineWorkbook.from_path(str(path))
     for name in workbook.sheet_names:
         rows = workbook.get_sheet_by_name(name).to_python(skip_empty_area=False)
+        error_positions = [(r, c) for sheet, r, c in errors if sheet == name]
+        height = max([len(rows), *(r for r, _ in error_positions)])
+        width = max([0, *(len(row) for row in rows), *(c for _, c in error_positions)])
+        if height * width > MAX_EXTERNAL_CELLS:
+            raise ValueError(
+                f"sheet {name!r} exceeds the external read ceiling of "
+                f"{MAX_EXTERNAL_CELLS:,} cells; partial external values were not used"
+            )
         scanned = 0
         for r_index, row in enumerate(rows):
             scanned += len(row)
@@ -252,6 +264,10 @@ def read_workbook_values(
                 ):
                     value = datetime.datetime(value.year, value.month, value.day)
                 values[(name, r_index + 1, c_index + 1)] = value
+    # Calamine does not retain Excel's error-versus-text distinction. Recover
+    # typed errors from package metadata; a text cell spelling '#N/A' stays text.
+    for key, text in errors.items():
+        values[key] = SpreadsheetError(text)
     return values
 
 
@@ -327,7 +343,9 @@ def _read_cached_cells(
 
 
 def _typed(text: str, kind: str | None) -> Any:
-    if kind in ("str", "e"):
+    if kind == "e":
+        return SpreadsheetError(text)
+    if kind == "str":
         return text
     if kind == "b":
         return text not in ("0", "false", "FALSE")

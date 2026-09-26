@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
@@ -96,6 +96,7 @@ class ExecutionPolicy:
     seconds: float = 120.0
     memory_mb: int = 2048
     isolated: bool = True
+    memory_retries: int = 2
 
     def __post_init__(self):
         if isinstance(self.seconds, bool) or not isinstance(self.seconds, (int, float)):
@@ -108,6 +109,12 @@ class ExecutionPolicy:
             raise ValueError("memory_mb must be a positive integer")
         if not isinstance(self.isolated, bool):
             raise TypeError("isolated must be boolean")
+        if isinstance(self.memory_retries, bool) or not isinstance(
+            self.memory_retries, int
+        ):
+            raise TypeError("memory_retries must be an integer between 0 and 2")
+        if not 0 <= self.memory_retries <= 2:
+            raise ValueError("memory_retries must be between 0 and 2")
 
 
 def add_coverage(graph: dict[str, Any]) -> None:
@@ -189,6 +196,90 @@ def _worker_directory():
 
 
 def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
+    """On proven OOM, try a smaller source inventory under the same budgets."""
+    started = time.monotonic()
+    result = _run_isolated_once(data, kwargs, policy)
+    initial = result["graph"]["meta"]["execution"]
+    if initial["status"] != "memory_limit" or not policy.memory_retries:
+        return result
+    if kwargs.get("targets"):
+        initial["recoverySkipped"] = (
+            "targeted_analysis_requires_complete_dependency_closure"
+        )
+        return result
+    attempts = [dict(initial, mode="analysis")]
+    cell_budget = min(5000, max(1, policy.memory_mb * 8))
+    for retry_index in range(policy.memory_retries):
+        remaining = policy.seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            break
+        recovery_kwargs = dict(kwargs)
+        # Reduce effective per-sheet caps too: otherwise a 400-node cap can
+        # make both a 5000-cell and a 1250-cell attempt read the same 400 cells.
+        for key, default in (
+            ("max_nodes_per_sheet", 400),
+            ("max_cells_per_sheet", None),
+        ):
+            limit = kwargs.get(key)
+            limit = default if limit is None else limit
+            if limit is not None:
+                recovery_kwargs[key] = limit // (4**retry_index)
+        retry = _run_isolated_once(
+            data,
+            recovery_kwargs,
+            replace(policy, seconds=remaining),
+            recovery_cells=cell_budget,
+        )
+        evidence = retry["graph"]["meta"]["execution"]
+        attempts.append(
+            dict(
+                evidence,
+                mode="source_only",
+                storedCellBudget=cell_budget,
+                cellsPerSheet=recovery_kwargs.get("max_cells_per_sheet"),
+                nodesPerSheet=recovery_kwargs.get("max_nodes_per_sheet"),
+            )
+        )
+        if evidence["status"] == "completed":
+            graph = retry["graph"]
+            graph["meta"]["warnings"] = (
+                result["graph"]["meta"]["warnings"] + graph["meta"]["warnings"]
+            )
+            graph["meta"]["execution"] = initial
+            graph["meta"]["sourceEvidence"] = result["graph"]["meta"].get(
+                "sourceEvidence", {}
+            )
+            initial["recovery"] = {
+                "status": "completed",
+                "mode": "source_only",
+                "storedCellBudget": cell_budget,
+                "recalculated": False,
+            }
+            result = retry
+            add_coverage(graph)
+            break
+        if evidence["status"] == "cancelled":
+            initial["status"] = "cancelled"
+            initial["failure"] = evidence["failure"]
+        if evidence["status"] != "memory_limit" or cell_budget == 1:
+            break
+        cell_budget = max(1, cell_budget // 4)
+    if len(attempts) > 1:
+        initial.setdefault(
+            "recovery", {"status": attempts[-1]["status"], "mode": "source_only"}
+        )
+        initial["attempts"] = attempts
+        initial["elapsedSeconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
+def _run_isolated_once(
+    data: bytes,
+    kwargs: dict,
+    policy: ExecutionPolicy,
+    *,
+    recovery_cells: int | None = None,
+) -> dict:
     """Run one worker, enforcing elapsed time even inside a native call."""
     started = time.monotonic()
     status = "timed_out"
@@ -205,6 +296,7 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
                 {
                     "kwargs": kwargs,
                     "memory_mb": policy.memory_mb,
+                    "recovery_cell_budget": recovery_cells,
                 },
                 default=str,
             ),
@@ -331,8 +423,12 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
         failure = _failure_details(status, exit_code, diagnostic)
         if status == "crashed" and failure["kind"] == "memory_limit":
             status = "memory_limit"
-        if status == "error":
+        if status == "error" and recovery_cells is None:
             raise ValueError(payload.get("error", "Analysis worker failed"))
+        if status == "error":
+            failure["summary"] = str(payload.get("error", "Source recovery failed"))[
+                :1024
+            ]
         graph: Any = payload.get("graph") if status == "completed" else None
         if graph is None:
             graph = cast(
@@ -346,7 +442,7 @@ def run_isolated(data: bytes, kwargs: dict, policy: ExecutionPolicy) -> dict:
                             "totalEdges": 0,
                             "totalFormulas": None,
                         },
-                        "warnings": [],
+                        "warnings": list(checkpoint.get("warnings", [])),
                     },
                     "nodes": [],
                     "edges": [],

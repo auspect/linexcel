@@ -66,6 +66,29 @@ _PRECEDENCE = {
 _UNARY_PRECEDENCE = 6
 
 
+def typed_ast_dict(ast) -> dict:
+    """Preserve error-token versus text-literal spelling for scratch evaluation."""
+    result = ast.to_dict()
+
+    def annotate(node, mapping):
+        kind = mapping.get("node_type")
+        if kind in {"Literal", "Array"}:
+            mapping["source_literal"] = node.to_formula().removeprefix("=")
+        if kind == "Function":
+            mappings = mapping.get("args", [])
+        elif kind == "BinaryOp":
+            mappings = [mapping["left"], mapping["right"]]
+        elif kind == "UnaryOp":
+            mappings = [mapping.get("operand") or mapping.get("expr")]
+        else:
+            mappings = []
+        for child, child_mapping in zip(node.children(), mappings):
+            annotate(child, child_mapping)
+
+    annotate(ast, result)
+    return result
+
+
 def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]:
     """First pass: collect every step expression ``_decompose`` will evaluate.
 
@@ -231,6 +254,8 @@ def _render_expr(node: dict) -> str:
     if ntype == "Reference":
         return str(node.get("reference", "?"))
     if ntype == "Literal":
+        if "source_literal" in node:
+            return node["source_literal"]
         v = node.get("value")
         if isinstance(v, str):
             return '"' + v.replace('"', '""') + '"'
@@ -240,7 +265,7 @@ def _render_expr(node: dict) -> str:
             return str(int(v))
         return str(v)
     if ntype == "Array":
-        return "{...}"
+        return node.get("source_literal", "{...}")
     if ntype == "Paren":
         inner = node.get("expr") or node.get("inner") or {}
         return f"({_render_expr(inner)})"
@@ -280,6 +305,8 @@ def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
     hence the single retry.
     """
     try:
+        if hasattr(engine, "qualify_formula"):
+            expr = engine.qualify_formula(expr, sheet)
         qualified = qualify_sheet(expr, sheet)
     except Exception:
         return None, False
@@ -307,7 +334,7 @@ def _guard_fallback_expr(expr: str) -> str | None:
     # inner guard absorb the broken reference and returns 0. That gap is the
     # accepted ceiling of this recovery.
     try:
-        ast_dict = fz.parse(expr).to_dict()
+        ast_dict = typed_ast_dict(fz.parse(expr))
     except Exception:
         return None
     if not isinstance(ast_dict, dict) or ast_dict.get("node_type") != "Function":

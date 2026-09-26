@@ -19,7 +19,7 @@ from typing import Any
 
 import formualizer as fz
 
-from linexcel.decompose import _collect_step_exprs, _decompose
+from linexcel.decompose import _collect_step_exprs, _decompose, typed_ast_dict
 from linexcel.engine import is_too_deep
 from linexcel.external import macro_files, parse_external_refs
 from linexcel.limits import limit_or_default
@@ -474,7 +474,7 @@ class GraphBuilder:
                     ast = self.ast_cache[formula] = fz.parse(
                         formula if formula.startswith("=") else "=" + formula
                     )
-                ast_dict = ast.to_dict()
+                ast_dict = typed_ast_dict(ast)
                 refs = _collect_ref_strings(ast_dict)
             except Exception:
                 ast, ast_dict, refs = None, None, []

@@ -72,6 +72,7 @@ packages = ["src/linexcel"]
 
 [tool.hatch.build.targets.sdist]
 artifacts = ["src/linexcel/assets/*.js", "src/linexcel/assets/*.html"]
+exclude = [".claude/", ".agents/", ".codex/"]
 
 [tool.ruff]
 target-version = "py311"

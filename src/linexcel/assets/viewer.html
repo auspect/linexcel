@@ -1357,6 +1357,10 @@
       notice.textContent = _t('execution_interrupted', {
         status: statuses[execution.status] || execution.status, phase: execution.phase || '—'
       });
+      if (execution.recovery && execution.recovery.status === 'completed' &&
+          execution.recovery.mode === 'source_only') {
+        notice.textContent += ' ' + _t('execution_source_recovery');
+      }
     }
     // One tail for everything the workbook holds beside formulas. The
     // placeholder is still called {vba} in the nine locales; what it carries

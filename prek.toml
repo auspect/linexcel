@@ -37,5 +37,11 @@ hooks = [
     entry = "uv run python scripts/capture_viewer.py --check",
     language = "system",
     pass_filenames = false,
-    files = '^src/linexcel/(assets/viewer\.html|(viewer|i18n)\.py)$' }
+    files = '^src/linexcel/(assets/viewer\.html|(viewer|i18n)\.py)$' },
+  { id = "app-shots",
+    name = "README screenshots match the application",
+    entry = "uv run python scripts/capture_app.py --check",
+    language = "system",
+    pass_filenames = false,
+    files = '^(src/linexcel/assets/app\.html|scripts/capture_app\.py|imgs/app_.*)$' }
 ]

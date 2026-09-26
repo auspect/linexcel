@@ -118,8 +118,10 @@ class TestRefsDirRecommendation:
     ):
         assert main(["analyze", str(cached_link_workbook), "--no-html"]) == 0
         err = capsys.readouterr().err
-        assert "hint:" in err
-        assert "--refs-dir" in err
+        assert "warning:" in err
+        assert "Budget.xlsx" in err
+        assert err.count("--refs-dir") == 1
+        assert "hint:" not in err
 
     def test_the_hint_is_not_repeated_when_the_warning_already_said_it(
         self, tmp_path, capsys

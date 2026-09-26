@@ -99,7 +99,10 @@ def hash_sources() -> dict[str, str]:
     digests = {}
     for relative in WATCHED_SOURCES:
         path = ROOT / relative
-        digests[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        # Git can check out identical sources with CRLF on Windows and LF on
+        # Linux. Line-ending conversion must not make screenshots look stale.
+        source = path.read_bytes().replace(b"\r\n", b"\n")
+        digests[relative.as_posix()] = hashlib.sha256(source).hexdigest()
     return digests
 
 

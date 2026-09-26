@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-09-26
+
+### Added
+
+- Show and generate node AI documentation beside the interactive graph, sharing
+  the same result with the detail card. Report input, output and total tokens
+  separately, including when accounting is estimated or unavailable.
+- Add English and French application interfaces, independently of the AI
+  documentation language, and reproducible English application screenshots.
+- Add explicit AI documentation tasks for individual nodes, workbook overviews
+  and selected captures in the web application, with server-owned provider
+  settings, operation budgets, persistent results and source provenance.
+- Detect copied formula patterns structurally in the lazy application, preserving
+  relative/absolute reference semantics and individual cell results. Expose
+  group membership and let existing projects refresh their structure.
+
+- Add a reproducible local corpus probe for the lazy application, sampling
+  OOXML workbooks across datasets and file sizes and formula targets across
+  sheets/signatures. Preserve selection hashes, isolated task outcomes and
+  saved-value comparisons under ignored validation storage.
+
+- Add a first deterministic lazy web application (`linexcel serve`) and a
+  mountable WSGI factory with host authentication integration. Import the main
+  workbook and references through the interface; build a structural graph
+  without recalculation, then evaluate complete supported target dependencies
+  in an isolated process. Keep ranges compact and unsupported dependencies
+  explicit. Add per-operation budgets/cancellation, persistent task history,
+  revision/version-aware caching, forced recalculation, cache comparisons,
+  deterministic captures and JSON export. Separate user storage, coordinate
+  worker/memory admission and preserve prior results on failure. External
+  references currently support simple literal inputs; see README for calculation
+  and server deployment limits. AI remains optional and explicitly requested.
+
+- After confirmed isolated-worker memory exhaustion, recover a bounded source
+  inventory in up to two fresh workers under the original time/memory budgets.
+  Stored-cell quotas are divided across worksheets and reduced fourfold on a
+  further memory failure. Recovery never recalculates truncated inputs, builds
+  dependency edges or claims completion; missing caches stay unknown and dates
+  may remain raw serial numbers. Preserve the initial failure and all attempts.
+  Disable with `--memory-retries 0` / `ExecutionPolicy(memory_retries=0)`;
+  targeted analysis, cancellation, timeout and unknown crashes do not trigger it.
+
+### Changed
+
+- Present sheet captures as a thumbnail gallery with a selected-image view,
+  replace native file controls with accessible styled upload buttons, and
+  highlight bounded JSON previews while omitting image payloads from operation
+  details. Keep complete results available through explicit downloads.
+- Move the graph center to the selected sheet and keep sheet selection consistent
+  during cross-sheet navigation; avoid oversized initial zoom for isolated nodes.
+
+- Restore an interactive directed graph in the lazy application with the
+  bundled offline Cytoscape library, pan/zoom, framing, sheet navigation,
+  selection details and an accessible list alternative. Keep compact-range
+  membership distinct from formula dependencies and bound only the display.
+- Expose formula dependency results from the same targeted engine operation,
+  separately from saved caches and literal inputs. Report unavailable results
+  and calculation coverage explicitly; reading dependency values does not
+  trigger additional volatile recalculations or claim a branch execution trace.
+- Organize the lazy graph around sources, the selected node and its usages,
+  with search, back navigation and explicit compact-range membership. Restore
+  dedicated deterministic node cards with formula highlighting, source/cache
+  provenance, nearby source labels and readable dependency decomposition.
+- Separate main-workbook and reference upload areas, support drag and drop,
+  show removable file selections and transfer/import progress, and preserve
+  valid selections when an upload needs correction.
+- Poll active operations individually instead of repeatedly transferring the
+  whole graph and result history; idle workspaces use a lightweight connection
+  check. Make empty-string results and volatile calculations explicit.
+
+### Fixed
+
+- Reuse the newest matching calculation after server restart, independently of
+  filesystem enumeration order. Exclude obsolete implementation results from
+  new AI dossiers and preserve value types in both node and workbook evidence.
+- Correct typed `SUMPRODUCT` array handling, error propagation through text
+  concatenation and mixed-type comparisons inside the calculation graph, so
+  dependent formulas use corrected results rather than patched final values.
+  Preserve source formulas and distinguish Excel errors from matching text.
+- Resolve constant defined names and sheet-local bindings, preserve stored
+  empty strings, and keep literal reads independent of the calculation engine.
+  Reject excessive formula depth before native parsing in targeted calculations.
+- Preserve exact stored date serials and numeric calculation output, including
+  Excel's fictitious 29 February 1900, instead of round-tripping through Python
+  calendar dates. Keep source date formatting separate from numerical results.
+- Distinguish Boolean values from numeric values and compare date values using
+  the workbook's date system when checking a targeted recalculation against the
+  saved Excel cache. Preserve readable date values in the detail card.
+
+- Preserve external-link advice and reference-folder read warnings when analysis
+  stops before the native engine finishes. Interrupted reports label those
+  links as declarations which may be obsolete, without claiming active usage.
+  Recommend `--refs-dir DIR` in report warnings even when external values are
+  cached, without repeating the CLI hint.
+
 ## [1.10.1] — 2026-09-24
 
 ### Fixed

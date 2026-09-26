@@ -560,12 +560,10 @@ class TestRootStep:
         assert inner["children"][0]["value"] == 5
 
     def test_an_array_literal_root_no_longer_reads_as_an_error(self):
-        """A step expression is re-rendered from the AST, and an array
-        literal renders as the placeholder ``{...}``. Evaluating that gave
-        ``#NAME?`` for a cell that plainly holds 21."""
+        """Typed rendering preserves the array instead of an unevaluable placeholder."""
         node = node_of(graph_of({"A1": "=SUM({1, 2, 3; 4, 5, 6})"}), "c:S!A1")
         assert node["value"] == 21
-        assert node["steps"]["expr"] == "SUM({...})"
+        assert node["steps"]["expr"] == "SUM({1, 2, 3; 4, 5, 6})"
         assert node["steps"]["value"] == 21
 
     def test_a_value_that_is_not_the_engine_s_leaves_the_root_evaluated(self):

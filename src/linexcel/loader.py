@@ -26,7 +26,7 @@ from xml.etree import ElementTree
 from xml.sax.saxutils import unescape
 
 from openpyxl import load_workbook
-from openpyxl.styles.numbers import is_date_format
+from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format
 
 from linexcel.limits import limit_or_default
 from linexcel.progress import Reporter
@@ -63,17 +63,25 @@ class CachedValues:
         date_cells: set[tuple[str, int, int]],
         epoch_1904: bool,
         truncated_sheets: set[str] | None = None,
+        error_cells: set[tuple[str, int, int]] | None = None,
     ):
         self._values = values
         self._date_cells = date_cells
         self.epoch_1904 = epoch_1904
         self.truncated_sheets = truncated_sheets or set()
+        self.error_cells = error_cells
 
     def get(self, sheet: str, row: int, col: int) -> Any:
         return self._values.get((sheet, row, col))
 
     def is_date(self, sheet: str, row: int, col: int) -> bool:
         return (sheet, row, col) in self._date_cells
+
+    def is_error(self, sheet: str | None, row: int, col: int) -> bool | None:
+        """Source cell type, not an inference from a '#VALUE!' text spelling."""
+        if self.error_cells is None or sheet is None:
+            return None
+        return (sheet, row, col) in self.error_cells
 
     def __len__(self) -> int:
         return len(self._values)
@@ -205,7 +213,8 @@ def load_cached_values(
 #: A cached formula error, ``<c r="A1" t="e"><f>…</f><v>#DIV/0!</v></c>``. The
 #: ``<c …>…</c>`` element never nests another ``<c>``, so ``.*?</c>`` is safe.
 _ERROR_CELL_RE = re.compile(
-    rb'<c\b(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"[^>]*(?<!/)>(.*?)</c>',
+    rb'<(?:\w+:)?c\b(?=[^>]*\st="e")[^>]*\sr="([A-Z]{1,3})(\d+)"'
+    rb"[^>]*(?<!/)>(.*?)</(?:\w+:)?c>",
     re.S,
 )
 
@@ -264,7 +273,9 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
                 if b't="e"' not in sheet_xml:
                     continue
                 for cell in _ERROR_CELL_RE.finditer(sheet_xml):
-                    value = re.search(rb"<v>([^<]*)</v>", cell.group(3))
+                    value = re.search(
+                        rb"<(?:\w+:)?v>([^<]*)</(?:\w+:)?v>", cell.group(3)
+                    )
                     if value is None or not value.group(1):
                         continue
                     row = int(cell.group(2))
@@ -304,7 +315,9 @@ def _load_cached_values_calamine(
     )
     truncated: set[str] = set()
     values: dict[tuple[str, int, int], Any] = {}
-    date_cells: set[tuple[str, int, int]] = set()
+    # A formula with no saved value still has a meaningful display format.
+    # Calamine's value types alone cannot recover that source metadata.
+    date_cells = _date_formatted_cells(data)
     epoch_1904 = _detect_epoch_1904(data)
     errors = _error_cached_values(data)
     # Calamine drops trailing cells that carry only formatting; openpyxl and
@@ -357,7 +370,109 @@ def _load_cached_values_calamine(
                 values.setdefault(key, error)
             else:
                 truncated.add(name)
-    return CachedValues(values, date_cells, epoch_1904, truncated)
+    _restore_phantom_date_serials(data, values, epoch_1904)
+    return CachedValues(
+        values, date_cells, epoch_1904, truncated, set(errors) & values.keys()
+    )
+
+
+def _restore_phantom_date_serials(
+    data: bytes, values: dict[tuple[str, int, int], Any], epoch_1904: bool
+) -> None:
+    """Keep day 60 as its actual stored number, never invent Gregorian Feb 28.
+
+    Both readers collapse Excel's fictitious day to a representable date.
+    Inspect only retained candidate dates and preserve all other cache values.
+    The following real day is included because sub-millisecond rounding can
+    turn 60.999999999 into March 1 during import.
+    """
+    if epoch_1904:
+        return
+    candidates = {
+        key
+        for key, value in values.items()
+        if isinstance(value, datetime.date)
+        and (value.year, value.month, value.day) in {(1900, 2, 28), (1900, 3, 1)}
+    }
+    if not candidates:
+        return
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            paths = _parse_sheet_targets(
+                archive.read("xl/workbook.xml").decode("utf-8"),
+                archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+            )
+            for sheet, path in paths.items():
+                if not any(key[0] == sheet for key in candidates):
+                    continue
+                for _, cell in ElementTree.iterparse(
+                    io.BytesIO(archive.read(path)), events=("end",)
+                ):
+                    if cell.tag.rsplit("}", 1)[-1] != "c":
+                        continue
+                    address = re.fullmatch(r"([A-Z]{1,3})(\d+)", cell.get("r", ""))
+                    if address and cell.get("t", "n") == "n":
+                        key = (
+                            sheet,
+                            int(address.group(2)),
+                            col_to_num(address.group(1)),
+                        )
+                        if key in candidates:
+                            raw = cell.findtext("{*}v")
+                            if raw is not None:
+                                try:
+                                    serial = float(raw)
+                                except ValueError:
+                                    serial = float("nan")
+                                if 60 <= serial < 61:
+                                    values[key] = serial
+                    cell.clear()
+    except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+        pass
+
+
+def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
+    """Sparse format metadata, including formulas whose saved cache is empty."""
+    result: set[tuple[str, int, int]] = set()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            if "xl/styles.xml" not in archive.namelist():
+                return result
+            styles = ElementTree.fromstring(archive.read("xl/styles.xml"))
+            formats = dict(BUILTIN_FORMATS)
+            formats.update(
+                {
+                    int(item.attrib["numFmtId"]): item.attrib["formatCode"]
+                    for item in styles.findall("{*}numFmts/{*}numFmt")
+                }
+            )
+            indices = {
+                index
+                for index, item in enumerate(styles.findall("{*}cellXfs/{*}xf"))
+                if _is_date_format(formats.get(int(item.get("numFmtId", "0"))))
+            }
+            if not indices:
+                return result
+            paths = _parse_sheet_targets(
+                archive.read("xl/workbook.xml").decode("utf-8"),
+                archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+            )
+            for sheet, path in paths.items():
+                for cell in re.finditer(rb"<(?:\w+:)?c\b([^>]+)>", archive.read(path)):
+                    address = re.search(rb'\br="([A-Z]{1,3})(\d+)"', cell.group(1))
+                    style = re.search(rb'\bs="(\d+)"', cell.group(1))
+                    index = int(style.group(1)) if style else 0
+                    if address and index in indices:
+                        result.add(
+                            (
+                                sheet,
+                                int(address.group(2)),
+                                col_to_num(address.group(1).decode("ascii")),
+                            )
+                        )
+    except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+        pass
+    return result
 
 
 def _stepped(phase_cm, items, verb: str):
@@ -397,6 +512,7 @@ def _load_cached_values_openpyxl(
     truncated: set[str] = set()
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
+    error_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = False
     try:
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
@@ -425,11 +541,14 @@ def _load_cached_values_openpyxl(
                         date_cells.add(key)
                     if cell.value is not None:
                         values[key] = cell.value
+                        if cell.data_type == "e":
+                            error_cells.add(key)
     except Exception:
         pass
     finally:
         wb.close()
-    return CachedValues(values, date_cells, epoch_1904, truncated)
+    _restore_phantom_date_serials(data, values, epoch_1904)
+    return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
 
 
 def _detect_epoch_1904(data: bytes) -> bool:

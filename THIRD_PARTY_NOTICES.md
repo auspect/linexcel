@@ -1,7 +1,8 @@
 # Third-Party Notices
 
 The standalone HTML viewer includes the following JavaScript packages under
-their respective MIT licenses:
+their respective MIT licenses. The local web application also uses the bundled
+Cytoscape.js package for its interactive graph:
 
 | Package | Bundled version | Upstream project |
 | --- | --- | --- |
