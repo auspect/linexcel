@@ -69,11 +69,23 @@ def main() -> None:
     progress._observer = checkpoint
     checkpoint("structure")
     try:
-        result = analyze_workbook(
-            (root / "input.xlsx").read_bytes(),
-            execution=ExecutionPolicy(isolated=False),
-            **request["kwargs"],
-        )
+        data = (root / "input.xlsx").read_bytes()
+        if request.get("recovery_cell_budget") is not None:
+            from linexcel.recovery import source_inventory
+
+            checkpoint("source recovery")
+            result = {
+                "graph": source_inventory(
+                    data,
+                    request["kwargs"],
+                    request["recovery_cell_budget"],
+                    progress.Reporter(),
+                )
+            }
+        else:
+            result = analyze_workbook(
+                data, execution=ExecutionPolicy(isolated=False), **request["kwargs"]
+            )
         checkpoint("serialization")
         output = {"status": "completed", "graph": result["graph"]}
     except MemoryError:

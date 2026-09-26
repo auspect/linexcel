@@ -101,6 +101,55 @@ os._exit(17)
     assert not result["graph"]["nodes"]
 
 
+@pytest.mark.parametrize("refs_supplied", [False, True])
+@pytest.mark.parametrize("cached", [False, True])
+def test_external_advice_survives_native_abort(
+    monkeypatch, tmp_path, refs_supplied, cached
+):
+    from test_external import _link, linked_workbook
+
+    data = linked_workbook(
+        {"A1": "='[1]Annual'!B4"},
+        [_link("Budget.xlsx", "Annual", {"B4": 21} if cached else None)],
+    )
+    # Run real structure extraction/checkpoints, then emulate an uncatchable
+    # native abort at the engine boundary in the actual supervised worker.
+    workload(
+        monkeypatch,
+        """
+import linexcel.analyzer as analyzer
+from linexcel._worker import main
+def abort(*args, **kwargs):
+    sys.stderr.write('memory allocation of 104 bytes failed\\n')
+    sys.stderr.flush()
+    os._exit(17)
+analyzer.boot_engine = abort
+main()
+""",
+    )
+    result = run_isolated(
+        data,
+        {"refs_dir": str(tmp_path) if refs_supplied else None},
+        ExecutionPolicy(seconds=10),
+    )
+    graph = result["graph"]
+    assert graph["meta"]["execution"]["status"] == "memory_limit"
+    warning = " ".join(graph["meta"]["warnings"])
+    assert "Budget.xlsx" in warning
+    if refs_supplied:
+        assert "not in the reference folder" in warning
+        assert "--refs-dir" not in warning
+    else:
+        assert warning.count("--refs-dir") == 1
+        assert "declares" in warning
+        assert "may be obsolete" in warning
+        assert "cells reading them have no value" not in warning
+    assert graph["meta"]["execution"]["recovery"]["status"] == "completed"
+    assert len(graph["nodes"]) == 1
+    assert graph["nodes"][0]["value"] is None
+    assert graph["nodes"][0]["steps"] is None
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Reproduced with Windows Job memory cap")
 def test_real_engine_allocation_failure_keeps_native_evidence():
     from openpyxl import Workbook
@@ -110,7 +159,8 @@ def test_real_engine_allocation_failure_keeps_native_evidence():
     data = io.BytesIO()
     workbook.save(data)
     result = analyze(
-        data.getvalue(), execution=ExecutionPolicy(seconds=30, memory_mb=128)
+        data.getvalue(),
+        execution=ExecutionPolicy(seconds=30, memory_mb=128, memory_retries=0),
     )
     execution = result.graph["meta"]["execution"]
     assert execution["status"] == "memory_limit", execution
@@ -194,7 +244,9 @@ engine.{helper} = crash
 main()
 """,
     )
-    result = run_isolated(lineage_excel, {}, ExecutionPolicy(seconds=10))
+    result = run_isolated(
+        lineage_excel, {}, ExecutionPolicy(seconds=10, memory_retries=0)
+    )
     execution = result["graph"]["meta"]["execution"]
     assert execution["phase"] == "engine evaluation"
     assert execution["operation"] == operation

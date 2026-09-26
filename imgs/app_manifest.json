@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-09-26T16:32:30.244763+00:00",
+  "uiLanguage": "en",
+  "documentLanguage": "en",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "sources": {
+    "src/linexcel/assets/app.html": "276b717db3b75d607129f8935c73c6fecdcf007f412ebadc0d8f791d095eca3d",
+    "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
+    "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
+    "scripts/capture_app.py": "b26a000dfafb4a904281752dc0d452c1a5e903c9143e19c1c58ee2c0c0ffb611"
+  },
+  "fixture": {
+    "name": "validation_demo.xlsx",
+    "sha256": "e658e47cffdd7b0b99bd6de24eceeb584c5f340f2893462b6764bae68abb35e6",
+    "generator": "validation_workbooks.build_sales_workbook",
+    "generatorSha256": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
+    "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
+  },
+  "images": {
+    "app_graph.png": {
+      "caption": "Interactive dependency graph with workbook navigation and selected-cell details",
+      "sha256": "4a96394b7dca0b960d1ffb7d688dd53be60e9a70baf44be6437e5720c3e1a2cd",
+      "pixels": [
+        2880,
+        1800
+      ]
+    },
+    "app_node_documented.png": {
+      "caption": "English node documentation in the full detail panel, with separate input and output token counts",
+      "sha256": "75b44a748f9ab6cc89ce55d90ff1861a0af9e8edbf34eb0751d31036b9de3b32",
+      "pixels": [
+        2880,
+        1800
+      ]
+    },
+    "app_captures.png": {
+      "caption": "Sheet capture gallery and the selected full-resolution image",
+      "sha256": "c11e01e8fb5ccf01b177538955650091aa2faa767f381e5f164117f6679bdd32",
+      "pixels": [
+        2880,
+        1800
+      ]
+    },
+    "app_import.png": {
+      "caption": "Accessible main-workbook and reference-file selection",
+      "sha256": "c643b79b0e3ebc623bf68c7f5d882f24e942b5b5c39673e5ed2d1e7a8e399078",
+      "pixels": [
+        2880,
+        1800
+      ]
+    }
+  },
+  "document": {
+    "taskId": "0ab9ac403a514e23b643b1ef4d2dfc5e",
+    "nodeId": "Summary!C5",
+    "language": "en",
+    "model": "qwen3.8:linexcel-32k",
+    "usage": {
+      "inputTokens": 1949,
+      "outputTokens": 1283,
+      "totalTokens": 3232,
+      "estimated": false
+    },
+    "markdownSha256": "8b4e5a8df544bee2bacb366f20b9884f9b37c645669815d7b9f6f82c5ce3ab31"
+  },
+  "capture": {
+    "taskId": "2a9f506ea3dc45c78601222835e6f00d",
+    "imageCount": 3
+  },
+  "modelRequestsDuringCapture": 0
+}

@@ -24,6 +24,12 @@ from xml.sax.saxutils import unescape
 import formualizer as fz
 
 from linexcel.decompose import SCRATCH_SHEET
+from linexcel.excel_compat import (
+    CompatibleWorkbook,
+    read_name_bindings,
+    register_excel_functions,
+    rewrite_formula,
+)
 from linexcel.limits import limit_or_default
 from linexcel.loader import MAX_CELLS_PER_SHEET, _detect_epoch_1904
 from linexcel.progress import Reporter
@@ -52,10 +58,12 @@ _SHEET_QUALIFIER_RE = re.compile(r"'((?:[^']|'')+)'!|(?<![#\w.$])([A-Za-z_][\w.]
 
 #: A cell element and its body. ``<c>`` never nests another ``<c>``, so the
 #: lazy ``.*?</c>`` is safe; self-closing ``<c/>`` elements carry no formula.
-_CELL_RE = re.compile(rb'<c\b[^>]*\br="([A-Z]{1,3})(\d+)"[^>]*(?<!/)>(.*?)</c>', re.S)
+_CELL_RE = re.compile(
+    rb'<(?:\w+:)?c\b[^>]*\br="([A-Z]{1,3})(\d+)"[^>]*(?<!/)>(.*?)</(?:\w+:)?c>', re.S
+)
 #: The ``<f>`` inside a cell body: either ``<f …/>`` (a shared-formula slave)
 #: or ``<f …>text</f>``.
-_F_RE = re.compile(rb"<f\b([^>]*?)(?:/>|>(.*?)</f>)", re.S)
+_F_RE = re.compile(rb"<(?:\w+:)?f\b([^>]*?)(?:/>|>(.*?)</(?:\w+:)?f>)", re.S)
 #: The shared-formula index, ``si="3"``.
 _SI_RE = re.compile(rb'\bsi="(\d+)"')
 _XML_ENTITIES = {"&quot;": '"', "&apos;": "'"}
@@ -122,8 +130,90 @@ def _open_workbook(data: bytes, parallel: bool):
     workbook = fz.Workbook.from_bytes(
         data, config=fz.WorkbookConfig(eval_config=eval_config)
     )
+    register_excel_functions(workbook, eval_config.date_system)
     _register_legacy_normal_functions(workbook, eval_config.date_system)
-    return workbook
+    compatible = CompatibleWorkbook(workbook, read_name_bindings(data))
+    for sheet, row, col, _source_formula in _iter_formulas_xml(data):
+        # Shared slaves must use the importer's translated formula, not their
+        # master's unshifted package text.
+        formula = workbook.get_formula(sheet, row, col)
+        if formula:
+            rewritten = rewrite_formula(formula, sheet, compatible.names)
+            if rewritten != formula:
+                workbook.set_formula(sheet, row, col, rewritten)
+                compatible.originals[(sheet, row, col)] = formula
+    _restore_empty_text_inputs(compatible, data)
+    return compatible
+
+
+def _restore_empty_text_inputs(workbook, data: bytes) -> None:
+    """Preserve source strings the importer turns into blanks (including spaces)."""
+    from linexcel.loader import _parse_sheet_targets
+
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+
+        def string_value(element):
+            return "".join(
+                text.text or ""
+                for text in element.findall("{*}t") + element.findall("{*}r/{*}t")
+            )
+
+        shared = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            shared = [
+                string_value(item)
+                for item in ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            ]
+        paths = _parse_sheet_targets(
+            archive.read("xl/workbook.xml").decode("utf-8"),
+            archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+        )
+        for sheet, path in paths.items():
+            if sheet not in workbook.sheet_names:
+                continue
+            for _, cell in ElementTree.iterparse(
+                io.BytesIO(archive.read(path)), events=("end",)
+            ):
+                if cell.tag.rsplit("}", 1)[-1] != "c":
+                    continue
+                if cell.get("t", "n") == "n" and cell.find("{*}f") is None:
+                    # Importing formatted serial 60 as Python 1900-02-28 loses
+                    # Excel's fictitious leap day. Source numeric values are
+                    # authoritative inputs, never saved formula results.
+                    raw = cell.findtext("{*}v")
+                    rect = parse_ref(cell.get("r", ""))
+                    if raw is not None and rect is not None:
+                        try:
+                            number = float(raw)
+                        except ValueError:
+                            number = float("nan")
+                        if (
+                            math.isfinite(number)
+                            and workbook.get_value(sheet, rect.r1, rect.c1) != number
+                        ):
+                            workbook.set_value(sheet, rect.r1, rect.c1, number)
+                if (
+                    cell.get("t") in {"inlineStr", "str", "s"}
+                    and cell.find("{*}f") is None
+                ):
+                    raw = cell.findtext("{*}v", "")
+                    if cell.get("t") == "inlineStr":
+                        inline = cell.find("{*}is")
+                        value = "" if inline is None else string_value(inline)
+                    elif cell.get("t") == "s":
+                        try:
+                            value = shared[int(raw)]
+                        except (ValueError, IndexError):
+                            continue
+                    else:
+                        value = raw
+                    rect = parse_ref(cell.get("r", ""))
+                    if (
+                        rect is not None
+                        and workbook.get_value(sheet, rect.r1, rect.c1) != value
+                    ):
+                        workbook.set_value(sheet, rect.r1, rect.c1, value)
+                cell.clear()
 
 
 def _register_legacy_normal_functions(workbook, date_system: str) -> None:
@@ -791,7 +881,10 @@ def _iter_formulas_xml(data: bytes):
                     sheet_xml = zf.read(zpath)
                 except KeyError:
                     continue
-                if b"<f" not in sheet_xml:
+                if (
+                    b"<f" not in sheet_xml
+                    and re.search(rb"<\w+:f\b", sheet_xml) is None
+                ):
                     continue
                 shared: dict[bytes, bytes] = {}
                 for cell in _CELL_RE.finditer(sheet_xml):

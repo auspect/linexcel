@@ -40,6 +40,12 @@ ERROR_KIND_TEXT = {
     "Calc": "#CALC!",
 }
 EXCEL_ERRORS = frozenset(ERROR_KIND_TEXT.values())
+
+
+class SpreadsheetError(str):
+    """Error text with its source type retained across external-workbook reads."""
+
+
 #: Error kinds that are *not* a cell value: the engine reporting that it could
 #: not compute, rather than a result. ``NImpl`` is a function or operator it does
 #: not implement — the range intersection in ``=SUM(D2:D10 D5:D20)``, say — and
@@ -64,7 +70,7 @@ def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
             return None
         base = EXCEL_EPOCH_1904
     else:
-        if days < 1 or days == 60:
+        if days < 1 or 60 <= days < 61:
             return None
         base = EPOCH_EARLY_1900 if days < 60 else EXCEL_EPOCH_1900
     try:
@@ -157,6 +163,10 @@ def _error_kind(value: Any) -> str | None:
     of a spreadsheet recognises — hence every path out of the engine going
     through here first.
     """
+    if isinstance(value, SpreadsheetError):
+        return next(
+            (kind for kind, text in ERROR_KIND_TEXT.items() if text == value), ""
+        )
     if isinstance(value, dict) and value.get("type") == "Error":
         kind = value.get("kind")
         return kind if isinstance(kind, str) else ""
@@ -302,7 +312,14 @@ def _separators_only(left: str, right: str) -> bool:
     )
 
 
-def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str:
+def readings_agree(
+    recalculated: Any,
+    stored: Any,
+    date_text: str | None,
+    *,
+    recalculated_is_error: bool | None = None,
+    stored_is_error: bool | None = None,
+) -> str:
     """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
 
     One rule, in one place. The report used to hold two: Python compared
@@ -316,6 +333,12 @@ def readings_agree(recalculated: Any, stored: Any, date_text: str | None) -> str
     with the separators of whatever saved the file. Both readings are still
     shown; only the verdict softens.
     """
+    if (
+        recalculated_is_error is not None
+        and stored_is_error is not None
+        and recalculated_is_error != stored_is_error
+    ):
+        return "differ"
     time_agreement = _time_agreement(recalculated, stored, date_text)
     if time_agreement is not None:
         return time_agreement

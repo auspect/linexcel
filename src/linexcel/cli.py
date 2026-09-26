@@ -26,6 +26,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    serve = sub.add_parser("serve", help="Start the local lazy web application.")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--mount-path", default="")
+    serve.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
+    serve.add_argument("--workers", type=int, default=2)
+    serve.add_argument(
+        "--memory-mb",
+        type=int,
+        default=2048,
+        help="Aggregate worker memory admission budget in MiB.",
+    )
+    serve.add_argument("--retention-days", type=int, default=7)
+    serve.add_argument(
+        "--ai", action="store_true", help="Enable explicit AI documentation actions."
+    )
+    serve.add_argument("--ai-base-url", default="http://localhost:11434/v1")
+    serve.add_argument("--ai-model", default="qwen3.8")
+    serve.add_argument("--ai-vision-model", default=None)
+    serve.add_argument("--ai-token-budget", type=int, default=16000)
+
     analyze = sub.add_parser(
         "analyze",
         help="Analyze a workbook and write a standalone HTML viewer.",
@@ -106,6 +126,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2048,
         help="Isolated worker memory limit in MiB (default 2048).",
+    )
+    analyze.add_argument(
+        "--memory-retries",
+        type=int,
+        choices=(0, 1, 2),
+        default=2,
+        help="After memory exhaustion, attempt a bounded source-only report "
+        "without recalculation (default 2 attempts, shared time/memory budgets; "
+        "0 disables).",
     )
     analyze.add_argument(
         "--target",
@@ -336,7 +365,9 @@ def _run_analyze(args: argparse.Namespace) -> int:
         step_seconds=args.time_budget,
         targets=args.target,
         execution=ExecutionPolicy(
-            seconds=args.analysis_seconds, memory_mb=args.memory_mb
+            seconds=args.analysis_seconds,
+            memory_mb=args.memory_mb,
+            memory_retries=args.memory_retries,
         ),
     )
     execution = result.graph.get("meta", {}).get("execution", {})
@@ -468,6 +499,10 @@ def _run_analyze(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        if args.command == "serve":
+            from linexcel.web import serve
+
+            return serve(args)
         return _run_analyze(args)
     except KeyboardInterrupt:
         return 130

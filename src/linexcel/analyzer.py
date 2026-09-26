@@ -234,11 +234,25 @@ def analyze_workbook(
             resolve_books(
                 externals, Path(refs_dir), warnings, max_dense_cells=max_dense_cells
             )
+    # Keep advice available if native evaluation aborts before the resolver
+    # builds its detailed external-workbook warning. Declarations alone do
+    # not prove that a link is still used or that formula caches are missing.
+    early_warnings = []
+    if externals and refs_dir is None:
+        names = sorted({book.name for book in externals.values() if book.name})
+        early_warnings.append(
+            f"This workbook declares {len(externals)} external workbook link(s)"
+            f" ({', '.join(names[:10])}{', ...' if len(names) > 10 else ''}). "
+            "The referenced files were not supplied. Pass refs_dir= "
+            "(CLI: --refs-dir DIR) to read them; otherwise only stored values, "
+            "where available, can be used. Declared links may be obsolete."
+        )
     _v("structure", _t)
     reporter.checkpoint(
         "structure",
         {
             "sheets": list(sheet_dims),
+            "warnings": warnings + early_warnings,
             "sourceEvidence": {
                 "sheetDimensions": {
                     sheet: {"rows": size[0], "columns": size[1], "scope": "declared"}
@@ -258,7 +272,7 @@ def analyze_workbook(
         max_cells_per_sheet=max_cells_per_sheet,
         max_dense_cells=max_dense_cells,
     )
-    reporter.checkpoint("cached values")
+    reporter.checkpoint("cached values", {"warnings": warnings + early_warnings})
 
     # --- 2. computation engine -------------------------------------------
     session = boot_engine(

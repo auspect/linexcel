@@ -664,6 +664,27 @@ def test_interrupted_empty_report_notice_persists_across_tabs(
 
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_source_recovery_notice_is_visible_across_tabs(report, width, height):
+    graph = rich_graph()
+    graph["meta"]["execution"] = {
+        "status": "memory_limit",
+        "phase": "engine evaluation",
+        "recovery": {"status": "completed", "mode": "source_only"},
+    }
+    page, errors = report(graph, width=width, height=height, language="fr")
+    for tab in ("graph", "sheets", "overview"):
+        page.click(f"#lin-tab-{tab}")
+        notice = page.locator("#lin-execution-notice")
+        assert notice.is_visible()
+        assert "Inventaire partiel" in notice.inner_text()
+        assert "sans recalcul ni graphe de dépendances" in notice.inner_text()
+        box = notice.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= width
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 def test_all_rich_tabs_and_search_navigation(report, width, height):
     page, errors = report(rich_graph(), width=width, height=height)
     page.click("#lin-tab-overview")

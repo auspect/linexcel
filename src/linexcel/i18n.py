@@ -104,6 +104,10 @@ AI_VALIDATION_NOTICES = {
 #: placeholders are substituted client-side and must be preserved verbatim.
 UI_STRINGS: dict[str, dict[str, str]] = {
     "en": {
+        "execution_source_recovery": (
+            "Partial source inventory: stored values only, "
+            "no recalculation or dependency graph."
+        ),
         "coverage_limit": "These counts do not certify complete workbook analysis.",
         "execution_interrupted": (
             "Analysis interrupted: {status} · {phase}. Results are incomplete."
@@ -308,6 +312,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "fr": {
+        "execution_source_recovery": (
+            "Inventaire partiel : valeurs enregistrées uniquement, "
+            "sans recalcul ni graphe de dépendances."
+        ),
         "coverage_limit": (
             "Ces comptes ne garantissent pas une analyse complète du classeur."
         ),
@@ -519,6 +527,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "es": {
+        "execution_source_recovery": (
+            "Inventario parcial: solo valores guardados, "
+            "sin recálculo ni grafo de dependencias."
+        ),
         "coverage_limit": (
             "Estos recuentos no garantizan un análisis completo del libro."
         ),
@@ -729,6 +741,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "de": {
+        "execution_source_recovery": (
+            "Teilinventar: nur gespeicherte Werte, "
+            "keine Neuberechnung und kein Abhängigkeitsgraph."
+        ),
         "coverage_limit": (
             "Diese Zahlen bestätigen keine vollständige Analyse der Arbeitsmappe."
         ),
@@ -944,6 +960,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "it": {
+        "execution_source_recovery": (
+            "Inventario parziale: solo valori salvati, "
+            "senza ricalcolo né grafo delle dipendenze."
+        ),
         "coverage_limit": (
             "Questi conteggi non garantiscono un’analisi completa della cartella."
         ),
@@ -1153,6 +1173,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "pt": {
+        "execution_source_recovery": (
+            "Inventário parcial: apenas valores guardados, "
+            "sem recálculo nem grafo de dependências."
+        ),
         "coverage_limit": (
             "Estas contagens não garantem uma análise completa da pasta de trabalho."
         ),
@@ -1360,6 +1384,10 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "nl": {
+        "execution_source_recovery": (
+            "Gedeeltelijke inventaris: alleen opgeslagen waarden, "
+            "geen herberekening of afhankelijkheidsgraaf."
+        ),
         "coverage_limit": (
             "Deze aantallen garanderen geen volledige analyse van de werkmap."
         ),
@@ -1571,6 +1599,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "ja": {
+        "execution_source_recovery": (
+            "部分的な一覧：保存済みの値のみ。再計算と依存関係グラフはありません。"
+        ),
         "coverage_limit": "これらの件数はブック全体の分析完了を保証しません。",
         "execution_interrupted": "分析中断：{status} · {phase}。結果は不完全です。",
         "execution_timed_out": "制限時間",
@@ -1767,6 +1798,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "zh": {
+        "execution_source_recovery": (
+            "部分清单：仅包含已保存的值，未经重新计算，也没有依赖关系图。"
+        ),
         "coverage_limit": "这些计数不能证明工作簿已被完整分析。",
         "execution_interrupted": "分析中断：{status} · {phase}。结果不完整。",
         "execution_timed_out": "时间限制",
