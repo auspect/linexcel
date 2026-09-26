@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] — 2026-09-26
+
+### Changed
+
+- Give the graph a wide, adjustable reader with **Linexcel calculation** first
+  and **AI documentation** in its own tab. Keep long documents inside a bounded
+  scrolling panel and preserve reading position, keyboard focus and graph view
+  when calculation results update. Stack the reader below the graph on narrow
+  screens.
+- Show saved-file values, targeted calculation results and dependency-cell
+  intermediates together. Keep unavailable and volatile results explicit; these
+  snapshots are not a trace of executed branches or subexpression evaluations.
+  Put deterministic evidence before optional AI documentation in the full card.
+- Refresh the English application screenshots to show both graph reader tabs.
+- Preserve intermediate text values verbatim when changing the interface
+  language; only their surrounding labels are translated.
+
 ## [1.11.0] — 2026-09-26
 
 ### Added

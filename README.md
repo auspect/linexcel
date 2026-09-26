@@ -48,6 +48,14 @@ interface is HTML, CSS and JavaScript, with Cytoscape.js for the graph; it does
 not run Python in the browser. Choose English or French in the interface, or
 open `/?lang=en`. This choice is independent of the AI documentation language.
 
+The graph opens **Linexcel calculation** first: compare the value saved in the
+file with the targeted result, then inspect intermediate dependency-cell values.
+These are engine snapshots, not a trace of executed branches or subexpressions.
+The separate **AI documentation** tab shares the graph's wide, adjustable reader.
+Long documents scroll inside the panel; on narrow screens it sits below the graph.
+
+![Graph with a separate AI documentation reader](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
+
 ![Selected node with AI documentation and separate token counts](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
 
 The interface provides sheets, a selected-node graph neighbourhood, dependency
