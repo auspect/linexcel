@@ -134,7 +134,10 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
         for name in ["nodes", "graph", "sheets", "captures", "tasks", "diagnostics"]:
             page.locator(f"[data-tab='{name}']").click()
             assert page.locator(f"#view-{name}").is_visible()
-            assert page.locator("[role=tabpanel]:visible").count() == 1
+            assert (
+                page.locator("#workspace-content > [role=tabpanel]:visible").count()
+                == 1
+            )
             assert page.evaluate(
                 "document.documentElement.scrollWidth <= window.innerWidth"
             )
@@ -732,9 +735,8 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
     try:
         page.goto("http://localhost/mounted/")
         picker = page.locator('[data-file-pick="workbook"]')
-        picker.focus()
         with page.expect_file_chooser() as event:
-            page.keyboard.press("Enter")
+            picker.press("Enter")
         event.value.set_files(
             {
                 "name": "keyboard.xlsx",
@@ -849,6 +851,186 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         assert page.locator("#diagnostics img").count() == 0
         assert len(page.locator("#diagnostics").inner_text()) < 10000
         assert page.evaluate("window.bad") is None
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert errors == []
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_graph_reader_calculation_first_and_long_document_state(browser, viewport):
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors, requests = [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "reader", "name": "Reader regression"}
+    graph = {
+        "nodes": [
+            {
+                "id": "Sheet!B1",
+                "sheet": "Sheet",
+                "cell": "B1",
+                "kind": "cell",
+                "formula": "=A1+1",
+                "cachedValue": 99,
+                "valueSource": "saved_cache",
+            },
+            {
+                "id": "Sheet!A1",
+                "sheet": "Sheet",
+                "cell": "A1",
+                "kind": "input",
+                "value": 2,
+                "valueSource": "input",
+            },
+        ],
+        "edges": [{"source": "Sheet!A1", "target": "Sheet!B1"}],
+        "meta": {"sheets": ["Sheet"]},
+    }
+    result = {
+        "status": "completed",
+        "value": 3,
+        "comparison": "different",
+        "steps": [
+            {
+                "nodeId": "Sheet!B1",
+                "formula": "=A1+1",
+                "evaluationStatus": "calculated",
+                "calculatedValue": 3,
+                "cachedValue": 99,
+                "comparison": "different",
+                "dependencies": ["Sheet!A1"],
+            },
+            {
+                "nodeId": "Sheet!A1",
+                "evaluationStatus": "input",
+                "cachedValue": 2,
+                "valueSource": "input",
+                "dependencies": [],
+            },
+        ],
+    }
+    tasks = [
+        {
+            "id": "calculated",
+            "operation": "evaluate",
+            "nodeId": "Sheet!B1",
+            "status": "succeeded",
+            "result": result,
+        },
+        {
+            "id": "documented",
+            "operation": "document",
+            "nodeId": "Sheet!B1",
+            "status": "succeeded",
+            "options": {"language": "fr"},
+            "result": {
+                "markdown": "\n\n".join(
+                    f"## Section {i}\n"
+                    "A long explanation of the calculation and its evidence."
+                    for i in range(80)
+                ),
+                "language": "fr",
+                "model": "test",
+                "usage": {"inputTokens": 20, "outputTokens": 40},
+            },
+        },
+    ]
+
+    def handle(route):
+        path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
+        if not path:
+            route.fulfill(
+                body=APP.read_text(encoding="utf-8"), content_type="text/html"
+            )
+            return
+        if path == "assets/cytoscape.min.js":
+            route.fulfill(
+                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
+                content_type="application/javascript",
+            )
+            return
+        if path == "api/projects":
+            data = {"projects": [project]}
+        elif path == "api/projects/reader":
+            data = {"project": project, "graph": graph, "tasks": tasks}
+        elif path == "api/projects/reader/tasks":
+            requests.append(route.request.post_data_json)
+            data = {"task": tasks[0]}
+        else:
+            data = {}
+        route.fulfill(body=json.dumps(data), content_type="application/json")
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/?lang=en")
+        page.locator('[data-project="reader"]').click()
+        page.locator("#tab-graph").click()
+        calculation = page.locator("#graph-panel-calculation")
+        assert calculation.is_visible()
+        assert "AI" not in calculation.inner_text()
+        assert "99" in calculation.inner_text() and "3" in calculation.inner_text()
+        assert "Differs from the cache" in calculation.inner_text()
+        assert "Sheet!A1" in page.locator("#graph-calculation-steps").inner_text()
+        assert page.locator("#graph-calculation-steps .step-card").count() == 2
+        assert "Input data" in page.locator("#graph-calculation-steps").inner_text()
+        # UI labels translate, but an engine string that happens to match one
+        # must remain byte-for-byte identical to the workbook result.
+        result["steps"][0]["calculatedValue"] = "Formule"
+        page.locator("#graph-recalculate").click()
+        page.locator("#graph-calculation-steps [data-no-i18n]").get_by_text(
+            "Formule", exact=True
+        ).wait_for()
+        camera = page.locator("#graph-canvas").evaluate(
+            "el => ({zoom:el._cy.zoom(), pan:el._cy.pan()})"
+        )
+        size = page.locator("#graph-preview").bounding_box()
+        page.locator("#graph-tab-calculation").focus()
+        page.keyboard.press("ArrowRight")
+        assert page.locator("#graph-tab-ai").get_attribute("aria-selected") == "true"
+        reader = page.locator("#graph-panel-ai")
+        assert reader.is_visible() and calculation.is_hidden()
+        assert page.locator("#graph-preview").bounding_box()["height"] == size["height"]
+        assert reader.evaluate("el => el.scrollHeight > el.clientHeight * 3")
+        reader.evaluate("el => el.scrollTop = 500")
+        page.locator("#graph-tab-ai").press("Home")
+        page.locator("#graph-tab-calculation").press("End")
+        assert reader.evaluate("el => el.scrollTop") == 500
+        # A calculation task completes while the user is reading another panel.
+        # Its normal render cycle must preserve the active tab, scroll and focus.
+        page.locator("#graph-recalculate").evaluate("el => el.click()")
+        page.wait_for_function(
+            "document.querySelector('#graph-recalculate').disabled === false"
+        )
+        assert page.locator("#graph-tab-ai").get_attribute("aria-selected") == "true"
+        assert reader.evaluate("el => el.scrollTop") == 500
+        assert page.locator("#graph-tab-ai").evaluate(
+            "el => el === document.activeElement"
+        )
+        assert (
+            page.locator("#graph-canvas").evaluate(
+                "el => ({zoom:el._cy.zoom(), pan:el._cy.pan()})"
+            )
+            == camera
+        )
+        if viewport[0] > 1100:
+            before = page.locator("#graph-preview").bounding_box()["width"]
+            page.locator("#graph-reader-width").focus()
+            page.keyboard.press("ArrowRight")
+            assert page.locator("#graph-preview").bounding_box()["width"] > before
+            assert (
+                page.locator("#graph-canvas").evaluate("el => el._cy.zoom()")
+                == camera["zoom"]
+            )
+        assert requests and all(r["operation"] == "evaluate" for r in requests)
+        page.locator("#graph-search").fill("Sheet!A1")
+        page.locator('#graph-results [data-related="Sheet!A1"]').click()
+        assert calculation.is_visible() and reader.is_hidden()
+        assert (
+            page.locator("#graph-tab-calculation").get_attribute("aria-selected")
+            == "true"
+        )
+        assert calculation.evaluate("el => el.scrollTop") == 0
+        assert "99" not in calculation.inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert errors == []
     finally:
@@ -985,6 +1167,16 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         page.locator("#task-list").get_by_text("Whole workbook", exact=True).wait_for()
         assert "Classeur entier" not in page.locator("#task-list").inner_text()
         page.get_by_role("tab", name="Graph", exact=True).click()
+        assert (
+            page.get_by_role("tab", name="Linexcel calculation").get_attribute(
+                "aria-selected"
+            )
+            == "true"
+        )
+        assert page.locator("#graph-panel-calculation").is_visible()
+        assert "AI" not in page.locator("#graph-panel-calculation").inner_text()
+        assert page.locator("#graph-ai").is_hidden()
+        page.get_by_role("tab", name="AI documentation", exact=True).click()
         page.locator("#graph-ai .ai-result").wait_for()
         assert (
             page.locator('#graph-sheet option[value="Feuilles"]').inner_text()
@@ -999,6 +1191,7 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert "Model-reported counts" in usage
         saved["result"]["usage"] = {"outputTokens": 7, "estimated": True}
         page.locator('[data-project="english"]').click()
+        page.get_by_role("tab", name="AI documentation", exact=True).click()
         page.locator("#graph-ai .token-usage .badge").get_by_text(
             "Estimated"
         ).wait_for()
@@ -1051,7 +1244,10 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         ]:
             page.locator(f"#tab-{tab}").click()
             page.get_by_role("heading", name=title, exact=True).wait_for()
-            assert page.locator("[role=tabpanel]:visible").count() == 1
+            assert (
+                page.locator("#workspace-content > [role=tabpanel]:visible").count()
+                == 1
+            )
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert errors == []
     finally:

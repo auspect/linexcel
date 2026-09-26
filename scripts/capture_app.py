@@ -52,7 +52,8 @@ SOURCES = (
     "scripts/capture_app.py",
 )
 SHOTS = {
-    "app_graph.png": "Interactive dependency graph with workbook navigation and selected-cell details",
+    "app_graph.png": "Interactive dependency graph with deterministic calculation and saved-value comparison",
+    "app_graph_documented.png": "Wide graph reader with a separate English AI documentation tab",
     "app_node_documented.png": "English node documentation in the full detail panel, with separate input and output token counts",
     "app_captures.png": "Sheet capture gallery and the selected full-resolution image",
     "app_import.png": "Accessible main-workbook and reference-file selection",
@@ -398,6 +399,7 @@ def capture(args) -> int:
                         and response.url.endswith("/tasks")
                     )
                 ):
+                    page.locator("#graph-tab-ai").click()
                     page.locator("#graph-ai [data-ai-start]").click()
                 data = wait_tasks(page, base, project, args.timeout)
                 document = english_document(data)
@@ -484,8 +486,7 @@ def capture(args) -> int:
                 )
             ):
                 page.locator(f'#graph-results [data-related="{NODE}"]').click()
-            page.locator("#graph-ai .ai-result").wait_for()
-            page.locator("#graph-ai .token-usage").wait_for()
+            page.locator("#graph-panel-calculation").wait_for()
             require_english(page)
             output.mkdir(parents=True, exist_ok=True)
 
@@ -499,7 +500,11 @@ def capture(args) -> int:
                     "pixels": list(png_dimensions(path)),
                 }
 
-            shot("app_graph.png", "#workspace-content")
+            shot("app_graph.png", ".graph-investigation", 70)
+            page.locator("#graph-tab-ai").click()
+            page.locator("#graph-ai .ai-result").wait_for()
+            page.locator("#graph-ai .token-usage").wait_for()
+            shot("app_graph_documented.png", ".graph-investigation", 70)
             page.locator("#graph-full-detail").click()
             shot("app_node_documented.png", "#node-ai", 80)
             usage = page.locator("#node-ai .token-usage").bounding_box()
