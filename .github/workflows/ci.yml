@@ -86,7 +86,9 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --extra screenshots
       - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest tests/test_viewer_browser.py tests/test_app_browser.py -v
+      - run: >
+          uv run pytest tests/test_viewer_browser.py tests/test_app_browser.py
+          tests/test_app_large_browser.py -v
 
   build:
     runs-on: ubuntu-latest

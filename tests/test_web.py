@@ -54,7 +54,7 @@ def wait(store, task_id):
         with store.lock:
             task = store.tasks[task_id]
             if task["status"] in {"succeeded", "failed", "cancelled"}:
-                return task.copy()
+                return store.get_task(task["owner"], task_id)
         time.sleep(0.02)
     raise AssertionError("Task did not terminate")
 
@@ -112,7 +112,15 @@ def test_full_import_evaluate_reconnect_export_and_delete(app):
     assert forced_id != task_id
     assert wait(app.store, forced_id)["result"]["value"] == 42
     _, body, _ = request(app, "GET", f"/api/projects/{project}/export")
-    assert json.loads(body)["graph"] == graph
+    exported = json.loads(body)
+    assert exported["export"]["scope"] == "complete"
+    assert exported["graph"]["nodes"] == graph["nodes"]
+    assert exported["graph"]["edges"] == graph["edges"]
+    assert exported["graph"]["meta"] == graph["meta"]
+    assert (
+        next(t for t in exported["tasks"] if t["id"] == task_id)["result"]["value"]
+        == 42
+    )
     assert request(app, "DELETE", f"/api/projects/{project}")[0] == 200
     assert request(app, "GET", f"/api/tasks/{task_id}")[0] == 404
 
@@ -156,8 +164,8 @@ def test_restart_reuses_latest_calculation_regardless_of_directory_order(
 
     original_glob = Path.glob
 
-    def newest_files_first(directory, pattern):
-        paths = list(original_glob(directory, pattern))
+    def newest_files_first(directory, pattern, **kwargs):
+        paths = list(original_glob(directory, pattern, **kwargs))
         if pattern == "tasks/*/task.json":
             paths.sort(
                 key=lambda path: json.loads(path.read_text("utf-8"))["createdAt"],

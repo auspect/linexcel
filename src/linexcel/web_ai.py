@@ -102,7 +102,9 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
                 "source": node.get("valueSource", "unknown"),
             },
             precedents=[_node(n) for n in related[:12]],
-            omittedPrecedents=max(0, len(related) - 12),
+            omittedPrecedents=max(
+                0, len(node.get("dependencies", [])) - min(12, len(related))
+            ),
             latestCalculation=None,
             formulaGroup=_bounded(
                 next(
@@ -122,6 +124,10 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
                 evaluations, key=lambda t: t.get("finishedAt", t.get("createdAt", 0))
             )
             result = latest["result"]
+            dependency_steps = _bounded(result.get("steps", [])[:12], 3000)
+            shown_steps = (
+                len(dependency_steps) if isinstance(dependency_steps, list) else 0
+            )
             common["latestCalculation"] = {
                 "taskId": latest["id"],
                 "finishedAt": latest.get("finishedAt"),
@@ -138,8 +144,17 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
                         "diagnostics",
                     )
                 },
-                "dependencySteps": _bounded(result.get("steps", [])[:12], 3000),
-                "omittedSteps": max(0, len(result.get("steps", [])) - 12),
+                "dependencySteps": dependency_steps,
+                "omittedSteps": max(
+                    0,
+                    result.get(
+                        "stepTotal",
+                        result.get("stepsPagination", {}).get(
+                            "total", len(result.get("steps", []))
+                        ),
+                    )
+                    - shown_steps,
+                ),
                 "stepSemantics": result.get("step_semantics"),
             }
     else:
@@ -168,22 +183,30 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
             sheets=_bounded(graph.get("meta", {}).get("sheets", [])),
             sheetDetails=_bounded(graph.get("meta", {}).get("sheetDetails", []), 1800),
             perSheetCounts=_bounded(
-                {
-                    sheet: dict(Counter(n["kind"] for n in group))
-                    for sheet, group in by_sheet.items()
-                },
+                graph.get("meta", {}).get(
+                    "perSheetCounts",
+                    {
+                        sheet: dict(Counter(n["kind"] for n in group))
+                        for sheet, group in by_sheet.items()
+                    },
+                ),
                 1500,
             ),
             patternSummary={
-                "groupCount": len(graph.get("formulaPatterns", [])),
+                "groupCount": graph.get("meta", {}).get(
+                    "formulaPatternCount", len(graph.get("formulaPatterns", []))
+                ),
                 "copiedGroupCount": graph.get("meta", {}).get("copiedPatternCount"),
                 "semantics": _bounded(
                     graph.get("meta", {}).get("patternSemantics"), 1200
                 ),
             },
-            nodeCounts=dict(Counter(n["kind"] for n in nodes)),
+            nodeCounts=graph.get("meta", {}).get(
+                "nodeCounts", dict(Counter(n["kind"] for n in nodes))
+            ),
             sample=selected,
-            omittedNodes=len(nodes) - len(selected),
+            omittedNodes=graph.get("meta", {}).get("nodeCount", len(nodes))
+            - len(selected),
             latestCalculation=None,
             recentCalculations=[
                 {

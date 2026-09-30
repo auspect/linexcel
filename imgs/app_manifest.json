@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "capturedAt": "2026-09-26T18:50:08.288673+00:00",
+  "capturedAt": "2026-09-30T21:36:49.069121+00:00",
   "uiLanguage": "en",
   "documentLanguage": "en",
   "viewport": {
@@ -9,14 +9,14 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "cf53e7ac326ff1fc36b3956ed9e49a95c5e818cc14d8c5904bae16afd1e4a49a",
+    "src/linexcel/assets/app.html": "26bfbed16608dca435f4f6b98c0956a9b526e58bef253fba183a0f467db2fe16",
     "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
     "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
-    "scripts/capture_app.py": "d7364c7804d380540cbf3e820088a544bfa510ddddff7de3453f92b029aada1f"
+    "scripts/capture_app.py": "59b61a5da88b3914cb9fcdb8299452fb562bd1c5797e59f7e707bdd67c6aedb2"
   },
   "fixture": {
     "name": "validation_demo.xlsx",
-    "sha256": "155ecc33a71caa614b1db04d67c2f8431a4a3f17571a2c19d038ca2e7f8f84df",
+    "sha256": "0a4ff63e541a7ee62c42e7a163d01962e2a6b3a94cd6063008aee17b1ad25538",
     "generator": "validation_workbooks.build_sales_workbook",
     "generatorSha256": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
@@ -24,7 +24,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "85d57ac13a5471a3b11c37f3835cdf8b724f1586a14c90ea0ff4188f9c852b38",
+      "sha256": "5d8b64932c241b097f4e06fb18f76546ea80234114c7744627ec3071ef16fc35",
       "pixels": [
         2880,
         1800
@@ -32,7 +32,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with a separate English AI documentation tab",
-      "sha256": "b984f01e2da11ab224133853cc26d40e2bc0cf61e4e69bbf8c65f0df26982046",
+      "sha256": "bb18042471d1e1b4990f1babf861ace222815e8f6994d9e476d13b5829ecdf52",
       "pixels": [
         2880,
         1800
@@ -40,7 +40,7 @@
     },
     "app_node_documented.png": {
       "caption": "English node documentation in the full detail panel, with separate input and output token counts",
-      "sha256": "c7bcc00ed95c5d4b60f5203a6ebb2ecc69068b4299564996ce468ba2743948c8",
+      "sha256": "5111c1a626a021f5ad96ea70b07ca8753b301bf7e2606c774a72756a117503a8",
       "pixels": [
         2880,
         1800
@@ -48,7 +48,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "00eb0aef6d97fc0f0d20e3e6cf9d8c13d50dfbe4674ff7a6295322adb7672b4e",
+      "sha256": "403fcd174b1f56cc5ecaeb8dd5bdaf0844b74badabeddbed5d122680b767664f",
       "pixels": [
         2880,
         1800
@@ -56,7 +56,7 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "87bf09801f34d99222c505475735c8afa7e9e3d1ac9102a459494f02417f3dd3",
+      "sha256": "e8aca5a511c30eb33c04a35fa63cf2d3385e066fb1da7e316070d5d518ba4a70",
       "pixels": [
         2880,
         1800
@@ -64,20 +64,20 @@
     }
   },
   "document": {
-    "taskId": "f9943193c839498ba48856ffab1f9f08",
+    "taskId": "65d4cf7bf02a4cf2b631a637647ef3a6",
     "nodeId": "Summary!C5",
     "language": "en",
-    "model": "qwen3.8:linexcel-32k",
+    "model": "qwen3.8",
     "usage": {
-      "inputTokens": 1976,
-      "outputTokens": 1356,
-      "totalTokens": 3332,
+      "inputTokens": 2043,
+      "outputTokens": 1222,
+      "totalTokens": 3265,
       "estimated": false
     },
-    "markdownSha256": "bf281b15b56b6ab3d281f41645634544419f36e8eba66f857f6339768a48f4dc"
+    "markdownSha256": "b4463f1be7c7aaf80e33c32431ced758f72dfe4f5078cdcce7f9b8e4a6cceaf5"
   },
   "capture": {
-    "taskId": "3fd69048005d40e4af4a4d408b1b44b2",
+    "taskId": "3de51143251e485aa22e149789954588",
     "imageCount": 3
   },
   "modelRequestsDuringCapture": 0

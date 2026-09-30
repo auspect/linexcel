@@ -75,6 +75,21 @@ class FakeProvider:
         return self.text, self.usage
 
 
+def test_omitted_steps_count_includes_sample_dropped_by_character_budget():
+    recent = {
+        "id": "large",
+        "finishedAt": 123,
+        "result": {
+            "stepTotal": 302,
+            "steps": [{"formula": "=" + "1+" * 400 + "1"} for _ in range(12)],
+        },
+    }
+    dossier = evidence(graph(), "S!B1", [recent])
+    calculation = dossier["latestCalculation"]
+    assert calculation["dependencySteps"]["omitted"]
+    assert calculation["omittedSteps"] == 302
+
+
 def test_node_dossier_distinguishes_cache_and_latest_calculation():
     recent = {
         "id": "calc1",

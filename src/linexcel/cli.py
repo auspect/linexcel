@@ -39,6 +39,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--retention-days", type=int, default=7)
     serve.add_argument(
+        "--max-upload-mb",
+        type=int,
+        default=256,
+        help="Maximum combined workbook and reference size in MiB (default: 256).",
+    )
+    serve.add_argument(
+        "--max-storage-mb",
+        type=int,
+        default=2048,
+        help="Disk quota including pending uploads and task outputs in MiB.",
+    )
+    serve.add_argument(
+        "--no-local-import",
+        action="store_true",
+        help="Disable importing workbook paths from the loopback web interface.",
+    )
+    serve.add_argument(
         "--ai", action="store_true", help="Enable explicit AI documentation actions."
     )
     serve.add_argument("--ai-base-url", default="http://localhost:11434/v1")

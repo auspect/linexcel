@@ -388,7 +388,7 @@ def find_pdftoppm() -> str | None:
 
 
 def render_workbook_screenshots(
-    data: bytes,
+    data: bytes | Path,
     filename: str,
     output_dir: str | Path,
     *,
@@ -440,7 +440,10 @@ def render_workbook_screenshots(
         input_path = temp / f"workbook{suffix}"
         pdf_dir = temp / "pdf"
         profile_dir = temp / "profile"
-        input_path.write_bytes(data)
+        if isinstance(data, Path):
+            shutil.copyfile(data, input_path)
+        else:
+            input_path.write_bytes(data)
         pdf_dir.mkdir()
         try:
             subprocess.run(
@@ -507,20 +510,29 @@ def render_workbook_screenshots(
         return _place_pages(pages, target, stem)
 
 
-def _sheet_names(data: bytes) -> list[str]:
+def _sheet_names(data: bytes | Path) -> list[str]:
     """Sheet names in workbook order — the order LibreOffice paginates in.
 
     Hidden sheets and chartsheets included: LibreOffice gives them a page like
     any other, so dropping them here would shift names or lose the mapping.
     """
+    # Rendering only needs workbook metadata. Even read-only openpyxl eagerly
+    # loads shared strings, which may exhaust memory before LibreOffice starts.
     try:
-        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    except Exception:
+        with zipfile.ZipFile(
+            data if isinstance(data, Path) else io.BytesIO(data)
+        ) as package:
+            with package.open("xl/workbook.xml") as source:
+                names = []
+                for _, element in ElementTree.iterparse(source, events=("end",)):
+                    if element.tag.rsplit("}", 1)[-1] == "sheet":
+                        name = element.get("name")
+                        if name:
+                            names.append(name)
+                    element.clear()
+                return names
+    except (OSError, KeyError, zipfile.BadZipFile, ElementTree.ParseError):
         return []
-    try:
-        return workbook.sheetnames
-    finally:
-        workbook.close()
 
 
 def empty_sheet_render_exemptions(data: bytes) -> dict[str, str]:
