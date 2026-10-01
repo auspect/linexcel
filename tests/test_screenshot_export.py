@@ -57,6 +57,29 @@ def test_chartsheet_pages_keep_workbook_order(monkeypatch, tmp_path):
     )
 
 
+def test_sheet_names_read_only_metadata_without_workbook_or_shared_strings(
+    monkeypatch, tmp_path
+):
+    from zipfile import ZipFile
+
+    from linexcel.insights import _sheet_names
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("metadata must not load an openpyxl workbook")
+
+    monkeypatch.setattr("linexcel.insights.load_workbook", forbidden)
+    path = tmp_path / "metadata.xlsx"
+    with ZipFile(path, "w") as package:
+        package.writestr(
+            "xl/workbook.xml",
+            '<workbook><sheets><sheet name="First"/>'
+            '<sheet name="Hidden" state="hidden"/></sheets></workbook>',
+        )
+        package.writestr("xl/sharedStrings.xml", "deliberately unreadable")
+    assert _sheet_names(path) == ["First", "Hidden"]
+    assert _sheet_names(path.read_bytes()) == ["First", "Hidden"]
+
+
 def test_page_names_survive_embedding_with_partial_out_of_order_docs(tmp_path):
     paths = [tmp_path / "finance-01.png", tmp_path / "finance-02.png"]
     for path in paths:

@@ -48,6 +48,44 @@ interface is HTML, CSS and JavaScript, with Cytoscape.js for the graph; it does
 not run Python in the browser. Choose English or French in the interface, or
 open `/?lang=en`. This choice is independent of the AI documentation language.
 
+Large workbooks are indexed once on disk. The interactive path streams sparse
+OOXML records through native ZIP/XML parsers into SQLite (C), without loading an
+openpyxl workbook or a complete Python graph. Formula calculation uses the Rust
+engine. Shared strings and copied-formula memberships stay on disk; formatting
+only cells do not create nodes. The browser requests pages of at most 200 nodes
+and bounded graph neighborhoods. Search covers the disk index, including cells
+outside the current page. Counts describe the full index, and omitted graph
+neighbors remain explicit.
+
+Uploads use resumable 8 MiB chunks, with a 256 MiB combined workbook/reference
+limit by default. No base64 workbook copy is made in the browser. On the local
+launcher, **Open a local path** copies a file directly from the server's disk
+into an immutable project, bypassing browser transfer. `--no-local-import`
+disables this option; it is disabled by default in embedded applications.
+For example, allow more disk space for several large indexed workbooks with:
+
+```Shell
+uv run linexcel serve --max-upload-mb 256 --max-storage-mb 8192
+```
+
+The compressed workbook size does not predict its expanded data or index size.
+Time, worker memory and disk quotas still apply. Errors in a worksheet or formula
+are reported locally; readable sheets remain browsable, and calculations that
+depend on incomplete data are refused. Refreshing an import publishes its new
+index atomically. A failed calculation leaves the index and other results usable.
+Operation history stores results on disk and loads the selected result only.
+Large decompositions have an explicit preview limit and a separate JSON download.
+Large ranges stream their literal inputs from SQLite to the calculation engine;
+formula dependencies and explicit cell references occupy the Python closure.
+Calculation coverage counts
+all selected inputs, while dependency cards keep a declared sample of at most 200
+nodes, including in the export. A separate 20,000 explicitly traversed-node limit
+(excluding literal range members) protects dependency traversal; exceeding it
+refuses the calculation explicitly. Very large calculations can require a higher
+worker memory budget than the default 512 MiB even though browsing stays small.
+Captures are served as individual images with thumbnails, without embedding every
+image in the project response. Rendering remains an explicit, budgeted operation.
+
 The graph opens **Linexcel calculation** first: compare the value saved in the
 file with the targeted result, then inspect intermediate dependency-cell values.
 These are engine snapshots, not a trace of executed branches or subexpressions.
@@ -178,7 +216,7 @@ application = create_app(
     resolve_user=lambda environ: environ.get("my_host.authenticated_user_id"),
     max_workers=2,
     total_memory_mb=2048,
-    max_upload_mb=64,
+    max_upload_mb=256,
     max_storage_mb=2048,
     retention_days=7,
 )
@@ -197,8 +235,9 @@ Use **one application coordinator per data directory** (an exclusive lock
 enforces this). Its shared queue limits worker concurrency and admission by
 the sum of requested memory budgets. Windows Job Objects enforce each worker
 tree's memory cap. On POSIX, the current limit is per-process address space;
-aggregate renderer memory requires host container/cgroup limits. API/JSON
-memory and LibreOffice temporary disk use also require host resource limits.
+aggregate renderer memory requires host container/cgroup limits. Upload reads,
+graph pages and task-result previews are bounded. LibreOffice temporary disk use
+and overall service resources also require host resource limits.
 This first implementation is not a distributed worker pool.
 
 Tasks have their own duration and memory limits, indeterminate running progress,

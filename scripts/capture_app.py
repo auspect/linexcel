@@ -236,6 +236,16 @@ def wait_tasks(page, base: str, project: str, timeout: int) -> dict:
     while time.monotonic() < deadline:
         data = api(page, base, "projects/" + project)
         if not any(t["status"] in ("queued", "running") for t in data.get("tasks", [])):
+            # Project snapshots intentionally contain only task metadata. Load
+            # the two types of evidence needed for these screenshots explicitly.
+            data["tasks"] = [
+                api(page, base, "tasks/" + task["id"])["task"]
+                if task.get("resultAvailable")
+                and task.get("result") is None
+                and task.get("operation") in ("document", "capture")
+                else task
+                for task in data.get("tasks", [])
+            ]
             return data
         page.wait_for_timeout(400)
     raise RuntimeError("Timed out waiting for the selected project's tasks.")
@@ -253,7 +263,7 @@ def english_document(data: dict) -> dict | None:
             if task.get("operation") == "document"
             and task.get("nodeId") == NODE
             and task.get("status") == "succeeded"
-            and task.get("result", {}).get("language") == "en"
+            and (task.get("result") or {}).get("language") == "en"
         ),
         key=task_time,
         reverse=True,
@@ -417,7 +427,7 @@ def capture(args) -> int:
                     for t in data["tasks"]
                     if t["operation"] == "capture"
                     and t["status"] == "succeeded"
-                    and t.get("result", {}).get("screenshots")
+                    and (t.get("result") or {}).get("screenshots")
                 ),
                 key=task_time,
             )
@@ -437,7 +447,7 @@ def capture(args) -> int:
                         for t in data["tasks"]
                         if t["operation"] == "capture"
                         and t["status"] == "succeeded"
-                        and t.get("result", {}).get("screenshots")
+                        and (t.get("result") or {}).get("screenshots")
                     ),
                     key=task_time,
                 )
@@ -505,7 +515,20 @@ def capture(args) -> int:
             page.locator("#graph-ai .ai-result").wait_for()
             page.locator("#graph-ai .token-usage").wait_for()
             shot("app_graph_documented.png", ".graph-investigation", 70)
-            page.locator("#graph-full-detail").click()
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST"
+                    and response.url.endswith("/tasks")
+                )
+            ):
+                page.locator("#graph-full-detail").click()
+            # Lazy neighborhood/result requests can remount the cell details.
+            # Wait before framing; otherwise scroll anchoring moves the shot.
+            page.wait_for_function(
+                "() => document.querySelector('#recalculate')"
+                " && !document.querySelector('#recalculate').disabled"
+            )
+            page.locator("#node-ai .token-usage").wait_for()
             shot("app_node_documented.png", "#node-ai", 80)
             usage = page.locator("#node-ai .token-usage").bounding_box()
             if not usage or usage["y"] < 0 or usage["y"] + usage["height"] > HEIGHT:
@@ -514,7 +537,8 @@ def capture(args) -> int:
                 )
             page.locator("#tab-captures").click()
             page.wait_for_function(
-                "document.querySelector('#capture-selected figure img')?.naturalWidth > 0"
+                "() => document.querySelector('#capture-selected figure img')"
+                "?.naturalWidth > 0"
             )
             expect(page.locator(".capture-thumb")).to_have_count(
                 min(80, len(captured["result"]["screenshots"]))

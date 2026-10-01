@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-10-01
+
+### Added
+
+- Stream resumable, owner-scoped uploads in 8 MiB chunks, defaulting to 256 MiB
+  for the workbook and references. Support direct local-path imports in the
+  loopback launcher, with immutable source copies and an opt-out flag. Bound
+  pending storage, clean up interrupted chunks and restore acknowledged offsets
+  after a server restart.
+- Index the interactive application's sparse OOXML data on disk with SQLite and
+  native ZIP/XML parsing. Avoid whole-workbook openpyxl loading, retain shared
+  strings on disk, skip formatting-only cells and resolve requested dependencies
+  from the existing index. Keep failed-sheet diagnostics and refuse calculations
+  whose inputs are incomplete.
+- Stream literal inputs from large dependency ranges into the Rust engine through
+  a disk-backed, deduplicated selection. Compute complete supported ranges while
+  keeping dependency cards sampled and coverage counts exact.
+
+### Changed
+
+- Serve paginated node searches and bounded graph neighborhoods instead of
+  transferring the whole graph. Keep workbook/sheet counts exact and distinguish
+  incomplete imports and omitted display data. Preserve the last published index
+  when a refresh fails.
+- Keep task results on disk and load them on demand, with bounded dependency
+  previews and streamed JSON downloads. Stream complete project exports without
+  loading all indexed nodes, edges or saved task results into memory.
+  Serve captures and thumbnails separately;
+  read only the selected image for AI documentation. Screenshot metadata no longer
+  loads workbook cells or shared strings through openpyxl.
+- Cache source revision hashes while file metadata is unchanged, avoiding a full
+  source reread for every requested calculation. Preserve Windows long-path support
+  for both SQLite indexes and uploaded project directories.
+- Refresh the English application screenshots and capture tooling for paginated
+  projects, deferred results and separately served captures.
+
 ## [1.11.1] — 2026-09-26
 
 ### Changed

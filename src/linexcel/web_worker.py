@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -15,35 +14,54 @@ def main():
     project = root.parent.parent
     try:
         if request["operation"] == "import":
-            from linexcel.lazy import build_structure
+            from linexcel.lazy_store import build_index
 
-            result = build_structure(project / "workbook.xlsx", project / "references")
+            result = build_index(
+                project / "workbook.xlsx",
+                root / "index.sqlite",
+                project / "references",
+            )
         elif request["operation"] == "evaluate":
             from linexcel.lazy import evaluate_node
 
             result = evaluate_node(
-                project / "workbook.xlsx", request["nodeId"], project / "references"
+                project / "workbook.xlsx",
+                request["nodeId"],
+                project / "references",
+                index_path=project / "index.sqlite",
             )
         elif request["operation"] == "capture":
             from linexcel.insights import render_workbook_screenshots
 
             shots = render_workbook_screenshots(
-                (project / "workbook.xlsx").read_bytes(),
+                project / "workbook.xlsx",
                 "workbook.xlsx",
                 root / "captures",
             )
             mapping = shots if isinstance(shots, dict) else {"Pages imprimées": shots}
+            published = root / "capture-files"
+            published.mkdir()
+            screenshots = []
+            for sheet, paths in mapping.items():
+                for path in paths:
+                    name = path.name
+                    filename = f"{len(screenshots)}.png"
+                    path.replace(published / filename)
+                    shot = {"sheet": sheet, "name": name, "file": filename}
+                    try:
+                        from PIL import Image
+
+                        thumbnail = f"{len(screenshots)}.thumb.png"
+                        with Image.open(published / filename) as image:
+                            image.thumbnail((320, 240))
+                            image.save(published / thumbnail)
+                        shot["thumbnail"] = thumbnail
+                    except Exception:
+                        # The full image remains usable if thumbnail creation fails.
+                        pass
+                    screenshots.append(shot)
             result = {
-                "screenshots": [
-                    {
-                        "sheet": sheet,
-                        "name": path.name,
-                        "data": "data:image/png;base64,"
-                        + base64.b64encode(path.read_bytes()).decode(),
-                    }
-                    for sheet, paths in mapping.items()
-                    for path in paths
-                ],
+                "screenshots": screenshots,
                 "notice": "Rendu LibreOffice, qui peut recalculer "
                 "les valeurs affichées. "
                 "Le fichier source et son cache restent inchangés. Aucune IA.",
