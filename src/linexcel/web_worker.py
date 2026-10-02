@@ -21,6 +21,10 @@ def main():
                 root / "index.sqlite",
                 project / "references",
             )
+        elif request["operation"] == "build_graph":
+            from linexcel.graph_store import build_graph
+
+            result = build_graph(project / "index.sqlite", root / "hierarchy.sqlite")
         elif request["operation"] == "evaluate":
             from linexcel.lazy import evaluate_node
 

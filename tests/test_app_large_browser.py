@@ -504,3 +504,189 @@ def test_pending_result_cannot_evaluate_same_address_in_another_project(browser)
         assert operations == ["projects/second/tasks"]
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_server_hierarchy_and_manual_calculation_are_independent(
+    browser, viewport, tmp_path
+):
+    from openpyxl import Workbook
+
+    from linexcel.graph_store import build_graph, generation, read_view
+    from linexcel.lazy_store import build_index, graph_neighborhood, graph_page
+
+    book = Workbook()
+    book.active.title = "Data"
+    for i in range(1, 205):
+        book.active.cell(i, 1, i)
+    sheet = book.create_sheet("Result")
+    sheet["B1"] = "=Data!A1+Data!A204"
+    sheet["B2"] = "=B1*2"
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors, operations, requests = [], [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "p", "name": "Structure without calculation"}
+    tasks = []
+    fail_view, delay_build = False, False
+
+    def handle(route):
+        if serve_asset(route):
+            return
+        url = urlsplit(route.request.url)
+        path, query = url.path.removeprefix("/mounted/api/"), parse_qs(url.query)
+        requests.append(path)
+        if path == "config":
+            body = {}
+        elif path == "projects":
+            body = {"projects": [project]}
+        elif path == "projects/p":
+            body = {"project": project, "tasks": tasks, "graph": graph_page(index)}
+        elif path == "projects/p/nodes":
+            body = graph_page(index, query=query.get("q", [None])[0])
+        elif path == "projects/p/graph-view":
+            if fail_view:
+                route.fulfill(status=409, json={"message": "Structure modifiée"})
+                return
+            body = read_view(
+                artifact,
+                generation(index),
+                view=int(query.get("view", ["0"])[0]),
+                node_id=query.get("nodeId", [None])[0],
+            )
+        elif path == "projects/p/neighborhood":
+            body = graph_neighborhood(index, query["nodeId"][0])
+        elif path == "projects/p/tasks":
+            request = route.request.post_data_json
+            operations.append(request)
+            task = {
+                "id": str(len(operations)),
+                "operation": request["operation"],
+                "nodeId": request.get("nodeId"),
+                "status": "running"
+                if delay_build and request["operation"] == "build_graph"
+                else "succeeded",
+                "result": {"status": "completed", "value": 205},
+            }
+            tasks.append(task)
+            body = {"task": task}
+        elif path.startswith("tasks/"):
+            task = next(t for t in tasks if t["id"] == path.split("/")[1])
+            if path.endswith("/cancel"):
+                task["status"] = "cancelled"
+            body = {"task": task}
+        else:
+            raise AssertionError(path)
+        route.fulfill(json=body)
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/")
+        page.locator("[data-project='p']").click()
+        # A no-result node search can leave the current page empty before the
+        # hierarchy is built. The workbook graph must still be explorable.
+        page.locator("#search").fill("no-such-cell")
+        page.wait_for_function(
+            "document.querySelectorAll('#node-list [data-node]').length===0"
+        )
+        page.locator("#tab-graph").click()
+        page.locator("#graph-build").click()
+        page.wait_for_function(
+            "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        )
+        assert page.locator("#graph [data-structure-node]").count() == 2
+        assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
+        assert not any(op["operation"] == "evaluate" for op in operations)
+        page.reload()
+        page.locator("[data-project='p']").click()
+        requests.clear()
+        operations.clear()
+        tasks.clear()
+        page.locator("#manual-recalculation").check()
+        page.locator("#tab-graph").click()
+        assert not any("graph-view" in r for r in requests)
+        page.locator("#graph-build").click()
+        page.wait_for_function(
+            "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        )
+        assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
+        assert operations[0]["budget"]["seconds"] == 600
+        assert not any("/structure" in r for r in requests)
+        assert page.locator("#graph-lazy-notice").is_hidden()
+        assert page.locator("#graph-depth").is_disabled()
+        page.evaluate(
+            "document.querySelector('#graph-canvas')._cy.nodes().filter(n=>n.data('label').startsWith('Result')).emit('tap')"
+        )
+        page.wait_for_function(
+            "document.querySelector('#graph-canvas')._cy?.nodes().length===3"
+        )
+        assert (
+            page.locator("#graph-breadcrumbs [aria-current]").inner_text() == "Result"
+        )
+        assert page.evaluate("""() => {
+            const cy=document.querySelector('#graph-canvas')._cy;
+            const boxes=cy.nodes().map(n=>n.boundingBox());
+            for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){
+                const a=boxes[i],b=boxes[j];
+                if(a.x1<b.x2&&a.x2>b.x1&&a.y1<b.y2&&a.y2>b.y1)return false;
+            }return true;
+        }""")
+        page.evaluate("""() => {const cy=document.querySelector('#graph-canvas')._cy;
+            cy.zoom(.8);cy.pan({x:123,y:234});window.savedGraph=cy;
+            cy.nodes().filter(n=>n.data('nodeId')==='Result!B1').emit('tap');} """)
+        page.locator("#graph-preview h3").get_by_text("Result · B1").wait_for()
+        assert len(operations) == 1
+        assert page.evaluate(
+            "document.querySelector('#graph-canvas')._cy===window.savedGraph"
+        )
+        assert page.evaluate("window.savedGraph.zoom()") == 0.8
+        assert page.evaluate("window.savedGraph.pan()") == {"x": 123, "y": 234}
+        page.locator("#graph-recalculate").click()
+        page.wait_for_function(
+            "document.querySelector('#graph-preview').textContent.includes('205')"
+        )
+        assert len(operations) == 2 and operations[-1]["force"] is True
+        assert operations[-1]["budget"]["seconds"] == 120
+        page.locator("#manual-recalculation").uncheck()
+        assert len(operations) == 2
+        page.evaluate(
+            "window.savedGraph.nodes().filter(n=>n.data('nodeId')==='Result!B2').emit('tap')"
+        )
+        page.wait_for_function(
+            "document.querySelector('#graph-preview h3').textContent.includes('B2')"
+        )
+        page.wait_for_function("!document.querySelector('#graph-recalculate').disabled")
+        assert len(operations) == 3 and operations[-1]["force"] is False
+        page.locator("#manual-recalculation").check()
+        for name in ["nodes", "sheets", "captures", "tasks", "diagnostics"]:
+            page.locator(f"#tab-{name}").click()
+            assert page.locator("#graph-build-status").is_hidden()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.locator("#tab-graph").click()
+        page.locator("#graph-neighborhood").click()
+        assert page.locator("#graph-lazy-notice").is_visible()
+        page.reload()
+        page.locator("[data-project='p']").click()
+        assert page.locator("#manual-recalculation").is_checked()
+        page.locator("#tab-graph").click()
+        fail_view = True
+        page.locator("#graph-build").click()
+        page.locator("#graph-build-status").get_by_text("Structure modifiée").wait_for()
+        assert page.locator("#graph-build").is_enabled()
+        fail_view, delay_build = False, True
+        page.locator("#graph-build").click()
+        page.locator("#graph-build-cancel").wait_for()
+        page.reload()
+        page.locator("#tab-graph").click()
+        page.locator("#graph-build-cancel").click()
+        assert page.locator("#graph-build").is_enabled()
+        assert tasks[-1]["status"] == "cancelled"
+        assert page.locator("#graph-neighborhood").is_hidden()
+        assert not errors
+    finally:
+        page.close()

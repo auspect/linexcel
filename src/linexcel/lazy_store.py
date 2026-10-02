@@ -1387,6 +1387,16 @@ def graph_page(
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
         where, args = _filters(sheet, query)
+        # An exact Excel reference uses the unique id index. Substring search
+        # remains available when no exact node matches.
+        if (
+            query
+            and store.db.execute(
+                "SELECT 1 FROM nodes WHERE id=?" + (" AND sheet=?" if sheet else ""),
+                [query, sheet] if sheet else [query],
+            ).fetchone()
+        ):
+            where, args = " WHERE id=?", [query]
         total = store.db.execute("SELECT count(*) FROM nodes" + where, args).fetchone()[
             0
         ]
@@ -1416,6 +1426,45 @@ def graph_page(
                 "limit": limit,
                 "total": total,
                 "hasMore": offset + len(nodes) < total,
+            },
+        }
+
+
+def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> dict:
+    """Page the complete topology without decoding cells or starting an engine.
+
+    Edges are paged independently: induced node-page edges would silently lose
+    dependencies whose endpoints are on different pages. Ranges remain grouped
+    as structural nodes; this does not expand their implicit cell membership.
+    """
+    if part not in {"nodes", "edges"}:
+        raise ValueError("Unknown structure part")
+    offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
+    with WorkbookIndex(index_path) as store:
+        total = store.db.execute(f"SELECT count(*) FROM {part}").fetchone()[0]
+        if part == "nodes":
+            items = [
+                {"id": nid, "kind": kind, "sheet": sheet}
+                for nid, kind, sheet in store.db.execute(
+                    "SELECT id,kind,sheet FROM nodes ORDER BY seq LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+            ]
+        else:
+            items = [
+                {"source": source, "target": target, "kind": "dep"}
+                for source, target in store.db.execute(
+                    "SELECT source,target FROM edges "
+                    "ORDER BY source,target LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+            ]
+        return {
+            part: items,
+            "pagination": {
+                "offset": offset,
+                "total": total,
+                "hasMore": offset + len(items) < total,
             },
         }
 
