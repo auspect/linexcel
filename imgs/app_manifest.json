@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "capturedAt": "2026-10-02T19:39:41.670565+00:00",
+  "capturedAt": "2026-10-02T20:08:58.207615+00:00",
   "uiLanguage": "en",
   "documentLanguage": "en",
   "viewport": {
@@ -9,7 +9,7 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "6f5547ac3b654963f5913ae659e60476a63adf953d24b72d67e082bea69ff2af",
+    "src/linexcel/assets/app.html": "033b5ac0de7be1bb160185de47895f3c28edcce3f557d8520fc5028790d6eeb7",
     "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
     "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
     "scripts/capture_app.py": "59b61a5da88b3914cb9fcdb8299452fb562bd1c5797e59f7e707bdd67c6aedb2"

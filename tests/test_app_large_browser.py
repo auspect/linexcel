@@ -604,6 +604,12 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
         assert not any(op["operation"] == "evaluate" for op in operations)
         page.reload()
         page.locator("[data-project='p']").click()
+        page.locator("#tab-graph").click()
+        page.locator("#graph-search").fill("Data!A4")
+        exact_result = page.locator("#graph-results [data-related]")
+        playwright.expect(exact_result).to_have_count(1)
+        assert exact_result.get_attribute("data-related") == "Data!A4"
+        page.locator("#tab-nodes").click()
         requests.clear()
         operations.clear()
         tasks.clear()

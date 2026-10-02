@@ -136,6 +136,10 @@ Ollama model:
 uv run --extra ai --extra screenshots linexcel serve --ai --ai-model qwen3.8
 ```
 
+`qwen3.8` is currently recommended for documentation and vision. AI validation
+is exploratory: model responses vary between runs and require review against
+the source formulas, values and images.
+
 The host configures the endpoint and text/vision models; browser requests cannot
 override the endpoint or supply API keys. The interface shows the configured
 model and keeps generated explanations separate from source formulas, caches

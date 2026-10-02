@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refresh the English application screenshots for the server-backed graph and
   manual recalculation controls.
 
+### Fixed
+
+- Preserve the case of graph searches sent to the backend so exact cell references
+  use the indexed lookup and exclude cells with longer, matching prefixes.
+
 ## [1.12.0] — 2026-10-01
 
 ### Added
