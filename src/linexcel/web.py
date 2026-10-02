@@ -31,7 +31,14 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
-OPERATIONS = {"import", "evaluate", "capture", "document", "describe_capture"}
+OPERATIONS = {
+    "import",
+    "build_graph",
+    "evaluate",
+    "capture",
+    "document",
+    "describe_capture",
+}
 AI_OPERATIONS = {"document", "describe_capture"}
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 MAX_PREVIEW_STEPS = 200
@@ -165,6 +172,7 @@ class TaskStore:
         for name in (
             "lazy.py",
             "lazy_store.py",
+            "graph_store.py",
             "engine.py",
             "excel_compat.py",
             "values.py",
@@ -199,6 +207,8 @@ class TaskStore:
             for task_path in path.parent.glob("tasks/*/task.json"):
                 task = _read(task_path)
                 if task["status"] not in TERMINAL:
+                    for scratch in task_path.parent.glob("hierarchy.sqlite*"):
+                        scratch.unlink(missing_ok=True)
                     task.update(
                         status="failed",
                         error={
@@ -230,10 +240,13 @@ class TaskStore:
             raise APIError(404, "Classeur introuvable")
         return path
 
-    def budget(self, value: Any) -> dict:
+    def budget(self, value: Any, *, default_seconds: int = 120) -> dict:
         if not isinstance(value, dict):
             raise APIError(400, "Budget invalide")
-        seconds, memory = value.get("seconds", 120), value.get("memoryMb", 512)
+        seconds, memory = (
+            value.get("seconds", default_seconds),
+            value.get("memoryMb", 512),
+        )
         if (
             isinstance(seconds, bool)
             or not isinstance(seconds, (float, int))
@@ -301,7 +314,7 @@ class TaskStore:
         return name, data
 
     def create(self, owner: str, body: dict) -> dict:
-        budget = self.budget(body.get("budget", {}))
+        budget = self.budget(body.get("budget", {}), default_seconds=600)
         workbook = self._file(body.get("workbook"))
         workspace_name = body.get("name") or workbook[0]
         if not isinstance(workspace_name, str) or len(workspace_name) > 200:
@@ -403,7 +416,12 @@ class TaskStore:
 
     def graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
-        from linexcel.lazy_store import graph_neighborhood, graph_page, patterns_page
+        from linexcel.lazy_store import (
+            graph_neighborhood,
+            graph_page,
+            patterns_page,
+            structure_page,
+        )
 
         def value(name: str, default: str = "") -> str:
             values = query.get(name, [default])
@@ -426,6 +444,45 @@ class TaskStore:
                 raise APIError(
                     409, "Actualisez la structure pour activer l’index sur disque"
                 )
+            if kind == "graph-view":
+                from linexcel.graph_store import generation, read_view
+
+                artifact = path / "hierarchy.sqlite"
+                if not artifact.is_file():
+                    raise APIError(409, "Construisez le graphe du classeur")
+                try:
+                    view_id = int(value("view", "0"))
+                except ValueError:
+                    raise APIError(400, "Vue invalide") from None
+                if not -(2**63) <= view_id <= 0:
+                    raise APIError(404, "Vue introuvable")
+                try:
+                    return read_view(
+                        artifact,
+                        generation(index),
+                        view=view_id,
+                        node_id=value("nodeId") or None,
+                    )
+                except KeyError:
+                    raise APIError(404, "Vue introuvable") from None
+                except ValueError:
+                    raise APIError(
+                        409, "Index modifié ; reconstruisez le graphe"
+                    ) from None
+            if kind == "structure":
+                part = value("part", "nodes")
+                if part not in {"nodes", "edges"}:
+                    raise APIError(400, "Partie du graphe invalide")
+                stat = index.stat()
+                snapshot = f"{stat.st_mtime_ns}:{stat.st_ctime_ns}:{stat.st_size}"
+                if value("snapshot") and value("snapshot") != snapshot:
+                    raise APIError(
+                        409, "Structure modifiée ; relancez le graphe complet"
+                    )
+                return {
+                    **structure_page(index, part=part, offset=offset, limit=limit),
+                    "snapshot": snapshot,
+                }
             if kind == "node":
                 node = self._node(path, value("nodeId"))
                 if node is None:
@@ -505,7 +562,9 @@ class TaskStore:
         force: bool = False,
         options: dict | None = None,
     ) -> dict:
-        if operation in AI_OPERATIONS and isinstance(budget, dict):
+        if operation in AI_OPERATIONS | {"import", "build_graph"} and isinstance(
+            budget, dict
+        ):
             budget = {"seconds": 600, **budget}
         budget = self.budget(budget)
         options = {} if options is None else options
@@ -538,6 +597,25 @@ class TaskStore:
         with self.lock:
             path = self.project_path(owner, project_id)
             project = _read(path / "project.json")
+            graph_generation = None
+            if operation in {"import", "build_graph"}:
+                opposite = "build_graph" if operation == "import" else "import"
+                if any(
+                    t["owner"] == owner
+                    and t["projectId"] == project_id
+                    and t["operation"] == opposite
+                    and t["status"] in {"queued", "running"}
+                    for t in self.tasks.values()
+                ):
+                    raise APIError(409, "Import ou construction du graphe en cours")
+            if operation == "build_graph":
+                from linexcel.graph_store import generation
+
+                if not (path / "index.sqlite").is_file():
+                    raise APIError(
+                        409, "Importez le classeur avant de construire le graphe"
+                    )
+                graph_generation = generation(path / "index.sqlite")
             if operation == "import" and self._project_exports.get((owner, project_id)):
                 raise APIError(409, "Un export est en cours ; réessayez après sa fin")
             if self._revision(path) != project["revision"]:
@@ -677,6 +755,12 @@ class TaskStore:
                     and task["revision"] == project["revision"]
                     and task.get("cacheVersion") == self.cache_version
                     and task.get("aiCacheKey") == ai_cache_key
+                    and task.get("graphGeneration") == graph_generation
+                    and (
+                        operation != "build_graph"
+                        or task["status"] != "succeeded"
+                        or (path / "hierarchy.sqlite").is_file()
+                    )
                     and task.get("options", {}) == options
                     and task["status"] in {"queued", "running", "succeeded"}
                     and not (force and task["status"] == "succeeded")
@@ -691,6 +775,7 @@ class TaskStore:
                 "revision": project["revision"],
                 "cacheVersion": self.cache_version,
                 "aiCacheKey": ai_cache_key,
+                "graphGeneration": graph_generation,
                 "options": options,
                 "operation": operation,
                 "nodeId": node_id,
@@ -833,6 +918,7 @@ class TaskStore:
                             (project / "graph.json").unlink(missing_ok=True)
                         else:
                             _write(project / "graph.json", payload)
+                        (project / "hierarchy.sqlite").unlink(missing_ok=True)
                         payload = {
                             "nodeCount": payload.get("meta", {}).get(
                                 "nodeCount", len(payload.get("nodes", []))
@@ -844,6 +930,21 @@ class TaskStore:
                                 "diagnostics", []
                             ),
                         }
+                    if task["operation"] == "build_graph":
+                        from linexcel.graph_store import generation
+
+                        project = root.parent.parent
+                        if (
+                            generation(project / "index.sqlite")
+                            != task["graphGeneration"]
+                            or payload.get("generation") != task["graphGeneration"]
+                        ):
+                            raise ValueError(
+                                "Index modifié pendant la construction du graphe"
+                            )
+                        (root / "hierarchy.sqlite").replace(
+                            project / "hierarchy.sqlite"
+                        )
                     self._save_result(root, task, payload)
                     task.update(status="succeeded")
         except Exception as exc:
@@ -865,6 +966,10 @@ class TaskStore:
                         "index.sqlite-journal",
                         "index.sqlite-wal",
                         "index.sqlite-shm",
+                        "hierarchy.sqlite",
+                        "hierarchy.sqlite-journal",
+                        "hierarchy.sqlite-wal",
+                        "hierarchy.sqlite-shm",
                     ):
                         (root / scratch).unlink(missing_ok=True)
                     for scratch in root.glob("index.sqlite.*.building*"):
@@ -1351,7 +1456,15 @@ class WebApp:
             project_id = parts[2]
             if (
                 len(parts) == 4
-                and parts[3] in {"nodes", "node", "neighborhood", "patterns"}
+                and parts[3]
+                in {
+                    "nodes",
+                    "node",
+                    "neighborhood",
+                    "patterns",
+                    "structure",
+                    "graph-view",
+                }
                 and method == "GET"
             ):
                 return self.store.graph_query(owner, project_id, parts[3], query or {})

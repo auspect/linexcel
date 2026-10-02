@@ -142,7 +142,7 @@ class UploadStore:
     def begin(self, owner: str, body: dict) -> dict:
         from linexcel.web import APIError, _write
 
-        budget = self.store.budget(body.get("budget", {}))
+        budget = self.store.budget(body.get("budget", {}), default_seconds=600)
         refs = body.get("references", [])
         if not isinstance(refs, list) or len(refs) > 32:
             raise APIError(400, "Au plus 32 classeurs de référence")

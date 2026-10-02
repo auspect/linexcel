@@ -74,6 +74,34 @@ def indexed(tmp_path):
         app.close()
 
 
+def test_complete_structure_pages_are_read_only_and_snapshot_scoped(indexed):
+    app, project = indexed
+    base = f"/api/projects/{project}/structure"
+    original_tasks = set(app.store.tasks)
+    nodes, snapshot = [], ""
+    for offset in range(0, 451, 200):
+        code, page = call(
+            app, "GET", base, query=f"offset={offset}&snapshot={snapshot}"
+        )
+        assert code == 200
+        snapshot = page["snapshot"]
+        nodes.extend(page["nodes"])
+        assert len(page["nodes"]) <= 200
+        assert page["pagination"]["hasMore"] == (offset < 400)
+    assert len({node["id"] for node in nodes}) == 451
+    assert all(set(node) == {"id", "kind", "sheet"} for node in nodes)
+    code, page = call(app, "GET", base, query=f"part=edges&snapshot={snapshot}")
+    assert code == 200
+    assert page["edges"] == [
+        {"source": "Sheet!A450", "target": "Sheet!B450", "kind": "dep"}
+    ]
+    assert not page["pagination"]["hasMore"]
+    assert set(app.store.tasks) == original_tasks  # No calculation was submitted.
+    assert call(app, "GET", base, query="snapshot=stale")[0] == 409
+    assert call(app, "GET", base, query="part=invalid")[0] == 400
+    assert call(app, "GET", base, user="bob")[0] == 404
+
+
 def test_pages_search_detail_neighborhood_and_unloaded_evaluation(indexed):
     app, project = indexed
     base = f"/api/projects/{project}"
@@ -191,3 +219,90 @@ def test_index_disk_quota_is_independent_of_compressed_upload_limit(tmp_path):
         assert (root / "index.sqlite").stat().st_size > 4 * 1048576
     finally:
         app.close()
+
+
+def test_hierarchy_task_persists_and_import_invalidates_it(indexed):
+    app, project = indexed
+    base = f"/api/projects/{project}"
+    assert call(app, "GET", base + "/graph-view")[0] == 409
+    code, built = call(app, "POST", base + "/tasks", {"operation": "build_graph"})
+    assert code == 200
+    assert built["task"]["budget"]["seconds"] == 600
+    finish(app.store, built["task"]["id"])
+    count = len(app.store.tasks)
+    code, view = call(app, "GET", base + "/graph-view")
+    assert code == 200
+    assert view["meta"]["nodeCount"] == 451
+    assert view["meta"]["edgeCount"] == 1
+    assert len(view["nodes"]) <= 33
+    code, located = call(app, "GET", base + "/graph-view", query="nodeId=Sheet!B450")
+    assert code == 200
+    assert any(n.get("nodeId") == "Sheet!B450" for n in located["nodes"])
+    assert len(app.store.tasks) == count  # Reading a view never evaluates.
+    assert call(app, "GET", base + "/graph-view", user="bob")[0] == 404
+    assert call(app, "GET", base + "/graph-view", query="view=bogus")[0] == 400
+    assert call(app, "GET", base + "/graph-view", query="view=123456")[0] == 404
+    assert call(app, "GET", base + "/graph-view", query="nodeId=missing")[0] == 404
+    code, cached = call(app, "POST", base + "/tasks", {"operation": "build_graph"})
+    assert code == 200 and cached["task"]["id"] == built["task"]["id"]
+    code, imported = call(
+        app, "POST", base + "/tasks", {"operation": "import", "force": True}
+    )
+    assert code == 200 and imported["task"]["budget"]["seconds"] == 600
+    finish(app.store, imported["task"]["id"])
+    assert call(app, "GET", base + "/graph-view")[0] == 409
+    code, rebuilt = call(app, "POST", base + "/tasks", {"operation": "build_graph"})
+    assert code == 200 and rebuilt["task"]["id"] != built["task"]["id"]
+    finish(app.store, rebuilt["task"]["id"])
+    assert call(app, "GET", base + "/graph-view")[0] == 200
+
+
+def test_hierarchy_and_import_exclude_each_other_and_failure_keeps_old_graph(
+    indexed, monkeypatch
+):
+    import threading
+
+    app, project = indexed
+    base = f"/api/projects/{project}"
+    _, built = call(app, "POST", base + "/tasks", {"operation": "build_graph"})
+    finish(app.store, built["task"]["id"])
+    entered, release = threading.Event(), threading.Event()
+    original_worker = app.store._worker
+
+    def wait_worker(task, root, event):
+        entered.set()
+        release.wait(10)
+        return {"error": {"kind": "test_failure", "message": "forced failure"}}
+
+    monkeypatch.setattr(app.store, "_worker", wait_worker)
+    try:
+        _, failed = call(
+            app, "POST", base + "/tasks", {"operation": "build_graph", "force": True}
+        )
+        assert entered.wait(5)
+        assert (
+            call(app, "POST", base + "/tasks", {"operation": "import", "force": True})[
+                0
+            ]
+            == 409
+        )
+    finally:
+        release.set()
+    deadline = time.monotonic() + 10
+    while app.store.tasks[failed["task"]["id"]]["status"] not in {
+        "failed",
+        "succeeded",
+    }:
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    assert app.store.tasks[failed["task"]["id"]]["status"] == "failed"
+    assert call(app, "GET", base + "/graph-view")[0] == 200
+    monkeypatch.setattr(app.store, "_worker", original_worker)
+
+
+def test_exact_node_search_does_not_include_prefix_matches(indexed):
+    app, project = indexed
+    code, found = call(app, "GET", f"/api/projects/{project}/nodes", query="q=Sheet!A4")
+    assert code == 200
+    assert found["pagination"]["total"] == 1
+    assert [n["id"] for n in found["nodes"]] == ["Sheet!A4"]

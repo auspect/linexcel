@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Build and save a whole-workbook graph hierarchy in a resource-isolated server
+  task, independently of formula evaluation. Each browser view has at most 32
+  groups/cells plus the rest of the workbook, with server-provided positions,
+  weighted dependencies, internal counts, breadcrumbs and direct cell lookup.
+  Retain cross-group links and grouped ranges without accumulating the entire
+  graph in browser memory. Support cancellation, task recovery and cache
+  invalidation after structural reimport.
+- Separate import/graph time budgets (600 seconds by default) from targeted
+  recalculation (120 seconds), and resolve exact cell searches through the SQLite
+  node index instead of a workbook-wide substring scan.
+- Add a persistent **Manual recalculation (lazy)** checkbox. By default, selecting
+  a formula still requests its targeted calculation; manual mode only reads saved
+  evidence until **Recalculate** is pressed. Neither mode recalculates the whole
+  workbook or automatically requests AI documentation.
+
+### Changed
+
+- Refresh the English application screenshots for the server-backed graph and
+  manual recalculation controls.
+
+### Fixed
+
+- Preserve the case of graph searches sent to the backend so exact cell references
+  use the indexed lookup and exclude cells with longer, matching prefixes.
+
 ## [1.12.0] — 2026-10-01
 
 ### Added

@@ -86,6 +86,29 @@ worker memory budget than the default 512 MiB even though browsing stays small.
 Captures are served as individual images with thumbnails, without embedding every
 image in the project response. Rendering remains an explicit, budgeted operation.
 
+**Explore the workbook graph** starts a cancellable server task and saves a
+hierarchy on disk. It does not start Formualizer. Each view contains at most 32
+groups or cells, plus the rest of the workbook. Click a group to expand it, use
+the breadcrumb to go back, or search for an exact cell reference to jump to its
+group. Positions and dependency counts are prepared by the server; the browser
+never downloads or lays out the entire workbook graph. The accessible list
+exposes each group's internal relationship count and weighted links between
+groups, including links outside the current group. Ranges remain grouped;
+unresolved or dynamic references retain the index's limitations. The saved graph
+is reused across sessions and invalidated after a successful structural reimport.
+
+Import and graph construction have a separate default time budget of 600 seconds;
+targeted recalculation keeps its 120-second default. Both are adjustable under
+**Limits per operation**. Exact node references use the index directly; other
+searches still match substrings and can take longer on very large workbooks.
+
+The **Manual recalculation (lazy)** checkbox controls a separate layer of laziness.
+Unchecked (the default), selecting a formula requests its targeted calculation
+and reuses the server cache when valid. Checked, selection reads saved evidence
+only; **Recalculate** explicitly runs the cell and its dependencies. The setting
+is remembered in this browser. Changing it does not launch a calculation or
+cancel an operation already running. No mode evaluates the whole workbook.
+
 The graph opens **Linexcel calculation** first: compare the value saved in the
 file with the targeted result, then inspect intermediate dependency-cell values.
 These are engine snapshots, not a trace of executed branches or subexpressions.
@@ -112,6 +135,10 @@ Ollama model:
 ```powershell
 uv run --extra ai --extra screenshots linexcel serve --ai --ai-model qwen3.8
 ```
+
+`qwen3.8` is currently recommended for documentation and vision. AI validation
+is exploratory: model responses vary between runs and require review against
+the source formulas, values and images.
 
 The host configures the endpoint and text/vision models; browser requests cannot
 override the endpoint or supply API keys. The interface shows the configured
