@@ -677,14 +677,14 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
         fail_view = True
         page.locator("#graph-build").click()
         page.locator("#graph-build-status").get_by_text("Structure modifiée").wait_for()
-        assert page.locator("#graph-build").is_enabled()
+        playwright.expect(page.locator("#graph-build")).to_be_enabled()
         fail_view, delay_build = False, True
         page.locator("#graph-build").click()
         page.locator("#graph-build-cancel").wait_for()
         page.reload()
         page.locator("#tab-graph").click()
         page.locator("#graph-build-cancel").click()
-        assert page.locator("#graph-build").is_enabled()
+        playwright.expect(page.locator("#graph-build")).to_be_enabled()
         assert tasks[-1]["status"] == "cancelled"
         assert page.locator("#graph-neighborhood").is_hidden()
         assert not errors

@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence until **Recalculate** is pressed. Neither mode recalculates the whole
   workbook or automatically requests AI documentation.
 
+### Changed
+
+- Refresh the English application screenshots for the server-backed graph and
+  manual recalculation controls.
+
 ## [1.12.0] — 2026-10-01
 
 ### Added
