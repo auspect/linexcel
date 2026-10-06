@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] — 2026-10-06
+
+### Changed
+
+- Require formualizer 0.10.1 and adopt native missing-sheet `#REF!` results,
+  error guards and nested-guard values with engine provenance. Keep recovery
+  paths covered through injected evaluation failures.
+- Detect long targeted formula chains from the bounded dependency trace;
+  compressed native evaluation plans no longer provide a reliable depth count.
+
+### Added
+
+- Add a weekly and manually triggered compatibility matrix for the declared
+  minimum, locked and latest stable formualizer versions, with calculation
+  contracts and JUnit artifacts. Run the same matrix on pull requests.
+- Document the upgrade audit and a release review plan covering native
+  capabilities, Python compatibility adaptations and measured performance.
+
 ## [1.13.0] — 2026-10-02
 
 ### Added

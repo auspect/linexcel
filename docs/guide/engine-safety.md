@@ -109,6 +109,12 @@ time and memory limits.
 
 ## Capability probes
 
+The [Formualizer upgrade audit](../formualizer_upgrade_plan.md) explains the
+0.10.1 migration and the release review process. Missing-sheet references now
+produce native `#REF!` values that error guards can catch. They do not trigger
+recovery merely because a referenced sheet is absent. Native evaluation failures
+and unsafe formulas retain their separate recovery paths.
+
 `meta.engineCapabilities` records a small reproducible synthetic matrix,
 including source inputs, formulas, expected and observed values, observed
 Python types, engine version and date epoch. Probes run once per worker

@@ -303,12 +303,12 @@ def boot_engine(
 ) -> EngineSession:
     """Instantiate the engine and run its evaluation.
 
-    ``evaluate_all`` is all-or-nothing, and it gives up on the *first*
-    reference it cannot resolve — so a single formula pointing at another
-    workbook costs every other cell in the file its computed value. When that
-    happens, the offending formulas are cut out of the package bytes and the
-    pass retried on the sanitized copy, leaving only them to the slower
-    per-cell recovery.
+    Some unsupported references still make ``evaluate_all`` raise before the
+    workbook finishes calculating. When that happens, the offending formulas
+    are cut out of the package bytes and the pass retried on the sanitized
+    copy, leaving only them to per-cell recovery. Ordinary spreadsheet errors
+    returned by the engine, including missing-sheet ``#REF!`` values, retain
+    their native results and can be caught by formula error guards.
 
     Two formulas never reach ``evaluate_all`` at all: the ones whose parse
     tree is deeper than ``max_ast_depth``, because the evaluator's recursive
@@ -719,10 +719,9 @@ def _evaluate_targets(
     ``evaluate_cells`` batch, and the reachable set comes back so the sweep
     can skip everything else.
 
-    The batch is all-or-nothing like ``evaluate_all``: one broken precedent
-    fails it whole. The fallback evaluates the requested targets one at a
-    time — the cells the user actually asked for — and leaves the rest to
-    the per-cell recovery, which is what a global failure would have got.
+    A native batch failure falls back to evaluating the requested targets
+    one at a time and leaves other cells to per-cell recovery. Spreadsheet
+    errors returned normally by the engine keep their native provenance.
     """
     cell_limit = limit_or_default(
         "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
@@ -768,17 +767,18 @@ def _evaluate_targets(
             "the subgraph is missing from the lineage. The engine may still "
             "evaluate omitted precedents to compute the requested targets"
         )
-    # The evaluation plan counts layers only for cells still dirty, so it is
-    # read here, before the evaluation — after it the same plan comes back
-    # empty. An indicator of risk, not a duration estimate.
-    try:
-        layers = len(engine.get_eval_plan(sorted(reachable)).layers)
-    except Exception:
-        layers = 0  # a plan that will not build says nothing usable
-    if layers >= CHAIN_LAYERS_WARNING:
+    # FormulaPlane can keep copied formulas compressed, so its evaluation
+    # plan no longer exposes the full dependency depth. The trace is already
+    # bounded above; measure its longest acyclic formula path without expanding
+    # ranges or building another graph. This remains a risk indicator, not a
+    # duration estimate.
+    layers = _trace_formula_depth(trace, TRACE_MAX_WORK)
+    if layers is not None and layers >= CHAIN_LAYERS_WARNING:
         warnings.append(
-            f"Long dependency chains: the targeted subgraph stacks "
-            f"{layers:,} evaluation layers. Such workbooks are where the "
+            f"Long dependency chains: the upstream trace contains at least "
+            f"{layers:,} linked calculation steps along an acyclic formula "
+            f"path. "
+            f"Such workbooks are where the "
             f"step-by-step decomposition hits its time budget (raise it with "
             f"--time-budget) and where an analysis runs long — a risk "
             f"indicator, not a duration estimate"
@@ -806,6 +806,85 @@ def _evaluate_targets(
             f"file are listed by the per-cell recovery"
         )
     return reachable, succeeded
+
+
+def _trace_formula_depth(trace: Any, work_limit: int = TRACE_MAX_WORK) -> int | None:
+    """Measure formula-path depth in an already-bounded native trace.
+
+    The native evaluation plan can report no layers for formulas held in a
+    compressed span. Trace links still expose the declared cell dependencies.
+    Only links whose endpoints are formula cells contribute to chain depth;
+    range membership is not expanded here. A cycle edge is skipped. The walk
+    stops at the warning threshold, returning that lower bound, and returns
+    unknown if it reaches its work budget first.
+    """
+    try:
+        formulas = {
+            address: node
+            for address in trace.nodes.keys()
+            if (node := trace.nodes[address]).cell.formula is not None
+        }
+        if not formulas:
+            return 0
+
+        state: dict[str, int] = {}  # 1 = on current path, 2 = complete
+        depths: dict[str, int] = {}
+        work = 0
+        for root, root_node in formulas.items():
+            if state.get(root) == 2:
+                continue
+            state[root] = 1
+            stack = [_TraceDepthFrame(root, root_node.links)]
+            while stack:
+                frame = stack[-1]
+                if frame.link_index >= len(frame.links):
+                    state[frame.address] = 2
+                    depths[frame.address] = frame.best
+                    stack.pop()
+                    if frame.best >= CHAIN_LAYERS_WARNING:
+                        return CHAIN_LAYERS_WARNING
+                    if stack:
+                        stack[-1].best = max(stack[-1].best, frame.best + 1)
+                    continue
+
+                link = frame.links[frame.link_index]
+                targets = link.targets
+                if frame.target_index >= len(targets):
+                    frame.link_index += 1
+                    frame.target_index = 0
+                    continue
+                target = targets[frame.target_index].node.address
+                frame.target_index += 1
+                work += 1
+                if work > work_limit:
+                    return None
+                if target not in formulas or state.get(target) == 1:
+                    continue
+                if state.get(target) == 2:
+                    frame.best = max(frame.best, depths[target] + 1)
+                    continue
+
+                stack.append(_TraceDepthFrame(target, formulas[target].links))
+                state[target] = 1
+                # The active path contains distinct formula cells: it already
+                # proves this lower bound, without walking a long chain to its
+                # leaf before the first depth can be propagated back upward.
+                if len(stack) >= CHAIN_LAYERS_WARNING:
+                    return CHAIN_LAYERS_WARNING
+
+        return max(depths.values(), default=0)
+    except Exception:
+        # An unavailable or malformed trace cannot support a useful warning.
+        return None
+
+
+@dataclass
+class _TraceDepthFrame:
+    address: str
+    links: Any
+    link_index: int = 0
+    target_index: int = 0
+    best: int = 1
 
 
 def _formulas_gone(
