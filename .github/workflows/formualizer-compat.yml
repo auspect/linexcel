@@ -1,0 +1,132 @@
+name: formualizer compatibility
+
+on:
+  pull_request:
+    branches: [main, 'codex/**']
+    paths:
+      - '.github/workflows/formualizer-compat.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'src/linexcel/**'
+      - 'tests/**'
+  schedule:
+    - cron: '23 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: formualizer-compat-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compatibility:
+    name: Formualizer ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [floor, locked, latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+          python-version: "3.14"
+
+      - name: Install the locked project environment
+        run: uv sync --locked
+
+      - name: Read the declared minimum Formualizer version
+        id: floor
+        run: |
+          uv run --no-sync python - <<'PY' >> "$GITHUB_OUTPUT"
+          import re
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          requirement = next(
+              item for item in project["dependencies"]
+              if item.lower().startswith("formualizer")
+          )
+          match = re.fullmatch(r"formualizer\s*>=\s*([0-9]+(?:\.[0-9]+)*)", requirement)
+          if match is None:
+              raise SystemExit(f"Cannot extract exact floor from {requirement!r}")
+          print(f"version={match.group(1)}")
+          PY
+
+      - name: Install the declared floor
+        if: matrix.channel == 'floor'
+        run: uv pip install --python .venv/bin/python "formualizer==${{ steps.floor.outputs.version }}"
+
+      - name: Upgrade Formualizer to the latest stable release
+        if: matrix.channel == 'latest'
+        run: uv sync --upgrade-package formualizer
+
+      - name: Record the selected Formualizer version
+        if: always()
+        run: |
+          if version="$(uv pip show --python .venv/bin/python formualizer 2>/dev/null | sed -n 's/^Version: //p')" && [ -n "$version" ]; then
+            :
+          else
+            version=unavailable
+          fi
+          echo "Formualizer channel: ${{ matrix.channel }}; version: ${version:-unavailable}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Capture Formualizer public Python bindings
+        if: always()
+        run: |
+          uv run --no-sync python - <<'PY'
+          import inspect
+          import json
+          import os
+          from importlib.metadata import version
+          from pathlib import Path
+          import formualizer
+
+          bindings = sorted(
+              name for name, value in vars(formualizer).items()
+              if not name.startswith("_") and (inspect.isclass(value) or callable(value))
+          )
+          class_members = {
+              name: sorted(member for member in vars(value) if not member.startswith("_"))
+              for name in ("Workbook", "EvaluationConfig", "Sheet", "TraceGraph")
+              if inspect.isclass(value := vars(formualizer).get(name))
+          }
+          report = {
+              "version": version("formualizer"),
+              "module": formualizer.__file__,
+              "public_bindings": bindings,
+              "class_public_members": class_members,
+          }
+          Path("formualizer-metadata.json").write_text(json.dumps(report, indent=2) + "\n")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+              summary.write(f"Public Python bindings captured: {len(bindings)}.\n")
+          PY
+
+      - name: Run engine and linexcel compatibility contracts
+        run: >-
+          uv run --no-sync pytest
+          tests/test_formualizer_contract.py
+          tests/test_date_epoch.py
+          tests/test_values.py
+          tests/test_targeted.py
+          tests/test_trace_formula_depth.py
+          tests/test_excel_compat.py
+          tests/test_lazy_correctness.py
+          tests/test_legacy_normal_functions.py
+          tests/test_native_complexity.py
+          --junitxml=junit.xml
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: formualizer-compat-${{ matrix.channel }}-junit
+          path: |
+            junit.xml
+            formualizer-metadata.json
+          if-no-files-found: warn
+          retention-days: 14

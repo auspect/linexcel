@@ -142,12 +142,7 @@ class TestTargetedAnalysis:
 
 
 class TestTargetedWithABrokenPrecedent:
-    """A target whose subgraph holds a reference the engine cannot resolve.
-
-    The one-batch evaluation is all-or-nothing, so it fails whole; the
-    fallback evaluates the requested targets one at a time, and the warning
-    says which of them did not make it.
-    """
+    """An unresolved sheet reference produces #REF! without blocking siblings."""
 
     @staticmethod
     def _workbook() -> bytes:
@@ -163,15 +158,53 @@ class TestTargetedWithABrokenPrecedent:
         wb.save(buf)
         return buf.getvalue()
 
-    def test_the_clean_target_is_evaluated_and_the_broken_one_named(self):
+    def test_native_ref_error_and_clean_target_are_both_evaluated(self):
         result = analyze(
             self._workbook(), filename="t.xlsx", targets=["Data!D1", "Data!C1"]
         )
         d1 = next(n for n in result.nodes if n["id"] == "c:Data!D1")
+        c1 = next(n for n in result.nodes if n["id"] == "c:Data!C1")
         assert d1["value"] == 103
+        assert c1["value"] == "#REF!"
+        joined = " ".join(result.warnings)
+        assert "Targeted analysis" in joined
+        assert "Targeted evaluation" not in joined
+
+    def test_a_failed_batch_evaluates_targets_individually_and_keeps_the_trace(
+        self, monkeypatch
+    ):
+        import linexcel.engine as eng
+
+        real_open = eng._open_workbook
+
+        def fail_batch_open(data, parallel):
+            engine = real_open(data, parallel)
+
+            def fail_batch(_cells):
+                raise RuntimeError("forced batch failure for targeted fallback")
+
+            engine.evaluate_cells = fail_batch
+            return engine
+
+        monkeypatch.setattr(eng, "_open_workbook", fail_batch_open)
+        result = analyze(
+            self._workbook(), filename="t.xlsx", targets=["Data!D1", "Data!C1"]
+        )
+
+        nodes = {node["id"]: node for node in result.nodes}
+        assert nodes["c:Data!D1"]["value"] == 103
+        assert nodes["c:Data!C1"]["value"] == "#REF!"
+        assert {
+            "i:Data!A1",
+            "c:Data!B1",
+            "c:Data!B2",
+            "c:Data!C1",
+            "c:Data!D1",
+        } <= nodes.keys()
         joined = " ".join(result.warnings)
         assert "Targeted evaluation" in joined
-        assert "Data!C1" in joined
+        assert "forced batch failure for targeted fallback" in joined
+        assert "requested targets were evaluated one by one" in joined
 
     def test_the_broken_cell_stays_on_the_graph(self):
         result = analyze(self._workbook(), filename="t.xlsx", targets=["Data!C1"])
@@ -191,7 +224,7 @@ class TestTruncatedTrace:
 class TestQuarantineRetryCosts:
     """A failed retry no longer pays a third ``from_bytes`` to get formulas back.
 
-    formualizer 0.9.3 keeps the formula map readable after a failed
+    Formualizer 0.10.1 keeps the formula map readable after a failed
     ``evaluate_all``, so the engine the run already holds is kept and the
     rebuild is paid only when the probe says the formulas really are gone.
     """
@@ -211,12 +244,18 @@ class TestQuarantineRetryCosts:
         boots = 0
         real_open = eng._open_workbook
 
-        def counting_open(data, parallel):
+        def failing_evaluation_open(data, parallel):
             nonlocal boots
             boots += 1
-            return real_open(data, parallel)
+            engine = real_open(data, parallel)
 
-        monkeypatch.setattr(eng, "_open_workbook", counting_open)
+            def fail():
+                raise RuntimeError("forced evaluation failure for retry coverage")
+
+            engine.evaluate_all = fail
+            return engine
+
+        monkeypatch.setattr(eng, "_open_workbook", failing_evaluation_open)
         warnings: list[str] = []
         session = eng.boot_engine(self._workbook(), warnings)
         # First boot + sanitized retry; the old code paid a third boot here.
@@ -231,12 +270,26 @@ class TestQuarantineRetryCosts:
         monkeypatch.setattr(
             eng, "_find_unresolvable", lambda data, sheets: {("S", 1, 2): "=A1*3"}
         )
+        real_open = eng._open_workbook
+
+        def fail_evaluation_open(data, parallel):
+            engine = real_open(data, parallel)
+
+            def fail():
+                raise RuntimeError("forced evaluation failure for retry coverage")
+
+            engine.evaluate_all = fail
+            return engine
+
+        monkeypatch.setattr(eng, "_open_workbook", fail_evaluation_open)
         graph = partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
             self._workbook(), "t.xlsx"
         )["graph"]
         formulas = {n.get("formula") for n in graph["nodes"] if "formula" in n}
-        assert "=NoSheet!A1+1" in formulas
-        assert "=A1*3" in formulas
+        assert {formula.replace(" ", "") for formula in formulas} >= {
+            "=NoSheet!A1+1",
+            "=A1*3",
+        }
         meta_warnings = graph["meta"]["warnings"]
         assert any("Global evaluation incomplete" in w for w in meta_warnings)
 
@@ -298,7 +351,7 @@ class TestChainDepthWarning:
             self._chain_workbook(40), filename="chain.xlsx", targets=["S!A40"]
         )
         (warning,) = [w for w in result.warnings if "Long dependency chains" in w]
-        assert "evaluation layers" in warning
+        assert "linked calculation steps" in warning
 
     def test_a_workbook_without_formulas_is_not_flagged(self):
         result = analyze(workbook({"A1": 1, "B1": "text"}), filename="plain.xlsx")

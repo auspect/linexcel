@@ -8,7 +8,7 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel.analyzer import analyze_workbook
-from linexcel.engine import _open_workbook
+from linexcel.engine import _open_workbook, _register_legacy_normal_functions
 
 
 def workbook_bytes(formulas):
@@ -20,6 +20,56 @@ def workbook_bytes(formulas):
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def test_only_the_incompatible_builtin_is_overridden():
+    class Workbook:
+        registrations = {}
+        attempts = []
+
+        def register_function(
+            self,
+            name,
+            callback,
+            *,
+            min_args,
+            max_args,
+            thread_safe,
+            allow_override_builtin=False,
+        ):
+            self.attempts.append((name, allow_override_builtin))
+            if name == "NORMDIST" and not allow_override_builtin:
+                raise RuntimeError(
+                    "#NAME?: Custom function NORMDIST conflicts with a global "
+                    "function; set allow_override_builtin=true to override"
+                )
+            self.registrations[name] = (
+                callback,
+                min_args,
+                max_args,
+                thread_safe,
+                allow_override_builtin,
+            )
+
+    workbook = Workbook()
+    _register_legacy_normal_functions(workbook, "1900")
+
+    assert set(workbook.registrations) == {"NORMSDIST"}
+    assert workbook.attempts == [("NORMSDIST", True), ("NORMDIST", False)]
+    _, min_args, max_args, thread_safe, allow_override = workbook.registrations[
+        "NORMSDIST"
+    ]
+    assert (min_args, max_args, thread_safe, allow_override) == (1, 1, False, True)
+
+
+def test_non_conflict_registration_errors_are_not_hidden():
+    class BrokenWorkbook:
+        def register_function(self, name, callback, **options):
+            if name == "NORMDIST":
+                raise RuntimeError("callback registration failed")
+
+    with pytest.raises(RuntimeError, match="callback registration failed"):
+        _register_legacy_normal_functions(BrokenWorkbook(), "1900")
 
 
 @pytest.mark.parametrize(

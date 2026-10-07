@@ -66,16 +66,27 @@ _CELL_RE = re.compile(
 _F_RE = re.compile(rb"<(?:\w+:)?f\b([^>]*?)(?:/>|>(.*?)</(?:\w+:)?f>)", re.S)
 #: The shared-formula index, ``si="3"``.
 _SI_RE = re.compile(rb'\bsi="(\d+)"')
+_NATIVE_FORMULA_LIMIT_RE = re.compile(
+    r"(?:AST height limit exceeded|Formula nesting too deep|"
+    r"(?:Formula )?(?:AST )?node limit exceeded|Formula token limit exceeded|"
+    r"Formula source byte limit exceeded) \(max (\d+)\)"
+)
 _XML_ENTITIES = {"&quot;": '"', "&apos;": "'"}
 
 #: Deepest formula parse tree ``evaluate_all`` is trusted with. The evaluator
 #: walks the tree recursively, and past roughly 1,000 nested operations that
 #: walk overflows the stack and *aborts the process* — a hard exit no
-#: try/except sees (upstream: https://github.com/PSU3D0/formualizer/issues/411;
-#: measured here on 0.9.3: a 700-term chain evaluates, a 1,000-term one
-#: aborts). Formulas deeper than this are quarantined before the evaluation
-#: runs. Configurable per call via ``boot_engine``'s ``max_ast_depth``.
+#: try/except sees (upstream: https://github.com/PSU3D0/formualizer/issues/411).
+#: Formulas deeper than this are quarantined before evaluation. Newer parser
+#: releases can impose a lower AST-height limit; those parser errors are also
+#: detected and quarantined without imposing that lower cap on parser versions
+#: that still accept deeper trees. Configurable via ``boot_engine``.
 MAX_AST_DEPTH = 900
+#: A formula this short cannot exceed Formualizer 0.11's smallest parser
+#: budget (72 nested frames); its node, token, byte and AST-height budgets are
+#: larger. Longer formulas are checked natively and quarantined only when a
+#: parser complexity error confirms rejection.
+FORMUALIZER_PARSER_SAFE_LENGTH = 64
 
 #: Whether the engine evaluates independent branches of the dependency graph
 #: in parallel. This is formualizer's own default since 0.9; it is stated
@@ -217,11 +228,15 @@ def _restore_empty_text_inputs(workbook, data: bytes) -> None:
 
 
 def _register_legacy_normal_functions(workbook, date_system: str) -> None:
-    """Bridge two Excel compatibility names to their native modern functions.
+    """Bridge legacy aliases where Formualizer's built-in is not Excel-exact.
 
     Registering workbook-local functions preserves original formulas, traces
-    and scratch expressions. The callback must never re-enter its workbook;
-    formualizer explicitly permits using a separate workbook. That evaluator
+    and scratch expressions. Newer Formualizer versions expose both aliases
+    globally. Its ``NORMDIST`` built-in matches the legacy Excel contract and
+    is kept. Its ``NORMSDIST`` accepts surplus arguments, so that alias keeps
+    the bridge to enforce Excel's one-argument arity. The callback must never
+    re-enter its workbook;
+    Formualizer explicitly permits using a separate workbook. That evaluator
     owns only argument cells and delegates coercion and errors to the native
     statistical functions, instead of approximating their Excel semantics.
     """
@@ -254,20 +269,34 @@ def _register_legacy_normal_functions(workbook, date_system: str) -> None:
             native.set_formula("Result", 1, 1, f"={modern}({','.join(references)})")
             return native.evaluate_cell("Result", 1, 1)
 
+    # Formualizer's current native NORMSDIST accepts extra arguments, contrary
+    # to Excel. Override only this alias so its signature and error handling
+    # remain compatible while its callback still delegates valid inputs to the
+    # native NORM.S.DIST implementation.
     workbook.register_function(
         "NORMSDIST",
         lambda *args: evaluate("NORM.S.DIST", args),
         min_args=1,
         max_args=1,
         thread_safe=False,
+        allow_override_builtin=True,
     )
-    workbook.register_function(
-        "NORMDIST",
-        lambda *args: evaluate("NORM.DIST", args),
-        min_args=4,
-        max_args=4,
-        thread_safe=False,
-    )
+
+    # Formualizer 0.11's NORMDIST built-in matches the legacy contract. Keep
+    # that validated implementation. Older releases do not expose the alias,
+    # so register the same native-backed bridge for them.
+    try:
+        workbook.register_function(
+            "NORMDIST",
+            lambda *args: evaluate("NORM.DIST", args),
+            min_args=4,
+            max_args=4,
+            thread_safe=False,
+        )
+    except RuntimeError as exc:
+        conflict = "Custom function NORMDIST conflicts with a global function"
+        if conflict not in str(exc):
+            raise
 
 
 def _iteration_options(data: bytes) -> tuple[bool, int, float]:
@@ -303,17 +332,17 @@ def boot_engine(
 ) -> EngineSession:
     """Instantiate the engine and run its evaluation.
 
-    ``evaluate_all`` is all-or-nothing, and it gives up on the *first*
-    reference it cannot resolve — so a single formula pointing at another
-    workbook costs every other cell in the file its computed value. When that
-    happens, the offending formulas are cut out of the package bytes and the
-    pass retried on the sanitized copy, leaving only them to the slower
-    per-cell recovery.
+    Some unsupported references still make ``evaluate_all`` raise before the
+    workbook finishes calculating. When that happens, the offending formulas
+    are cut out of the package bytes and the pass retried on the sanitized
+    copy, leaving only them to per-cell recovery. Ordinary spreadsheet errors
+    returned by the engine, including missing-sheet ``#REF!`` values, retain
+    their native results and can be caught by formula error guards.
 
-    Two formulas never reach ``evaluate_all`` at all: the ones whose parse
-    tree is deeper than ``max_ast_depth``, because the evaluator's recursive
-    walk aborts the process on them rather than raising. They are quarantined
-    up front, before the first evaluation.
+    Formulas that exceed the evaluator's recursive-walk budget or are rejected
+    by the native parser's AST-height limit are quarantined up front, before
+    import or evaluation. This keeps version-specific parser limits from
+    aborting the workbook load.
 
     With ``targets`` the global pass is skipped entirely: the upstream
     subgraph of those cells is traced, only it is evaluated, and the session
@@ -356,15 +385,14 @@ def boot_engine(
             _mark_uncached_quarantine(engine, quarantined)
             sheet, row, col = deepest
             warnings.append(
-                f"{len(too_deep)} cell(s) hold a formula nested deeper than the "
-                f"engine can safely inspect or evaluate (conservative lexical "
-                f"complexity guard or parse tree over {max_ast_depth} levels; "
-                f"native conversion or evaluation can abort outright on such "
-                f"input — https://github.com/PSU3D0/formualizer/issues/411). They "
-                f"were quarantined before evaluation and keep the value stored in "
-                f"the file, if any; without a cached value, dependent formulas "
-                f"also remain uncomputed. First affected cell: "
-                f"{sheet}!{a1(row, col)}"
+                f"{len(too_deep)} cell(s) hold a formula beyond a native "
+                f"complexity limit (parser AST-height, nesting, node, token or source "
+                f"budget; conservative lexical guard; or evaluator depth over "
+                f"{max_ast_depth}). Parser-limited formulas were kept from import; "
+                f"formulas beyond the evaluator's recursive limit were kept from "
+                f"evaluation. They keep the value stored in the file, if any; "
+                f"without a cached value, dependent formulas also remain "
+                f"uncomputed. First affected cell: {sheet}!{a1(row, col)}"
             )
         if targets is not None:
             reporter.operation("engine evaluation", "tracing and evaluating targets")
@@ -719,10 +747,9 @@ def _evaluate_targets(
     ``evaluate_cells`` batch, and the reachable set comes back so the sweep
     can skip everything else.
 
-    The batch is all-or-nothing like ``evaluate_all``: one broken precedent
-    fails it whole. The fallback evaluates the requested targets one at a
-    time — the cells the user actually asked for — and leaves the rest to
-    the per-cell recovery, which is what a global failure would have got.
+    A native batch failure falls back to evaluating the requested targets
+    one at a time and leaves other cells to per-cell recovery. Spreadsheet
+    errors returned normally by the engine keep their native provenance.
     """
     cell_limit = limit_or_default(
         "max_cells_per_sheet", max_cells_per_sheet, MAX_CELLS_PER_SHEET
@@ -768,17 +795,18 @@ def _evaluate_targets(
             "the subgraph is missing from the lineage. The engine may still "
             "evaluate omitted precedents to compute the requested targets"
         )
-    # The evaluation plan counts layers only for cells still dirty, so it is
-    # read here, before the evaluation — after it the same plan comes back
-    # empty. An indicator of risk, not a duration estimate.
-    try:
-        layers = len(engine.get_eval_plan(sorted(reachable)).layers)
-    except Exception:
-        layers = 0  # a plan that will not build says nothing usable
-    if layers >= CHAIN_LAYERS_WARNING:
+    # FormulaPlane can keep copied formulas compressed, so its evaluation
+    # plan no longer exposes the full dependency depth. The trace is already
+    # bounded above; measure its longest acyclic formula path without expanding
+    # ranges or building another graph. This remains a risk indicator, not a
+    # duration estimate.
+    layers = _trace_formula_depth(trace, TRACE_MAX_WORK)
+    if layers is not None and layers >= CHAIN_LAYERS_WARNING:
         warnings.append(
-            f"Long dependency chains: the targeted subgraph stacks "
-            f"{layers:,} evaluation layers. Such workbooks are where the "
+            f"Long dependency chains: the upstream trace contains at least "
+            f"{layers:,} linked calculation steps along an acyclic formula "
+            f"path. "
+            f"Such workbooks are where the "
             f"step-by-step decomposition hits its time budget (raise it with "
             f"--time-budget) and where an analysis runs long — a risk "
             f"indicator, not a duration estimate"
@@ -806,6 +834,85 @@ def _evaluate_targets(
             f"file are listed by the per-cell recovery"
         )
     return reachable, succeeded
+
+
+def _trace_formula_depth(trace: Any, work_limit: int = TRACE_MAX_WORK) -> int | None:
+    """Measure formula-path depth in an already-bounded native trace.
+
+    The native evaluation plan can report no layers for formulas held in a
+    compressed span. Trace links still expose the declared cell dependencies.
+    Only links whose endpoints are formula cells contribute to chain depth;
+    range membership is not expanded here. A cycle edge is skipped. The walk
+    stops at the warning threshold, returning that lower bound, and returns
+    unknown if it reaches its work budget first.
+    """
+    try:
+        formulas = {
+            address: node
+            for address in trace.nodes.keys()
+            if (node := trace.nodes[address]).cell.formula is not None
+        }
+        if not formulas:
+            return 0
+
+        state: dict[str, int] = {}  # 1 = on current path, 2 = complete
+        depths: dict[str, int] = {}
+        work = 0
+        for root, root_node in formulas.items():
+            if state.get(root) == 2:
+                continue
+            state[root] = 1
+            stack = [_TraceDepthFrame(root, root_node.links)]
+            while stack:
+                frame = stack[-1]
+                if frame.link_index >= len(frame.links):
+                    state[frame.address] = 2
+                    depths[frame.address] = frame.best
+                    stack.pop()
+                    if frame.best >= CHAIN_LAYERS_WARNING:
+                        return CHAIN_LAYERS_WARNING
+                    if stack:
+                        stack[-1].best = max(stack[-1].best, frame.best + 1)
+                    continue
+
+                link = frame.links[frame.link_index]
+                targets = link.targets
+                if frame.target_index >= len(targets):
+                    frame.link_index += 1
+                    frame.target_index = 0
+                    continue
+                target = targets[frame.target_index].node.address
+                frame.target_index += 1
+                work += 1
+                if work > work_limit:
+                    return None
+                if target not in formulas or state.get(target) == 1:
+                    continue
+                if state.get(target) == 2:
+                    frame.best = max(frame.best, depths[target] + 1)
+                    continue
+
+                stack.append(_TraceDepthFrame(target, formulas[target].links))
+                state[target] = 1
+                # The active path contains distinct formula cells: it already
+                # proves this lower bound, without walking a long chain to its
+                # leaf before the first depth can be propagated back upward.
+                if len(stack) >= CHAIN_LAYERS_WARNING:
+                    return CHAIN_LAYERS_WARNING
+
+        return max(depths.values(), default=0)
+    except Exception:
+        # An unavailable or malformed trace cannot support a useful warning.
+        return None
+
+
+@dataclass
+class _TraceDepthFrame:
+    address: str
+    links: Any
+    link_index: int = 0
+    target_index: int = 0
+    best: int = 1
 
 
 def _formulas_gone(
@@ -992,12 +1099,21 @@ def ast_depth(formula: str) -> int | None:
     and its ``to_dict`` conversion can themselves abort on long chains.
     A lexical guard runs before either native operation.
     """
-    if _lexical_depth_bound(formula) > MAX_AST_DEPTH:
-        return None
+    return _ast_depth_and_parser_limit(formula)[0]
+
+
+def _ast_depth_and_parser_limit(
+    formula: str, lexical_depth: int | None = None
+) -> tuple[int | None, bool]:
+    """Return AST depth and whether a native parser budget rejected it."""
+    if lexical_depth is None:
+        lexical_depth = _lexical_depth_bound(formula)
+    if lexical_depth > MAX_AST_DEPTH:
+        return None, False
     try:
         root = fz.parse(formula if formula.startswith("=") else "=" + formula).to_dict()
-    except Exception:
-        return None
+    except Exception as exc:
+        return None, bool(_NATIVE_FORMULA_LIMIT_RE.search(str(exc)))
     depth = 0
     stack: list[tuple[object, int]] = [(root, 1)]
     while stack:
@@ -1010,22 +1126,26 @@ def ast_depth(formula: str) -> int | None:
         else:
             continue
         stack.extend((v, level + 1) for v in children if isinstance(v, (dict, list)))
-    return depth
+    return depth, False
 
 
 def is_too_deep(formula: str, max_depth: int = MAX_AST_DEPTH) -> bool:
-    """Whether evaluating ``formula`` risks the stack-overflow abort.
+    """Whether parsing or evaluating ``formula`` exceeds a native depth limit.
 
-    A tree can never nest deeper than the formula is long — every level spends
-    at least one character — so the parse is paid only for formulas long
-    enough to be dangerous.
+    Lexically shallow formulas avoid native parsing. Deeper formulas are parsed
+    once; a parser-reported AST-height limit is distinct from an unrelated
+    syntax/unsupported-formula error. The latter remains the importer’s
+    responsibility as before.
     """
-    if len(formula) <= min(max_depth, MAX_AST_DEPTH):
-        return False
-    if _lexical_depth_bound(formula) > MAX_AST_DEPTH:
+    lexical_depth = _lexical_depth_bound(formula)
+    if lexical_depth > MAX_AST_DEPTH:
         return True
-    depth = ast_depth(formula)
-    return depth is not None and depth > max_depth
+    if len(formula) <= FORMUALIZER_PARSER_SAFE_LENGTH and lexical_depth <= max_depth:
+        return False
+    depth, parser_limit = _ast_depth_and_parser_limit(formula, lexical_depth)
+    if depth is not None:
+        return depth > max_depth
+    return parser_limit
 
 
 def _find_too_deep(

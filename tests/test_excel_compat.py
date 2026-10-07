@@ -167,9 +167,21 @@ def test_unsafe_defined_expression_does_not_reach_the_native_parser():
 
 
 def test_safe_names_cannot_combine_into_an_unsafe_expanded_formula():
+    import formualizer as fz
+
     from linexcel.engine import is_too_deep
 
-    names = {(None, "INNER"): "1" + "+1" * 499, (None, "OUTER"): "INNER" + "+1" * 499}
+    terms = 500
+    try:
+        fz.parse("=" + "+".join(["1"] * terms))
+    except Exception as error:
+        if "AST height limit exceeded" not in str(error):
+            raise
+        terms = 200
+    names = {
+        (None, "INNER"): "1" + "+1" * (terms - 1),
+        (None, "OUTER"): "INNER" + "+1" * (terms - 1),
+    }
     assert not is_too_deep("=" + names[(None, "INNER")])
     assert not is_too_deep("=" + names[(None, "OUTER")])
     assert rewrite_formula("=OUTER", "S", names) == "=OUTER"

@@ -101,9 +101,28 @@ def test_xml_boolean_spellings_are_shared_by_loader_and_engine(text, expected):
     assert engine.get_value("Dates", 1, 1) == (44592 if expected else 46054)
 
 
-def test_quarantine_retry_preserves_the_workbook_epoch():
+def test_quarantine_retry_preserves_the_workbook_epoch(monkeypatch):
+    import linexcel.engine as eng
+
     warnings = []
+    real_open = eng._open_workbook
+    opened = 0
+
+    def fail_first_evaluation(data, parallel):
+        nonlocal opened
+        engine = real_open(data, parallel)
+        opened += 1
+        if opened == 1:
+
+            def fail():
+                raise RuntimeError("forced first-pass failure for retry coverage")
+
+            engine.evaluate_all = fail
+        return engine
+
+    monkeypatch.setattr(eng, "_open_workbook", fail_first_evaluation)
     session = boot_engine(epoch_workbook(True, broken_reference=True), warnings)
     assert session.quarantined
+    assert opened == 2
     assert session.engine.get_value("Dates", 1, 2) == 2026
     assert session.engine.get_value("Dates", 1, 3) == 2026

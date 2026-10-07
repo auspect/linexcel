@@ -13,6 +13,7 @@ subprocess, and reports timings; this is the part that belongs in CI.
 import io
 import zipfile
 
+import formualizer as fz
 import pytest
 from openpyxl import Workbook
 
@@ -383,29 +384,44 @@ def test_cached_formula_error_is_read_not_dropped():
 
 
 class TestAFormulaTooDeepToEvaluate:
-    """A formula nested past what the evaluator's recursive walk survives.
+    """A formula past the parser or evaluator's native complexity budgets.
 
     ``evaluate_all`` walks the parse tree recursively, and past roughly 1,000
     nested operations that walk overflows the stack and *aborts the process* —
     a hard exit, not an exception a try/except can catch
     (https://github.com/PSU3D0/formualizer/issues/411; measured on 0.9.3: a
     700-term chain evaluates, a 1,000-term one aborts). Such formulas are
-    quarantined before the evaluation runs, exactly like the references the
-    engine cannot resolve.
+    quarantined before import/evaluation if the native parser or evaluator
+    cannot safely handle them.
     """
 
     def test_depth_comes_from_the_parse_tree(self):
         shallow = ast_depth("=1+1")
         assert shallow is not None and shallow < 10
-        assert ast_depth("=" + "+".join(["1"] * 100)) > 50
+        moderate_depth = ast_depth("=" + "+".join(["1"] * 100))
+        assert moderate_depth is not None and moderate_depth > 50
         # an unparseable formula is not depth-quarantined: the evaluation
         # failure path, which already exists, is the one that handles it
         assert ast_depth("===((") is None
 
-    def test_the_gate_is_length_first(self):
-        # a tree can never nest deeper than the formula is long, so anything
-        # short skips the parse entirely
-        assert not is_too_deep("=" + "+".join(["1"] * MAX_AST_DEPTH))
+    def test_the_gate_respects_the_native_parser_when_the_old_cap_allows_it(self):
+        formula = "=" + "+".join(["1"] * MAX_AST_DEPTH)
+        try:
+            fz.parse(formula)
+        except Exception as error:
+            parser_limited = any(
+                text in str(error)
+                for text in (
+                    "AST height limit exceeded",
+                    "Formula nesting too deep",
+                    "node limit exceeded",
+                    "Formula token limit exceeded",
+                    "Formula source byte limit exceeded",
+                )
+            )
+        else:
+            parser_limited = False
+        assert is_too_deep(formula) is parser_limited
         assert is_too_deep("=" + "+".join(["1"] * (MAX_AST_DEPTH + 300)))
 
     def test_a_1200_term_chain_degrades_instead_of_crashing(self):
@@ -413,8 +429,8 @@ class TestAFormulaTooDeepToEvaluate:
         result = analyze(
             workbook({"A1": deep, "B1": 5, "B2": "=B1*2"}), filename="deep.xlsx"
         )
-        (warning,) = [w for w in result.warnings if "quarantined" in w]
-        assert "deeper than the engine" in warning
+        (warning,) = [w for w in result.warnings if "complexity limit" in w]
+        assert "evaluator depth" in warning
         assert "S!A1" in warning
         # the deep cell keeps a node — degraded, readable, no crash
         node = next(n for n in result.nodes if n.get("addr") == "A1")

@@ -85,11 +85,11 @@ def resolver_for(
 
 
 class TestGuardedErrors:
-    def test_missing_sheet_guard_falls_back_to_the_second_argument(self):
+    def test_native_missing_sheet_guard_evaluates_the_second_argument(self):
         graph = graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"})
         node = node_of(graph, "c:S!A1")
         assert node["value"] == 456
-        assert node["valueSource"] == "fallback"
+        assert node["valueSource"] == "engine"
 
     def test_native_error_guard_is_evaluated_by_the_engine(self):
         graph = graph_of({"A1": "=IFERROR(1/0, 42)"})
@@ -107,18 +107,11 @@ class TestGuardedErrors:
         assert node_of(graph, "c:S!A1")["value"] == 99
 
     def test_unguarded_missing_sheet_does_not_break_the_analysis(self):
-        """The cell claims no value, and the rest of the pass still completes.
-
-        An unguarded broken reference is now isolated before evaluation rather
-        than aborting it, so the warning names an evaluation that finished. The
-        cell itself is unchanged: it has no value to report either way.
-        """
+        """The native engine reports an unresolved sheet as Excel's #REF! value."""
         graph = graph_of({"A1": "=NOSHEET!A1"})
         node = node_of(graph, "c:S!A1")
-        assert node["value"] is None
-        assert "valueSource" not in node
-        warnings = graph["meta"]["warnings"]
-        assert any("completed after isolating 1 cell" in w for w in warnings)
+        assert node["value"] == "#REF!"
+        assert node["valueSource"] == "engine"
 
 
 class TestResilience:
@@ -264,10 +257,10 @@ class TestChainedRefs:
         # a reader of the report must never see that object rather than #DIV/0!
         assert node_of(self.graph(), "c:Errors!A1")["value"] == "#DIV/0!"
 
-    def test_the_unguarded_broken_reference_claims_no_value(self):
+    def test_the_unguarded_broken_reference_reports_ref_error(self):
         node = node_of(self.graph(), "c:Errors!A2")
-        assert node["value"] is None
-        assert "valueSource" not in node
+        assert node["value"] == "#REF!"
+        assert node["valueSource"] == "engine"
 
     def test_a_self_referencing_formula_does_not_crash(self):
         # =B1+B2 written in B2: the cycle is cut, B2 reads as blank
@@ -275,10 +268,10 @@ class TestChainedRefs:
         val = node_of(self.graph(), "c:Errors!B2")["value"]
         assert val in (1, None)
 
-    def test_the_recovery_is_reported_in_the_warnings(self):
+    def test_native_ref_error_does_not_trigger_recovery_warnings(self):
         warnings = self.graph()["meta"]["warnings"]
-        assert any("Global evaluation incomplete" in w for w in warnings)
-        assert any(w.startswith("Values recovered cell by cell:") for w in warnings)
+        assert not any("Global evaluation incomplete" in w for w in warnings)
+        assert not any(w.startswith("Values recovered cell by cell:") for w in warnings)
 
 
 class TestChainedViaGuarded:
@@ -320,19 +313,17 @@ class TestSiblingIsolation:
         assert node_of(graph, "c:A!A3")["value"] == 15
         assert node_of(graph, "c:B!B2")["value"] == 30
         assert node_of(graph, "c:C!C1")["value"] == 30
-        assert node_of(graph, "c:B!B1")["value"] is None
+        assert node_of(graph, "c:B!B1")["value"] == "#REF!"
 
 
 class TestNestedGuard:
-    def test_only_the_outer_guard_is_recovered(self):
+    def test_nested_guards_are_evaluated_by_the_engine(self):
         # Excel lets the inner IFERROR absorb the missing sheet — SUM(0) — and
-        # returns 0. The engine cannot evaluate the expression at all, so the
-        # recovery falls back to the branch of the outer guard. Documented
-        # ceiling of the recovery, asserted here so a change is noticed.
+        # returns 0. Formualizer 0.10.1 evaluates both guards natively.
         graph = graph_of({"A1": "=IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1)"})
         node = node_of(graph, "c:S!A1")
-        assert node["value"] == 1
-        assert node["valueSource"] == "fallback"
+        assert node["value"] == 0
+        assert node["valueSource"] == "engine"
 
 
 class TestDates:
@@ -566,11 +557,12 @@ class TestRootStep:
         assert node["steps"]["expr"] == "SUM({1, 2, 3; 4, 5, 6})"
         assert node["steps"]["value"] == 21
 
-    def test_a_value_that_is_not_the_engine_s_leaves_the_root_evaluated(self):
-        """Under a guard the shown value is a fallback, not this expression."""
+    def test_a_guarded_value_from_the_engine_leaves_the_root_evaluated(self):
+        """A native IFERROR result is the root expression's computed value."""
         node = node_of(graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"}), "c:S!A1")
-        assert node["valueSource"] == "fallback"
+        assert node["valueSource"] == "engine"
         assert node["steps"]["label"] == "IFERROR"
+        assert node["steps"]["evaluated"] is True
 
     def test_the_batch_drops_the_root_expression_but_keeps_the_rest(self):
         ast = fz.parse("=ROUND(SUM(A1:A2) * 1.5, 2)").to_dict()
@@ -841,9 +833,9 @@ class TestProvenance:
         graph = graph_of({"A1": 2, "A2": "=A1*3"})
         assert node_of(graph, "c:S!A2")["valueSource"] == "engine"
 
-    def test_guarded_node_reports_the_fallback(self):
+    def test_guarded_node_reports_engine_provenance(self):
         graph = graph_of({"A1": 1, "A2": "=IFERROR(NOSHEET!A1, 456)"})
-        assert node_of(graph, "c:S!A2")["valueSource"] == "fallback"
+        assert node_of(graph, "c:S!A2")["valueSource"] == "engine"
 
     def test_static_cell_carries_the_file_value(self):
         graph = graph_of({"A1": datetime.date(2026, 8, 7), "B1": "=A1+1"})

@@ -526,17 +526,17 @@ wheels = [
 
 [[package]]
 name = "formualizer"
-version = "0.9.3"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5b/be/af53c09a55d4f018a492d41f48413466bc7152a7717adcc767879f823834/formualizer-0.9.3.tar.gz", hash = "sha256:3d27562fff1310de5fc99699bf667a98cabf32fd7207e53e5c6c9bea8d94cf4c", size = 2330231, upload-time = "2026-09-11T13:11:27.81Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/aa/490452119a849ec99352b63cb97a524ca3f49a46050ea90b7c7b5ff03e10/formualizer-0.10.1.tar.gz", hash = "sha256:693b83845c45cd561d96e0938a6d9fd1370d6f493292070804ae1e6eb5e87fbd", size = 2650978, upload-time = "2026-09-30T04:29:48.886Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/f2/1029a9897809735817b4df657ce85700209b13f8c13ec81dbabb34b0ec1b/formualizer-0.9.3-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:4ba6254619eebcddb44a6c43dc3325d651a3556fee4897778edbf42b2a053ee7", size = 8175028, upload-time = "2026-09-11T13:11:14.449Z" },
-    { url = "https://files.pythonhosted.org/packages/af/e7/16c9cdbf243dafb3c780524cbfd651e79def90522cc163e0972cae1cc17d/formualizer-0.9.3-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:20cc1c0830192efea0462862151a19bfca4c12a23f242839e2fa43ecc3bca1e6", size = 7779412, upload-time = "2026-09-11T13:11:16.341Z" },
-    { url = "https://files.pythonhosted.org/packages/5f/08/8ca2c2968b8c5300df4a7a7f57b1112514fd79c8d5fcd9daa0b31cc25894/formualizer-0.9.3-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8f4baba9b7ec73a4b8bca19231655c38d1ec71dcbc37be3e95cc2c129461a06c", size = 8094745, upload-time = "2026-09-11T13:11:18.074Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/8b/04d9689fb7f6fcb866634e67cd52cf50563aa8a2cd13d6ee7ef7f0c7bc8d/formualizer-0.9.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:13202ca184d005a8a676792beb0b6fe09b3aaac926e51594d6f04421a5e8cac5", size = 8559805, upload-time = "2026-09-11T13:11:20.071Z" },
-    { url = "https://files.pythonhosted.org/packages/81/88/3e804dbaccafe9f20872841b224d36600399c5b88fb9be1d513589bfa219/formualizer-0.9.3-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:e1e6437d5d279fb7e0c77b6d6626bd2e652920cc249975cd239f486b9e86024f", size = 8318087, upload-time = "2026-09-11T13:11:22.119Z" },
-    { url = "https://files.pythonhosted.org/packages/f0/79/1a3735cc6223779f6fac859e49150d52398b70e2fb32d5162296c92750ad/formualizer-0.9.3-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f78fd9e654b87671ebf3cf0c19b9639d3784ecd74c442e836f5aca56bfb23d8c", size = 8756966, upload-time = "2026-09-11T13:11:24.045Z" },
-    { url = "https://files.pythonhosted.org/packages/35/d3/1601c35f27ad7b277fe268d86ba681f75693cfbc2840798483d94266e96d/formualizer-0.9.3-cp310-abi3-win_amd64.whl", hash = "sha256:13b3ee7c30f694055b549f5909832891518bc7335b69f94f8e9c48ab03380d32", size = 8010104, upload-time = "2026-09-11T13:11:26.232Z" },
+    { url = "https://files.pythonhosted.org/packages/08/00/643a43372cb273097871d3dfdc2179bbd869eb625b8c0e01c2b9834e8d67/formualizer-0.10.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:dd7592e99b62a8227e07445c1d5ed1946e584d670fa95e6c5f77481821e2c380", size = 7877039, upload-time = "2026-09-30T04:29:36.3Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/49/e967dcd716dba251e71c96709d89fe3bfc91afaa5deeb42fb1df3f493048/formualizer-0.10.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f6df5b1af3af953d911650041849987c5a6380ef216a0f368fb635251c5e64b0", size = 7540287, upload-time = "2026-09-30T04:29:38.181Z" },
+    { url = "https://files.pythonhosted.org/packages/51/1b/bd4aa41ae8d6a966b524474a42e202351210f03d5a978dcd94a871fa328b/formualizer-0.10.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2f021207408d7ba32957ccde72bd66ac0d291af16e031a84cbaa00bdfc3da523", size = 7864586, upload-time = "2026-09-30T04:29:40.035Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/92/db9bed23faf5dcf245ea689829da19d05de758a44719db8b89042b52f26e/formualizer-0.10.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2608121c5861f791d35bc119d45d9bfc23f7fdd49c28e842959d5c60472a05eb", size = 8259813, upload-time = "2026-09-30T04:29:41.953Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/79/ef4012f7ff40cddd3a9d8cd71a7b9696f0d778f94148aec9f278874bb7ff/formualizer-0.10.1-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:d1033164fa3e92fdc456cebf4a4c5b8977e7fec3a1d00820df7e2d3e9e50d6cc", size = 8080379, upload-time = "2026-09-30T04:29:43.832Z" },
+    { url = "https://files.pythonhosted.org/packages/45/20/d9da9a87868fde2d7d8d995240dd3f606b9f6a7f7fb8e172684cedeeb7a2/formualizer-0.10.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3db5b28a03c6a4ac6fff09a1aadacf0ca92176516def7535d588ce385dd4c2b1", size = 8459635, upload-time = "2026-09-30T04:29:45.371Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/a5/9b653a2b583778113c9a16548429190cef216903b597830485e2244f1a01/formualizer-0.10.1-cp310-abi3-win_amd64.whl", hash = "sha256:8f5c58bd2c2c5baaf68223b3a2c06949f62b11b41255a6327881926b235bfcfc", size = 7748695, upload-time = "2026-09-30T04:29:47.358Z" },
 ]
 
 [[package]]
@@ -651,8 +651,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "python_full_version < '3.12' or sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "python_full_version < '3.12' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -847,7 +847,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "formualizer", specifier = ">=0.9.3" },
+    { name = "formualizer", specifier = ">=0.10.1" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.26" },
