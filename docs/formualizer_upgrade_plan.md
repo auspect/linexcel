@@ -1,5 +1,61 @@
 # Formualizer : audit et amélioration continue
 
+## Addendum du 7 octobre 2026 : CI sur formualizer 0.11.0
+
+Le workflow de veille a résolu formualizer 0.11.0, publié sous le tag amont
+[`v0.11.0`](https://github.com/PSU3D0/formualizer/blob/v0.11.0/CHANGELOG.md).
+L'index de recherche ne montrait pas encore cette version. Le changelog tagué,
+les stubs Python du même tag et son guide CLI servent de sources :
+[stubs Python 0.11.0](https://github.com/PSU3D0/formualizer/blob/v0.11.0/bindings/python/formualizer/formualizer_py.pyi),
+[guide CLI 0.11.0](https://github.com/PSU3D0/formualizer/blob/v0.11.0/docs/cli.md).
+
+### État de la CI de PR #113
+
+Le [run 37619156812](https://github.com/auspect/linexcel/actions/runs/37619156812)
+a réussi tous les jobs, dont les tests Linux/Windows et navigateur, après le
+rebase sur linexcel 1.13.0. Le premier run
+[plancher/verrou 37619156894](https://github.com/auspect/linexcel/actions/runs/37619156894)
+a passé les 236 tests sur chacun de ces deux canaux. Son job « dernière version »
+sur 0.11.0 a révélé
+116 échecs et 120 succès, en raison de collisions entre les nouveaux noms
+statistiques natifs et les alias linexcel.
+
+Le correctif conserve `NORMDIST` natif après vérification de ses contrats.
+`NORMSDIST` garde son bridge : le natif 0.11.0 accepte à tort un argument
+supplémentaire. L'enregistrement autorise explicitement cette surcharge ;
+les erreurs inattendues restent visibles. Les contrats couvrent les arités,
+coercitions, tableaux, erreurs, gardes et recalculs après modification d'entrée.
+
+Les probes ont aussi confirmé les limites du parseur au chargement. Les
+formules rejetées pour leur hauteur, imbrication ou budget de taille sont
+isolées avant l'import. Les autres cellules restent calculables et les
+formules isolées conservent leur cache lorsqu'il existe. Cette admission
+dépend du refus réel du parseur : une chaîne de 700 termes continue donc
+à être calculée avec 0.10.1. La matrice hebdomadaire couvre désormais les
+contrats des alias et les limites natives dans des sous-processus.
+
+La garde vérifie nativement les formules de plus de 64 caractères avant
+l'import, en plus du contrôle lexical contre les conversions dangereuses.
+Cette protection ajoute du travail de parsing. Son coût sur les grandes
+familles de formules reste à mesurer dans le lot de performances ; aucun
+gain de vitesse de linexcel n'est revendiqué dans cette release.
+
+Les résultats de 1 453 tests locaux et 99 tests navigateur consignés plus bas
+datent de l'arbre avant le rebase sur linexcel 1.13.0. Ils restent un relevé
+historique, pas une validation de 0.11.0. Le statut final dépend du nouveau run
+après correction des alias et des gardes du parseur.
+
+### Capacités 0.11.0 et priorités d'intégration
+
+| Capacité amont | Situation linexcel | Prochaine action |
+| --- | --- | --- |
+| Parseur borné : hauteur AST par défaut de 256, source de 65 536 octets, 16 384 tokens, 8 192 nœuds et 72 cadres Pratt | La garde reconnaît les refus de complexité natifs avant import et conserve son plafond contre les conversions profondes. Les stubs Python 0.11.0 n'exposent pas `ParserLimits`. | **P0 livré.** Couvrir les limites dans la veille ; ne pas augmenter les budgets sans API publiée et preuves de sûreté. |
+| Fonctions natives Excel 2007, dont `NORMSDIST`, `NORMDIST`, `NORMSINV`, `TDIST` et les fonctions historiques de lois | Le natif `NORMDIST` remplace son bridge ; `NORMSDIST` garde la validation d'arité linexcel. | **P0 livré.** Étendre les oracles statistiques indépendants avant de retirer d'autres adaptations. |
+| Opérateur `^` désormais associatif à gauche; `AND`, `OR` et `XOR` évaluent tous leurs arguments et propagent la première erreur selon l'ordre source | Ce sont des changements sémantiques visibles. `2^3^2` vaut maintenant 64; `AND(FALSE,1/0)` renvoie `#DIV/0!`. | **P1.** Ajouter ces cas aux contrats versionnés et comparer les résultats à Excel avant de traiter un écart comme une régression ou une adaptation linexcel. |
+| `IF` applique les conditions tableaux élément par élément; tableaux CSE historiques, références de débordement `A1#` et `_xlfn.ANCHORARRAY(A1)` | L'analyse sait lire les formules et les cellules de dépendance, mais ces nouveaux résultats de tableaux et références de débordement n'ont pas encore de contrat linexcel dédié. | **P1.** Ajouter de petites fixtures pour la valeur de l'ancre, les enfants de débordement, la trace ciblée et les gardes d'erreurs. Vérifier séparément le calcul mutable et le recalcul XLSX source. |
+| API Python `recalculate_xlsx_file`/`recalculate_xlsx_bytes`, avec conservation des parties XLSX, contrôle des caches, horloge et graine déterministes | Linexcel analyse les classeurs sans publier un fichier recalculé. Le recalcul amont refuse le classeur complet hors de son sous-ensemble pris en charge. | **P2.** Évaluer un export séparé sur une copie, avec les refus testés et des options de temps/graine explicites. Ne pas l'insérer dans le chemin d'analyse. |
+| Rapports de recalcul avec raisons d'erreur, liste complète des fonctions inconnues et tolérance de cache d'une unité au 15e chiffre significatif | Ces règles concernent la nouvelle API de recalcul XLSX; elles ne changent pas automatiquement `Workbook.evaluate_cell` ni la comparaison de cache linexcel. | **P2.** Comparer les reçus Python au rapport de provenance linexcel sur un corpus synthétique avant d'aligner les statuts de cache ou les diagnostics. |
+
 Audit du 6 octobre 2026. Périmètre : passage de 0.9.3 à 0.10.1,
 analyse complète, calcul ciblé et exploration des grands classeurs.
 
@@ -159,15 +215,21 @@ itération non convergente et divergences entre moteur et caches LibreOffice.
 Les fonctions modernes que LibreOffice conserve en `#NAME?` ne constituent
 pas un oracle indépendant utilisable dans ce run.
 
-Après correction, la suite complète locale rapporte **1453 succès et 12
-tests ignorés**, avec les tests navigateur activés. Les derniers changements
-(cas statistiques supplémentaires, véritable fixture cyclique et arrêt
-anticipé de la détection des chaînes) ont ensuite été vérifiés dans une
-sélection de **37 tests**, tous réussis. Ruff, formatage et typage passent.
-Les 99 tests navigateur réussissent aussi dans leur exécution séparée.
-Le nouveau workflow a été parsé localement ; son exécution GitHub reste à
-faire après publication des changements.
-La wheel et la distribution source ont été construites et importées dans deux
-environnements isolés. Le manifeste de livraison enregistre deux analyses
-`completed`, aucune erreur technique et 12 captures ; son statut global
-`incomplete` conserve explicitement l'exclusion des contrôles IA.
+Le relevé local complet de **1 453 succès et 12 tests ignorés**, les **99 tests
+navigateur**, les 37 tests ciblés et les deux distributions construites
+proviennent de l'arbre avant le rebase sur linexcel 1.13.0. Le manifeste local
+de ce run garde le statut `incomplete` demandé, puisqu'il omet les contrôles IA.
+Ces nombres et artefacts décrivent cet arbre; ils ne valident pas 0.11.0.
+
+Depuis, le workflow a tourné dans GitHub : le job navigateur passe dans le
+[run PR #113](https://github.com/auspect/linexcel/actions/runs/37619156812),
+et les versions plancher/verrou passent **236 tests** dans le
+[run 37619156894](https://github.com/auspect/linexcel/actions/runs/37619156894).
+Le premier job latest sur formualizer 0.11.0 a rapporté **116 échecs et 120 succès** à
+cause des collisions entre fonctions statistiques natives et alias linexcel.
+Les correctifs décrits dans l'addendum répondent à ces collisions et aux
+limites de complexité du parseur. La sélection finale de **27 tests** de garde
+et de robustesse passe sur **0.10.1 et 0.11.0**. Ruff, formatage et typage
+passent aussi. Les résultats GitHub de la branche publiée sont consultables
+dans les [contrôles de la PR #113](https://github.com/auspect/linexcel/pull/113/checks).
+Le tag de release reste conditionné à leur réussite.

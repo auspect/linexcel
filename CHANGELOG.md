@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detect long targeted formula chains from the bounded dependency trace;
   compressed native evaluation plans no longer provide a reliable depth count.
 
+### Fixed
+
+- Avoid legacy normal-distribution alias registration conflicts with formualizer
+  0.11.0 while preserving Excel argument validation and support for 0.10.1.
+- Quarantine formulas rejected by native parser complexity limits before workbook
+  import, preserving cached values and evaluation of unrelated formulas.
+
 ### Added
 
 - Add a weekly and manually triggered compatibility matrix for the declared

@@ -117,6 +117,8 @@ jobs:
           tests/test_trace_formula_depth.py
           tests/test_excel_compat.py
           tests/test_lazy_correctness.py
+          tests/test_legacy_normal_functions.py
+          tests/test_native_complexity.py
           --junitxml=junit.xml
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
