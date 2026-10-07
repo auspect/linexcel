@@ -398,7 +398,8 @@ class TestAFormulaTooDeepToEvaluate:
     def test_depth_comes_from_the_parse_tree(self):
         shallow = ast_depth("=1+1")
         assert shallow is not None and shallow < 10
-        assert ast_depth("=" + "+".join(["1"] * 100)) > 50
+        moderate_depth = ast_depth("=" + "+".join(["1"] * 100))
+        assert moderate_depth is not None and moderate_depth > 50
         # an unparseable formula is not depth-quarantined: the evaluation
         # failure path, which already exists, is the one that handles it
         assert ast_depth("===((") is None

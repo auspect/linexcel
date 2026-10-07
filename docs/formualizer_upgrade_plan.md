@@ -42,8 +42,10 @@ gain de vitesse de linexcel n'est revendiqué dans cette release.
 
 Les résultats de 1 453 tests locaux et 99 tests navigateur consignés plus bas
 datent de l'arbre avant le rebase sur linexcel 1.13.0. Ils restent un relevé
-historique, pas une validation de 0.11.0. Le statut final dépend du nouveau run
-après correction des alias et des gardes du parseur.
+historique, pas une validation de 0.11.0. Après correction, le
+[run de compatibilité 37622130087](https://github.com/auspect/linexcel/actions/runs/37622130087)
+passe **295 tests sur chacun des trois canaux**. La suite complète isolée
+sans navigateur avec 0.11.0 passe **1 369 tests**, avec **13 ignorés**.
 
 ### Capacités 0.11.0 et priorités d'intégration
 
@@ -230,6 +232,12 @@ cause des collisions entre fonctions statistiques natives et alias linexcel.
 Les correctifs décrits dans l'addendum répondent à ces collisions et aux
 limites de complexité du parseur. La sélection finale de **27 tests** de garde
 et de robustesse passe sur **0.10.1 et 0.11.0**. Ruff, formatage et typage
-passent aussi. Les résultats GitHub de la branche publiée sont consultables
+passent aussi. Le run de compatibilité post-correctif passe **295 tests par
+canal** ; la suite complète isolée 0.11.0 sans navigateur passe **1 369 tests**,
+avec **13 ignorés**. La validation manuelle finale du 7 octobre termine les
+deux analyses, sans erreur technique, avec **12 captures** et le statut
+`incomplete` attendu sans IA. La revue indépendante confirme la fermeture
+des contournements du parseur et signale le coût de préflight à mesurer.
+Les résultats GitHub de la branche publiée sont consultables
 dans les [contrôles de la PR #113](https://github.com/auspect/linexcel/pull/113/checks).
 Le tag de release reste conditionné à leur réussite.
