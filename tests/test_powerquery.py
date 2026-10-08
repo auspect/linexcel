@@ -6,7 +6,10 @@ between the two: what a query plainly names is found, what an expression would
 have to compute is not claimed, and neither case costs the analysis a run.
 """
 
+import base64
 import io
+import struct
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -18,6 +21,7 @@ from linexcel.powerquery import (
     Query,
     QuerySource,
     parse_section,
+    query_warning,
     read_destinations,
     read_queries,
     read_section,
@@ -68,6 +72,21 @@ class TestSectionParsing:
 
     def test_an_empty_section_yields_nothing(self):
         assert parse_section("") == {}
+
+    def test_comments_between_declaration_tokens_preserve_the_body(self):
+        section = (
+            "section Section1; // note\nshared /* name */ A /* value */ = "
+            'let x = "/* keep */" in x;'
+        )
+        assert parse_section(section) == {"A": 'let x = "/* keep */" in x'}
+
+    @pytest.mark.parametrize("newline", ["\r", "\r\n", "\x85", "\u2028", "\u2029"])
+    def test_all_m_newlines_end_line_comments(self, newline):
+        section = f"section Section1; // note{newline}shared A = 1;"
+        assert parse_section(section) == {"A": "1"}
+
+    def test_escaped_query_identifiers_are_decoded(self):
+        assert parse_section('shared #"Raw#(0020)Sales" = 1;') == {"Raw Sales": "1"}
 
 
 class TestSourceScanning:
@@ -135,6 +154,83 @@ class TestSourceScanning:
         m_source = 'let x = "Raw Sales" in x'
         assert scan_sources(m_source, {"Raw Sales"}) == []
 
+    @pytest.mark.parametrize(
+        "m_source",
+        [
+            '// File.Contents("fake.csv")\n1',
+            '/* File.Contents("fake.csv") */ 1',
+            '"File.Contents(""fake.csv"")"',
+            '#"File.Contents(""fake.csv"")"',
+            '// Excel.CurrentWorkbook(){[Name="Fake"]}[Content]\n1',
+            '"Excel.CurrentWorkbook(){[Name=""Fake""]}[Content]"',
+        ],
+    )
+    def test_connector_text_in_comments_and_literals_is_not_a_source(self, m_source):
+        assert scan_sources(m_source, set()) == []
+
+    def test_comments_between_connector_tokens_are_whitespace(self):
+        assert scan_sources(
+            'File.Contents /* note */ ( /* target */ "real.csv")', set()
+        ) == [QuerySource("file", "real.csv", "File.Contents")]
+
+    def test_comments_inside_a_real_target_are_preserved(self):
+        assert scan_sources(
+            'Web.Contents("https://example.com/*literal*/")', set()
+        ) == [QuerySource("web", "https://example.com/*literal*/", "Web.Contents")]
+
+    @pytest.mark.parametrize(
+        "m_source",
+        [
+            'File.Contents("prefix" & parameter)',
+            'Web.Contents("prefix" & "suffix")',
+            'Excel.CurrentWorkbook(){[Name="Prefix" & parameter]}[Content]',
+        ],
+    )
+    def test_a_literal_prefix_of_a_dynamic_target_is_not_a_complete_source(
+        self, m_source
+    ):
+        assert scan_sources(m_source, set()) == []
+
+    def test_web_page_parses_inline_html_without_an_external_source(self):
+        assert scan_sources('Web.Page("<html><body>Hello</body></html>")', set()) == []
+
+    @pytest.mark.parametrize("namespace", ["MyExcel", "Custom.Excel"])
+    def test_custom_current_workbook_function_is_not_the_builtin(self, namespace):
+        assert scan_sources(f'{namespace}.CurrentWorkbook(){{[Name="T"]}}', set()) == []
+
+    def test_queries_differing_in_case_resolve_to_the_exact_name(self):
+        assert scan_sources("Sales + sales", {"Sales", "sales"}) == [
+            QuerySource("query", "Sales", "let"),
+            QuerySource("query", "sales", "let"),
+        ]
+
+    def test_a_case_mismatch_does_not_resolve_to_a_query(self):
+        assert scan_sources("sales", {"Sales"}) == []
+
+    def test_local_bindings_shadow_only_the_exact_query_name(self):
+        assert scan_sources("let sales = 1 in Sales", {"Sales"}) == [
+            QuerySource("query", "Sales", "let")
+        ]
+
+    def test_m_escape_sequences_are_decoded_without_python_backslash_escapes(self):
+        assert scan_sources('File.Contents("C:\\temp\\a#(0020)b.csv")', set()) == [
+            QuerySource("file", "C:\\temp\\a b.csv", "File.Contents")
+        ]
+        assert scan_sources('#"Raw#(0020)Sales"', {"Raw Sales"}) == [
+            QuerySource("query", "Raw Sales", "let")
+        ]
+
+    def test_escape_of_escape_is_decoded_once(self):
+        assert (
+            scan_sources('File.Contents("#(#)(tab).csv")', set())[0].target
+            == "#(tab).csv"
+        )
+
+    def test_combined_and_long_character_escapes(self):
+        assert scan_sources('File.Contents("a#(cr,lf)#(0001F600).csv")', set())[
+            0
+        ].target == ("a\r\n😀.csv")
+
 
 class TestReadingTheFile:
     def test_the_m_source_is_recovered_from_the_mashup(self, data):
@@ -170,6 +266,24 @@ class TestReadingTheFile:
         assert read_queries(b"not a zip at all") == []
         assert read_section(b"") is None
 
+    def test_an_unknown_mashup_version_is_not_interpreted(self):
+        from linexcel.powerquery import _unpack_mashup
+
+        assert _unpack_mashup(_encoded_mashup(b"shared A = 1;", version=1)) is None
+
+    def test_nested_zip_expansion_is_bounded_before_reading(self, monkeypatch):
+        from linexcel import powerquery
+
+        # The compressed package fits the budget while its M source does not.
+        monkeypatch.setattr(powerquery, "MAX_MASHUP_BYTES", 1024)
+        encoded = _encoded_mashup(b" " * 2048)
+        assert powerquery._unpack_mashup(encoded) is None
+
+    def test_valid_mashup_under_the_budget_is_still_read(self):
+        from linexcel.powerquery import _unpack_mashup
+
+        assert _unpack_mashup(_encoded_mashup(b"shared A = 1;")) == "shared A = 1;"
+
 
 class TestChainedQueries:
     """One query reading another is the shape most real mashups have."""
@@ -202,6 +316,23 @@ class TestChainedQueries:
         labels = {n["label"] for n in graph["nodes"] if n["kind"] == "query"}
         assert labels == {"Sales", "sales"}
 
+    def test_chained_query_edges_keep_case_distinctions(self, monkeypatch):
+        from linexcel import analyzer
+
+        section = (
+            "section Section1; shared Sales = 1; shared sales = 2; "
+            "shared Upper = Sales; shared Lower = sales;"
+        )
+        monkeypatch.setattr(analyzer, "read_queries", _queries_from(section))
+        graph = analyzer.analyze_workbook(
+            plain_workbook(), "main.xlsx", execution=ExecutionPolicy(isolated=False)
+        )["graph"]
+        edges = {(e["source"], e["target"]) for e in graph["edges"]}
+        assert ("q:Sales", "q:Upper") in edges
+        assert ("q:sales", "q:Lower") in edges
+        assert ("q:sales", "q:Upper") not in edges
+        assert ("q:Sales", "q:Lower") not in edges
+
 
 def _queries_from(section: str):
     """Stand in for the mashup reader with M written here rather than in a file."""
@@ -214,7 +345,21 @@ def _queries_from(section: str):
     return lambda data: queries
 
 
+def _encoded_mashup(source: bytes, *, version: int = 0) -> str:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as package:
+        package.writestr("Formulas/Section1.m", source)
+    raw = buffer.getvalue()
+    return base64.b64encode(struct.pack("<II", version, len(raw)) + raw).decode("ascii")
+
+
 class TestOutsideSources:
+    def test_missing_sheet_destination_does_not_claim_no_data_model_load(self):
+        warning = query_warning([Query(name="ModelQuery", source="1")])
+        assert warning is not None
+        assert "no worksheet destination detected" in warning
+        assert "loaded nowhere" not in warning
+
     def test_what_is_in_the_workbook_is_not_counted_as_outside(self):
         query = Query(
             name="Q",

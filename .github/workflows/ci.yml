@@ -60,10 +60,10 @@ jobs:
           enable-cache: true
           prune-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --locked
+      - run: uv sync --locked --extra ai
       # No path argument: testpaths (tests/ + src/ doctests) applies.
       - run: >
-          uv run pytest -v
+          uv run --extra ai pytest -v
           --cov=src/linexcel
           --cov-report=term-missing
           --cov-report=xml

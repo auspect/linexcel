@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-10-08
+
+### Added
+
+- Expose `OpenAICompatProvider` for reusable OpenAI/HTTPX clients, model URL
+  templates, explicit proxies, transport options, SDK options and chat request
+  parameters. Support caller-owned HTTP or SDK clients and context-managed
+  cleanup of owned connections. Declare HTTPX in the optional AI extras and
+  require OpenAI 1.55.3 or later for the configured transport API.
+- Add sourced package recommendations and a Power Query audit with integration
+  costs, coverage limits and benchmark plans.
+
+### Fixed
+
+- Keep Power Query identifiers case-sensitive, exclude comments and text from
+  source detection, and bound decompression of the embedded M section.
+- Clarify static Power Query extraction, isolated execution limits and the
+  scope of AI quotation checks in the documentation.
+- Report HTTP status codes without quoting gateway payloads in provider API
+  error messages; avoid attributing all vision failures to a text-only model.
+
 ## [1.13.1] — 2026-10-07
 
 ### Changed

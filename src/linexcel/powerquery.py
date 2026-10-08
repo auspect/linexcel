@@ -51,7 +51,6 @@ CONNECTORS = {
     "Folder.Files": "folder",
     "Folder.Contents": "folder",
     "Web.Contents": "web",
-    "Web.Page": "web",
     "Web.BrowserContents": "web",
     "SharePoint.Contents": "web",
     "SharePoint.Files": "web",
@@ -61,21 +60,22 @@ CONNECTORS = {
     "Odbc.Query": "database",
     "Odbc.DataSource": "database",
 }
-#: Every connector Microsoft and its partners ship follows the same naming, so
-#: a suffix rule covers the ones no list can enumerate — ``Sql.Database``,
-#: ``Snowflake.Databases``, ``Salesforce.Data``, a partner's ``Foo.Feed``.
-#: Deliberately narrow: transform namespaces (``Table``, ``Text``, ``List``)
-#: have no member ending this way, so nothing of the pipeline is mistaken for
-#: a source.
+#: Common connector suffixes extend the explicit list, including
+#: ``Sql.Database``, ``Snowflake.Databases`` and a partner's ``Foo.Feed``.
+#: This is a naming heuristic: a custom function with one of these suffixes
+#: may transform data rather than read a database.
 DATABASE_SUFFIXES = ("Database", "Databases", "Tables", "Cubes", "Feed", "DataSource")
+_NEWLINE_RE = re.compile(r"[\r\n\x85\u2028\u2029]")
 
 #: A query reading a table or a named range of the workbook it lives in.
 _CURRENT_WORKBOOK_RE = re.compile(
-    r'Excel\.CurrentWorkbook\s*\(\s*\)\s*\{\s*\[\s*Name\s*=\s*"((?:[^"]|"")*)"'
+    r'(?<![\w.])Excel\.CurrentWorkbook\s*\(\s*\)\s*\{\s*\[\s*Name\s*=\s*"((?:[^"]|"")*)"\s*\]'
 )
 #: ``Namespace.Member("first string argument"`` — the shape every connector
 #: uses to name what it reads.
-_CALL_RE = re.compile(r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*\(\s*"((?:[^"]|"")*)"')
+_CALL_RE = re.compile(
+    r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*\(\s*"((?:[^"]|"")*)"(?=\s*[,)])'
+)
 #: The head of a section member: optional metadata, optional ``shared``, then
 #: the name — quoted when it holds spaces — and the ``=`` that opens its body.
 _MEMBER_RE = re.compile(
@@ -123,7 +123,10 @@ class Query:
 
     @property
     def loaded(self) -> bool:
-        """``False`` for a connection-only query — computed, never written."""
+        """Whether a worksheet destination was detected for this query.
+
+        ``False`` also covers data-model loads and unresolved destinations.
+        """
         return bool(self.loaded_to)
 
     def outside_sources(self) -> list[QuerySource]:
@@ -172,7 +175,7 @@ def query_warning(queries: list[Query]) -> str | None:
         head = "1 Power Query query feeds this workbook" + (
             ", loaded onto a sheet."
             if loaded
-            else ", loaded nowhere (connection only)."
+            else ", with no worksheet destination detected."
         )
     else:
         head = (
@@ -219,7 +222,9 @@ def parse_section(text: str) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     for statement in _statements(text):
-        head = _MEMBER_RE.match(statement)
+        # Comments are whitespace in M, including before or inside a member
+        # declaration. Preserve offsets so the returned body keeps its source.
+        head = _MEMBER_RE.match(_scrub(statement, keep_text=True))
         if head is None:
             continue
         name = _identifier(head.group(1), head.group(2))
@@ -234,16 +239,24 @@ def scan_sources(m_source: str, other_queries: set[str]) -> list[QuerySource]:
 
     Three kinds of answer: a table or named range of this workbook, another
     query of the same file, or something outside both — a path, a URL, a
-    server. Anything an expression computes rather than spells out is not
-    here, and no static reader can put it there.
+    server. Targets that require evaluating an expression remain unresolved
+    here.
     """
     found: list[QuerySource] = []
-    for match in _CURRENT_WORKBOOK_RE.finditer(m_source):
+    body = _scrub(m_source, keep_text=True)
+    code = _scrub(m_source, keep_identifiers=False)
+    for match in _CURRENT_WORKBOOK_RE.finditer(body):
+        if not code.startswith("Excel.CurrentWorkbook", match.start()):
+            continue
         found.append(
             QuerySource("table", _unquote(match.group(1)), "Excel.CurrentWorkbook")
         )
-    for match in _CALL_RE.finditer(m_source):
+    for match in _CALL_RE.finditer(body):
         function, target = match.group(1), _unquote(match.group(2))
+        # A connector-shaped phrase inside a literal or quoted identifier is
+        # text, even when its spelling matches a real connector.
+        if not code.startswith(function, match.start()):
+            continue
         kind = CONNECTORS.get(function)
         if kind is None and function.rpartition(".")[2].endswith(DATABASE_SUFFIXES):
             kind = "database"
@@ -338,12 +351,20 @@ def _unpack_mashup(encoded: str) -> str | None:
         return None
     if len(blob) < 8:
         return None
-    _version, length = struct.unpack_from("<II", blob, 0)
+    version, length = struct.unpack_from("<II", blob, 0)
+    if version != 0:
+        return None
     if not 0 < length <= min(len(blob) - 8, MAX_MASHUP_BYTES):
         return None
     try:
         with zipfile.ZipFile(io.BytesIO(blob[8 : 8 + length])) as package:
-            return package.read(SECTION_PART).decode("utf-8-sig")
+            if package.getinfo(SECTION_PART).file_size > MAX_MASHUP_BYTES:
+                return None
+            with package.open(SECTION_PART) as source:
+                raw = source.read(MAX_MASHUP_BYTES + 1)
+            if len(raw) > MAX_MASHUP_BYTES:
+                return None
+            return raw.decode("utf-8-sig")
     except Exception:
         return None
 
@@ -368,8 +389,7 @@ def _statements(text: str) -> list[str]:
             index = _skip_string(text, index)
             continue
         if text.startswith("//", index):
-            newline = text.find("\n", index)
-            index = end if newline < 0 else newline + 1
+            index = _line_comment_end(text, index)
             continue
         if text.startswith("/*", index):
             close = text.find("*/", index + 2)
@@ -402,11 +422,18 @@ def _skip_string(text: str, index: int) -> int:
     return end
 
 
-def _scrub(text: str) -> str:
-    """The M source with strings and comments blanked, identifiers kept.
+def _line_comment_end(text: str, index: int) -> int:
+    """The first M newline after a line comment, or the end of the source."""
+    newline = _NEWLINE_RE.search(text, index)
+    return newline.start() if newline is not None else len(text)
+
+
+def _scrub(text: str, *, keep_text: bool = False, keep_identifiers: bool = True) -> str:
+    """Mask non-code text without moving source offsets.
 
     Quoted identifiers survive: ``#"Sales 2026"`` names a query, while
-    ``"Sales 2026"`` is a value that happens to read the same.
+    ``"Sales 2026"`` is a value that happens to read the same. ``keep_text``
+    masks only comments; ``keep_identifiers=False`` also masks quoted names.
     """
     out: list[str] = []
     index = 0
@@ -415,13 +442,14 @@ def _scrub(text: str) -> str:
         char = text[index]
         if char == '"':
             close = _skip_string(text, index)
-            keep = index > 0 and text[index - 1] == "#"
+            keep = keep_text or (
+                keep_identifiers and index > 0 and text[index - 1] == "#"
+            )
             out.append(text[index:close] if keep else " " * (close - index))
             index = close
             continue
         if text.startswith("//", index):
-            newline = text.find("\n", index)
-            close = end if newline < 0 else newline
+            close = _line_comment_end(text, index)
             out.append(" " * (close - index))
             index = close
             continue
@@ -448,23 +476,21 @@ def _referenced_queries(m_source: str, others: set[str]) -> list[str]:
     if not others:
         return []
     body = _scrub(m_source)
-    by_fold = {name.casefold(): name for name in others}
     bound = {
-        _identifier(m.group(1), m.group(2)).casefold()
+        _identifier(m.group(1), m.group(2))
         for m in _BOUND_RE.finditer(body)
         if _identifier(m.group(1), m.group(2))
     }
     found: list[str] = []
     for match in _IDENT_RE.finditer(body):
         name = _identifier(match.group(1), match.group(2))
-        fold = name.casefold()
-        if fold in bound or fold not in by_fold:
+        if name in bound or name not in others:
             continue
         # ``Table.Sort`` is one name in two halves, not a query called Table.
         if match.group(2) is not None and _is_dotted(body, match.start(), match.end()):
             continue
-        if by_fold[fold] not in found:
-            found.append(by_fold[fold])
+        if name not in found:
+            found.append(name)
     return found
 
 
@@ -483,8 +509,24 @@ def _identifier(quoted: str | None, bare: str | None) -> str:
 
 
 def _unquote(text: str) -> str:
-    """``""`` is how M escapes a quote inside a quoted token."""
-    return text.replace('""', '"')
+    """Decode M's doubled quotes and character escapes in a quoted token."""
+    controls = {"cr": "\r", "lf": "\n", "tab": "\t", "#": "#"}
+
+    def escape(match: re.Match[str]) -> str:
+        decoded: list[str] = []
+        for part in match.group(1).split(","):
+            if part in controls:
+                decoded.append(controls[part])
+            elif re.fullmatch(r"[0-9A-Fa-f]{4}(?:[0-9A-Fa-f]{4})?", part):
+                value = int(part, 16)
+                if value > 0x10FFFF:
+                    return match.group(0)
+                decoded.append(chr(value))
+            else:
+                return match.group(0)
+        return "".join(decoded)
+
+    return re.sub(r"#\(([^()]*)\)", escape, text.replace('""', '"'))
 
 
 # ---------------------------------------------------------------------------
