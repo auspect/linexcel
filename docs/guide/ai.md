@@ -1,7 +1,8 @@
 # AI documentation
 
-Optional and opt-in: linexcel is a lineage analyser first, and every figure in
-the report is computed without a model. What AI adds is prose — a card per node
+Optional and opt-in: linexcel extracts or computes deterministic evidence
+without a model, including saved workbook values and calculation qualifications.
+What AI adds is prose — a card per node
 and an overview per workbook, written from the deterministic dossier the
 analysis already produced.
 
@@ -95,6 +96,15 @@ about external caches, ambiguous localized illustrative formulas and invented
 visual discrepancies. The six unsupported quotations in that run are lexical
 observations, not a count of proven factual errors. Neither the additional
 source facts nor a complete generation run certifies the explanation.
+
+An OpenRouter review with `qwen/qwen3.8-flash` on 2026-10-07 also found a
+space-separated range intersection described as a union with double counting,
+and a cached volatile `TODAY()` value described as a fresh engine calculation.
+The deterministic dossier preserved the intersection and marked the volatile
+value as an unrecalculated snapshot. These were errors in generated prose;
+formula quotation checks did not establish its correctness. Excel's
+[reference operators](https://support.microsoft.com/en-us/excel/calculation-operators-and-precedence-in-excel)
+distinguish a space (intersection) from a comma (union).
 
 ## Node cards
 

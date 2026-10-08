@@ -31,7 +31,9 @@ precedent is missing is a fact about the workbook, not a gap to hide.
 
 ## Power Query (Get & Transform)
 
-Queries are in the lineage. Each one is a node carrying its M source, and the
+Power Query extraction is static and covers a subset of M. linexcel does not
+execute M, refresh queries or verify their saved results. Recognized queries
+are in the lineage. Each one is a node carrying its M source, and the
 graph crosses it: `Source!A1:B4` → `BusyProducts` → `Loaded!A1:B3`, where the
 landing range used to sit at the top of the graph with nothing above it.
 
@@ -39,10 +41,10 @@ What is read, and from where:
 
 | | |
 | --- | --- |
-| The M source | the `customXml` part whose schema is `http://schemas.microsoft.com/DataMashup`: base64, then a ZIP whose `Formulas/Section1.m` holds every query in plain text |
+| The M source | the `customXml` part whose schema is `http://schemas.microsoft.com/DataMashup`: base64, then the versioned MS-QDEFF header and package ZIP containing `Formulas/Section1.m` |
 | The destination | `xl/connections.xml` names the query a connection loads, `xl/queryTables/*.xml` ties that connection to a table on a sheet |
 | The sources | read off the M — `Excel.CurrentWorkbook(){[Name="X"]}` is a table or defined name of this file and is linked to it, and a query reading another is an edge between the two |
-| Everything else | `File.Contents`, `Folder.Files`, `Web.Contents`, `Sql.Database` and any `*.Database`, `*.Feed` or `*.DataSource` connector: named, never opened |
+| External connectors | Literal arguments to recognized calls such as `File.Contents`, `Folder.Files`, `Web.Contents`, `Sql.Database` and `*.Database`, `*.Feed` or `*.DataSource`: named, never opened |
 
 A query that computes without loading anywhere — connection only, or straight
 into the data model — is shown as loading nowhere rather than dropped.
@@ -51,7 +53,11 @@ Where it stops is the data behind an outside source. A CSV on a share, a REST
 endpoint, a database: the query names them, linexcel does not read them, and
 the panel says so under the source list. And M is a real language — a source
 built at run time rather than written out is invisible to a static reader,
-which is the same limit VBA has below.
+which is the same limit VBA has below. Comments and text literals are excluded
+from dependency scanning, and query identifiers retain M's case sensitivity.
+Dynamic connector arguments and complex scope rules can still produce missing
+or ambiguous edges. See the [Power Query audit](../powerquery_audit.md) for the
+tested cases and proposed parser improvements.
 
 ## Not in the graph
 

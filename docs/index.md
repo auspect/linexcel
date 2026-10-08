@@ -53,7 +53,6 @@ See the [command line reference](guide/cli.md).
   only what the file computes
 - [Choosing an AI provider](guide/providers.md) — local runtime, hosted
   gateway, or your own callable; none is chosen for you
-- [AI documentation](guide/ai.md) — provable cards, token accounting, budgets
+- [AI documentation](guide/ai.md) — evidence-based cards, quotation checks, token accounting and budgets
 - [Languages](guide/languages.md) — nine, for both the prompt and the interface
 - [Data handling](guide/data-handling.md) — what leaves the machine, and when
-

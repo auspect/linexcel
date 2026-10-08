@@ -103,8 +103,10 @@ Cache retention still follows row-major order, so the cache of a distant target
 may be unavailable. External files also have an independent 200,000-cell ceiling
 per sheet; a file that exceeds it is refused rather than read partially.
 
-These ceilings do not bound native engine recalculation, total memory, AST depth
-or overall runtime. Truncation and fallback warnings must still be inspected.
+These extraction ceilings apply alongside the default isolated execution
+policy, which bounds worker runtime and memory. They do not independently bound
+native engine recalculation or AST depth. Truncation and fallback warnings must
+still be inspected; see [execution budgets](execution.md).
 `linexcel.analyzer.inspect_workbook(data, **limits)` accepts the same options;
 its `ceilings` and `recoveryDepth` fields describe the planned limits.
 

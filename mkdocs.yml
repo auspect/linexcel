@@ -65,6 +65,9 @@ nav:
       - Languages: guide/languages.md
       - Data handling: guide/data-handling.md
       - Local acceptance: manual_validation.md
+  - Audits:
+      - Open-source packages: package_research.md
+      - Power Query: powerquery_audit.md
   - API Reference:
       - result: api/result.md
       - analyzer: api/analyzer.md

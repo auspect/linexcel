@@ -27,6 +27,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote, urlsplit
 
 from linexcel.ai_validation import validate_documentation
 from linexcel.doc_evidence import formula_evidence, relevant_names
@@ -337,7 +338,7 @@ def _resolve_provider(
         )
         if not resolved_model:
             raise AiDocError(
-                f"No model named for the endpoint at {base}: pass model= or set "
+                "No model named for the endpoint: pass model= or set "
                 "LINEXCEL_AI_MODEL. Endpoints do not agree on a default and "
                 "linexcel does not invent one."
             )
@@ -354,16 +355,88 @@ def _resolve_provider(
     )
 
 
-class _OpenAICompatProvider:
+class OpenAICompatProvider:
     """A client for anything exposing an OpenAI-compatible chat API.
 
     The wire format is the only thing assumed — which vendor, gateway or local
     runtime answers at ``base_url`` is the caller's business.
+
+    ``base_url`` may contain ``{model}`` in its hostname or path. The model
+    is also sent in the JSON body. Pass this object as ``provider=`` to node,
+    workbook or image documentation. ``client_kwargs`` configures the SDK;
+    ``http_client_kwargs`` configures its default HTTPX transport (HTTPX2 in
+    newer SDKs); ``request_kwargs`` configures chat completions, including
+    ``extra_body``, ``extra_headers`` and ``extra_query``.
+
+    Use a context manager to close connections created here. Injected SDK
+    clients and HTTP clients remain caller-owned and are never closed here.
     """
 
-    def __init__(self, *, base_url: str, api_key: str | None = None, model: str):
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        proxy: str | None = None,
+        http_client: Any = None,
+        http_client_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        request_kwargs: Mapping[str, Any] | None = None,
+        client: Any = None,
+    ):
+        if not model:
+            raise ValueError("model must be named")
+        self._model = model
+        self._request_kwargs = dict(request_kwargs or {})
+        if {"model", "messages", "max_tokens"} & self._request_kwargs.keys():
+            raise ValueError(
+                "request_kwargs cannot override model, messages or max_tokens"
+            )
+        extra_body = self._request_kwargs.get("extra_body") or {}
+        if {"model", "messages", "max_tokens"} & extra_body.keys():
+            raise ValueError("extra_body cannot override model, messages or max_tokens")
+        if self._request_kwargs.get("stream") or extra_body.get("stream"):
+            raise ValueError("Documentation requires a non-streaming response")
+        self._owns_client = client is None and http_client is None
+        if client is not None:
+            if any(
+                (
+                    base_url,
+                    api_key,
+                    proxy,
+                    http_client is not None,
+                    http_client_kwargs,
+                    client_kwargs,
+                )
+            ):
+                raise ValueError(
+                    "client cannot be combined with SDK or HTTP configuration"
+                )
+            self._client = client
+            return
+        base = (
+            base_url
+            or os.getenv("LINEXCEL_AI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+        )
+        if not base:
+            raise AiDocError("No AI provider selected: pass base_url= or client=")
+        base = _model_base_url(base, model)
+        options = dict(client_kwargs or {})
+        if {"api_key", "base_url", "http_client"} & options.keys():
+            raise ValueError("Use explicit api_key, base_url and http_client arguments")
+        http_options = dict(http_client_kwargs or {})
+        if http_client is not None and (proxy is not None or http_options):
+            raise ValueError(
+                "http_client cannot be combined with proxy or http_client_kwargs"
+            )
+        if proxy is not None:
+            if "proxy" in http_options:
+                raise ValueError("Specify proxy only once")
+            http_options["proxy"] = proxy
         try:
-            from openai import OpenAI
+            from openai import DefaultHttpxClient, OpenAI
         except ImportError as exc:  # pragma: no cover
             raise AiDocError(
                 "openai is not installed (pip install 'linexcel[ai]' or "
@@ -372,21 +445,45 @@ class _OpenAICompatProvider:
             ) from exc
         # Local runtimes ignore the key but the client refuses to start without
         # one, so a placeholder stands in rather than a hosted key being needed.
-        timeout = float(os.getenv("LINEXCEL_AI_TIMEOUT_SECONDS", "300"))
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("LINEXCEL_AI_TIMEOUT_SECONDS must be finite and positive")
-        self._client = OpenAI(
-            api_key=(
-                api_key
-                or os.getenv("LINEXCEL_AI_API_KEY")
-                or os.getenv("OPENAI_API_KEY")
-                or "not-needed"
-            ),
-            base_url=base_url,
-            timeout=timeout,
-            max_retries=0,
-        )
-        self._model = model
+        if "timeout" not in options:
+            timeout = float(os.getenv("LINEXCEL_AI_TIMEOUT_SECONDS", "300"))
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError(
+                    "LINEXCEL_AI_TIMEOUT_SECONDS must be finite and positive"
+                )
+            options["timeout"] = timeout
+        options.setdefault("max_retries", 0)
+        created_http = None
+        if http_options:
+            created_http = DefaultHttpxClient(**http_options)
+            http_client = created_http
+        try:
+            self._client = OpenAI(
+                api_key=(
+                    api_key
+                    or os.getenv("LINEXCEL_AI_API_KEY")
+                    or os.getenv("OPENAI_API_KEY")
+                    or "not-needed"
+                ),
+                base_url=base,
+                http_client=http_client,
+                **options,
+            )
+        except Exception:
+            if created_http is not None:
+                created_http.close()
+            raise
+
+    def close(self) -> None:
+        """Close owned connections after all in-flight calls have finished."""
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> OpenAICompatProvider:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def generate(
         self,
@@ -408,7 +505,7 @@ class _OpenAICompatProvider:
         temperature: float = 0.2,
         max_tokens: int | None = None,
     ) -> tuple[str, TokenUsage]:
-        kwargs: dict[str, Any] = {"temperature": temperature}
+        kwargs: dict[str, Any] = {"temperature": temperature, **self._request_options()}
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         try:
@@ -422,7 +519,9 @@ class _OpenAICompatProvider:
             )
             text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
-            raise AiDocError(f"OpenAI-compatible API call failed: {exc}") from exc
+            raise AiDocError(
+                f"OpenAI-compatible API call failed ({_api_error_name(exc)})"
+            ) from exc
         return self._checked_response(
             response, system_prompt + "\n\n" + user_prompt, text
         )
@@ -466,7 +565,7 @@ class _OpenAICompatProvider:
         nothing is left behind on the endpoint's side.
         """
         encoded = base64.b64encode(image).decode("ascii")
-        kwargs: dict[str, Any] = {"temperature": temperature}
+        kwargs: dict[str, Any] = {"temperature": temperature, **self._request_options()}
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         try:
@@ -492,8 +591,8 @@ class _OpenAICompatProvider:
             text = (response.choices[0].message.content or "").strip()
         except Exception as exc:
             raise AiDocError(
-                f"OpenAI-compatible vision call failed: {exc}. A text-only "
-                "model refuses an image; name a multimodal one."
+                f"OpenAI-compatible vision call failed ({_api_error_name(exc)}). "
+                "Check gateway settings and the model's image support."
             ) from exc
         # The fallback estimate counts the prompts only — an image is worth
         # hundreds of tokens that no character count can see — so a run whose
@@ -501,6 +600,43 @@ class _OpenAICompatProvider:
         return self._checked_response(
             response, system_prompt + "\n\n" + user_prompt, text
         )
+
+    def _request_options(self) -> dict[str, Any]:
+        # Older callers and response-contract tests construct the private class
+        # without __init__; retain that compatibility.
+        return getattr(self, "_request_kwargs", {})
+
+
+def _model_base_url(base_url: str, model: str) -> str:
+    """Expand the literal model placeholder without changing URL structure."""
+    parts = urlsplit(base_url)
+    if "{model}" in parts.netloc:
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", model):
+            raise ValueError(
+                "A model used in a hostname must contain only DNS characters"
+            )
+    expanded = base_url.replace("{model}", quote(model, safe="."))
+    parsed = urlsplit(expanded)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("base_url must be an absolute HTTP(S) URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Pass credentials through api_key or headers, not base_url")
+    if parsed.query or parsed.fragment or "{" in expanded or "}" in expanded:
+        raise ValueError(
+            "base_url accepts only {model}; use default_query for query parameters"
+        )
+    return expanded
+
+
+# Preserve the existing internal resolution and monkeypatching hook.
+_OpenAICompatProvider = OpenAICompatProvider
+
+
+def _api_error_name(exc: Exception) -> str:
+    """Report the HTTP status without copying provider payloads or URLs."""
+    status = getattr(exc, "status_code", None)
+    suffix = f", HTTP {status}" if isinstance(status, int) else ""
+    return type(exc).__name__ + suffix
 
 
 def _usage_from(

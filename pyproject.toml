@@ -30,9 +30,9 @@ dependencies = [
 # The `openai` package is the client for every OpenAI-compatible endpoint —
 # a local Ollama or vLLM runtime, a hosted gateway, a vendor API — not a choice
 # of vendor. `openai` is kept as an alias of `ai` for callers already using it.
-ai = ["openai>=1.0"]
-openai = ["openai>=1.0"]
-all = ["openai>=1.0", "rich>=13.0"]
+ai = ["openai>=1.55.3", "httpx>=0.28,<1"]
+openai = ["openai>=1.55.3", "httpx>=0.28,<1"]
+all = ["openai>=1.55.3", "httpx>=0.28,<1", "rich>=13.0"]
 # Progress while a large workbook is analysed. Optional on purpose: the
 # same phases and timings are printed without it, only unadorned.
 progress = ["rich>=13.0"]

@@ -53,6 +53,12 @@ request body, so nothing is uploaded or left behind under a file id.
 | `base_url=` on a hosted endpoint or gateway | That operator, under their terms — read them |
 | `provider=` | Wherever your own callable sends it |
 
+An explicit proxy or an HTTPX environment proxy may carry these requests too.
+Configure `http_client_kwargs={"trust_env": False}` on `OpenAICompatProvider`
+to ignore environment proxy and certificate settings, or set `trust_env=False`
+on an injected HTTPX client. Custom transports, hooks and authentication
+handlers can also inspect the payload; their behavior belongs to your code.
+
 linexcel takes no position on which is acceptable, because only you know what is
 in the workbook. Do not enable AI documentation for a file whose contents must
 stay local unless the provider you configured satisfies that requirement.
@@ -60,10 +66,15 @@ stay local unless the provider you configured satisfies that requirement.
 ## Credentials
 
 API keys are read from the argument you pass or from the environment
-(`LINEXCEL_AI_API_KEY`, `OPENAI_API_KEY`); they are never written to the report,
-the JSON export, or any log. The generated HTML contains the graph, your chosen
-interface language and the AI text — never a key, a URL or a model name you
-configured.
+(`LINEXCEL_AI_API_KEY`, `OPENAI_API_KEY`). linexcel does not serialize provider
+configuration into the report or JSON graph export. The generated HTML contains
+the graph, your chosen interface language and the AI text. Source workbook
+content or generated prose can still contain sensitive values, including
+credentials embedded in M source. Token accounting exposed through `result.token_usage`
+includes the model ID. Provider API errors report the exception type without
+quoting the server payload; the chained SDK exception and SDK debug logging can
+still contain request details. Caller-supplied hooks and providers control their
+own logging.
 
 ## Reporting a problem
 

@@ -433,7 +433,7 @@ Planned:
 | [HTML export](https://auspect.github.io/linexcel/guide/html/)                           | The standalone offline report                                            |
 | [Workbook context &amp; screenshots](https://auspect.github.io/linexcel/guide/context/) | What a reader sees, not only what the file computes                      |
 | [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/)          | Ollama, OpenRouter, any OpenAI-compatible endpoint, or your own callable |
-| [AI documentation](https://auspect.github.io/linexcel/guide/ai/)                        | Provable cards, token usage, `token_budget=`                            |
+| [AI documentation](https://auspect.github.io/linexcel/guide/ai/)                        | Evidence-based cards, quotation checks, token usage, `token_budget=`                            |
 | [Languages](https://auspect.github.io/linexcel/guide/languages/)                        | The nine supported locales                                               |
 | [Data handling](https://auspect.github.io/linexcel/guide/data-handling/)                | What leaves the machine, and when                                        |
 | [API reference](https://auspect.github.io/linexcel/api/result/)                         | `LineageResult`, `analyzer`, `aidoc`, `powerquery`, `external`, … |
