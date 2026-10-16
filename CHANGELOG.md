@@ -66,8 +66,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `serve`; accept the generic gateway API key only for remote endpoints and
   invalidate completed documentation caches when response settings change.
 
+### Changed
+
+- Refresh the locked environment with Dependabot's Formualizer 0.11.1,
+  python-calamine 0.8.3, OpenAI SDK 3.28.0, Playwright 1.63.0, Ruff 0.17.0
+  and ty 0.0.86 updates, retaining the declared minimum versions.
+- Cover the engine update with versioned native and integration contracts for
+  literal criteria, power associativity, logical error propagation and
+  AGGREGATE's error-handling options; retain the lazy metadata guards.
+- Update pinned GitHub Actions to setup-uv 10.3.0, upload-artifact 7.0.2 and
+  download-artifact 8.0.2 while preserving the expanded browser test coverage.
+
 ### Fixed
 
+- Use the current generator annotation for progress context managers so the
+  updated type checker accepts them without changing progress reporting.
 - Keep a stable lazy graph canvas, common-node positions and camera while
   selecting nodes, polling calculations or returning from another tab; restore
   bounded navigation snapshots on Back instead of rebuilding the whole view.
