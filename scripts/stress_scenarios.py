@@ -243,18 +243,19 @@ def links_big_ref(d: Path) -> Built:
 def dense_chain_broken_ref(d: Path) -> Built:
     """Running totals over a sheet holding one unresolvable reference.
 
-    The shape #65 predicted and a user hit: every cell sums everything above
-    it, so the dependency graph is dense, and one dead reference sends each
-    cell through the recovery path. Each step evaluation then costs the engine
-    a walk of that graph — quadratic, and quiet about it. Three hours on a
-    file whose estimate said four minutes.
+    Each formula sums earlier rows and reads the same missing-sheet reference.
+    The initial literal keeps the dense dependency chain free of self-cycles.
+    Current engines can return native #REF! values for the missing sheet without
+    entering recovery. This completion probe therefore does not establish
+    recovery complexity, numerical parity or large-workbook memory behavior.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "S"
+    ws["A1"] = 1
     ws["Z1"] = "=Ghost!A1"
-    for r in range(1, 601):
-        ws.cell(row=r, column=1, value=f"=SUM(A1:A{max(1, r - 1)}) + Z1")
+    for r in range(2, 602):
+        ws.cell(row=r, column=1, value=f"=SUM(A1:A{r - 1}) + Z1")
     return _save(wb, d / "main.xlsx"), None
 
 
@@ -402,6 +403,8 @@ SCENARIOS = [
 
 RUNNER = """
 import json, sys, time
+from collections import Counter
+from importlib.metadata import version
 sys.path.insert(0, {src!r})
 import linexcel
 start = time.perf_counter()
@@ -415,10 +418,24 @@ except BaseException as exc:
         "seconds": round(time.perf_counter() - start, 2),
     }}))
 else:
+    formula_nodes = [node for node in result.nodes if node.get("formula")]
     print("@@" + json.dumps({{
         "outcome": "ok",
         "seconds": round(time.perf_counter() - start, 2),
+        "engineVersion": version("formualizer"),
+        "formulas": result.stats.get("totalFormulas"),
         "nodes": len(result.nodes),
+        "formulaNodes": len(formula_nodes),
+        "formulaNodeValueSources": dict(Counter(
+            node.get("valueSource", "unknown") for node in formula_nodes
+        )),
+        "unavailableFormulaNodes": sum(
+            node.get("value") is None for node in formula_nodes
+        ),
+        "aggregatedFormulaCells": sum(
+            node.get("count", 0) for node in result.nodes
+            if node.get("kind") == "misc"
+        ),
         "warnings": [w[:150] for w in result.warnings],
         "external": result.stats.get("externalWorkbooks"),
         "externalRead": result.stats.get("externalWorkbooksRead"),

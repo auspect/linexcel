@@ -72,7 +72,26 @@ _PDF_FILTER_SINGLE_PAGE = (
 
 
 class WorkbookRenderError(RuntimeError):
-    """Raised when the optional workbook screenshot renderer is unavailable."""
+    """Renderer failure retaining the failing tool's exit code, if available."""
+
+    def __init__(
+        self, message: str, *, renderer: str | None = None, exit_code: int | None = None
+    ):
+        super().__init__(message)
+        self.renderer = renderer
+        self.exit_code = exit_code
+
+
+def _renderer_process_error(renderer: str, exc: subprocess.CalledProcessError):
+    details = (exc.stderr or exc.stdout or "").strip()
+    code = str(exc.returncode)
+    if sys.platform == "win32":
+        code += f" (0x{exc.returncode & 0xFFFFFFFF:08X})"
+    return WorkbookRenderError(
+        f"{renderer} failed with exit code {code}: {details or 'no diagnostic output'}",
+        renderer=renderer,
+        exit_code=exc.returncode,
+    )
 
 
 def extract_workbook_context(
@@ -387,6 +406,26 @@ def find_pdftoppm() -> str | None:
     return None
 
 
+def prepare_readonly_office_profile(profile_dir: Path) -> None:
+    """Create an isolated rendering profile with no trusted macro locations.
+
+    LibreOffice's very-high macro level permits only trusted locations. This
+    disposable profile trusts none; document macros cannot be used to render
+    or recalculate a workbook. It never changes the user's Office profile.
+    """
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "user").mkdir(exist_ok=True)
+    (profile_dir / "user" / "registrymodifications.xcu").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<oor:items xmlns:oor="http://openoffice.org/2001/registry">'
+        '<item oor:path="/org.openoffice.Office.Common/Security/Scripting">'
+        '<prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop>'
+        '<prop oor:name="SecureURL" oor:op="fuse"><value/></prop>'
+        "</item></oor:items>",
+        encoding="utf-8",
+    )
+
+
 def render_workbook_screenshots(
     data: bytes | Path,
     filename: str,
@@ -429,7 +468,11 @@ def render_workbook_screenshots(
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
     suffix = Path(filename).suffix.lower()
-    if suffix not in {".xls", ".xlsx", ".xlsm", ".xlsb", ".xltx", ".xltm"}:
+    if suffix in {".xla", ".xlam"}:
+        raise WorkbookRenderError(
+            "Add-ins are read as static VBA; worksheet rendering is unavailable."
+        )
+    if suffix not in {".xls", ".xlsx", ".xlsm", ".xlsb", ".xltx", ".xltm", ".xlam"}:
         suffix = ".xlsx"
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(filename).stem).strip(".-")
     stem = stem or "workbook"
@@ -445,6 +488,7 @@ def render_workbook_screenshots(
         else:
             input_path.write_bytes(data)
         pdf_dir.mkdir()
+        prepare_readonly_office_profile(profile_dir)
         try:
             subprocess.run(
                 [
@@ -471,10 +515,7 @@ def render_workbook_screenshots(
                 f"LibreOffice did not finish within {timeout} seconds"
             ) from exc
         except subprocess.CalledProcessError as exc:
-            details = (exc.stderr or exc.stdout or "unknown error").strip()
-            raise WorkbookRenderError(
-                f"LibreOffice could not render the workbook: {details}"
-            ) from exc
+            raise _renderer_process_error("LibreOffice", exc) from exc
 
         pdfs = list(pdf_dir.glob("*.pdf"))
         if not pdfs:
@@ -498,10 +539,7 @@ def render_workbook_screenshots(
                 f"PDF conversion did not finish within {timeout} seconds"
             ) from exc
         except subprocess.CalledProcessError as exc:
-            details = (exc.stderr or exc.stdout or "unknown error").strip()
-            raise WorkbookRenderError(
-                f"pdftoppm could not create screenshots: {details}"
-            ) from exc
+            raise _renderer_process_error("pdftoppm", exc) from exc
         pages = sorted(png_dir.glob(f"{stem}-*.png"))
         if not pages:
             raise WorkbookRenderError("pdftoppm did not produce PNG screenshots")

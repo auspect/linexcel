@@ -17,36 +17,53 @@ require review and are not a proof of calculation correctness.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import os
 import re
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from threading import local
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from urllib.parse import quote, urlsplit
 
-from linexcel.ai_validation import validate_documentation
-from linexcel.doc_evidence import formula_evidence, relevant_names
+from linexcel.ai_validation import review_protocol, strip_claims, validate_documentation
+from linexcel.doc_evidence import (
+    formula_evidence,
+    formula_text_evidence,
+    relevant_names,
+    three_dimensional_reference_evidence,
+    value_comparison_evidence,
+    vba_excerpt_evidence,
+)
+from linexcel.documentation_proof import render_formula_tokens
 from linexcel.i18n import AI_VALIDATION_NOTICES, AI_VALIDATION_OMITTED
 from linexcel.i18n import LANGUAGES as _LANGUAGES
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam
+
+    from linexcel.vision_evidence import ImageEvidence, Region
 
 # No DEFAULT_MODEL: naming one would make a vendor's model the implicit choice,
 # and a name that suits a hosted API is wrong for a local runtime. The model is
 # always supplied by the caller, via model= or an environment variable.
-MAX_DOSSIER_CHARS = 6_000
+# Keep bounded source provenance alongside the decomposition rather than
+# forcing the exact XML evidence to displace the calculation's proof.
+MAX_DOSSIER_CHARS = 10_000
 MAX_DOCUMENT_CONNECTIONS = 24
 # Raised from 12k when the workbook dossier gained the presentation context
-# (sheet previews and comments); _fit_workbook_dossier() sheds that part first
+# (sheet previews and comments); _fit_workbook_dossier() bounds those examples
 # if a workbook still exceeds it, so a graph-only dossier is unaffected.
 MAX_WORKBOOK_DOSSIER_CHARS = 16_000
 MAX_DOSSIER_COMMENT_CHARS = 300
-#: Ceiling on one screenshot handed to a vision model, before base64 (which
-#: adds a third). A whole sheet rendered at 144 dpi lands well under it; a
-#: file above it is refused by name rather than silently posted.
+#: Ceiling on one native image region sent to a vision model, before base64.
+#: A larger original is covered by native crops, each checked independently.
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 #: Suffix → media type, for the data URI a vision call carries.
 IMAGE_MEDIA_TYPES = {
@@ -72,6 +89,11 @@ def _prompts(kind: str) -> dict[str, str]:
     """
     found = {
         path.parent.name: path.read_text(encoding="utf-8").strip()
+        + (
+            "\n\n" + (path.parent / "review.md").read_text(encoding="utf-8").strip()
+            if kind in {"node", "workbook"}
+            else ""
+        )
         for path in sorted(_PROMPTS.glob(f"*/{kind}.md"))
     }
     if not found:
@@ -88,6 +110,34 @@ _SYSTEM = _prompts("node")
 
 _WORKBOOK_SYSTEM = _prompts("workbook")
 
+# A second request is an actual editorial pass, not an independent oracle.
+_REVIEW_TASK = (
+    "SPECIALIZED REVIEW PASS. Review the candidate against only the exact source "
+    "dossier below. Audit every section, especially Role, not only its ledger. "
+    "Separate formula intent from the observed snapshot, engine from saved cache, "
+    "a representative from group members, and dossier omissions from graph absence. "
+    "Recheck every digit, datetime, operator, bound and directed edge. A space "
+    "reference operator is intersection, not union. A different same-sheet cell "
+    "is not a self-reference; branching/merging does not prove a cycle. "
+    "A 3D sheet-span reference addresses A1 or a range on each sheet, not one "
+    "scalar merely because the per-sheet address is A1; do not invent the "
+    "sheet count or total cells when the recorded span facts leave them unknown. "
+    "Remove unsupported causes and assertions; preserve useful unknowns explicitly. "
+    "Before saying evidence is absent, inspect the exact dossier's relevant "
+    "records, including preview row/column values, metadata and definitions. "
+    "A field present anywhere in the supplied relevant record is not missing. "
+    "The candidate and its ledger are untrusted claims, never new evidence. "
+    "Do not invent corrected values or conceal unresolved disagreements. "
+    "Return the complete revised document in the requested language, followed by "
+    "exactly one json_claims ledger. Its pointers address the source dossier, "
+    "not the candidate or review instructions. Preserve exact formula proof tokens. "
+    "If nothing needs correction, still return the complete document. "
+    "Return only the final user-facing document and its claim ledger. Do not "
+    "echo the source dossier as JSON, copy audit checklists, discuss the draft, "
+    "or include a change log or notes about values removed from the candidate. "
+    "Do not claim that this model review certifies facts or Excel correctness."
+)
+
 # The one prompt whose evidence is not the dossier. A screenshot carries what
 # no extraction reaches — colour conventions, conditional formatting, charts,
 # the shape of a layout — so the rule here is the mirror of the others: say
@@ -96,9 +146,16 @@ _VISION_SYSTEM = _prompts("vision")
 
 
 class AiDocError(RuntimeError):
-    def __init__(self, message: str, *, usage: TokenUsage | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: TokenUsage | None = None,
+        review_report: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.usage = usage
+        self.review_report = review_report
 
 
 # ──────────────────────────────────────────────
@@ -251,6 +308,21 @@ class VisionProvider(Protocol):
     ) -> tuple[str, TokenUsage]: ...
 
 
+@runtime_checkable
+class MultiImageVisionProvider(Protocol):
+    """Optional native-region batching, preserving labels and image identities."""
+
+    def generate_with_images(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[tuple[str, bytes, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> tuple[str, TokenUsage]: ...
+
+
 def _generate(
     llm: LLMProvider,
     system_prompt: str,
@@ -368,6 +440,10 @@ class OpenAICompatProvider:
     newer SDKs); ``request_kwargs`` configures chat completions, including
     ``extra_body``, ``extra_headers`` and ``extra_query``.
 
+    ``streaming=True`` explicitly assembles content deltas and terminal usage.
+    A stream must finish with ``stop``; interrupted streams are never accepted
+    as documentation. SDK retries do not restart an interrupted stream.
+
     Use a context manager to close connections created here. Injected SDK
     clients and HTTP clients remain caller-owned and are never closed here.
     """
@@ -383,11 +459,14 @@ class OpenAICompatProvider:
         http_client_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         request_kwargs: Mapping[str, Any] | None = None,
+        streaming: bool = False,
         client: Any = None,
     ):
         if not model:
             raise ValueError("model must be named")
         self._model = model
+        self._streaming = streaming
+        self._vision_state = local()
         self._request_kwargs = dict(request_kwargs or {})
         if {"model", "messages", "max_tokens"} & self._request_kwargs.keys():
             raise ValueError(
@@ -396,8 +475,13 @@ class OpenAICompatProvider:
         extra_body = self._request_kwargs.get("extra_body") or {}
         if {"model", "messages", "max_tokens"} & extra_body.keys():
             raise ValueError("extra_body cannot override model, messages or max_tokens")
-        if self._request_kwargs.get("stream") or extra_body.get("stream"):
-            raise ValueError("Documentation requires a non-streaming response")
+        if "stream" in self._request_kwargs or "stream" in extra_body:
+            raise ValueError(
+                "Use the explicit streaming argument, not request_kwargs stream"
+            )
+        for options in (self._request_kwargs, extra_body):
+            if "n" in options and (type(options["n"]) is not int or options["n"] != 1):
+                raise ValueError("Documentation requires a single choice (n=1)")
         self._owns_client = client is None and http_client is None
         if client is not None:
             if any(
@@ -508,36 +592,230 @@ class OpenAICompatProvider:
         kwargs: dict[str, Any] = {"temperature": temperature, **self._request_options()}
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        return self._complete(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            system_prompt + "\n\n" + user_prompt,
+            kwargs,
+        )
+
+    def _complete(
+        self,
+        messages: list[dict[str, Any]],
+        prompt: str,
+        options: dict[str, Any],
+        *,
+        vision: bool = False,
+    ) -> tuple[str, TokenUsage]:
+        streaming = getattr(self, "_streaming", False)
+        if streaming:
+            options["stream"] = True
+            # Extra-body SDK fields can override top-level options; consolidate
+            # both sources before forcing terminal usage for the stream.
+            extra_body = dict(options.get("extra_body") or {})
+            stream_options = {
+                **(options.get("stream_options") or {}),
+                **(extra_body.pop("stream_options", None) or {}),
+                "include_usage": True,
+            }
+            options["stream_options"] = stream_options
+            if "extra_body" in options:
+                options["extra_body"] = extra_body
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                **kwargs,
+                messages=cast("Iterable[ChatCompletionMessageParam]", messages),
+                **options,
             )
+            if streaming:
+                return self._consume_stream(response, prompt)
             text = (response.choices[0].message.content or "").strip()
+        except AiDocError:
+            raise
         except Exception as exc:
+            kind = "vision" if vision else "API"
+            hint = (
+                " Check gateway settings and the model's image support."
+                if vision
+                else ""
+            )
             raise AiDocError(
-                f"OpenAI-compatible API call failed ({_api_error_name(exc)})"
+                f"OpenAI-compatible {kind} call failed ({_api_error_name(exc)}).{hint}"
             ) from exc
-        return self._checked_response(
-            response, system_prompt + "\n\n" + user_prompt, text
+        return self._checked_response(response, prompt, text)
+
+    def _consume_stream(self, stream: Any, prompt: str) -> tuple[str, TokenUsage]:
+        parts: list[str] = []
+        reported = None
+        finish_reason = None
+        resolved_model = None
+        response_id = None
+        failure = None
+        try:
+            for chunk in stream:
+                chunk_model, chunk_id = (
+                    getattr(chunk, "model", None),
+                    getattr(chunk, "id", None),
+                )
+                if chunk_model:
+                    if resolved_model is not None and chunk_model != resolved_model:
+                        raise AiDocError("AI stream changed its resolved model")
+                    resolved_model = chunk_model
+                if chunk_id:
+                    if response_id is not None and chunk_id != response_id:
+                        raise AiDocError("AI stream changed its response id")
+                    response_id = chunk_id
+                if getattr(chunk, "usage", None) is not None:
+                    reported = chunk.usage
+                choices = getattr(chunk, "choices", None) or []
+                if len(choices) > 1:
+                    raise AiDocError(
+                        "AI stream contains multiple choices; expected index 0"
+                    )
+                for choice in choices:
+                    if getattr(choice, "index", None) != 0:
+                        raise AiDocError(
+                            "AI stream contains an unexpected choice index; expected 0"
+                        )
+                    if finish_reason is not None:
+                        raise AiDocError(
+                            "AI stream returned choices after a terminal finish reason"
+                        )
+                    content = getattr(choice.delta, "content", None)
+                    if content is not None:
+                        if not isinstance(content, str):
+                            raise AiDocError(
+                                "AI stream returned a non-text content delta"
+                            )
+                        parts.append(content)
+                    # reasoning_content and reasoning_details are not prose.
+                    finish_reason = getattr(choice, "finish_reason", None)
+        except AiDocError as exc:
+            failure = exc
+            if exc.usage is None:
+                exc.usage = _usage_from(
+                    reported,
+                    ("prompt_tokens", "completion_tokens"),
+                    prompt,
+                    "".join(parts),
+                    model=self._model,
+                    provider="openai-compatible",
+                )
+            raise
+        except Exception as exc:
+            usage = _usage_from(
+                reported,
+                ("prompt_tokens", "completion_tokens"),
+                prompt,
+                "".join(parts),
+                model=self._model,
+                provider="openai-compatible",
+            )
+            failure = AiDocError(
+                f"OpenAI-compatible stream failed ({_api_error_name(exc)})",
+                usage=usage,
+            )
+            raise failure from exc
+        finally:
+            try:
+                stream.close()
+            except Exception as exc:
+                usage = _usage_from(
+                    reported,
+                    ("prompt_tokens", "completion_tokens"),
+                    prompt,
+                    "".join(parts),
+                    model=self._model,
+                    provider="openai-compatible",
+                )
+                if failure is not None:
+                    failure.add_note(
+                        f"Stream close also failed ({_api_error_name(exc)})"
+                    )
+                else:
+                    raise AiDocError(
+                        "OpenAI-compatible stream close failed "
+                        f"({_api_error_name(exc)})",
+                        usage=usage,
+                    ) from exc
+        # A completed receipt follows successful close, so a subclass cannot
+        # record success before a close failure makes the whole call fail.
+        text = "".join(parts).strip()
+        assembled = SimpleNamespace(
+            model=resolved_model,
+            id=response_id,
+            usage=reported,
+            choices=[
+                SimpleNamespace(
+                    index=0,
+                    finish_reason=finish_reason,
+                    message=SimpleNamespace(content=text),
+                )
+            ],
         )
+        return self._checked_response(assembled, prompt, text, require_stop=True)
 
     def _checked_response(
-        self, response: Any, prompt: str, text: str
+        self,
+        response: Any,
+        prompt: str,
+        text: str,
+        *,
+        require_stop: bool = False,
+    ) -> tuple[str, TokenUsage]:
+        status, usage = "failed", None
+        try:
+            output, usage = self._checked_output(
+                getattr(response, "usage", None),
+                prompt,
+                text,
+                getattr(response.choices[0], "finish_reason", None),
+                require_stop=require_stop,
+            )
+            status = "complete"
+            return output, usage
+        except AiDocError as exc:
+            usage = exc.usage
+            raise
+        finally:
+            state = getattr(self, "_vision_state", None)
+            if state is not None and getattr(state, "active", False):
+                state.receipt = {
+                    "status": status,
+                    "requested_model": self._model,
+                    "resolved_model": getattr(response, "model", None),
+                    "response_id": getattr(response, "id", None),
+                    "finish_reason": getattr(
+                        response.choices[0], "finish_reason", None
+                    ),
+                    "streaming": require_stop,
+                    "prompt_text_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                    "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                    "content_characters": len(text),
+                    "usage": vars(usage).copy() if usage is not None else None,
+                }
+
+    def _checked_output(
+        self,
+        reported: Any,
+        prompt: str,
+        text: str,
+        reason: Any,
+        *,
+        require_stop: bool = False,
     ) -> tuple[str, TokenUsage]:
         usage = _usage_from(
-            getattr(response, "usage", None),
+            reported,
             ("prompt_tokens", "completion_tokens"),
             prompt,
             text,
             model=self._model,
             provider="openai-compatible",
         )
-        reason = getattr(response.choices[0], "finish_reason", None)
+        if require_stop and reason is None:
+            raise AiDocError("AI stream ended without finish_reason=stop", usage=usage)
         if reason not in (None, "stop"):
             raise AiDocError(
                 f"AI response is incomplete (finish_reason={reason}). "
@@ -564,42 +842,68 @@ class OpenAICompatProvider:
         No upload and no file id: the picture travels in the request body, so
         nothing is left behind on the endpoint's side.
         """
-        encoded = base64.b64encode(image).decode("ascii")
+        return self.generate_with_images(
+            system_prompt,
+            user_prompt,
+            [("image", image, media_type)],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    def generate_with_images(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: list[tuple[str, bytes, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> tuple[str, TokenUsage]:
+        """Send labelled native crops; the prompt supplies their exact manifest."""
+        if not images:
+            raise AiDocError("A vision request requires at least one image")
+        content: list[dict[str, Any]] = [{"type": "text", "text": user_prompt}]
+        for label, image, media_type in images:
+            # Preserve the historic one-image request shape for direct callers.
+            if len(images) > 1 or label != "image":
+                content.append({"type": "text", "text": f"Region: {label}"})
+            encoded = base64.b64encode(image).decode("ascii")
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{media_type};base64,{encoded}",
+                        "detail": "high",
+                    },
+                }
+            )
         kwargs: dict[str, Any] = {"temperature": temperature, **self._request_options()}
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": user_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{media_type};base64,{encoded}"
-                                },
-                            },
-                        ],
-                    },
-                ],
-                **kwargs,
-            )
-            text = (response.choices[0].message.content or "").strip()
-        except Exception as exc:
-            raise AiDocError(
-                f"OpenAI-compatible vision call failed ({_api_error_name(exc)}). "
-                "Check gateway settings and the model's image support."
-            ) from exc
         # The fallback estimate counts the prompts only — an image is worth
         # hundreds of tokens that no character count can see — so a run whose
         # endpoint reports nothing is under-counted, and says it is estimated.
-        return self._checked_response(
-            response, system_prompt + "\n\n" + user_prompt, text
-        )
+        if not hasattr(self, "_vision_state"):
+            self._vision_state = local()
+        self._vision_state.active = True
+        self._vision_state.receipt = None
+        try:
+            return self._complete(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ],
+                system_prompt + "\n\n" + user_prompt,
+                kwargs,
+                vision=True,
+            )
+        finally:
+            self._vision_state.active = False
+
+    @property
+    def vision_receipt(self) -> dict[str, Any] | None:
+        """Last image completion identity in this thread, excluding credentials."""
+        return getattr(getattr(self, "_vision_state", None), "receipt", None)
 
     def _request_options(self) -> dict[str, Any]:
         # Older callers and response-contract tests construct the private class
@@ -697,7 +1001,9 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
         return None
     precedents = incoming.get(node_id, [])
     dependents = outgoing.get(node_id, [])
-    facts = formula_evidence(node.get("formula"))
+    facts = formula_evidence(
+        node.get("formula"), sheet=node.get("sheet"), address=node.get("addr")
+    )
     dossier: dict[str, Any] = {
         "node_id": node_id,
         "kind": node.get("kind"),
@@ -739,7 +1045,22 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
             "dependents_total": len(dependents),
             "precedents_omitted": max(0, len(precedents) - 30),
             "dependents_omitted": max(0, len(dependents) - 30),
+            "interpretation": (
+                "Omitted neighbors are withheld from this dossier, not absent "
+                "from the supplied graph. A group neighbor identifies its "
+                "representative, not every member's reference."
+            ),
         },
+    }
+    dossier["review_protocol"] = review_protocol()
+    dossier.update(_formula_provenance(node))
+    dossier["value_policy"] = {
+        "volatile_cache_preservation": node.get("valueSource") == "volatile",
+        "interpretation": (
+            "volatile source preserves a saved reading by policy; "
+            "it does not prove engine inability. Saved cache age and "
+            "mismatch causes are unknown."
+        ),
     }
     if node.get("kind") == "group":
         dossier["group_coverage"]["value_samples_in_dossier"] = len(
@@ -750,7 +1071,10 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
             "module": node.get("module"),
             "procedure": node.get("proc"),
             "type": node.get("procKind"),
-            "code": (node.get("code") or "")[:2500],
+            **vba_excerpt_evidence(node),
+            "lines": node.get("lines"),
+            "provenance": node.get("vbaProvenance"),
+            "execution": "not_executed",
         }
     if node.get("kind") == "opaque":
         source = node.get("valueSource")
@@ -765,9 +1089,22 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
             "read_from_disk means an external file was opened and read; "
             "embedded_file_cache means values come from an internal cache "
             "stored in this workbook; "
-            "unresolved means the external workbook was neither read nor cached."
+            "unresolved establishes no disk read or cached value. An opaque node "
+            "may be an internal 3-D/structured reference; "
+            "it does not prove an external workbook."
         )
     return dossier
+
+
+def _formula_provenance(node: dict) -> dict:
+    """Stored XML, a canonical expression and a calculation trace are distinct."""
+    return {
+        "source_formula": node.get("sourceFormula"),
+        "canonical_formula": node.get("canonicalFormula", node.get("formula")),
+        "formula_provenance": node.get("formulaProvenance", {"status": "unavailable"}),
+        "source_value_provenance": node.get("sourceValueProvenance"),
+        "formula_text_evidence": formula_text_evidence(node),
+    }
 
 
 def _document_name_evidence(evidence: dict) -> dict:
@@ -775,6 +1112,15 @@ def _document_name_evidence(evidence: dict) -> dict:
     return {
         **evidence,
         "definition_provenance": "source_workbook_metadata",
+        "scope_counts_in_supplied_definitions": {
+            scope: sum(
+                item.get("scope") == scope for item in evidence.get("definitions", [])
+            )
+            for scope in ("workbook", "sheet", "unknown")
+        },
+        "definition_count_scope": (
+            "all scopes; filtered/omitted definitions are not a complete inventory"
+        ),
         "definitions": [
             {key: value for key, value in item.items() if key != "expression_evaluated"}
             for item in evidence.get("definitions", [])
@@ -805,10 +1151,23 @@ def _value_evidence(node: dict) -> dict:
         "value_source": node.get("valueSource", "unknown"),
         "value_origin_kind": origin_kind,
         "cached_value": node.get("cachedValue"),
+        "cached_value_kind": node.get("cachedValueKind", "unknown"),
+        "displayed_value_kind": node.get("valueKind", "unknown"),
         "cached_agreement": node.get("cachedAgreement"),
         "group_cached_agreement": node.get("groupCachedAgreement"),
         "verification": node.get("verification", "not_independently_verified"),
         "semantic_risks": node.get("semanticRisks", []),
+        "value_comparison": value_comparison_evidence(node),
+        "result_evidence": {
+            "recorded_engine_formula_result": origin == "engine"
+            and origin_kind == "formula_result"
+            and node.get("value") is not None,
+            "scope": (
+                "this node or representative only; not independent Excel verification"
+            ),
+            "saved_cache_is_engine_result": False,
+            "error_cause": "not_established",
+        },
     }
     if node.get("kind") == "group":
         evidence["value_role"] = "representative cell, not an aggregate of the group"
@@ -994,6 +1353,21 @@ def _fit_node_dossier(dossier: dict) -> str:
             return value
 
         dossier = bound(dossier)
+        vba = dossier.get("vba", {})
+        if isinstance(vba.get("code"), dict) and vba["code"].get("omitted"):
+            # The measured excerpt was replaced by an omission, so it is no
+            # longer supplied code. Keep full/graph facts, update the sent stage.
+            bounds = vba["code_bounds"]
+            bounds["dossier_characters"] = 0
+            bounds["omitted_graph_to_dossier"] = bounds["graph_characters"]
+            bounds["omitted_full_source_to_dossier"] = (
+                bounds["full_source_characters"]
+                if bounds["source_and_graph_size_consistent"] is True
+                else None
+            )
+            vba["code_omitted_characters"] = bounds["graph_characters"]
+            vba["code_status"] = "omitted_by_dossier_size_limit"
+            vba["code_hashes"]["dossier_sha256"] = None
     if len(encoded()) > MAX_DOSSIER_CHARS:
         raise AiDocError(
             "Node dossier exceeds size limit even after explicit omissions"
@@ -1007,8 +1381,14 @@ def _neighbor(other: dict, edge: dict) -> dict:
         "kind": other.get("kind"),
         "label": other.get("label"),
         "edge_kind": edge.get("kind"),
+        "sheet": other.get("sheet"),
+        "address": other.get("addr"),
+        "extent": other.get("bbox"),
+        "edge_source": edge.get("source"),
+        "edge_target": edge.get("target"),
         **_value_evidence(other),
         "formula": other.get("formula"),
+        **_formula_provenance(other),
     }
     if other.get("kind") == "opaque":
         source = other.get("valueSource")
@@ -1042,10 +1422,21 @@ def _compact_steps(step: dict | None) -> dict | None:
             value = item.get("value")
             if isinstance(value, dict) and "range" in value:
                 bounds = _range_bounds(value["range"])
+                span = three_dimensional_reference_evidence(value["range"])
                 documented["value"] = {
                     **value,
-                    "n_unit": "cells",
+                    "n_unit": "not_determined" if span else "cells",
                     "dimensions": _range_dimensions(value["range"]),
+                    **(
+                        {
+                            "count_scope": (
+                                "reported_count_not_established_as_total_3d_cells"
+                            ),
+                            "three_dimensional_reference": span,
+                        }
+                        if span
+                        else {}
+                    ),
                     **(
                         {
                             "bounds": {
@@ -1117,12 +1508,20 @@ def build_workbook_dossier(
                 "formula": node.get("formula"),
                 "cells": node.get("count", 1),
                 "extent": node.get("bbox"),
+                "formula_facts": formula_evidence(
+                    node.get("formula"),
+                    sheet=node.get("sheet"),
+                    address=node.get("addr"),
+                ),
                 **_value_evidence(node),
+                **_formula_provenance(node),
             }
             for node in nodes
             if node.get("kind") in {"cell", "group"}
         ),
-        key=lambda item: item["cells"],
+        key=lambda item: (
+            item["cells"] if isinstance(item["cells"], (int, float)) else 0
+        ),
         reverse=True,
     )
     pattern_total = len(formula_patterns)
@@ -1157,6 +1556,7 @@ def build_workbook_dossier(
         ),
     }
     return {
+        "review_protocol": review_protocol(),
         "filename": meta.get("filename"),
         # Live native handles are intentionally not returned from an isolated
         # worker. Their API availability says nothing about recalculation.
@@ -1179,6 +1579,7 @@ def build_workbook_dossier(
                 "unverified. Cache values are separate. A group represents several "
                 "cells but counts once; its displayed value belongs to one member."
             ),
+            "count_categories_are_value_origin_kinds": False,
         },
         "coverage": meta.get("analysisCoverage", {"status": "not_inspected"}),
         "analysis": {
@@ -1203,7 +1604,20 @@ def build_workbook_dossier(
         ),
         "defined_names_in_graph_are_not_source_inventory": True,
         "vba_procedures": vba,
+        "vba_source_scope": {
+            "code_text": "not_supplied_in_overview",
+            "execution": "not_executed",
+            "interpretation": (
+                "Procedure metadata is not readable full source or an executed "
+                "macro trace. No omitted code can be reconstructed from names."
+            ),
+        },
         "external_workbooks": external_workbooks,
+        "value_policy": (
+            "Volatile readings marked volatile are deliberately preserved file "
+            "snapshots, not engine inability; unknown values and cache mismatch "
+            "causes remain unknown."
+        ),
         "external_or_unresolved_references": opaque_references,
         "warnings": [
             *meta.get("warnings", []),
@@ -1235,6 +1649,22 @@ def _document_connections(graph: dict) -> dict:
             len(targets) > 1 for targets in destinations.values()
         ),
         "merging_observed": any(len(sources) > 1 for sources in origins.values()),
+        "branching_nodes": sorted(
+            source for source, targets in destinations.items() if len(targets) > 1
+        )[:24],
+        "merging_nodes": sorted(
+            target for target, sources in origins.items() if len(sources) > 1
+        )[:24],
+        "degree_scope": (
+            "all supplied graph edges; incoming >1 is merging, outgoing >1 is branching"
+        ),
+        "self_edges": [
+            edge for edge in connections if edge["source"] == edge["target"]
+        ],
+        "self_edge_scope": (
+            "only retained directed edges with identical IDs; merging/branching "
+            "is not self-reference or cycle evidence"
+        ),
     }
 
 
@@ -1296,7 +1726,8 @@ def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
 
     Ordered cheapest-loss first: long previews shrink, then the tail of the
     pattern and VBA lists, and only then are previews and comments dropped
-    outright. A workbook small enough to fit loses nothing.
+    outright. Retained formulas keep their complete source provenance; omitted
+    examples remain counted. A workbook small enough to fit loses nothing.
     """
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
@@ -1304,26 +1735,52 @@ def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
 
     for sheet in dossier["sheets"]:
         if sheet.get("preview"):
+            sheet["preview_rows_omitted_from_dossier"] = sheet.get(
+                "preview_rows_omitted_from_dossier", 0
+            ) + max(0, len(sheet["preview"]) - 4)
             sheet["preview"] = sheet["preview"][:4]
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
         return blob
 
-    dossier["formula_patterns"] = dossier["formula_patterns"][:5]
-    if "formula_pattern_coverage" in dossier:
-        coverage = dossier["formula_pattern_coverage"]
-        coverage["shown"] = len(dossier["formula_patterns"])
-        coverage["omitted"] = coverage["total"] - coverage["shown"]
+    def trim_patterns(limit: int) -> None:
+        dossier["formula_patterns"] = dossier["formula_patterns"][:limit]
+        if "formula_pattern_coverage" in dossier:
+            coverage = dossier["formula_pattern_coverage"]
+            coverage["shown"] = len(dossier["formula_patterns"])
+            coverage["omitted"] = coverage["total"] - coverage["shown"]
+
+    # Formula patterns are optional examples, whereas the short VBA inventory
+    # records which procedures were discovered. Reduce examples before losing
+    # that inventory; every retained example still carries its source evidence.
+    for limit in (5, 3, 1):
+        trim_patterns(limit)
+        blob = json.dumps(dossier, ensure_ascii=False, default=str)
+        if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
+            return blob
+    dossier["vba_procedures_omitted_from_dossier"] = max(
+        0, len(dossier["vba_procedures"]) - 10
+    )
     dossier["vba_procedures"] = dossier["vba_procedures"][:10]
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
         return blob
 
     for sheet in dossier["sheets"]:
+        sheet["preview_rows_omitted_from_dossier"] = sheet.get(
+            "preview_rows_omitted_from_dossier", 0
+        ) + len(sheet.get("preview", []))
+        if sheet.get("comments"):
+            sheet["comments_omitted_from_dossier"] = len(sheet["comments"])
         sheet.pop("preview", None)
         sheet.pop("preview_range", None)
         sheet.pop("comments", None)
     blob = json.dumps(dossier, ensure_ascii=False, default=str)
+    if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
+        # A workbook overview can explicitly omit all optional formula examples;
+        # node documentation still retains its focal source and omission rules.
+        trim_patterns(0)
+        blob = json.dumps(dossier, ensure_ascii=False, default=str)
     for limit in (20, 5, 0):
         if len(blob) <= MAX_WORKBOOK_DOSSIER_CHARS:
             return blob
@@ -1339,6 +1796,11 @@ def _fit_workbook_dossier(dossier: dict[str, Any]) -> str:
             0, len(items) - limit
         )
         names["definitions"] = items[:limit]
+        if "scope_counts_in_supplied_definitions" in names:
+            names["scope_counts_in_supplied_definitions"] = {
+                scope: sum(item.get("scope") == scope for item in names["definitions"])
+                for scope in ("workbook", "sheet", "unknown")
+            }
         blob = json.dumps(dossier, ensure_ascii=False, default=str)
     if len(blob) > MAX_WORKBOOK_DOSSIER_CHARS:
         raise AiDocError("Workbook dossier exceeds size limit after explicit omissions")
@@ -1439,7 +1901,7 @@ def _insert_tables(text: str) -> str:
     whose table is missing is dropped, never left as raw braces in the
     output, and neither is a placeholder that arrived with no block at all.
     """
-    text = _unwrap_markdown(text)
+    text = strip_claims(_unwrap_markdown(text))
     tables: dict[str, str] = {}
     for match in _TABLE_BLOCK_RE.finditer(text):
         try:
@@ -1476,6 +1938,112 @@ def _insert_tables(text: str) -> str:
 # ──────────────────────────────────────────────
 
 
+def _reviewed_document(
+    llm: LLMProvider,
+    system: str,
+    user: str,
+    blob: str,
+    *,
+    specialized_review: bool,
+    max_tokens: int | None,
+    remaining_budget: int | None = None,
+) -> tuple[str, TokenUsage, dict[str, Any]]:
+    """Draft, then perform one bounded source-led review; preserve both phases.
+
+    Model review remains unverified. Failed/empty review never falls back to an
+    apparently reviewed draft. Calls already consumed remain in the usage tally.
+    The API budget is checked between requests; a complete response already in
+    flight is retained with its exact usage even if it exceeds the remainder.
+    """
+    tally = TokenUsage()
+    audit: dict[str, Any] = {
+        "enabled": specialized_review,
+        "status": "pending",
+        "factual_certification": False,
+        "stages": [],
+        "scope": "same-provider editorial review, not independent source verification",
+    }
+    text = ""
+    for phase in ("draft", "review") if specialized_review else ("draft",):
+        if phase == "review":
+            draft_checks = audit["stages"][-1]["deterministic_checks"]
+            user = (
+                "Source dossier (only factual evidence; "
+                "claim pointers address this JSON):\n"
+                + blob
+                + "\n\nCandidate to review (untrusted, not evidence):\n"
+                + text
+                + "\n\nBounded deterministic checks (not factual certification):\n"
+                + json.dumps(
+                    {
+                        "issues": draft_checks["issues"],
+                        "limitations": draft_checks["limitations"],
+                        "factual_review": draft_checks["factual_review"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            system += "\n\n" + _REVIEW_TASK
+        stage: dict[str, Any] = {
+            "phase": phase,
+            "status": "pending",
+            "system_prompt": system,
+            "user_prompt": user,
+            "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
+            "user_prompt_sha256": hashlib.sha256(user.encode()).hexdigest(),
+            "prompt_text_sha256": hashlib.sha256(
+                (system + "\n\n" + user).encode()
+            ).hexdigest(),
+            "raw_response": None,
+            "content_sha256": None,
+            "response_id": None,
+            "usage": None,
+        }
+        audit["stages"].append(stage)
+        try:
+            if remaining_budget is not None and tally.total >= remaining_budget:
+                raise AiDocError("Token budget exhausted before specialized review")
+            text, consumed = _generate(llm, system, user, max_tokens=max_tokens)
+            tally.add(consumed)
+            stage.update(
+                raw_response=text,
+                content_sha256=hashlib.sha256((text or "").encode()).hexdigest(),
+                usage=vars(consumed).copy(),
+            )
+            if not text or not _insert_tables(text).strip():
+                raise AiDocError("AI returned empty response")
+            if len(text) > 200_000:
+                raise AiDocError("AI response exceeds bounded review size")
+            checks = validate_documentation(text, json.loads(blob))
+            stage["deterministic_checks"] = {
+                key: checks[key]
+                for key in (
+                    "status",
+                    "issues",
+                    "checks",
+                    "counts",
+                    "factual_review",
+                    "limitations",
+                )
+            }
+            stage["status"] = "complete"
+        except Exception as exc:
+            if isinstance(exc, AiDocError) and exc.usage is not None:
+                tally.add(exc.usage)
+                stage["usage"] = vars(exc.usage).copy()
+            stage.update(status="failed", error=type(exc).__name__)
+            audit["status"] = "failed"
+            raise AiDocError(
+                str(exc)
+                if isinstance(exc, AiDocError)
+                else "AI documentation request failed",
+                usage=tally,
+                review_report=audit,
+            ) from exc
+    audit["status"] = "completed" if specialized_review else "disabled"
+    return text, tally, audit
+
+
 def document_workbook(
     graph: dict[str, Any],
     *,
@@ -1489,6 +2057,7 @@ def document_workbook(
     token_budget: int | None = None,
     context: dict[str, Any] | None = None,
     validation_results: dict[str, Any] | None = None,
+    specialized_review: bool = True,
 ) -> str:
     """Generate a Markdown overview grounded in the workbook dossier.
 
@@ -1505,6 +2074,12 @@ def document_workbook(
     If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
     accumulated into it. ``token_budget`` caps cumulative spend across that
     accumulator: an already-exhausted budget raises before anything is sent.
+    By default, ``specialized_review`` makes two requests: draft, then review
+    against the same source dossier. Both count toward usage. A budget exhausted
+    after the draft prevents the review and no draft is published as reviewed.
+    A final request already in flight may finish above the approximate ceiling;
+    its complete response and cost are retained. ``max_tokens`` caps each
+    response, not the two-request document's combined output.
 
     ``validation_results``, when supplied, receives the bounded quotation-check
     report under ``workbook``, including the raw response. Unsupported comparable
@@ -1522,10 +2097,26 @@ def document_workbook(
     system = _WORKBOOK_SYSTEM[language]
     user = "Workbook dossier (deterministic, extracted from workbook):\n" + blob
     try:
-        text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
+        text, call_usage, review = _reviewed_document(
+            llm,
+            system,
+            user,
+            blob,
+            specialized_review=specialized_review,
+            max_tokens=max_tokens,
+            remaining_budget=None
+            if token_budget is None
+            else token_budget - (usage.total if usage else 0),
+        )
     except AiDocError as exc:
         if usage is not None and exc.usage is not None:
             usage.add(exc.usage)
+        if validation_results is not None and exc.review_report is not None:
+            validation_results["workbook"] = {
+                "status": "failed",
+                "specialized_review": exc.review_report,
+                "raw_response": None,
+            }
         raise
     except Exception as exc:
         raise AiDocError(f"AI documentation failed: {exc}") from exc
@@ -1534,13 +2125,38 @@ def document_workbook(
     rendered = _insert_tables(text) if text else ""
     if not rendered.strip():
         raise AiDocError("AI returned empty response")
-    report = validate_documentation(text, json.loads(blob))
+    report = _documentation_report(text, blob)
+    report["specialized_review"] = review
+    rendered, insertions = render_formula_tokens(rendered, json.loads(blob))
+    report["deterministic_formula_insertions"] = insertions
     if validation_results is not None:
         validation_results["workbook"] = report
     return _qualify_documentation(rendered, report, language)
 
 
+def _documentation_report(text: str, blob: str) -> dict:
+    """Keep exact fitted JSON independently from the parsed binding fingerprint."""
+    report = validate_documentation(text, json.loads(blob))
+    report["sent_dossier"] = {
+        "json_text": blob,
+        "json_text_sha256": hashlib.sha256(blob.encode("utf-8")).hexdigest(),
+        "characters": len(blob),
+        "utf8_bytes": len(blob.encode("utf-8")),
+        "scope": (
+            "Exact serialized JSON portion of the user prompt; excludes its "
+            "prefix, the system prompt, provider request options and images."
+        ),
+    }
+    return report
+
+
 def _qualify_documentation(text: str, report: dict, language: str) -> str:
+    review = report.get("specialized_review", {})
+    prefix = (
+        "> " + _REVIEW_NOTICES[language] + "\n\n"
+        if review.get("enabled") and review.get("status") == "completed"
+        else ""
+    )
     if report["status"] == "qualified":
         unsupported = [
             check["quotation"]
@@ -1560,12 +2176,228 @@ def _qualify_documentation(text: str, report: dict, language: str) -> str:
         detail = "\n>\n> " + " · ".join(excerpts) if excerpts else ""
         if len(unsupported) > 3:
             detail += f" (+{len(unsupported) - 3})"
-        return "> " + AI_VALIDATION_NOTICES[language] + detail + "\n\n" + text
-    return text
+        notice = (
+            AI_VALIDATION_NOTICES[language] if unsupported else _CLAIM_NOTICES[language]
+        )
+        return "> " + notice + detail + "\n\n" + prefix + text
+    return prefix + text
+
+
+_REVIEW_NOTICES = {
+    "en": (
+        "AI draft and specialized review · 2 requests. Source checks are bounded; "
+        "the full response is not factually certified."
+    ),
+    "fr": (
+        "Brouillon IA puis revue spécialisée · 2 appels. "
+        "Les contrôles sources sont bornés ; "
+        "toute la réponse n’est pas certifiée factuellement."
+    ),
+    "de": (
+        "KI-Entwurf und spezialisierte Prüfung · 2 Anfragen. "
+        "Die Quellenprüfung ist begrenzt; die gesamte Antwort ist "
+        "nicht als faktisch korrekt bestätigt."
+    ),
+    "es": (
+        "Borrador IA y revisión especializada · 2 solicitudes. "
+        "Las comprobaciones de fuentes son limitadas; "
+        "la respuesta completa no está certificada como factual."
+    ),
+    "it": (
+        "Bozza IA e revisione specialistica · 2 richieste. "
+        "I controlli delle fonti sono limitati; "
+        "l’intera risposta non è certificata come fattualmente corretta."
+    ),
+    "ja": (
+        "AI草稿と専門レビュー · 2回のリクエスト。"
+        "出典の確認には範囲の制限があり、"
+        "回答全体の事実性は保証されません。"
+    ),
+    "nl": (
+        "AI-concept en gespecialiseerde controle · 2 verzoeken. "
+        "Broncontroles zijn begrensd; "
+        "de volledige reactie is niet feitelijk gecertificeerd."
+    ),
+    "pt": (
+        "Rascunho IA e revisão especializada · 2 pedidos. "
+        "As verificações das fontes são limitadas; "
+        "a resposta completa não está certificada como factual."
+    ),
+    "zh": (
+        "AI草稿与专业复核 · 2次请求。来源检查有范围限制，并不证明整篇回答的事实准确性。"
+    ),
+}
+
+
+_CLAIM_NOTICES = {
+    "en": (
+        "AI evidence review: some factual bindings are missing or disagree with "
+        "the supplied evidence. Review the claims; the original response is preserved."
+    ),
+    "fr": (
+        "Revue des preuves IA : certaines assertions factuelles manquent de preuve "
+        "ou contredisent le dossier transmis. Vérifiez-les ; "
+        "la réponse originale est conservée."
+    ),
+    "de": (
+        "KI-Evidenzprüfung: Einige Faktenbindungen fehlen oder widersprechen den "
+        "übermittelten Belegen. Prüfen Sie die Aussagen; "
+        "die Originalantwort bleibt erhalten."
+    ),
+    "es": (
+        "Revisión de pruebas de IA: algunas afirmaciones carecen de respaldo o "
+        "contradicen el expediente enviado. Revísalas; "
+        "se conserva la respuesta original."
+    ),
+    "it": (
+        "Revisione delle prove IA: alcune affermazioni non hanno riscontri o "
+        "contraddicono il dossier inviato. Verificarle; "
+        "la risposta originale è conservata."
+    ),
+    "ja": (
+        "AI証拠レビュー：一部の事実の根拠が不足しているか、送信された資料と矛盾しています。"
+        "主張を確認してください。元の回答は保持されています。"
+    ),
+    "nl": (
+        "AI-bewijscontrole: sommige feitelijke verwijzingen ontbreken of spreken "
+        "het aangeleverde dossier tegen. Controleer de uitspraken; "
+        "het oorspronkelijke antwoord blijft bewaard."
+    ),
+    "pt": (
+        "Revisão de evidências da IA: algumas afirmações não têm suporte ou "
+        "contradizem o dossiê enviado. Verifique-as; "
+        "a resposta original é preservada."
+    ),
+    "zh": (
+        "AI证据复核：部分事实缺少依据或与所提供的资料矛盾。"
+        "请核查相关陈述；原始回答已保留。"
+    ),
+}
+
+
+def _describe_native_batch(
+    llm: VisionProvider | MultiImageVisionProvider,
+    system: str,
+    prompt: str,
+    native: ImageEvidence,
+    regions: list[Region],
+    batch: dict[str, Any],
+    accumulator: TokenUsage,
+    *,
+    token_budget: int | None,
+    max_tokens: int | None,
+) -> list[dict[str, Any]]:
+    """One optional complete regeneration for invalid regional JSON only."""
+    from linexcel.vision_evidence import VisionEvidenceError, parse_observations
+
+    batch["attempts"] = []
+    batch_usage = TokenUsage()
+    for number in (1, 2):
+        try:
+            _check_budget(token_budget, accumulator)
+        except AiDocError:
+            batch["status"] = "failed"
+            batch["failure_code"] = "token_budget"
+            raise
+        attempt_prompt = prompt
+        if number == 2:
+            manifest = json.loads(prompt)
+            manifest["contract_retry"] = {
+                "attempt": 2,
+                "instruction": (
+                    "Generate a complete fresh response for this same native crop. "
+                    "Return only the region JSON contract, at most 3 nonempty "
+                    "literal quotations of at most 80 characters. "
+                    "Do not repair or shorten a previous response."
+                ),
+            }
+            attempt_prompt = json.dumps(
+                manifest, ensure_ascii=False, separators=(",", ":")
+            )
+        attempt: dict[str, Any] = {
+            "number": number,
+            "status": "pending",
+            "user_prompt": attempt_prompt,
+            "json_prompt_sha256": hashlib.sha256(attempt_prompt.encode()).hexdigest(),
+            "prompt_text_sha256": hashlib.sha256(
+                (system + "\n\n" + attempt_prompt).encode()
+            ).hexdigest(),
+            "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
+        }
+        batch["attempts"].append(attempt)
+        try:
+            if isinstance(llm, MultiImageVisionProvider):
+                text, call_usage = llm.generate_with_images(
+                    system,
+                    attempt_prompt,
+                    [
+                        (region.id, region.payload, region.media_type)
+                        for region in regions
+                    ],
+                    temperature=0,
+                    max_tokens=max_tokens,
+                )
+            else:
+                region = regions[0]
+                text, call_usage = llm.generate_with_image(
+                    system,
+                    attempt_prompt,
+                    region.payload,
+                    media_type=region.media_type,
+                    temperature=0,
+                    max_tokens=max_tokens,
+                )
+            accumulator.add(call_usage)
+            batch_usage.add(call_usage)
+            attempt["usage"] = vars(call_usage).copy()
+            attempt["provider_receipt"] = getattr(llm, "vision_receipt", None)
+            if not isinstance(text, str):
+                raise AiDocError("AI returned a non-text vision response")
+            attempt["raw_response"] = text
+            attempt["content_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+            if token_budget is not None and accumulator.total > token_budget:
+                attempt["failure_code"] = "token_budget"
+                raise AiDocError("Vision token budget exceeded after reported usage")
+            if not text.strip():
+                raise AiDocError("AI returned empty response for native vision crop")
+            observations = parse_observations(text, native, regions)
+        except AiDocError as exc:
+            if exc.usage is not None:
+                accumulator.add(exc.usage)
+                batch_usage.add(exc.usage)
+                attempt["usage"] = vars(exc.usage).copy()
+            attempt["status"] = "failed"
+            attempt["provider_receipt"] = getattr(llm, "vision_receipt", None)
+            raise
+        except VisionEvidenceError as exc:
+            attempt["status"] = "invalid_response"
+            attempt["contract_error"] = str(exc)
+            if number == 2:
+                raise
+        else:
+            attempt["status"] = "complete"
+            return observations
+        finally:
+            for key in (
+                "status",
+                "usage",
+                "provider_receipt",
+                "raw_response",
+                "content_sha256",
+                "contract_error",
+                "failure_code",
+            ):
+                batch.pop(key, None)
+            batch.update(
+                {key: value for key, value in attempt.items() if key != "number"}
+            )
+            batch["final_attempt"] = number
+            batch["usage_total"] = vars(batch_usage).copy()
+    raise AssertionError("Native vision attempts must complete or fail")
 
 
 def describe_images(
-    images: Mapping[str, bytes | str | Path],
+    images: Mapping[str, bytes | str | Path | Iterable[bytes | str | Path]],
     *,
     model: str | None = None,
     api_key: str | None = None,
@@ -1575,86 +2407,178 @@ def describe_images(
     usage: TokenUsage | None = None,
     max_tokens: int | None = None,
     token_budget: int | None = None,
+    validation_results: dict[str, Any] | None = None,
+    evidence_dir: str | Path | None = None,
 ) -> dict[str, str]:
-    """Describe rendered images with a multimodal model, ``{name: markdown}``.
+    """Describe every native image region with bounded visual observations.
 
-    ``images`` maps a name — a sheet name, in practice — to a PNG, either as
-    bytes or as a path to read. Each one is sent on its own, so a description
-    is grounded in a single picture and nothing else.
+    Large screenshots are cropped without resampling into overlapping 1024px
+    regions. Each request contains exactly one native crop, including for
+    multi-image providers. Each response must identify the requested
+    region and short contiguous quotations. Their scope is the exact
+    crop computed by code; the model supplies no geometry. Rendering is
+    deterministic, with no further model-generated summary. This validates
+    scope, not visual truth. Exact uniform or fully transparent decoded crops
+    are resolved locally: their empty text observation is not a model response
+    and has no provider receipt. Nonuniform pixels always require the model.
 
-    This is the one part of linexcel whose evidence is not the deterministic
-    dossier: a screenshot shows what no extraction reaches — colour
-    conventions, conditional formatting, charts, the shape of a layout — and
-    the prompt confines the model to what is visible rather than letting it
-    reason about the calculation.
-
-    The provider must accept an image (:class:`VisionProvider`); a text-only
-    one raises rather than having the picture dropped from the request. Model
-    resolution is otherwise :func:`document_workbook`'s, so ``model=`` here is
-    where a vision model is named when it differs from the writing one.
-
-    Images are sent one at a time: they are large, and the local runtimes this
-    is most used against serialize them anyway. An image that fails is skipped
-    with a :class:`UserWarning`; :class:`AiDocError` is raised only when every
-    one failed. ``token_budget`` is checked before each call.
+    ``validation_results`` retains original/crop hashes, coordinates, raw
+    responses and request identities, including one optional complete retry
+    for invalid regional JSON. Both attempts retain their full raw response
+    and consumption; no reply is truncated or repaired. ``evidence_dir`` saves
+    the exact sent crops. Multiple pages belonging to one sheet are processed. A sheet
+    is returned only if every page and region completes; partial evidence is
+    retained, but cannot silently become a complete screenshot description.
     """
+    from linexcel.vision_evidence import (
+        BATCH_SIZE,
+        VisionEvidenceError,
+        batch_prompt,
+        persist_image,
+        prepare_image,
+        render_observations,
+        uniform_region_observations,
+    )
+
     if language not in _LANGUAGES:
         raise ValueError(f"Unsupported language: {language!r}. Use one of {_LANGUAGES}")
-    _check_budget(token_budget, usage)
     if not images:
         return {}
-    llm = _resolve_provider(
-        provider=provider, model=model, api_key=api_key, base_url=base_url
-    )
-    if not isinstance(llm, VisionProvider):
-        raise AiDocError(
-            f"{type(llm).__name__} cannot be handed an image: describing "
-            "screenshots needs a provider exposing generate_with_image("
-            "system_prompt, user_prompt, image, *, media_type). The built-in "
-            "OpenAI-compatible client does; point it at a multimodal model."
-        )
+    llm = None
     system = _VISION_SYSTEM[language]
+    accumulator = usage if usage is not None else TokenUsage()
     described: dict[str, str] = {}
     failed: list[str] = []
     for name, image in images.items():
+        report: dict[str, Any] = {
+            "status": "incomplete",
+            "language": language,
+            "pages": [],
+            "factual_certification": False,
+        }
+        if validation_results is not None:
+            validation_results[name] = report
         try:
-            _check_budget(token_budget, usage)
-        except AiDocError:
-            warnings.warn(
-                f"Token budget reached: {len(images) - len(described)} "
-                "screenshot(s) left undescribed.",
-                UserWarning,
-                stacklevel=2,
-            )
-            break
-        try:
-            payload, media_type = _image_payload(name, image)
-            text, call_usage = llm.generate_with_image(
-                system,
-                f"Sheet: {name}",
-                payload,
-                media_type=media_type,
-                temperature=0.2,
-                max_tokens=max_tokens,
-            )
-        except (AiDocError, OSError) as exc:
-            if (
-                isinstance(exc, AiDocError)
-                and exc.usage is not None
-                and usage is not None
-            ):
-                usage.add(exc.usage)
+            sources = [image] if isinstance(image, bytes | str | Path) else list(image)
+            if not sources:
+                raise VisionEvidenceError("No image pages supplied")
+            report["expected_pages"] = len(sources)
+            for page_number, source in enumerate(sources, 1):
+                payload, _ = _image_payload(name, source)
+                native = prepare_image(payload)
+                metadata = (
+                    persist_image(native, Path(evidence_dir))
+                    if evidence_dir is not None
+                    else native.metadata()
+                )
+                page: dict[str, Any] = {
+                    "evidence": metadata,
+                    "batches": [],
+                    "observations": [],
+                    "page": page_number,
+                    "source_path": (
+                        str(Path(source).resolve())
+                        if not isinstance(source, bytes)
+                        else None
+                    ),
+                    "completed_regions": [],
+                    "model_regions": [],
+                    "deterministic_regions": [],
+                }
+                report["pages"].append(page)
+                size = BATCH_SIZE
+                for offset in range(0, len(native.regions), size):
+                    regions = list(native.regions[offset : offset + size])
+                    batch: dict[str, Any] = {
+                        "id": f"page-{page_number}-batch-{offset // size}",
+                        "region_ids": [region.id for region in regions],
+                        "original_sha256": native.sha256,
+                        "images": [region.metadata() for region in regions],
+                        "status": "pending",
+                    }
+                    page["batches"].append(batch)
+                    for region in regions:
+                        if len(region.payload) > MAX_IMAGE_BYTES:
+                            raise VisionEvidenceError(
+                                f"{name}/{region.id}: crop exceeds image byte ceiling"
+                            )
+                    if all(r.text_visibility != "not_determined" for r in regions):
+                        observations = uniform_region_observations(regions)
+                        batch.update(
+                            {
+                                "status": "complete",
+                                "resolution": "deterministic_pixels",
+                                "observations": observations,
+                                "attempts": [],
+                                "usage_total": vars(TokenUsage()).copy(),
+                                "provider_request_required": False,
+                            }
+                        )
+                        page["observations"].extend(observations)
+                        page["completed_regions"].extend(r.id for r in regions)
+                        page["deterministic_regions"].extend(r.id for r in regions)
+                        continue
+                    _check_budget(token_budget, accumulator)
+                    if llm is None:
+                        llm = _resolve_provider(
+                            provider=provider,
+                            model=model,
+                            api_key=api_key,
+                            base_url=base_url,
+                        )
+                    if not isinstance(llm, VisionProvider | MultiImageVisionProvider):
+                        raise AiDocError(
+                            f"{type(llm).__name__} cannot be handed an image: "
+                            "describing screenshots needs a provider exposing "
+                            "generate_with_image(system_prompt, user_prompt, image, "
+                            "*, media_type). The built-in "
+                            "OpenAI-compatible client does; "
+                            "point it at a multimodal model."
+                        )
+                    prompt = batch_prompt(name, page_number, native, regions)
+                    batch.update(
+                        {
+                            "resolution": "model",
+                            "provider_request_required": True,
+                            "user_prompt": prompt,
+                            "json_prompt_sha256": hashlib.sha256(
+                                prompt.encode()
+                            ).hexdigest(),
+                            "prompt_text_sha256": hashlib.sha256(
+                                (system + "\n\n" + prompt).encode()
+                            ).hexdigest(),
+                            "system_prompt_sha256": hashlib.sha256(
+                                system.encode()
+                            ).hexdigest(),
+                        }
+                    )
+                    _check_budget(token_budget, accumulator)
+                    observations = _describe_native_batch(
+                        llm,
+                        system,
+                        prompt,
+                        native,
+                        regions,
+                        batch,
+                        accumulator,
+                        token_budget=token_budget,
+                        max_tokens=max_tokens,
+                    )
+                    page["observations"].extend(observations)
+                    page["completed_regions"].extend(region.id for region in regions)
+                    page["model_regions"].extend(region.id for region in regions)
+                page["region_coverage_complete"] = set(page["completed_regions"]) == {
+                    region.id for region in native.regions
+                }
+            report["status"] = "complete"
+            described[name] = render_observations(report["pages"], language)
+        except (AiDocError, OSError, VisionEvidenceError) as exc:
+            report["error"] = str(exc)
             failed.append(f"{name} ({exc})")
-            continue
-        if usage is not None:
-            usage.add(call_usage)
-        rendered = _unwrap_markdown(text)
-        if rendered.strip():
-            described[name] = rendered
-        else:
-            failed.append(f"{name} (AI returned empty response)")
     if failed and not described:
-        raise AiDocError("No screenshot could be described: " + "; ".join(failed))
+        raise AiDocError(
+            "No screenshot could be described: " + "; ".join(failed), usage=accumulator
+        )
     if failed:
         warnings.warn(
             f"{len(failed)} screenshot(s) not described: " + "; ".join(failed),
@@ -1672,11 +2596,6 @@ def _image_payload(name: str, image: bytes | str | Path) -> tuple[bytes, str]:
         path = Path(image)
         payload = path.read_bytes()
         media_type = IMAGE_MEDIA_TYPES.get(path.suffix.lower(), "image/png")
-    if len(payload) > MAX_IMAGE_BYTES:
-        raise AiDocError(
-            f"{name}: image is {len(payload) / 1e6:.1f} MB, over the "
-            f"{MAX_IMAGE_BYTES / 1e6:.0f} MB ceiling; render it at a lower dpi."
-        )
     return payload, media_type
 
 
@@ -1694,6 +2613,7 @@ def document_nodes(
     max_tokens: int | None = None,
     token_budget: int | None = None,
     validation_results: dict[str, Any] | None = None,
+    specialized_review: bool = True,
 ) -> dict[str, str]:
     """Document the requested nodes, returns {node_id: markdown}.
 
@@ -1707,6 +2627,11 @@ def document_nodes(
     :class:`UserWarning` reports how many nodes were dropped.
     :class:`AiDocError` is raised only when *every* node failed.
 
+    ``specialized_review=True`` makes two requests per node: draft, then bounded
+    editorial review by the same provider. Both requests count toward usage.
+    An incomplete or unaffordable review never publishes the draft as reviewed.
+    Set it to ``False`` explicitly to request only one draft per node.
+
     If a :class:`TokenUsage` is passed as ``usage``, consumed tokens are
     accumulated into it, including usage reported for rejected responses and
     calls in a run that later fails. Tokens already spent are still billed.
@@ -1717,9 +2642,10 @@ def document_nodes(
     the only point at which a cost is known: nodes still queued when the tally
     reaches the budget are never sent, and a :class:`UserWarning` reports how
     many were left undocumented. Requests already in flight are allowed to
-    finish, so the final tally can exceed the budget by up to ``max_workers``
-    responses — set it as an order of magnitude, not to the token. Use
-    ``max_tokens`` to bound each individual response instead.
+    finish. Each active node has its own remaining-budget snapshot, so the final
+    tally may include both phases of up to ``max_workers`` active nodes. Set the
+    ceiling as an order of magnitude, not to the token. Use ``max_tokens`` to
+    bound each individual response, not a document's combined output.
 
     ``validation_results``, when supplied, receives a bounded quotation-check
     report keyed by node ID, including raw responses. Formula quotations without
@@ -1749,11 +2675,24 @@ def document_nodes(
     def _doc_one(nid_blob: tuple[str, str]) -> tuple[str, str, TokenUsage, dict]:
         nid, blob = nid_blob
         user = "Lineage dossier (deterministic, extracted from workbook):\n" + blob
-        text, call_usage = _generate(llm, system, user, max_tokens=max_tokens)
+        text, call_usage, review = _reviewed_document(
+            llm,
+            system,
+            user,
+            blob,
+            specialized_review=specialized_review,
+            max_tokens=max_tokens,
+            remaining_budget=None
+            if token_budget is None
+            else token_budget - tally.total,
+        )
         rendered = _insert_tables(text) if text else ""
         if not rendered.strip():
             raise AiDocError("AI returned empty response", usage=call_usage)
-        report = validate_documentation(text, json.loads(blob))
+        report = _documentation_report(text, blob)
+        report["specialized_review"] = review
+        rendered, insertions = render_formula_tokens(rendered, json.loads(blob))
+        report["deterministic_formula_insertions"] = insertions
         return (
             nid,
             _qualify_documentation(rendered, report, language),
@@ -1795,6 +2734,16 @@ def document_nodes(
                 except Exception as exc:
                     if isinstance(exc, AiDocError) and exc.usage is not None:
                         tally.add(exc.usage)
+                    if (
+                        validation_results is not None
+                        and isinstance(exc, AiDocError)
+                        and exc.review_report is not None
+                    ):
+                        validation_results[node_id] = {
+                            "status": "failed",
+                            "specialized_review": exc.review_report,
+                            "raw_response": None,
+                        }
                     failures.append((node_id, exc))
                     continue
                 docs[nid] = text

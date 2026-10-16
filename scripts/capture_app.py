@@ -29,6 +29,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import struct
 import sys
@@ -115,6 +116,8 @@ def check(output: Path, workbook: Path | None = None) -> int:
         doc = manifest.get("document", {})
         if doc.get("language") != "en" or not doc.get("taskId") or not doc.get("model"):
             problems.append("missing English document provenance")
+        if doc.get("providerRequests") != 2:
+            problems.append("missing draft/review provider-call evidence")
         for field in ("inputTokens", "outputTokens"):
             value = doc.get("usage", {}).get(field)
             if (
@@ -334,7 +337,9 @@ def capture(args) -> int:
     )
     images = {}
     with sync_playwright() as driver:
-        browser = driver.chromium.launch()
+        browser = driver.chromium.launch(
+            channel=os.environ.get("LINEXCEL_BROWSER_CHANNEL") or None
+        )
         context = browser.new_context(
             viewport={"width": WIDTH, "height": HEIGHT},
             device_scale_factor=SCALE,
@@ -497,6 +502,11 @@ def capture(args) -> int:
             ):
                 page.locator(f'#graph-results [data-related="{NODE}"]').click()
             page.locator("#graph-panel-calculation").wait_for()
+            wait_tasks(page, base, project, args.timeout)
+            expect(page.locator("#graph-recalculate")).to_be_enabled()
+            expect(
+                page.locator("#graph-preview .value-pair .value-card").nth(1)
+            ).to_contain_text("6724.5")
             require_english(page)
             output.mkdir(parents=True, exist_ok=True)
 
@@ -514,6 +524,19 @@ def capture(args) -> int:
             page.locator("#graph-tab-ai").click()
             page.locator("#graph-ai .ai-result").wait_for()
             page.locator("#graph-ai .token-usage").wait_for()
+            page.locator("#graph-options > summary").click()
+            page.locator("#graph-reader-width").focus()
+            page.keyboard.press("End")
+            expect(page.locator("#graph-reader-width")).to_have_value("62")
+            page.locator("#graph-options > summary").click()
+            page.locator("#graph-panel-ai").evaluate(
+                """panel => {
+                    const heading = panel.querySelector('.ai-result h3');
+                    if (!heading) throw new Error('Missing rendered document heading');
+                    panel.scrollTop += heading.getBoundingClientRect().top
+                        - panel.getBoundingClientRect().top - 16;
+                }"""
+            )
             shot("app_graph_documented.png", ".graph-investigation", 70)
             with page.expect_response(
                 lambda response: (
@@ -593,6 +616,12 @@ def capture(args) -> int:
                     "language": result["language"],
                     "model": result["model"],
                     "usage": result["usage"],
+                    "providerRequests": sum(
+                        stage.get("usage", {}).get("requests", 0)
+                        for stage in result["validation"]["specialized_review"][
+                            "stages"
+                        ]
+                    ),
                     "markdownSha256": hashlib.sha256(
                         result["markdown"].encode()
                     ).hexdigest(),
@@ -655,7 +684,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--generate-doc",
         action="store_true",
-        help="Explicitly allow one English node-document request if none exists.",
+        help="Allow one English documentation operation (draft and review calls).",
     )
     result.add_argument(
         "--prepare",

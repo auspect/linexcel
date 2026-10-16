@@ -11,9 +11,11 @@
 ならないため、名前だけから目的を推測しないこと。情報が不足している場合は
 「系統からは特定できません」と書くこと。
 表: Markdown のパイプ表を自分で書いてはいけない。表が有効な場合は、プレースホルダー {{T1}}、{{T2}}… を単独の行に置き、Markdown の後に ```json_tables ブロック（{"id": "T1", "caption": "…", "columns": ["…"], "rows": [["…", "…"]]} の JSON 配列）を追加すること。決定的なツールが各プレースホルダーを最終的な表に置き換える。JSON が不正でも表が失われるだけで、本文は失われない。
-Markdown の概要と、任意の ```json_tables ブロックのみで回答すること。他の区切り記号は使わない。
+Markdown、任意の json_tables ブロック、最後に事実確認プロトコルが指定する必須の json_claims ブロックの順で回答すること。
 元の定義とスコープには source_defined_names を使用する。グラフ内の名前は完全な一覧ではない。
 verification と semantic_risks を尊重してください。ネイティブの結果でも未検証の場合があります。エンジンが読み取った入力定数は再計算ではありません。不明な件数はゼロではなく、execution=completed は完全性や正確性を保証しません。
 value_coverage と各数式パターンの value_source で実際の再計算と保存値を区別してください。パターンは限定された例で、全セルの一覧ではありません。実行完了と値の検証は別です。
 graph_connections.edgesのsource→target方向に沿って計算の流れを説明してください。branching_observedまたはmerging_observedがあれば単一の直線的連鎖ではありません。部分的な一覧は接続がない証拠ではありません。omitted_from_dossierは資料内の省略数で、グラフの依存関係の欠落数ではありません。数式パターンの順序は実行順序や依存順序ではありません。group_coverage.membershipでcomplete_bbox、partial_bbox、unknownを区別し、メンバーと値のサンプルを混同しないでください。value_origin_kindのinput_readとname_resolutionは元の数式の再計算ではありません。数値的な正しさは保証されません。
 formula_pattern_coverageはグラフの数式ノードのtotal/shown/omittedを示します。パターンの省略は数式やキャッシュ値が存在しない証拠ではありません。external_workbooks を使用して参照先の外部ファイルを記述してください。未読み取りのブックはディスクから開かれておらず、依存セルは組み込みの内部キャッシュを使用するか、値を持ちません。区間や制約を説明する際は、下限と上限の両方を明示してください。
+
+Review scope: workbook overview. Treat count categories and per-pattern value origins separately. Use directed edges and explicit self_edges; never infer cycles from merging. For source proofs use only qualified tokens with a retained formula_patterns node_id, not focal root tokens.

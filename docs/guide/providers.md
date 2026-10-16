@@ -143,7 +143,9 @@ credentials belong in `api_key` or headers.
 
 The same placeholder works with `result.document(base_url=..., model=...)` and
 `LINEXCEL_AI_BASE_URL`. Advanced options are configured through `provider=` in
-the Python API; the command line and browser settings do not expose them.
+the Python API. The lazy server also exposes a small set of response options;
+see [the server's AI configuration](cli.md#lazy-application). Browser users
+cannot change the endpoint or credentials.
 
 | Argument | Configures |
 | --- | --- |
@@ -185,7 +187,9 @@ Do not combine an injected HTTP client with `proxy` or `http_client_kwargs`;
 configure those on the injected client. Do not combine `client` with endpoint,
 credential or SDK configuration.
 
-Requests are non-streaming. `request_kwargs` and `extra_body` cannot override
+Requests are non-streaming by default. A provider configured with
+`streaming=True` collects the complete stream before applying the same response
+validation. `request_kwargs` and `extra_body` cannot override
 `model`, `messages` or `max_tokens`. Set the output ceiling through the
 documentation method. linexcel defaults to zero SDK retries; enabling retries
 can increase request count and duration outside the token tally.

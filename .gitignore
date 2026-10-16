@@ -23,6 +23,8 @@ coverage.xml
 *.xlsx
 *.xlsm
 *.xlsb
+*.xlam
+*.xla
 out.html
 # Checked-in fixtures are the exception: openpyxl cannot author a
 # vbaProject.bin or a Power Query mashup, so those workbooks are built once,

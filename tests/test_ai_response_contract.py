@@ -86,6 +86,8 @@ def test_failed_calls_count_towards_budget_before_more_nodes_are_sent():
 
 
 def test_empty_vision_is_failure_and_keeps_consumed_tokens():
+    from vision_helpers import image_bytes
+
     class Provider:
         def generate(self, *args, **kwargs):
             return "unused"
@@ -95,7 +97,7 @@ def test_empty_vision_is_failure_and_keeps_consumed_tokens():
 
     usage = TokenUsage()
     with pytest.raises(AiDocError, match="empty response"):
-        describe_images({"sheet": b"image"}, provider=Provider(), usage=usage)
+        describe_images({"sheet": image_bytes()}, provider=Provider(), usage=usage)
     assert usage.total == 12
 
 

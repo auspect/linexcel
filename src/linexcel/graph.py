@@ -12,8 +12,9 @@ infrastructure (``add_edge``, ``ensure_opaque_node``, ``ensure_input_node``,
 
 from __future__ import annotations
 
+import hashlib
 from bisect import bisect_left, bisect_right
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +83,7 @@ def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
 def _resolve_call(
     callee: str,
     caller_module: str,
-    proc_ids: dict[str, str],
+    proc_ids: dict[str, str | None],
     procs_by_name: dict[str, list[str]],
 ) -> str | None:
     """Resolve a VBA call to a procedure node id.
@@ -594,7 +595,11 @@ class GraphBuilder:
         self, data: bytes, filename: str, refs_dir: str | Path | None
     ) -> None:
         """Nodes for every VBA procedure, wired by call and by cell access."""
-        self.vba_modules = extract_vba_modules(data, filename, self.warnings)
+        module_origins: dict[str, dict] = {}
+        external_modules: set[str] = set()
+        self.vba_modules = extract_vba_modules(
+            data, filename, self.warnings, provenance=module_origins
+        )
         self.vba_procs: list[VbaProc] = (
             analyze_vba(self.vba_modules) if self.vba_modules else []
         )
@@ -604,26 +609,52 @@ class GraphBuilder:
         # came from.
         if refs_dir is not None:
             for addin in macro_files(Path(refs_dir)):
+                extra_origins: dict[str, dict] = {}
                 extra = extract_vba_modules(
-                    addin.read_bytes(), addin.name, self.warnings
+                    addin.read_bytes(),
+                    addin.name,
+                    self.warnings,
+                    provenance=extra_origins,
                 )
                 if not extra:
                     continue
                 origin = {f"{addin.name}:{name}": code for name, code in extra.items()}
                 self.vba_modules.update(origin)
-                self.vba_procs.extend(analyze_vba(origin))
+                external_modules.update(origin)
+                module_origins.update(
+                    {
+                        f"{addin.name}:{name}": info
+                        for name, info in extra_origins.items()
+                    }
+                )
+                for proc in analyze_vba(extra):
+                    proc.module = f"{addin.name}:{proc.module}"
+                    proc.calls = [
+                        f"{addin.name}:{callee}" if "." in callee else callee
+                        for callee in proc.calls
+                    ]
+                    self.vba_procs.append(proc)
         # Node ids keep the declared spelling, but both lookups are keyed on
         # the lowercased name: VBA is case-insensitive, so Module1.Taux and
         # module1.TAUX designate the same procedure. proc_ids resolves a
         # qualified name, procs_by_name the unqualified ones _find_calls
         # reports.
-        proc_ids: dict[str, str] = {}
-        procs_by_name: dict[str, list[str]] = defaultdict(list)
+        multiplicity = Counter(f"{p.module}.{p.name}".lower() for p in self.vba_procs)
+        scoped_ids: dict[str, dict[str, str | None]] = defaultdict(dict)
+        scoped_names: dict[str, dict[str, list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        source_ids: dict[int, str] = {}
         for proc in self.vba_procs:
             qualified = f"{proc.module}.{proc.name}"
             pid = f"vp:{qualified}"
-            proc_ids[qualified.lower()] = pid
-            procs_by_name[proc.name.lower()].append(qualified.lower())
+            scope = module_origins.get(proc.module, {}).get("sourceFile", filename)
+            duplicate = multiplicity[qualified.lower()] > 1
+            if duplicate:
+                pid += f"@{proc.kind.replace(' ', '')}:{proc.line_start}"
+            source_ids[id(proc)] = pid
+            scoped_ids[scope][qualified.lower()] = None if duplicate else pid
+            scoped_names[scope][proc.name.lower()].append(qualified.lower())
             self.nodes[pid] = {
                 "id": pid,
                 "kind": "vba",
@@ -634,19 +665,56 @@ class GraphBuilder:
                 "procKind": proc.kind,
                 "lines": [proc.line_start, proc.line_end],
                 "code": proc.code[:MAX_VBA_CODE_CHARS],
+                "vbaProvenance": {
+                    **module_origins.get(proc.module, {}),
+                    "procedureSha256": hashlib.sha256(proc.code.encode()).hexdigest(),
+                    "codeTruncated": len(proc.code) > MAX_VBA_CODE_CHARS,
+                    "totalCodeCharacters": len(proc.code),
+                    "referenceSemantics": (
+                        "static heuristic literals; only explicit ThisWorkbook "
+                        "in the source workbook can bind to its cells; bare, "
+                        "ActiveWorkbook, alias and add-in references remain "
+                        "unresolved, never proof of runtime binding"
+                    ),
+                },
             }
         for proc in self.vba_procs:
-            pid = proc_ids[f"{proc.module}.{proc.name}".lower()]
+            pid = source_ids[id(proc)]
+            scope = module_origins.get(proc.module, {}).get("sourceFile", filename)
             for callee in proc.calls:
-                target = _resolve_call(callee, proc.module, proc_ids, procs_by_name)
+                target = _resolve_call(
+                    callee, proc.module, scoped_ids[scope], scoped_names[scope]
+                )
                 if target is not None:
                     self.add_edge(pid, target, "call")
+                else:
+                    self.warnings.append(
+                        f"Unresolved or ambiguous static VBA call in {scope}: "
+                        f"{proc.module}.{proc.name} -> {callee}"
+                    )
             for ref in proc.refs:
                 detail = parse_ref_detailed(ref.ref, default_sheet=ref.sheet)
-                if detail is None or detail.rect.sheet is None:
+                ambiguous_book = (
+                    ref.workbook is None or ref.workbook.lower() != "thisworkbook"
+                )
+                if (
+                    proc.module in external_modules
+                    or ambiguous_book
+                    or detail is None
+                    or detail.rect.sheet is None
+                ):
                     opaque_id = self.ensure_input_node(
                         Rect(None, 1, 1, 1, 1),
-                        opaque_label=f"VBA:{ref.sheet or '?'}!{ref.ref}",
+                        opaque_label=(
+                            "VBA:"
+                            + (
+                                f"{scope}:"
+                                if proc.module in external_modules or ambiguous_book
+                                else ""
+                            )
+                            + (f"{ref.workbook}:" if ref.workbook else "")
+                            + f"{ref.sheet or '?'}!{ref.ref}"
+                        ),
                     )
                     if ref.access == "write":
                         self.add_edge(pid, opaque_id, "vba-write")
@@ -659,6 +727,11 @@ class GraphBuilder:
                     )
                 else:
                     self.resolve_rect_edges(detail.rect, pid, kind="vba-read")
+
+        for edge in self.edges.values():
+            if edge["kind"] in {"call", "vba-read", "vba-write"}:
+                edge["scope"] = "static_vba_heuristic"
+                edge["approx"] = True
 
     def build_queries(self, queries: list[Query]) -> None:
         """A node per Power Query query, wired to its sources and loads."""

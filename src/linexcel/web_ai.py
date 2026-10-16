@@ -13,6 +13,12 @@ import time
 from collections import Counter
 from typing import Any
 
+from linexcel.doc_evidence import (
+    formula_evidence,
+    formula_text_evidence,
+    value_comparison_evidence,
+    vba_excerpt_evidence,
+)
 from linexcel.i18n import LANGUAGES
 
 MAX_DOSSIER_CHARS = 12000
@@ -20,10 +26,18 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 class WebAIError(RuntimeError):
-    def __init__(self, kind: str, message: str, usage: dict | None = None):
+    def __init__(
+        self,
+        kind: str,
+        message: str,
+        usage: dict | None = None,
+        *,
+        review_report: dict | None = None,
+    ):
         super().__init__(message)
         self.kind = kind
         self.usage = usage
+        self.review_report = review_report
 
 
 def digest(value: Any) -> str:
@@ -46,6 +60,10 @@ def _node(node: dict) -> dict:
         "sheet",
         "cell",
         "formula",
+        "sourceFormula",
+        "canonicalFormula",
+        "formulaProvenance",
+        "sourceValueProvenance",
         "cachedValue",
         "cachedValueKind",
         "value",
@@ -61,19 +79,67 @@ def _node(node: dict) -> dict:
         "patternId",
         "patternMemberCount",
         "context",
+        "module",
+        "proc",
+        "procKind",
+        "lines",
+        "vbaProvenance",
     )
-    return {
-        key: _bounded(node[key], 2500 if key == "formula" else 1000)
+    out = {
+        key: _bounded(
+            node[key],
+            2500
+            if key
+            in {"formula", "sourceFormula", "canonicalFormula", "formulaProvenance"}
+            else 1000,
+        )
         for key in keys
         if key in node
     }
+    if node.get("formula") or "formulaProvenance" in node:
+        out["formula_text_evidence"] = formula_text_evidence(node)
+        out["formula_facts"] = formula_evidence(
+            node.get("formula"),
+            sheet=node.get("sheet"),
+            address=node.get("cell"),
+        )
+    if "value" in node or "cachedValue" in node:
+        out["value_comparison"] = value_comparison_evidence(node)
+    if node.get("kind") == "vba":
+        out.update(vba_excerpt_evidence(node))
+        out["codeOmittedCharacters"] = out["code_omitted_characters"]
+        out["execution"] = "not_executed"
+    return out
 
 
-def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
+def _overview_example(node: dict) -> dict:
+    """Use the text proof schema once, retaining the same bounded example."""
+    example = _node(node)
+    for source, target in (
+        ("id", "node_id"),
+        ("sourceFormula", "source_formula"),
+        ("canonicalFormula", "canonical_formula"),
+        ("formulaProvenance", "formula_provenance"),
+    ):
+        if source in example:
+            example[target] = example.pop(source)
+    return example
+
+
+def evidence(
+    graph: dict,
+    node_id: str | None,
+    evaluations: list[dict],
+    *,
+    revision: str | None = None,
+) -> dict:
     """Bound the dossier explicitly; preserve source/cache/calculation separation."""
+    from linexcel.ai_validation import review_protocol
+
     nodes = graph["nodes"]
     indexed = {n["id"]: n for n in nodes}
     common: dict[str, Any] = {
+        "review_protocol": review_protocol(),
         "source": "lazy structural graph, no global recalculation",
         "sourceSha256": graph.get("meta", {}).get("sha256"),
         "limitations": _bounded(graph.get("meta", {}).get("limits", [])),
@@ -83,6 +149,12 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
             "not Excel certification.",
             "Dependency decomposition is not an evaluated subexpression trace.",
             "Omitted evidence is unknown, never evidence of absence.",
+            "Stored XML formula, parser canonical formula and decomposition are "
+            "separate evidence. A shared slave translation is not stored source text.",
+            "Static VBA source and call edges do not prove execution, "
+            "dynamic calls or business effects.",
+            "An error/cache mismatch alone establishes no cause, "
+            "engine support or cache age.",
             "A missing value kind in an older graph is unknown. Do not infer "
             "an Excel error from text such as '#N/A'; refresh structure for types.",
         ],
@@ -92,9 +164,11 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
         related = [
             indexed[key] for key in node.get("dependencies", []) if key in indexed
         ]
+        node_summary = _node(node)
         common.update(
             scope="node",
-            node=_node(node),
+            formula_facts=node_summary.pop("formula_facts", formula_evidence(None)),
+            node=node_summary,
             savedCache={
                 "value": _bounded(node.get("cachedValue")),
                 "kind": node.get("cachedValueKind", "unknown"),
@@ -156,6 +230,37 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
                     - shown_steps,
                 ),
                 "stepSemantics": result.get("step_semantics"),
+                "result_evidence": {
+                    "recorded_engine_formula_result": (
+                        latest.get("status") == "succeeded"
+                        and latest.get("nodeId") == node_id
+                        and result.get("nodeId", result.get("node_id", node_id))
+                        == node_id
+                        and (revision is None or latest.get("revision") == revision)
+                        and result.get("status") == "completed"
+                        and result.get("provenance") == "targeted_recalculation"
+                        and result.get("value") is not None
+                        and isinstance(node.get("formula"), str)
+                        and bool(node["formula"])
+                    ),
+                    "scope": (
+                        "this frozen target calculation only; not a current or "
+                        "independently verified Excel result"
+                    ),
+                    "saved_cache_is_engine_result": False,
+                    "error_cause": "not_established",
+                },
+                "value_comparison": value_comparison_evidence(
+                    {
+                        **(
+                            {"cachedValue": node["cachedValue"]}
+                            if "cachedValue" in node
+                            else {}
+                        ),
+                        **({"value": result["value"]} if "value" in result else {}),
+                        "cachedAgreement": result.get("comparison"),
+                    }
+                ),
             }
     else:
         # A reproducible cross-sheet sample, never a claim that all nodes were sent.
@@ -177,7 +282,9 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
         for offset in range(3):
             for group in prioritized:
                 if offset < len(group) and len(selected) < 18:
-                    selected.append(_node(group[offset]))
+                    selected.append(_overview_example(group[offset]))
+        formula_examples = [n for n in selected if n.get("formula")]
+        value_examples = [n for n in selected if not n.get("formula")]
         common.update(
             scope="workbook",
             sheets=_bounded(graph.get("meta", {}).get("sheets", [])),
@@ -204,7 +311,13 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
             nodeCounts=graph.get("meta", {}).get(
                 "nodeCounts", dict(Counter(n["kind"] for n in nodes))
             ),
-            sample=selected,
+            formula_patterns=formula_examples,
+            value_samples=value_examples,
+            exampleNotice=(
+                "Only bounded cross-sheet node examples, split into formula "
+                "and non-formula records. Their order is not execution order; "
+                "omittedNodes never means absent workbook nodes."
+            ),
             omittedNodes=graph.get("meta", {}).get("nodeCount", len(nodes))
             - len(selected),
             latestCalculation=None,
@@ -241,13 +354,31 @@ def evidence(graph: dict, node_id: str | None, evaluations: list[dict]) -> dict:
             ),
             calculationNotice="No whole-workbook recalculation is available.",
         )
+        from linexcel.aidoc import _document_connections
+
+        common["graph_connections"] = _document_connections(
+            {
+                "edges": graph.get(
+                    "edges",
+                    [
+                        {"source": dependency, "target": node["id"]}
+                        for node in nodes
+                        for dependency in node.get("dependencies", [])
+                    ],
+                )
+            }
+        )
+        common["graph_connections"]["semantics"] = (
+            "Source dependency/static call relationships, never execution order."
+        )
     # Remove optional entries, not partial JSON or formula text.
-    optional = "precedents" if node_id is not None else "sample"
-    while (
-        len(json.dumps(common, ensure_ascii=False)) > MAX_DOSSIER_CHARS
-        and common[optional]
+    optional = (
+        ["precedents"] if node_id is not None else ["value_samples", "formula_patterns"]
+    )
+    while len(json.dumps(common, ensure_ascii=False)) > MAX_DOSSIER_CHARS and any(
+        common[key] for key in optional
     ):
-        common[optional].pop()
+        next(common[key] for key in optional if common[key]).pop()
         field = "omittedPrecedents" if node_id is not None else "omittedNodes"
         common[field] += 1
     if len(json.dumps(common, ensure_ascii=False)) > MAX_DOSSIER_CHARS:
@@ -292,19 +423,22 @@ def _usage(usage: Any) -> dict:
 
 
 def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> dict:
-    """Make exactly one explicitly requested provider call, never send extra images."""
+    """Document the chosen evidence; captures use complete native crop batches."""
     from linexcel.ai_validation import validate_documentation
     from linexcel.aidoc import (
         _SYSTEM,
         _VISION_SYSTEM,
         _WORKBOOK_SYSTEM,
         AiDocError,
+        TokenUsage,
         UsageReportingProvider,
-        VisionProvider,
         _insert_tables,
         _resolve_provider,
+        _reviewed_document,
+        describe_images,
         estimate_tokens,
     )
+    from linexcel.documentation_proof import render_formula_tokens
 
     language = options["language"]
     if not isinstance(language, str) or language not in LANGUAGES:
@@ -326,61 +460,108 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
     dossier = {k: v for k, v in snapshot.items() if k != "image"}
     user = "Frozen evidence dossier (JSON):\n" + json.dumps(dossier, ensure_ascii=False)
     reserved = estimate_tokens(system + user) + (4096 if is_image else 512)
-    max_output = min(12000, token_budget - reserved)
+    max_output = min(config.get("maxTokens", 12000), token_budget - reserved)
     if max_output < 256:
         raise WebAIError(
             "token_budget", "Budget de tokens insuffisant pour ce dossier."
         )
     try:
+        extra = {}
+        if config.get("reasoningSplit"):
+            extra["reasoning_split"] = True
+        if config.get("thinking") is not None:
+            extra["thinking"] = {"type": config["thinking"]}
+        configured = None
+        if extra or config.get("stream"):
+            from linexcel.aidoc import OpenAICompatProvider
+
+            configured = OpenAICompatProvider(
+                base_url=config["baseUrl"],
+                model=model,
+                api_key=config.get("apiKey") or "not-needed",
+                streaming=config.get("stream", False),
+                request_kwargs={"extra_body": extra} if extra else None,
+            )
         provider = _resolve_provider(
+            provider=configured,
             base_url=config["baseUrl"],
             model=model,
             api_key=config.get("apiKey") or "not-needed",
         )
         if is_image:
-            if not isinstance(provider, VisionProvider):
-                raise WebAIError(
-                    "ai_capability", "Ce fournisseur ne prend pas en charge les images."
-                )
             image = base64.b64decode(snapshot["image"].split(",", 1)[1], validate=True)
-            text, usage = provider.generate_with_image(
-                system, user, image, max_tokens=max_output
+            vision_checks: dict = {}
+            usage = TokenUsage()
+            name = snapshot.get("sheet") or snapshot.get("name") or "capture"
+            descriptions = describe_images(
+                {name: image},
+                provider=provider,
+                language=language,
+                usage=usage,
+                token_budget=token_budget,
+                max_tokens=max_output,
+                validation_results=vision_checks,
             )
+            text = descriptions[name]
         else:
             if not isinstance(provider, UsageReportingProvider):
                 raise WebAIError(
                     "ai_capability",
                     "Ce fournisseur ne déclare pas la consommation de tokens.",
                 )
-            text, usage = provider.generate_with_usage(
-                system, user, max_tokens=max_output
+            text, usage, editorial_review = _reviewed_document(
+                provider,
+                system,
+                user,
+                json.dumps(dossier, ensure_ascii=False),
+                specialized_review=True,
+                max_tokens=max_output,
+                remaining_budget=token_budget,
             )
     except WebAIError:
         raise
     except Exception as exc:
         usage = _usage(exc.usage) if isinstance(exc, AiDocError) and exc.usage else None
+        failed_review = exc.review_report if isinstance(exc, AiDocError) else None
         # Provider exceptions may contain endpoints, credentials or request data.
         # Classify known failures but never expose their raw string to the API.
         message = str(exc).lower()
         if "not installed" in message or isinstance(exc, ImportError):
             raise WebAIError(
-                "ai_dependency", "L’extension linexcel[ai] est requise.", usage
+                "ai_dependency",
+                "L’extension linexcel[ai] est requise.",
+                usage,
+                review_report=failed_review,
             ) from None
         if "incomplete" in message or "finish_reason" in message:
             raise WebAIError(
                 "ai_truncated",
                 "Réponse IA tronquée ou interrompue ; augmentez le budget.",
                 usage,
+                review_report=failed_review,
             ) from None
         if "empty" in message:
             raise WebAIError(
-                "ai_empty", "Le fournisseur a renvoyé une réponse vide.", usage
+                "ai_empty",
+                "Le fournisseur a renvoyé une réponse vide.",
+                usage,
+                review_report=failed_review,
+            ) from None
+        if "budget" in message:
+            raise WebAIError(
+                "token_budget",
+                "La consommation déclarée dépasse le budget de tokens."
+                if usage and usage["totalTokens"] > token_budget
+                else "Budget insuffisant pour couvrir l'opération IA et sa revue.",
+                usage,
+                review_report=failed_review,
             ) from None
         raise WebAIError(
             "ai_provider",
             "Échec du fournisseur IA ; vérifiez sa disponibilité "
             "et sa configuration côté serveur.",
             usage,
+            review_report=failed_review,
         ) from None
     if not isinstance(text, str) or not text.strip():
         raise WebAIError(
@@ -391,6 +572,7 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
             "token_budget",
             "La consommation déclarée dépasse le budget de tokens.",
             _usage(usage),
+            review_report=editorial_review if not is_image else None,
         )
     markdown = _insert_tables(text).strip()
     if not markdown:
@@ -400,7 +582,10 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
     # The quotation checker consumes only formula records actually sent.
     validation_dossier = dict(dossier.get("node") or {})
     validation_dossier["precedents"] = dossier.get("precedents", [])
-    validation_dossier["formula_patterns"] = dossier.get("sample", [])
+    validation_dossier["formula_patterns"] = dossier.get(
+        "formula_patterns", dossier.get("sample", [])
+    )
+    validation_dossier["value_samples"] = dossier.get("value_samples", [])
     group = dossier.get("formulaGroup")
     if isinstance(group, dict) and isinstance(group.get("representativeFormula"), str):
         validation_dossier["formula_patterns"] = [
@@ -410,13 +595,34 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
                 "formula": group["representativeFormula"],
             },
         ]
-    report = validate_documentation(markdown, validation_dossier)
-    warnings = [
-        "Texte généré par IA : vérifier les faits et les sources ; "
-        "aucune certification de calcul.",
-        "Les tokens d’entrée sont estimés avant envoi ; "
-        "le plafond de sortie est transmis au fournisseur.",
-    ]
+    report = (
+        {
+            "status": "visual_scope_checked",
+            "factual_certification": False,
+            "regions": vision_checks[name],
+        }
+        if is_image
+        else validate_documentation(text, dossier, quotation_dossier=validation_dossier)
+    )
+    if not is_image:
+        report["specialized_review"] = editorial_review
+        markdown, insertions = render_formula_tokens(markdown, dossier)
+        report["deterministic_formula_insertions"] = insertions
+    local_pixels_only = is_image and usage.requests == 0
+    warnings = (
+        [
+            "Constat local sur les pixels uniformes : aucun texte discernable "
+            "dans les régions contrôlées. Aucun appel IA ni token consommé. "
+            "Cela ne décrit pas les données du classeur."
+        ]
+        if local_pixels_only
+        else [
+            "Texte généré par IA : vérifier les faits et les sources ; "
+            "aucune certification de calcul.",
+            "Les tokens d’entrée sont estimés avant envoi ; "
+            "le plafond de sortie est transmis au fournisseur.",
+        ]
+    )
     if usage.estimated:
         warnings.append(
             "Consommation estimée ; les tokens image ne sont pas mesurés "
@@ -424,17 +630,45 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
         )
     if is_image:
         warnings.append(
-            "Description limitée à la capture choisie ; "
-            "le rendu peut différer des valeurs enregistrées."
+            "Observations limitées aux régions natives de la capture choisie ; "
+            "coordonnées vérifiées, faits visuels non certifiés. "
+            "Le rendu peut différer des valeurs enregistrées."
+        )
+    else:
+        warnings.append(
+            "Brouillon puis revue IA spécialisée sur les mêmes sources "
+            "(deux appels, consommation cumulée). Cette revue ne certifie "
+            "ni les faits ni les calculs ; contrôlez les preuves sources."
         )
     if report.get("status") == "qualified":
-        warnings.append(
-            "Certaines citations de formules ne correspondent pas "
-            "aux sources transmises."
-        )
+        if report["counts"]["not_source_supported"]:
+            warnings.append(
+                "Certaines citations de formules ne correspondent pas "
+                "aux sources transmises."
+            )
+        if report["factual_review"]["issues"]:
+            warnings.append(
+                "Certaines assertions factuelles manquent de preuve "
+                "ou contredisent le dossier transmis."
+            )
     return {
         "markdown": markdown,
-        "model": model,
+        "rawResponse": (
+            json.dumps(
+                [
+                    batch["raw_response"]
+                    for page in vision_checks[name]["pages"]
+                    for batch in page["batches"]
+                    if isinstance(batch.get("raw_response"), str)
+                ],
+                ensure_ascii=False,
+            )
+            if is_image
+            else text
+        ),
+        "model": None if local_pixels_only else model,
+        "configuredModel": model,
+        "observationOrigin": "deterministic_pixels" if local_pixels_only else "model",
         "language": language,
         "usage": _usage(usage),
         "generatedAt": time.time(),
@@ -442,6 +676,7 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
         "sources": {
             "scope": snapshot["scope"],
             "evidenceDigest": digest(snapshot),
+            **({"visionEvidence": vision_checks[name]} if is_image else {}),
             **{
                 k: snapshot[k]
                 for k in (

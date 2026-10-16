@@ -184,20 +184,26 @@ def test_workbook_trim_preserves_edges_and_counts_omitted_patterns():
     }
     dossier = aidoc.build_workbook_dossier(graph)
     assert dossier["formula_pattern_coverage"]["omitted"] == 20
+    original_patterns = copy.deepcopy(dossier["formula_patterns"])
     connections = copy.deepcopy(dossier["graph_connections"])
     # Force the existing preview-first/pattern-tail trimming stages.
     dossier["sheets"] = [
         {"name": "S", "preview": [{"values": ["x" * 700]} for _ in range(20)]}
     ]
-    fitted = json.loads(aidoc._fit_workbook_dossier(dossier))
+    blob = aidoc._fit_workbook_dossier(dossier)
+    assert len(blob) <= aidoc.MAX_WORKBOOK_DOSSIER_CHARS
+    fitted = json.loads(blob)
     assert fitted["graph_connections"] == connections
     assert len(connections["edges"]) == aidoc.MAX_DOCUMENT_CONNECTIONS
     assert connections["omitted_from_dossier"] == 39 - aidoc.MAX_DOCUMENT_CONNECTIONS
+    retained = len(fitted["formula_patterns"])
+    assert 0 < retained < len(original_patterns)
+    assert fitted["formula_patterns"] == original_patterns[:retained]
     assert fitted["formula_pattern_coverage"] == {
         "scope": "graph_formula_nodes",
         "total": 40,
-        "shown": 5,
-        "omitted": 35,
+        "shown": retained,
+        "omitted": 40 - retained,
     }
 
 

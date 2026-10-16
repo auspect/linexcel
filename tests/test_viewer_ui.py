@@ -332,7 +332,7 @@ class TestResponsivePanel:
     def test_a_populated_panel_keeps_its_close_button(self):
         html = render_html(demo_graph())
         assert "var close = el('button', 'lin-close', '✕');" in html
-        assert "close.onclick = function () { clearSel(cy); };" in html
+        assert "if (cy) clearSel(cy); else p.classList.add('hidden');" in html
 
     def test_the_sheets_columns_stack(self):
         narrow = render_html(demo_graph()).split("@media (max-width: 900px) {", 1)[1]
@@ -594,7 +594,10 @@ class TestFormulaHighlighting:
     def test_the_panel_formula_is_tokenised_and_coloured(self):
         script = script_of(render_html(demo_graph()))
         assert "function highlightFormula(src)" in script
-        assert "fcode.innerHTML = highlightFormula(n.formula);" in script
+        assert (
+            "fcode.innerHTML = highlightFormula("
+            "hasSource ? n.sourceFormula : n.formula);" in script
+        )
 
     def test_the_token_colours_are_theme_tokens(self):
         html = render_html(demo_graph())

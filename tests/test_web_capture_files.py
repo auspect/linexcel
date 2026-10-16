@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 from pathlib import Path
 
+import pytest
 from test_web import request, wait, workbook
 
 from linexcel.web import create_app
@@ -107,6 +109,9 @@ def test_capture_worker_writes_metadata_and_small_thumbnail(tmp_path, monkeypatc
 
     root = tmp_path / "project" / "tasks" / "task"
     root.mkdir(parents=True)
+    (root.parent.parent / "project.json").write_text(
+        json.dumps({"filename": "source.xlsm"}), "utf-8"
+    )
     (root / "request.json").write_text(json.dumps({"operation": "capture"}), "utf-8")
     actual = io.BytesIO()
     Image.new("RGB", (1000, 800), "white").save(actual, "PNG")
@@ -128,3 +133,47 @@ def test_capture_worker_writes_metadata_and_small_thumbnail(tmp_path, monkeypatc
     with Image.open(root / "capture-files" / shot["thumbnail"]) as thumb:
         assert thumb.width <= 320 and thumb.height <= 240
     assert len(json.dumps(payload)) < 1000
+
+
+@pytest.mark.parametrize(
+    "exit_code, windows_kind",
+    [
+        (1, "WorkbookRenderError"),
+        (0xC00000FD, "stack_overflow"),
+        (0xC0000017, "memory_limit"),
+    ],
+)
+def test_capture_worker_preserves_renderer_failure(
+    tmp_path, monkeypatch, exit_code, windows_kind
+):
+    from linexcel import insights, web_worker
+
+    root = tmp_path / "project" / "tasks" / "task"
+    root.mkdir(parents=True)
+    (root.parent.parent / "project.json").write_text(
+        json.dumps({"filename": "source.xlsx"}), "utf-8"
+    )
+    (root / "request.json").write_text(
+        json.dumps({"operation": "capture", "memoryMb": 512}), "utf-8"
+    )
+
+    def render(*args):
+        raise insights.WorkbookRenderError(
+            f"Renderer exit code {exit_code}",
+            renderer="LibreOffice",
+            exit_code=exit_code,
+        )
+
+    monkeypatch.setattr(insights, "render_workbook_screenshots", render)
+    monkeypatch.setattr("sys.argv", ["web_worker", str(root)])
+    web_worker.main()
+    error = json.loads((root / "result.json").read_text("utf-8"))["error"]
+    assert error["renderer"] == "LibreOffice"
+    assert error["exitCode"] == exit_code
+    assert error["kind"] == (windows_kind if os.name == "nt" else "WorkbookRenderError")
+    assert str(exit_code) in error["message"]
+    if os.name == "nt" and windows_kind == "memory_limit":
+        assert "512 Mio" in error["message"]
+        assert "Augmentez le budget" in error["message"]
+    if windows_kind == "stack_overflow":
+        assert "insuffisant" not in error["message"]

@@ -102,12 +102,10 @@ targeted recalculation keeps its 120-second default. Both are adjustable under
 **Limits per operation**. Exact node references use the index directly; other
 searches still match substrings and can take longer on very large workbooks.
 
-The **Manual recalculation (lazy)** checkbox controls a separate layer of laziness.
-Unchecked (the default), selecting a formula requests its targeted calculation
-and reuses the server cache when valid. Checked, selection reads saved evidence
-only; **Recalculate** explicitly runs the cell and its dependencies. The setting
-is remembered in this browser. Changing it does not launch a calculation or
-cancel an operation already running. No mode evaluates the whole workbook.
+Selecting a formula immediately starts a fresh targeted calculation;
+simultaneous visits share the active task. **Recalculate** retries or refreshes
+that cell and its dependencies. Source inputs and static VBA do not trigger
+calculation; navigation never evaluates the whole workbook.
 
 The graph opens **Linexcel calculation** first: compare the value saved in the
 file with the targeted result, then inspect intermediate dependency-cell values.
@@ -136,9 +134,9 @@ Ollama model:
 uv run --extra ai --extra screenshots linexcel serve --ai --ai-model qwen3.8
 ```
 
-`qwen3.8` is currently recommended for documentation and vision. AI validation
-is exploratory: model responses vary between runs and require review against
-the source formulas, values and images.
+The local example uses `qwen3.8`; choose a model actually installed in your
+runtime. AI validation is exploratory: model responses vary between runs and
+require review against the source formulas, values and images.
 
 The host configures the endpoint and text/vision models; browser requests cannot
 override the endpoint or supply API keys. The interface shows the configured
@@ -155,6 +153,17 @@ not limit the separate model server, and cancelling a task cannot guarantee
 that a remote provider stops an already accepted request.
 Each generated document shows input, output and total token usage separately;
 missing provider counts remain unavailable rather than being reported as zero.
+Text documentation makes two provider requests: a draft and a specialized
+review against the same bounded source dossier. Both consume the token budget.
+The review improves guidance and traceability but cannot certify the final prose.
+
+The **Data** tab embeds a read-only Datasette browser with worksheet filters,
+sorting and exports. It shows source inputs and saved formula caches, with
+cell-level formula provenance; it does not substitute later calculation results
+or reproduce Excel's formatted display. See the [data browser guide](docs/guide/datasette.md).
+For `.xlam` and `.xla` add-ins, use the [static VBA reader](docs/guide/macros.md)
+to inspect decoded modules and procedures without opening Excel or executing
+macros. Add-in reports explicitly have no worksheet calculation or data view.
 
 Drop the main workbook and its optional references into their separate upload
 areas using accessible file buttons or drag and drop, inspect or remove selected

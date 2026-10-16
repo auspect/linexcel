@@ -469,6 +469,14 @@
   .lin-close:hover { background: var(--hair); color: var(--ink); }
   .lin-fallback { position: absolute; inset: 0; display: flex; align-items: center;
     justify-content: center; text-align: center; padding: 2rem; color: var(--ink2); }
+  .lin-fallback.is-list { display: block; overflow: auto; text-align: left;
+    padding: 1.25rem; }
+  .lin-fallback.is-list input { box-sizing: border-box; width: 100%; min-width: 0;
+    padding: .6rem; margin: .5rem 0; }
+  .lin-fallback-list { list-style: none; padding: 0; margin: .5rem 0; }
+  .lin-fallback-list button { display: block; text-align: left; width: 100%;
+    white-space: normal; overflow-wrap: anywhere; margin: .3rem 0; padding: .6rem; }
+  .lin-fallback-pages { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
   /* The workbook held no formula-driven cells, so there is nothing to lay out
      or trace. A blank canvas reads as a broken render; this states the absence
      and stands the graph-only chrome down (see boot()). */
@@ -660,7 +668,7 @@
     .lin-sheet-control { max-width: none; gap: .35rem; }
     .lin-sheet-control > span { font-size: .68rem; }
     .lin-fit-actions { grid-column: 1 / -1; display: flex; margin: 0; }
-    .lin-fit-actions button { flex: 1; }
+    .lin-fit-actions button { flex: 1; min-width: 0; padding: .4rem; font-size: .72rem; line-height: 1.2; white-space: normal; }
     .lin-bar-right { width: 100%; flex-wrap: wrap; }
     .lin-search { flex: 1; min-width: 0; }
     .lin-search input { flex: 1; width: 100%; }
@@ -795,6 +803,7 @@
           <div class="lin-group lin-fit-actions">
             <button type="button" id="lin-fit"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span id="lin-fit-label">Fit graph</span></button>
             <button type="button" id="lin-fit-sel" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v3m0 8v3M1 8h3m8 0h3" stroke="currentColor" stroke-width="1.5"/></svg><span id="lin-fit-sel-label">Focus selection</span></button>
+            <button type="button" id="lin-explore-selection" disabled>Explore locally</button>
           </div>
         </div>
         <div class="lin-cy" id="lin-cy"></div>
@@ -958,6 +967,7 @@
   // keydown handler (Escape clears the selection/panel) can reach it without
   // threading a closure through every caller.
   var activeCy = null;
+  var fallbackSelect = null;
   // Sheet filter state: ALL_SHEETS mirrors the sentinel option value rendered
   // server-side, CUR_SHEET is what the graph is currently narrowed to.
   var ALL_SHEETS = '__all__';
@@ -972,6 +982,7 @@
 
   function graphSnapshot(cy) {
     return { sheet: CUR_SHEET, zoom: cy.zoom(), pan: Object.assign({}, cy.pan()),
+      readerScroll: document.getElementById('lin-panel').scrollTop,
       layout: document.getElementById('lin-lay-dagre').getAttribute('aria-pressed') === 'true' ? 'dagre' : 'fcose',
       exploration: exploration && Object.assign({}, exploration),
       nodes: cy.nodes().map(function (node) {
@@ -1017,6 +1028,7 @@
     restoringNavigation = true;
     select(cy, item.id);
     restoringNavigation = false;
+    document.getElementById('lin-panel').scrollTop = item.state.readerScroll || 0;
     resetSearchUI();
   }
   function revealNode(cy, id) {
@@ -1151,7 +1163,8 @@
         fn();
         if (document.getElementById('lin-graph-main').classList.contains('hidden')) return;
         var current = document.getElementById(id);
-        if (current && !current.disabled) current.focus(); else panel.focus();
+        if (current && !current.disabled) current.focus({preventScroll: true});
+        else panel.focus({preventScroll: true});
       }; row.appendChild(button); return button;
     }
     action('lin-history-back', 'history_back', function () { travel(cy, -1); }, navigationIndex <= 0);
@@ -1189,7 +1202,7 @@
       b.onclick = function () { copyExact(b, value); }; actions.appendChild(b);
     }
     copyButton('lin-copy-reference', 'copy_reference', node.label || node.id);
-    if (node.formula) copyButton('lin-copy-formula', 'copy_formula', node.formula);
+    if (node.formula) copyButton('lin-copy-formula', 'copy_formula', node.sourceFormula || node.formula);
     if (node.value !== undefined && node.value !== null) copyButton('lin-copy-value', 'copy_value',
       typeof node.value === 'object' ? JSON.stringify(node.value) : String(node.value));
     var link = new URL(window.location.href); link.hash = new URLSearchParams({node: node.id}).toString();
@@ -1320,8 +1333,10 @@
     named('lin-zoom-out', _t('zoom_out'));
     label('lin-fit-label', _t('fit_all'));
     label('lin-fit-sel-label', _t('fit_sel'));
+    label('lin-explore-selection', _t('explore_local'));
     named('lin-fit', _t('fit_all'));
     named('lin-fit-sel', _t('fit_sel'));
+    named('lin-explore-selection', _t('explore_local'));
     label('lin-sheet-label', _t('sheet_scope'));
     named('lin-tools', _t('graph_controls'));
     named('lin-zoom-controls', _t('zoom_level'));
@@ -1368,7 +1383,7 @@
     var extraText = (stats.vbaProcs ? ' · ' + stats.vbaProcs + ' VBA' : '')
       + (stats.queries ? ' · ' + stats.queries + ' Power Query' : '');
     document.getElementById('lin-stats').textContent = _t('stats', {
-      formulas: stats.totalFormulas == null ? '—' : stats.totalFormulas.toLocaleString(LANG),
+      formulas: GRAPH.meta.macroOnly || stats.totalFormulas == null ? '—' : stats.totalFormulas.toLocaleString(LANG),
       nodes: stats.totalNodes == null ? '—' : stats.totalNodes,
       edges: stats.totalEdges == null ? '—' : stats.totalEdges,
       vba: extraText
@@ -1381,10 +1396,6 @@
 
     var cyContainer = document.getElementById('lin-cy');
     if (typeof cytoscape === 'undefined') {
-      var f = document.createElement('div');
-      f.className = 'lin-fallback';
-      f.textContent = _t('fallback');
-      cyContainer.appendChild(f);
       // Without a rendered graph the whole graph-only chrome is inert: the
       // command bar (zoom/fit/sheet filter) and the rail's Layout and Node
       // types groups would read as controls that do something. Stand them down
@@ -1396,6 +1407,7 @@
       sheetSel.disabled = true;  // nothing to filter without a rendered graph
       search.disabled = true; document.getElementById('lin-search-submit').disabled = true;    // nor to search
       panel.classList.add('hidden');
+      renderFallbackList(cyContainer);
       return;
     }
     // Register layout extensions if present.
@@ -1469,6 +1481,9 @@
     // leaving the canvas fires mouseout so the class cannot stick.
     cy.on('mouseover', 'node', function (ev) { ev.target.addClass('hovered'); });
     cy.on('mouseout', 'node', function (ev) { ev.target.removeClass('hovered'); });
+    // A direct jump outside the canvas need not cross another Cytoscape hit
+    // target. Clear the hover at the DOM boundary as well as between nodes.
+    cyContainer.addEventListener('pointerleave', function () { cy.nodes('.hovered').removeClass('hovered'); });
 
     // Level of detail: which nodes keep their label depends on the zoom band.
     // Far out, labels collide into noise, so only the selection keeps its own
@@ -1531,6 +1546,7 @@
       });
     };
     var fitSelBtn = document.getElementById('lin-fit-sel');
+    var exploreSelBtn = document.getElementById('lin-explore-selection');
     function syncCommands() {
       var zoom = cy.zoom();
       document.getElementById('lin-zoom-level').textContent =
@@ -1538,6 +1554,7 @@
       document.getElementById('lin-zoom-in').disabled = zoom >= cy.maxZoom() - 1e-9;
       document.getElementById('lin-zoom-out').disabled = zoom <= cy.minZoom() + 1e-9;
       fitSelBtn.disabled = cy.nodes(':selected').length === 0;
+      exploreSelBtn.disabled = cy.nodes(':selected').length !== 1;
     }
     syncCommands();
     fitSelBtn.onclick = function () {
@@ -1545,6 +1562,12 @@
       if (sel.length > 0) {
         frameEles(cy, sel, 250);
       }
+    };
+    exploreSelBtn.onclick = function () {
+      var selection = cy.nodes(':selected');
+      if (selection.length !== 1) return;
+      var narrow = window.matchMedia('(max-width: 900px)').matches;
+      explore(cy, selection.id(), 1, narrow ? (GRAPH.nodes.length > 80 ? 4 : 7) : 13);
     };
     function scheduleSelectionUpdate() {
       if (selectionScheduled) return;
@@ -2241,7 +2264,7 @@
   }
   // The verdict travels with the node (cachedAgreement), falling back to the
   // same comparison the value card runs. A genuine disagreement only — a
-  // format-only difference ('format') is the same value in another locale.
+  // 'format' is a separator heuristic; different strings remain different.
   function nodeDiffers(n) {
     if (n.groupCachedAgreement) return n.groupCachedAgreement === 'differ';
     var r = readings(n);
@@ -2537,6 +2560,52 @@
     host.appendChild(box);
   }
 
+  function renderFallbackList(host) {
+    var box = el('section', 'lin-fallback is-list');
+    box.setAttribute('aria-label', _t('graph'));
+    var notice = el('p', 'lin-hint', _t('fallback'));
+    notice.setAttribute('role', 'note'); box.appendChild(notice);
+    var search = el('input'); search.type = 'search'; search.id = 'lin-fallback-search';
+    search.placeholder = _t('search'); search.setAttribute('aria-label', _t('search'));
+    box.appendChild(search);
+    var pages = el('div', 'lin-fallback-pages');
+    var back = el('button', 'lin-chip', _t('history_back'));
+    var next = el('button', 'lin-chip', _t('history_forward'));
+    back.type = next.type = 'button';
+    var status = el('span', 'lin-hint'); status.id = 'lin-fallback-status';
+    status.setAttribute('role', 'status');
+    pages.appendChild(back); pages.appendChild(status); pages.appendChild(next);
+    box.appendChild(pages);
+    var list = el('ul', 'lin-fallback-list'); box.appendChild(list); host.appendChild(box);
+    var offset = 0, pageSize = 50, matches = GRAPH.nodes;
+    fallbackSelect = function (id) {
+      if (!byId[id]) return;
+      renderPanel(null, byId[id]);
+      document.getElementById('lin-panel').focus({preventScroll: true});
+    };
+    function render() {
+      list.replaceChildren();
+      matches.slice(offset, offset + pageSize).forEach(function (n) {
+        var item = el('li'), button = el('button', 'lin-result', n.label || n.id);
+        button.type = 'button'; button.dataset.nodeId = n.id;
+        button.onclick = function () { fallbackSelect(n.id); };
+        item.appendChild(button); list.appendChild(item);
+      });
+      back.disabled = offset === 0; next.disabled = offset + pageSize >= matches.length;
+      status.textContent = matches.length ? (offset + 1) + '–'
+        + Math.min(offset + pageSize, matches.length) + ' / ' + matches.length : _t('graph_empty');
+    }
+    search.oninput = function () {
+      var term = search.value.toLocaleLowerCase(LANG).trim();
+      matches = GRAPH.nodes.filter(function (n) {
+        return [n.id, n.label, n.sheet, n.formula].join(' ').toLocaleLowerCase(LANG).indexOf(term) !== -1;
+      }); offset = 0; render();
+    };
+    back.onclick = function () { offset = Math.max(0, offset - pageSize); render(); };
+    next.onclick = function () { offset += pageSize; render(); };
+    render();
+  }
+
   function el(tag, cls, txt) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -2560,12 +2629,30 @@
   // first, so model output can never inject markup.
   function _md(src) {
     var esc = src.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    var lines = esc.split('\n'), out = [], lists = [];
+    var rawLines = src.split('\n'), lines = esc.split('\n'), out = [], lists = [];
+    var openings = new Map(), closings = new Set(), stack = [], fenced = false;
+    for (var at = 0; at < rawLines.length; at++) {
+      if (/^```/.test(rawLines[at])) { fenced = !fenced; continue; }
+      if (fenced) continue;
+      var opening = /^<details><summary>([^<>]*)<\/summary>$/.exec(rawLines[at]);
+      if (opening) stack.push({index: at, text: opening[1]});
+      else if (rawLines[at] === '</details>' && stack.length) {
+        var start = stack.pop(); openings.set(start.index, start.text); closings.add(at);
+      }
+    }
     function closeLists() {
       while (lists.length) out.push('</li></' + lists.pop().type + '>');
     }
     for (var i = 0; i < lines.length; i++) {
       var l = lines[i];
+      // Only balanced, attribute-free disclosure lines are structural. All
+      // other model-supplied HTML remains literal escaped text.
+      if (openings.has(i)) {
+        closeLists();
+        var summary = openings.get(i).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        out.push('<details><summary>' + summary + '</summary>'); continue;
+      }
+      if (closings.has(i)) { closeLists(); out.push('</details>'); continue; }
       // Qualifications use consecutive quote paragraphs. The source is already
       // escaped: remove only the leading Markdown marker, never inner operators.
       if (/^ {0,3}&gt;/.test(l)) {
@@ -2657,6 +2744,18 @@
     return cells;
   }
   function _mdInline(s) {
+    // Native quotation records escape literal glyphs before Markdown. Decode
+    // only that exact record shape, then escape it again as plain DOM text.
+    var quote = /^“(.*)” — `(visible|ambiguous)` · (p\d+\/r\d+-c\d+ · pixels `\[\d+, \d+, \d+, \d+\]` · crop `[a-f0-9]{12}`)$/.exec(s);
+    if (quote) {
+      var entities = {'amp':'&', 'lt':'<', 'gt':'>', 'quot':'"', '#x27':"'"};
+      var decode = function (text) { return text.replace(/&(amp|lt|gt|quot|#x27);/g,
+        function (_, key) { return entities[key]; }); };
+      var literal = decode(decode(quote[1].replace(/\\([\\`*_{}\[\]()#+!|])/g, '$1')));
+      literal = literal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return '“' + literal + '” — <code>' + quote[2] + '</code> · ' +
+        quote[3].replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
     // Code is already HTML-escaped by _md. Keep its literal operators out of
     // emphasis matching, including when emphasis surrounds a code span.
     // Pick a marker absent from the input so supplied text cannot alias it.
@@ -2706,15 +2805,16 @@
     neighbors.onclick = function () {
       frameEles(cy, cy.getElementById(n.id).closedNeighborhood().filter(':visible'), 250);
     };
+    neighbors.hidden = !cy;
     head.appendChild(neighbors);
     var close = el('button', 'lin-close', '✕');
     close.type = 'button';
     close.setAttribute('aria-label', _t('close'));
     close.title = _t('close');
-    close.onclick = function () { clearSel(cy); };
+    close.onclick = function () { if (cy) clearSel(cy); else p.classList.add('hidden'); };
     head.appendChild(close); p.appendChild(head);
     p.appendChild(el('h2', null, n.label));
-    appendInvestigation(cy, p, n);
+    if (cy) appendInvestigation(cy, p, n);
     if (n.verification === 'unverified_engine_semantics') {
       var semantic = el('div', 'lin-context-warnings'); semantic.id = 'lin-semantic-notice';
       semantic.setAttribute('role', 'note'); semantic.appendChild(icon('warn'));
@@ -2728,10 +2828,29 @@
     }
 
     if (n.formula) {
-      var sf = section(_t('formula'));
+      var hasSource = Object.prototype.hasOwnProperty.call(n, 'sourceFormula');
+      var sf = section(_t(hasSource ? 'source_formula' : 'canonical_formula'));
       var fcode = el('code', 'lin-formula');
-      fcode.innerHTML = highlightFormula(n.formula);
-      sf.appendChild(fcode);
+      if (hasSource && !n.sourceFormula) sf.appendChild(el('p', 'lin-hint', _t('source_formula_missing')));
+      else {
+        fcode.innerHTML = highlightFormula(hasSource ? n.sourceFormula : n.formula);
+        sf.appendChild(fcode);
+      }
+      if (hasSource && n.sourceFormula !== n.formula) {
+        sf.appendChild(el('h4', null, _t('canonical_formula')));
+        var canonicalCode = el('code', 'lin-formula');
+        canonicalCode.innerHTML = highlightFormula(n.canonicalFormula || n.formula);
+        sf.appendChild(canonicalCode);
+      }
+      sf.appendChild(el('p', 'lin-hint', _t('decomposition_basis')));
+      if (n.formulaProvenance) {
+        var sourceDetails = el('details');
+        sourceDetails.appendChild(el('summary', null, _t('formula_provenance')));
+        sourceDetails.appendChild(el('pre', 'lin-formula', JSON.stringify({
+          formula: n.formulaProvenance, savedValue: n.sourceValueProvenance
+        }, null, 2)));
+        sf.appendChild(sourceDetails);
+      }
       if (n.kind === 'group') {
         sf.appendChild(el('p', 'lin-hint',
           _t('stretched_pattern', { count: n.count.toLocaleString(LANG), bbox: n.bbox })));
@@ -2749,6 +2868,8 @@
         si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString(LANG) + ' ' + _t('cells')));
       p.appendChild(si);
     }
+    if (!cy && n.kind === 'input' && !n.values && n.value !== undefined)
+      p.appendChild(valueSection(n));
     if (n.kind === 'name' && n.targets) {
       var sn = section(_t('target')); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
@@ -2763,9 +2884,24 @@
     if (n.externalBooks && n.externalBooks.length) p.appendChild(externalSection(n));
     if (n.kind === 'vba') {
       var sc = section(n.procKind + ' — module ' + n.module);
-      sc.appendChild(el('pre', 'lin-code', n.code || '')); p.appendChild(sc);
+      sc.appendChild(el('p', 'lin-hint', _t('vba_static_source')));
+      sc.appendChild(el('pre', 'lin-code', String(n.code || '').slice(0, 6000)));
+      if (n.vbaProvenance && n.vbaProvenance.codeTruncated || String(n.code || '').length > 6000)
+        sc.appendChild(el('p', 'lin-hint', _t('vba_source_truncated')));
+      if (n.vbaProvenance) {
+        var macroDetails = el('details');
+        macroDetails.appendChild(el('summary', null, _t('vba_source_provenance')));
+        macroDetails.appendChild(el('pre', 'lin-formula', JSON.stringify(n.vbaProvenance, null, 2)));
+        sc.appendChild(macroDetails);
+      }
+      p.appendChild(sc);
     }
     if (n.kind === 'query') p.appendChild(querySection(n));
+    // Keep the navigation before potentially long generated documentation.
+    appendNav(cy, p, _t('precedents'), GRAPH.edges.filter(function (e) { return e.target === n.id; })
+      .map(function (e) { return { node: byId[e.source], kind: e.kind }; }));
+    appendNav(cy, p, _t('dependents'), GRAPH.edges.filter(function (e) { return e.source === n.id; })
+      .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
     if (n.doc) {
       var sd = el('div', 'lin-ai-box');
       var badge = el('span', 'lin-ai-badge', _t('ai_doc'));
@@ -2774,10 +2910,9 @@
       dv.innerHTML = _md(n.doc);
       sd.appendChild(dv); p.appendChild(sd);
     }
-    appendNav(cy, p, _t('precedents'), GRAPH.edges.filter(function (e) { return e.target === n.id; })
-      .map(function (e) { return { node: byId[e.source], kind: e.kind }; }));
-    appendNav(cy, p, _t('dependents'), GRAPH.edges.filter(function (e) { return e.source === n.id; })
-      .map(function (e) { return { node: byId[e.target], kind: e.kind }; }));
+    // A new cell starts with its identity and source formula. History restores
+    // the prior cell's own reader position after this synchronous render.
+    p.scrollTop = 0;
   }
 
   // A query is the one thing in a workbook that produces values with no
@@ -2880,8 +3015,8 @@
       comparable: comparable,
       // The verdict is decided in Python and travels with the node, so the
       // two sides of the report cannot disagree about what a disagreement is.
-      // 'format' means the same value written with another locale's
-      // separators — 6,7 € against 6.7 € — which is not a divergence.
+      // 'format' records a possible separator difference, not proven equality of
+      // string values — 6,7 € and 6.7 € remain unequal literal strings.
       // The fallback is for a report written by an older version.
       agreement: o.cachedAgreement ||
         ((!!sameDate || cached === shown) ? 'same' : 'differ'),
@@ -2907,7 +3042,7 @@
     var card = el('div', 'lin-vcard');
     if (comparable.length) {
       var agree = comparable.every(function (r) { return r.agree; });
-      // Same value, other separators: worth saying, and worth not shouting.
+      // Keep the heuristic separate from a literal equality claim.
       var formatted = agree && comparable.some(function (r) {
         return r.agreement === 'format';
       });
@@ -3054,7 +3189,7 @@
     if (!items.length) return;
     var sec = section(title + ' (' + items.length + ')');
     var ul = el('ul', 'lin-nav');
-    items.forEach(function (it) {
+    function appendItem(it) {
       var li = el('li');
       var btn = el('button');
       btn.type = 'button';
@@ -3062,16 +3197,26 @@
       dot.style.background = (KIND[it.node.kind] || {}).color || PALETTE.grey;
       btn.appendChild(dot); btn.appendChild(document.createTextNode(it.node.label));
       btn.onclick = (function (id) { return function () {
-        revealNode(cy, id);
+        if (cy) revealNode(cy, id); else fallbackSelect(id);
         // The button that carried focus is about to be replaced: hand focus to
         // the panel so the keyboard path continues and the new content is read.
         document.getElementById('lin-panel').focus();
-        cy.animate({ center: { eles: cy.getElementById(id) }, duration: 250 });
+        if (cy) cy.animate({ center: { eles: cy.getElementById(id) }, duration: 250 });
       }; })(it.node.id);
       li.appendChild(btn); li.appendChild(el('span', 'lin-ek', it.kind));
       ul.appendChild(li);
-    });
-    sec.appendChild(ul); parent.appendChild(sec);
+    }
+    if (cy) items.forEach(appendItem);
+    else {
+      var shown = 0, more = el('button', 'lin-chip', _t('show_more'));
+      more.type = 'button';
+      function appendPage() {
+        items.slice(shown, shown + 50).forEach(appendItem); shown += 50;
+        more.hidden = shown >= items.length;
+      }
+      more.onclick = appendPage; appendPage();
+    }
+    sec.appendChild(ul); if (!cy) sec.appendChild(more); parent.appendChild(sec);
   }
 
   if (document.readyState === 'loading')

@@ -241,7 +241,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} cells sampled out of {count}.",
         "value_match": "The recalculated value matches the file",
-        "value_match_format": "Same value, different number separators",
+        "value_match_format": "Different strings; possible number separator difference",
         "value_mismatch": "The recalculated value differs from the file",
         "target": "Target",
         "step_decomp": "Step-by-step decomposition",
@@ -260,8 +260,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "it is not independent evidence."
         ),
         "fallback": (
-            "Cytoscape could not be loaded (CDN access required). The JSON "
-            "graph remains available via result.to_dict()."
+            "The interactive graph could not be loaded. Use the "
+            "searchable list below to read the available sources and "
+            "relationships. The other views remain available."
         ),
         "stats": "{formulas} formulas · {nodes} nodes · {edges} edges{vba}",
         "kind_cell": "Formula",
@@ -456,7 +457,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} cellules échantillonnées sur {count}.",
         "value_match": "La valeur recalculée correspond au fichier",
-        "value_match_format": "Même valeur, séparateurs numériques différents",
+        "value_match_format": (
+            "Chaînes différentes ; possible différence de séparateurs"
+        ),
         "value_mismatch": "La valeur recalculée diffère du fichier",
         "target": "Cible",
         "step_decomp": "Décomposition pas-à-pas",
@@ -475,8 +478,12 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "source ; elle ne constitue pas une preuve indépendante."
         ),
         "fallback": (
-            "Cytoscape n'a pas pu être chargé (accès CDN requis). Le graphe "
-            "JSON reste disponible via result.to_dict()."
+            "Le graphe interactif n’a "
+            "pas pu être chargé. "
+            "Utilisez la liste "
+            "ci-dessous pour rechercher "
+            "un nœud et lire ses sources "
+            "et ses relations. Les autres vues restent disponibles."
         ),
         "stats": "{formulas} formules · {nodes} nœuds · {edges} liens{vba}",
         "kind_cell": "Formule",
@@ -669,7 +676,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} celdas muestreadas de {count}.",
         "value_match": "El valor recalculado coincide con el archivo",
-        "value_match_format": "Mismo valor, distintos separadores numéricos",
+        "value_match_format": "Textos distintos; posible diferencia de separadores",
         "value_mismatch": "El valor recalculado difiere del archivo",
         "target": "Destino",
         "step_decomp": "Descomposición paso a paso",
@@ -688,8 +695,11 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "original; no constituye una prueba independiente."
         ),
         "fallback": (
-            "No se pudo cargar Cytoscape (se requiere acceso al CDN). El grafo "
-            "JSON sigue disponible mediante result.to_dict()."
+            "No se pudo cargar el grafo "
+            "interactivo. Use la lista "
+            "de búsqueda para leer las "
+            "fuentes y relaciones disponibles. Las otras vistas siguen "
+            "disponibles."
         ),
         "stats": "{formulas} fórmulas · {nodes} nodos · {edges} enlaces{vba}",
         "kind_cell": "Fórmula",
@@ -888,7 +898,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} von {count} Zellen als Stichprobe.",
         "value_match": "Der neu berechnete Wert stimmt mit der Datei überein",
-        "value_match_format": "Gleicher Wert, andere Zahlentrennzeichen",
+        "value_match_format": "Andere Zeichenfolgen; mögliche Zahlentrennzeichen",
         "value_mismatch": "Der neu berechnete Wert weicht von der Datei ab",
         "target": "Ziel",
         "step_decomp": "Schrittweise Zerlegung",
@@ -907,8 +917,14 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "Originalarbeitsmappe; er ist kein unabhängiger Nachweis."
         ),
         "fallback": (
-            "Cytoscape konnte nicht geladen werden (CDN-Zugriff erforderlich). "
-            "Der JSON-Graph bleibt über result.to_dict() verfügbar."
+            "Der interaktive Graph "
+            "konnte nicht geladen "
+            "werden. Nutzen Sie die "
+            "durchsuchbare Liste, um "
+            "verfügbare Quellen und "
+            "Beziehungen zu lesen. Die "
+            "anderen Ansichten bleiben "
+            "verfügbar."
         ),
         "stats": "{formulas} Formeln · {nodes} Knoten · {edges} Kanten{vba}",
         "kind_cell": "Formel",
@@ -1101,7 +1117,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} celle campionate su {count}.",
         "value_match": "Il valore ricalcolato coincide con il file",
-        "value_match_format": "Stesso valore, separatori numerici diversi",
+        "value_match_format": "Stringhe diverse; possibile differenza nei separatori",
         "value_mismatch": "Il valore ricalcolato differisce dal file",
         "target": "Destinazione",
         "step_decomp": "Scomposizione passo passo",
@@ -1120,8 +1136,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "e la cartella originale; non costituisce una prova indipendente."
         ),
         "fallback": (
-            "Impossibile caricare Cytoscape (è necessario l'accesso al CDN). "
-            "Il grafo JSON resta disponibile tramite result.to_dict()."
+            "Impossibile caricare il grafo interattivo. Usa la lista "
+            "ricercabile per leggere le fonti e le relazioni "
+            "disponibili. Le altre viste restano disponibili."
         ),
         "stats": "{formulas} formule · {nodes} nodi · {edges} archi{vba}",
         "kind_cell": "Formula",
@@ -1312,7 +1329,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} células amostradas em {count}.",
         "value_match": "O valor recalculado coincide com o ficheiro",
-        "value_match_format": "Mesmo valor, separadores numéricos diferentes",
+        "value_match_format": "Textos diferentes; possível diferença nos separadores",
         "value_mismatch": "O valor recalculado difere do ficheiro",
         "target": "Destino",
         "step_decomp": "Decomposição passo a passo",
@@ -1331,8 +1348,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "pasta original; não constitui uma prova independente."
         ),
         "fallback": (
-            "Não foi possível carregar o Cytoscape (é necessário acesso ao "
-            "CDN). O grafo JSON continua disponível através de result.to_dict()."
+            "Não foi possível carregar o "
+            "grafo interativo. Use a "
+            "lista pesquisável para ler "
+            "as fontes e relações "
+            "disponíveis. As outras "
+            "vistas continuam "
+            "disponíveis."
         ),
         "stats": "{formulas} fórmulas · {nodes} nós · {edges} ligações{vba}",
         "kind_cell": "Fórmula",
@@ -1527,7 +1549,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{shown} van {count} cellen bemonsterd.",
         "value_match": "De herberekende waarde komt overeen met het bestand",
-        "value_match_format": "Zelfde waarde, andere scheidingstekens",
+        "value_match_format": "Teksten verschillen; mogelijk andere scheidingstekens",
         "value_mismatch": "De herberekende waarde wijkt af van het bestand",
         "target": "Doel",
         "step_decomp": "Stapsgewijze ontleding",
@@ -1546,8 +1568,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "oorspronkelijke werkmap; het is geen onafhankelijk bewijs."
         ),
         "fallback": (
-            "Cytoscape kon niet worden geladen (CDN-toegang vereist). De "
-            "JSON-graaf blijft beschikbaar via result.to_dict()."
+            "De interactieve graaf kon niet worden geladen. Gebruik de "
+            "doorzoekbare lijst om beschikbare bronnen en relaties te "
+            "lezen. De andere weergaven blijven beschikbaar."
         ),
         "stats": "{formulas} formules · {nodes} knopen · {edges} verbindingen{vba}",
         "kind_cell": "Formule",
@@ -1728,7 +1751,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "{count} セル中 {shown} セルを抽出。",
         "value_match": "再計算値はファイルの値と一致します",
-        "value_match_format": "同じ値です（数値の区切り記号のみ相違）",
+        "value_match_format": "文字列が異なります（数値区切りの違いの可能性）",
         "value_mismatch": "再計算値はファイルの値と異なります",
         "target": "対象範囲",
         "step_decomp": "ステップごとの分解",
@@ -1747,8 +1770,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "この概要は独立した証拠にはなりません。"
         ),
         "fallback": (
-            "Cytoscape を読み込めませんでした（CDN へのアクセスが必要です）。"
-            "JSON グラフは result.to_dict() から引き続き利用できます。"
+            "インタラクティブなグラフを読み込めませんでした。下の検索"
+            "可能な一覧で、利用可能なソースと関係を確認できます。他の"
+            "ビューも引き続き利用できます。"
         ),
         "stats": "数式 {formulas} 件 · ノード {nodes} 件 · エッジ {edges} 件{vba}",
         "kind_cell": "数式",
@@ -1917,7 +1941,7 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
         "sampled_cells": "已抽样 {count} 个单元格中的 {shown} 个。",
         "value_match": "重算值与文件中的值一致",
-        "value_match_format": "值相同，仅数字分隔符不同",
+        "value_match_format": "字符串不同；可能存在数字分隔符差异",
         "value_mismatch": "重算值与文件中的值不一致",
         "target": "目标区域",
         "step_decomp": "逐步分解",
@@ -1936,8 +1960,8 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "本概览不构成独立证据。"
         ),
         "fallback": (
-            "无法加载 Cytoscape（需要访问 CDN）。"
-            "JSON 图谱仍可通过 result.to_dict() 获取。"
+            "无法加载交互式图谱。请使用下方可搜索列表查看现有来源和关"
+            "系。其他视图仍然可用。"
         ),
         "stats": "{formulas} 个公式 · {nodes} 个节点 · {edges} 条边{vba}",
         "kind_cell": "公式",
@@ -1985,6 +2009,170 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         ),
     },
 }
+
+
+_FORMULA_SOURCE_KEYS = (
+    "source_formula",
+    "canonical_formula",
+    "source_formula_missing",
+    "formula_provenance",
+    "decomposition_basis",
+)
+_FORMULA_SOURCE_TEXT = {
+    "en": (
+        "Source formula (displayed with =)",
+        "Canonical calculation formula",
+        (
+            "No formula text is stored in this cell. Shared formulas are "
+            "translated from their master."
+        ),
+        "Formula and saved-value provenance",
+        "Decomposition uses the canonical calculation formula.",
+    ),
+    "fr": (
+        "Formule source (affichage avec =)",
+        "Formule canonique de calcul",
+        (
+            "Aucun texte de formule n’est stocké dans cette cellule. Les "
+            "formules partagées sont traduites depuis leur maître."
+        ),
+        "Traçabilité de la formule et de la valeur enregistrée",
+        "La décomposition utilise la formule canonique de calcul.",
+    ),
+    "es": (
+        "Fórmula fuente (mostrada con =)",
+        "Fórmula canónica de cálculo",
+        (
+            "Esta celda no almacena texto de fórmula. Las fórmulas "
+            "compartidas se traducen desde su celda maestra."
+        ),
+        "Procedencia de la fórmula y del valor guardado",
+        "La descomposición utiliza la fórmula canónica de cálculo.",
+    ),
+    "de": (
+        "Quellformel (Anzeige mit =)",
+        "Kanonische Berechnungsformel",
+        (
+            "Diese Zelle enthält keinen gespeicherten Formeltext. Geteilte "
+            "Formeln werden aus ihrer Masterzelle übersetzt."
+        ),
+        "Herkunft der Formel und des gespeicherten Werts",
+        "Die Zerlegung verwendet die kanonische Berechnungsformel.",
+    ),
+    "it": (
+        "Formula sorgente (visualizzata con =)",
+        "Formula canonica di calcolo",
+        (
+            "Questa cella non contiene testo di formula memorizzato. Le "
+            "formule condivise sono tradotte dalla cella principale."
+        ),
+        "Provenienza della formula e del valore salvato",
+        "La scomposizione usa la formula canonica di calcolo.",
+    ),
+    "pt": (
+        "Fórmula de origem (exibida com =)",
+        "Fórmula canónica de cálculo",
+        (
+            "Esta célula não armazena texto de fórmula. As fórmulas "
+            "partilhadas são traduzidas a partir da célula principal."
+        ),
+        "Proveniência da fórmula e do valor guardado",
+        "A decomposição usa a fórmula canónica de cálculo.",
+    ),
+    "nl": (
+        "Bronformule (weergave met =)",
+        "Canonieke berekeningsformule",
+        (
+            "Deze cel bevat geen opgeslagen formuletekst. Gedeelde formules "
+            "worden vanuit hun hoofdcel vertaald."
+        ),
+        "Herkomst van de formule en de opgeslagen waarde",
+        "De opsplitsing gebruikt de canonieke berekeningsformule.",
+    ),
+    "ja": (
+        "元の数式（表示には = を追加）",
+        "計算用の正規化された数式",
+        "このセルには数式のテキストが保存されていません。共有数式は親セルから変換されます。",
+        "数式と保存値の出所",
+        "分解には計算用の正規化された数式を使用します。",
+    ),
+    "zh": (
+        "源公式（显示时添加 =）",
+        "用于计算的规范公式",
+        "此单元格没有保存公式文本。共享公式由主单元格的公式转换而来。",
+        "公式和保存值的来源",
+        "分解使用规范计算公式。",
+    ),
+}
+for _language, _strings in _FORMULA_SOURCE_TEXT.items():
+    UI_STRINGS[_language].update(zip(_FORMULA_SOURCE_KEYS, _strings, strict=True))
+
+_VBA_SOURCE_KEYS = (
+    "vba_static_source",
+    "vba_source_provenance",
+    "vba_source_truncated",
+)
+_VBA_SOURCE_TEXT = {
+    "en": (
+        "Static reading of decoded VBA source; no macro executed.",
+        "VBA source provenance",
+        "Code preview truncated.",
+    ),
+    "fr": (
+        "Lecture statique du code VBA décodé ; aucune macro exécutée.",
+        "Traçabilité du code VBA",
+        "Aperçu du code tronqué.",
+    ),
+    "es": (
+        "Lectura estática del código VBA decodificado; ninguna macro ejecutada.",
+        "Procedencia del código VBA",
+        "Vista previa del código truncada.",
+    ),
+    "de": (
+        "Statische Ansicht des dekodierten VBA-Codes; keine Makros ausgeführt.",
+        "Herkunft des VBA-Codes",
+        "Code-Vorschau gekürzt.",
+    ),
+    "it": (
+        "Lettura statica del codice VBA decodificato; nessuna macro eseguita.",
+        "Provenienza del codice VBA",
+        "Anteprima del codice troncata.",
+    ),
+    "pt": (
+        "Leitura estática do código VBA descodificado; nenhuma macro executada.",
+        "Proveniência do código VBA",
+        "Pré-visualização do código truncada.",
+    ),
+    "nl": (
+        "Statische weergave van gedecodeerde VBA-code; geen macro uitgevoerd.",
+        "Herkomst van de VBA-code",
+        "Codevoorbeeld afgekapt.",
+    ),
+    "ja": (
+        "デコードされた VBA ソースの静的表示。マクロは実行されません。",
+        "VBA ソースの出所",
+        "コードのプレビューは省略されています。",
+    ),
+    "zh": (
+        "静态显示解码后的 VBA 源代码；未执行宏。",
+        "VBA 源代码来源",
+        "代码预览已截断。",
+    ),
+}
+_OPAQUE_LABELS = {
+    "en": "Unresolved reference",
+    "fr": "Référence non résolue",
+    "es": "Referencia no resuelta",
+    "de": "Nicht aufgelöster Verweis",
+    "it": "Riferimento non risolto",
+    "pt": "Referência não resolvida",
+    "nl": "Niet-opgeloste verwijzing",
+    "ja": "未解決の参照",
+    "zh": "未解析的引用",
+}
+for _language, _strings in _VBA_SOURCE_TEXT.items():
+    UI_STRINGS[_language].update(zip(_VBA_SOURCE_KEYS, _strings, strict=True))
+    UI_STRINGS[_language]["kind_opaque"] = _OPAQUE_LABELS[_language]
 
 
 def validate_language(language: str) -> str:

@@ -452,6 +452,16 @@ def _evaluate_index(nodes, node_id: str, max_closure_nodes: int) -> dict:
             ),
             "diagnostics": list(node.get("diagnostics", [])),
         }
+        for key in (
+            "sourceFormula",
+            "canonicalFormula",
+            "formulaProvenance",
+            "sourceValueProvenance",
+        ):
+            if key in node:
+                step[key] = node[key]
+        if node.get("formula"):
+            step["decompositionFormulaBasis"] = "canonicalFormula"
         if omitted:
             step["dependenciesOmitted"] = omitted
         return step

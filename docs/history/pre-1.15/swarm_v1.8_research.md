@@ -1,3 +1,15 @@
+---
+search:
+  exclude: true
+---
+
+> **Historical record, archived 2026-10-16.** This document describes an older
+> task, source snapshot or experiment. Its commands, ownership assignments,
+> validation waivers and merge verdicts are not current instructions or current
+> acceptance evidence. The original body follows unchanged. Use the
+> [current plan](../../continuous_improvement_plan.md) and
+> [local acceptance contract](../../manual_validation.md) for present work.
+
 # swarm v1.8 — Research consult (AXIS C): reuse excel-skill & OfficeCLI
 
 Model consulted: **z-ai/glm-5.3-flash** (OpenRouter). Read-only recommendation; no code changed.

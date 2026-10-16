@@ -87,8 +87,9 @@ jobs:
       - run: uv sync --locked --extra screenshots
       - run: uv run playwright install --with-deps chromium
       - run: >
-          uv run pytest tests/test_viewer_browser.py tests/test_app_browser.py
-          tests/test_app_large_browser.py -v
+          uv run pytest tests/test_viewer*.py tests/test_app*.py
+          tests/test_ui_navigation_polish.py tests/test_formula_proof_browser.py
+          tests/test_vision_disclosure.py -v
 
   build:
     runs-on: ubuntu-latest

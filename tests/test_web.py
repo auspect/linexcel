@@ -183,6 +183,206 @@ def test_restart_reuses_latest_calculation_regardless_of_directory_order(
         recovered.close()
 
 
+def test_unsupported_evaluation_is_retryable_without_force(app, monkeypatch):
+    imported = app.store.create("alice", {"workbook": workbook()})
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project = imported["project"]["id"]
+    outcomes = iter(
+        [
+            {
+                "status": "unsupported",
+                "value": None,
+                "diagnostics": ["closure refused"],
+            },
+            {"status": "completed", "value": 42, "steps": []},
+        ]
+    )
+    monkeypatch.setattr(
+        app.store, "_worker", lambda task, root, event: {"result": next(outcomes)}
+    )
+    refused = app.store.submit("alice", project, "evaluate", "Sheet!B1", {})
+    assert wait(app.store, refused["id"])["result"]["status"] == "unsupported"
+    retried = app.store.submit("alice", project, "evaluate", "Sheet!B1", {})
+    assert retried["id"] != refused["id"]
+    assert wait(app.store, retried["id"])["result"]["value"] == 42
+    assert (
+        app.store.submit("alice", project, "evaluate", "Sheet!B1", {})["id"]
+        == retried["id"]
+    )
+
+
+@pytest.mark.parametrize("latest_outcome", ["failed", "unsupported"])
+def test_latest_unsuccessful_evaluation_never_falls_back_to_an_older_value(
+    app, monkeypatch, latest_outcome
+):
+    imported = app.store.create("alice", {"workbook": workbook()})
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project = imported["project"]["id"]
+    latest = (
+        {"error": {"kind": "timeout", "message": "target budget exceeded"}}
+        if latest_outcome == "failed"
+        else {"result": {"status": "unsupported", "value": None}}
+    )
+    outcomes = iter(
+        [
+            {"result": {"status": "completed", "value": 11}},
+            latest,
+            {"result": {"status": "completed", "value": 42}},
+        ]
+    )
+    monkeypatch.setattr(app.store, "_worker", lambda task, root, event: next(outcomes))
+    older = app.store.submit("alice", project, "evaluate", "Sheet!B1", {})
+    assert wait(app.store, older["id"])["result"]["value"] == 11
+    unsuccessful = app.store.submit(
+        "alice", project, "evaluate", "Sheet!B1", {}, force=True
+    )
+    finished = wait(app.store, unsuccessful["id"])
+    assert (
+        finished["status"] == "failed"
+        if latest_outcome == "failed"
+        else finished["result"]["status"] == "unsupported"
+    )
+    retried = app.store.submit("alice", project, "evaluate", "Sheet!B1", {})
+    assert retried["id"] not in {older["id"], unsuccessful["id"]}
+    assert wait(app.store, retried["id"])["result"]["value"] == 42
+    assert app.store.get_task("alice", older["id"])["result"]["value"] == 11
+
+
+def test_force_joins_active_work_but_keeps_nodes_and_projects_independent(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = TaskStore(WebConfig(tmp_path, max_workers=1))
+    entered, release = threading.Event(), threading.Event()
+    try:
+        created = [store.create("alice", {"workbook": workbook()}) for _ in range(2)]
+        for item in created:
+            assert wait(store, item["task"]["id"])["status"] == "succeeded"
+        project, other_project = [item["project"]["id"] for item in created]
+        calls = []
+
+        def worker(task, root, event):
+            calls.append((task["projectId"], task["nodeId"]))
+            entered.set()
+            assert release.wait(5)
+            return {
+                "result": {"nodeId": task["nodeId"], "status": "completed", "value": 42}
+            }
+
+        monkeypatch.setattr(store, "_worker", worker)
+        running = store.submit("alice", project, "evaluate", "Sheet!B1", {}, force=True)
+        assert entered.wait(2)
+        with ThreadPoolExecutor(max_workers=4) as callers:
+            joined = list(
+                callers.map(
+                    lambda _: store.submit(
+                        "alice", project, "evaluate", "Sheet!B1", {}, force=True
+                    ),
+                    range(4),
+                )
+            )
+        assert {task["id"] for task in joined} == {running["id"]}
+        queued = store.submit("alice", project, "evaluate", "Sheet!A1", {}, force=True)
+        assert queued["status"] == "queued"
+        assert (
+            store.submit("alice", project, "evaluate", "Sheet!A1", {}, force=True)["id"]
+            == queued["id"]
+        )
+        other = store.submit(
+            "alice", other_project, "evaluate", "Sheet!B1", {}, force=True
+        )
+        assert len({running["id"], queued["id"], other["id"]}) == 3
+        release.set()
+        for task in (running, queued, other):
+            assert wait(store, task["id"])["status"] == "succeeded"
+        assert calls == [
+            (project, "Sheet!B1"),
+            (project, "Sheet!A1"),
+            (other_project, "Sheet!B1"),
+        ]
+        with pytest.raises(APIError):
+            store.get_task("bob", running["id"])
+        fresh = store.submit("alice", project, "evaluate", "Sheet!B1", {}, force=True)
+        assert fresh["id"] != running["id"]
+        assert wait(store, fresh["id"])["status"] == "succeeded"
+    finally:
+        release.set()
+        store.close()
+
+
+def test_an_evaluation_with_cancellation_requested_is_not_joined(app, monkeypatch):
+    imported = app.store.create("alice", {"workbook": workbook()})
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project = imported["project"]["id"]
+    entered, release = threading.Event(), threading.Event()
+
+    def worker(task, root, event):
+        entered.set()
+        assert release.wait(5)
+        return {"result": {"status": "completed", "value": 42}}
+
+    monkeypatch.setattr(app.store, "_worker", worker)
+    try:
+        old = app.store.submit("alice", project, "evaluate", "Sheet!B1", {}, force=True)
+        assert entered.wait(2)
+        app.store.cancel("alice", old["id"])
+        new = app.store.submit("alice", project, "evaluate", "Sheet!B1", {}, force=True)
+        assert new["id"] != old["id"]
+    finally:
+        release.set()
+    assert wait(app.store, old["id"])["status"] == "cancelled"
+    assert wait(app.store, new["id"])["result"]["value"] == 42
+
+
+def test_refused_formula_and_excel_error_do_not_block_other_nodes(app):
+    book = Workbook()
+    book.active["A1"] = "=1/0"
+    book.active["B1"] = "=IFERROR(A1,42)"
+    book.active["C1"] = '=INDIRECT("D1")'
+    book.active["D1"] = 9
+    book.active["E1"] = "=2+3"
+    stream = io.BytesIO()
+    book.save(stream)
+    imported = app.store.create(
+        "alice",
+        {
+            "workbook": {
+                "name": "mixed.xlsx",
+                "data": base64.b64encode(stream.getvalue()).decode(),
+            }
+        },
+    )
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project = imported["project"]["id"]
+    original = app.store.snapshot("alice", project)["graph"]
+
+    def evaluate(node):
+        task = app.store.submit("alice", project, "evaluate", node, {}, force=True)
+        finished = wait(app.store, task["id"])
+        assert finished["status"] == "succeeded", finished
+        return finished["result"]
+
+    error = evaluate("Sheet!A1")
+    assert error["status"] == "completed"
+    assert error["value"] == "#DIV/0!" and error["valueKind"] == "error"
+    guarded = evaluate("Sheet!B1")
+    assert guarded["status"] == "completed" and guarded["value"] == 42
+    assert {step["nodeId"] for step in guarded["steps"]} == {"Sheet!A1", "Sheet!B1"}
+    assert all(
+        step["calculatedProvenance"] == "targeted_recalculation"
+        for step in guarded["steps"]
+    )
+    refused = evaluate("Sheet!C1")
+    assert refused["status"] == "unsupported"
+    assert refused["coverage"]["status"] == "not_evaluated"
+    healthy = evaluate("Sheet!E1")
+    assert healthy["status"] == "completed" and healthy["value"] == 5
+    assert [step["nodeId"] for step in healthy["steps"]] == ["Sheet!E1"]
+    assert healthy["coverage"]["formulaCells"] == 1
+    assert app.store.snapshot("alice", project)["graph"] == original
+
+
 def test_graph_asset_is_packaged_mounted_and_allowlisted(tmp_path):
     from pathlib import Path
 
@@ -390,6 +590,60 @@ def test_failed_result_write_releases_worker_capacity(tmp_path, monkeypatch):
         assert store.snapshot("owner", created["project"]["id"])["graph"]
     finally:
         store.close()
+
+
+def test_terminal_status_waits_for_final_publication(app, monkeypatch):
+    import linexcel.web as web
+
+    imported = app.store.create("alice", {"workbook": workbook()})
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project = imported["project"]["id"]
+    finalizing, release = threading.Event(), threading.Event()
+    condition = app.store.capacity
+
+    class PublicationBarrier:
+        """Pause the worker at its final publication, with the lock free."""
+
+        entries = 0
+
+        def __enter__(self):
+            if threading.current_thread() is not threading.main_thread():
+                self.entries += 1
+                if self.entries == 2:
+                    finalizing.set()
+                    assert release.wait(5)
+            return condition.__enter__()
+
+        def __exit__(self, *args):
+            return condition.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(condition, name)
+
+    original_write = web._write
+
+    def fail_terminal_write(path, value):
+        if path.name == "task.json" and value.get("status") == "succeeded":
+            raise OSError("Disk full at final publication")
+        return original_write(path, value)
+
+    monkeypatch.setattr(app.store, "capacity", PublicationBarrier())
+    monkeypatch.setattr(web, "_write", fail_terminal_write)
+    monkeypatch.setattr(
+        app.store,
+        "_worker",
+        lambda task, root, event: {"result": {"status": "completed", "value": 42}},
+    )
+    try:
+        task = app.store.submit("alice", project, "evaluate", "Sheet!B1", {})
+        assert finalizing.wait(2)
+        assert app.store.get_task("alice", task["id"])["status"] == "running"
+    finally:
+        release.set()
+    finished = wait(app.store, task["id"])
+    assert finished["status"] == "failed"
+    assert finished["error"]["kind"] == "persistence_error"
+    assert app.store.used_memory == 0
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows legacy MAX_PATH regression")

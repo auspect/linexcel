@@ -37,10 +37,12 @@ from openpyxl.utils.datetime import (
     to_excel,
 )
 
+from linexcel.formula_source import cell_source_fields
 from linexcel.refs import a1, parse_ref, split_sheet_prefix
 
 SCHEMA_VERSION = 1
 MAX_PAGE_SIZE = 200
+MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
     "id",
     "kind",
@@ -62,6 +64,10 @@ _NODE_KEYS = (
     "diagnostics",
     "reference_bindings",
     "volatile",
+    "sourceFormula",
+    "canonicalFormula",
+    "formulaProvenance",
+    "sourceValueProvenance",
 )
 _SHORT_KEYS = {key: chr(65 + i) for i, key in enumerate(_NODE_KEYS)}
 _LONG_KEYS = {short: key for key, short in _SHORT_KEYS.items()}
@@ -417,6 +423,7 @@ def _read_source(path, store):
     from linexcel.lazy import _INPUT_ERROR_KINDS, _id, _json, _name_literal
 
     db = store.db
+    source_digest = file_sha256(path)
     names = {}
     links = {}
     diagnostics = []
@@ -677,6 +684,16 @@ def _read_source(path, store):
                                             "row": row,
                                             "column": column_number,
                                             "formula": formula,
+                                            **cell_source_fields(
+                                                element,
+                                                workbook_sha256=source_digest,
+                                                worksheet_part=sheet["part"],
+                                                sheet=sheet["name"],
+                                                cell=address,
+                                                canonical_formula=formula,
+                                                canonical_origin="unresolved",
+                                                unreadable_value=True,
+                                            ),
                                             "value": None,
                                             "cache_status": "unknown",
                                             "dependencies": [],
@@ -694,6 +711,10 @@ def _read_source(path, store):
                             formula_element = element.find("{*}f")
                             formula = None
                             problems = []
+                            shared_master = None
+                            translation_status = None
+                            translated_formula = None
+                            canonical_origin = "xml"
                             if formula_element is not None:
                                 formula = "=" + (formula_element.text or "")
                                 form_type = formula_element.get("t")
@@ -717,16 +738,24 @@ def _read_source(path, store):
                                             (sheet["name"], shared_id),
                                         ).fetchone()
                                         if shared:
+                                            shared_master = (shared[0], shared[1][1:])
                                             try:
                                                 formula = Translator(
                                                     shared[1], origin=shared[0]
                                                 ).translate_formula(address)
+                                                translated_formula = formula
+                                                translation_status = "translated"
+                                                canonical_origin = "shared_translation"
                                             except Exception as exc:
+                                                translation_status = "failed"
+                                                canonical_origin = "unresolved"
                                                 problems.append(
                                                     "Shared formula translation "
                                                     f"failed: {exc}"
                                                 )
                                         else:
+                                            translation_status = "missing_master"
+                                            canonical_origin = "unresolved"
                                             problems.append(
                                                 "Shared formula anchor is missing "
                                                 "or occurs after this cell."
@@ -751,6 +780,7 @@ def _read_source(path, store):
                                     )
                                     if not formula_element.text:
                                         formula = "=<array/data-table>"
+                                        canonical_origin = "unresolved"
                             cell_type = element.get("t", "n")
                             if cell_type not in {
                                 "n",
@@ -871,6 +901,24 @@ def _read_source(path, store):
                                     "row": row,
                                     "column": column_number,
                                     "formula": formula,
+                                    **cell_source_fields(
+                                        element,
+                                        workbook_sha256=source_digest,
+                                        worksheet_part=sheet["part"],
+                                        sheet=sheet["name"],
+                                        cell=address,
+                                        canonical_formula=formula,
+                                        canonical_origin=canonical_origin,
+                                        shared_master=shared_master,
+                                        translation_status=translation_status,
+                                        translated_formula=translated_formula,
+                                        unreadable_value=any(
+                                            p.startswith(
+                                                "Stored cell value is unreadable:"
+                                            )
+                                            for p in problems
+                                        ),
+                                    ),
                                     "numberFormat": number_format,
                                     "sourceDataType": "f"
                                     if formula is not None
@@ -1040,6 +1088,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                     cache_status="saved",
                     sourceSha256=digest,
                 )
+                if member and member.get("sourceValueProvenance"):
+                    node["sourceValueProvenance"] = member["sourceValueProvenance"]
             except Exception as exc:
                 node["diagnostics"].append(f"External reference unavailable: {exc}")
             store.put(node)
@@ -1225,7 +1275,13 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                 other.close()
 
 
-def build_index(path: Path, index_path: Path, refs_dir: Path | None = None) -> dict:
+def build_index(
+    path: Path,
+    index_path: Path,
+    refs_dir: Path | None = None,
+    *,
+    filename: str | None = None,
+) -> dict:
     "Publish a complete disk index atomically; preserve any previous index on failure."
     path, index_path = Path(path), Path(index_path)
     index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1237,8 +1293,27 @@ def build_index(path: Path, index_path: Path, refs_dir: Path | None = None) -> d
     try:
         with WorkbookIndex(temp_path, writable=True) as store:
             _schema(store.db)
-            metadata, names, links = _read_source(path, store)
-            _index_dependencies(store, metadata, names, links, refs_dir)
+            from linexcel.macros import OLE_MAGIC, index_vba
+
+            with path.open("rb") as source:
+                macro_only = source.read(8).startswith(OLE_MAGIC) or (
+                    (filename or path.name).lower().endswith(".xlam")
+                )
+            if macro_only:
+                metadata: dict[str, Any] = {
+                    "sheets": [],
+                    "sheetDetails": [],
+                    "diagnostics": [],
+                    "macroOnly": True,
+                }
+            else:
+                metadata, names, links = _read_source(path, store)
+                _index_dependencies(store, metadata, names, links, refs_dir)
+            metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
+            metadata["diagnostics"].extend(
+                {"phase": "VBA", "message": warning}
+                for warning in metadata["vba"]["warnings"]
+            )
             counts = dict(
                 store.db.execute("SELECT kind,count(*) FROM nodes GROUP BY kind")
             )
@@ -1257,7 +1332,7 @@ def build_index(path: Path, index_path: Path, refs_dir: Path | None = None) -> d
                 evaluated=False,
                 lazy=True,
                 storage="sqlite",
-                filename=path.name,
+                filename=filename or path.name,
                 sha256=file_sha256(path),
                 nodeCount=sum(counts.values()),
                 nodeCounts=counts,
@@ -1295,6 +1370,16 @@ def build_index(path: Path, index_path: Path, refs_dir: Path | None = None) -> d
                     "presentation limit."
                 ),
                 limits=[
+                    *(
+                        [
+                            "Add-in source report: worksheet cells, values and formula "
+                            "evaluation are not analyzed."
+                        ]
+                        if macro_only
+                        else []
+                    ),
+                    "VBA relations are static source heuristics; "
+                    "macros are never executed.",
                     (
                         "External single-cell literal inputs are supported "
                         "from uploads; external formulas/ranges, structured "
@@ -1328,11 +1413,14 @@ def get_node(index_path: Path, node_id: str) -> dict | None:
         return store.node(node_id)
 
 
-def _filters(sheet=None, query=None):
+def _filters(sheet=None, query=None, kind=None):
     conditions, values = [], []
     if sheet:
         conditions.append("sheet=?")
         values.append(sheet)
+    if kind:
+        conditions.append("kind=?")
+        values.append(kind)
     if query:
         # Literal substring search, with SQL metacharacters escaped.
         conditions.append(
@@ -1349,15 +1437,19 @@ def _filters(sheet=None, query=None):
 
 
 def _edges_for_nodes(store, ids):
+    from linexcel.macros import static_edge_record
+
     if not ids:
         return []
     placeholders = ",".join("?" for _ in ids)
     rows = store.db.execute(
-        f"SELECT source,target FROM edges WHERE target IN ({placeholders}) "
-        f"AND source IN ({placeholders}) ORDER BY source,target",
+        "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
+        "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+        f"WHERE e.target IN ({placeholders}) "
+        f"AND e.source IN ({placeholders}) ORDER BY e.source,e.target",
         ids + ids,
     )
-    return [{"source": s, "target": t, "kind": "dep"} for s, t in rows]
+    return [static_edge_record(s, t, sk, tk) for s, t, sk, tk in rows]
 
 
 def _pattern(store, row, member_limit=MAX_PAGE_SIZE):
@@ -1382,11 +1474,11 @@ def _pattern(store, row, member_limit=MAX_PAGE_SIZE):
 
 
 def graph_page(
-    index_path: Path, *, offset=0, limit=200, sheet=None, query=None
+    index_path: Path, *, offset=0, limit=200, sheet=None, query=None, kind=None
 ) -> dict:
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
-        where, args = _filters(sheet, query)
+        where, args = _filters(sheet, query, kind)
         # An exact Excel reference uses the unique id index. Substring search
         # remains available when no exact node matches.
         if (
@@ -1397,6 +1489,9 @@ def graph_page(
             ).fetchone()
         ):
             where, args = " WHERE id=?", [query]
+            if kind:
+                where += " AND kind=?"
+                args.append(kind)
         total = store.db.execute("SELECT count(*) FROM nodes" + where, args).fetchone()[
             0
         ]
@@ -1451,11 +1546,14 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
                 )
             ]
         else:
+            from linexcel.macros import static_edge_record
+
             items = [
-                {"source": source, "target": target, "kind": "dep"}
-                for source, target in store.db.execute(
-                    "SELECT source,target FROM edges "
-                    "ORDER BY source,target LIMIT ? OFFSET ?",
+                static_edge_record(source, target, sk, tk)
+                for source, target, sk, tk in store.db.execute(
+                    "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
+                    "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                    "ORDER BY e.source,e.target LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
             ]
@@ -1500,7 +1598,14 @@ def patterns_page(index_path: Path, *, offset=0, limit=200, sheet=None) -> dict:
 
 
 def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> dict:
-    limit, depth = max(1, min(MAX_PAGE_SIZE, int(limit))), max(0, min(2, int(depth)))
+    """Read an undirected neighborhood with independent depth and node budgets.
+
+    A deeper traversal never expands the HTTP node budget. ``truncated`` means
+    an eligible node within the requested depth was omitted by that budget;
+    neighbors beyond the requested depth are intentionally outside the view.
+    """
+    limit = max(1, min(MAX_PAGE_SIZE, int(limit)))
+    depth = max(0, min(MAX_NEIGHBORHOOD_DEPTH, int(depth)))
     with WorkbookIndex(index_path) as store:
         if node_id not in store:
             raise ValueError(f"Unknown node: {node_id}")
@@ -1508,13 +1613,15 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         frontier = [node_id]
         truncated = False
         for _ in range(depth):
+            if not frontier:
+                break
             following = []
             for current in frontier:
                 rows = store.db.execute(
                     (
-                        "SELECT source FROM edges WHERE target=? "
-                        "UNION SELECT target FROM "
-                        "edges WHERE source=? LIMIT ?"
+                        "SELECT source AS neighbor FROM edges WHERE target=? "
+                        "UNION SELECT target FROM edges WHERE source=? "
+                        "ORDER BY neighbor LIMIT ?"
                     ),
                     (current, current, limit + 1),
                 )
@@ -1526,6 +1633,10 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
                         break
                     ids[row[0]] = None
                     following.append(row[0])
+                if truncated:
+                    break
+            if truncated:
+                break
             frontier = following
         nodes = [store.node(nid) for nid in ids]
         return {
@@ -1629,6 +1740,8 @@ def evidence_graph(index_path: Path, node_id: str | None = None) -> dict:
 
 def export_structure(index_path: Path) -> dict:
     """Explicit compatibility export. The web API must use bounded pages instead."""
+    from linexcel.macros import static_edge_record
+
     with WorkbookIndex(index_path) as store:
         nodes = [
             store._decode(row, context=True)
@@ -1644,9 +1757,11 @@ def export_structure(index_path: Path) -> dict:
             )
         ]
         edges = [
-            {"source": s, "target": t, "kind": "dep"}
-            for s, t in store.db.execute(
-                "SELECT source,target FROM edges ORDER BY source,target"
+            static_edge_record(s, t, sk, tk)
+            for s, t, sk, tk in store.db.execute(
+                "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
+                "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                "ORDER BY e.source,e.target"
             )
         ]
         return {

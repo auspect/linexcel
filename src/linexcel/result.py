@@ -62,6 +62,21 @@ def _read_source(source: Source, filename: str | None) -> tuple[bytes, str]:
     raise TypeError("source must be a path, bytes, or a binary file object.")
 
 
+def read_macros(source: Source, filename: str | None = None) -> dict[str, Any]:
+    """Read decoded VBA modules, procedures and provenance, without execution.
+
+    Accepts OOXML macro workbooks/add-ins and legacy OLE XLA files. This
+    extracts source only; use :func:`analyze` for a graph. A legacy XLA graph
+    explicitly omits worksheet values and calculation.
+    """
+    from linexcel.macros import read_macro_project, valid_excel_header
+
+    data, name = _read_source(source, filename)
+    if not valid_excel_header(data[:8], name):
+        raise ValueError("Expected an OOXML workbook/add-in or an OLE .xla file")
+    return read_macro_project(data, name)
+
+
 def analyze(
     source: Source,
     filename: str | None = None,
@@ -151,9 +166,12 @@ def analyze(
     except Exception as exc:
         # Frontière publique : transformer l'erreur brute (BadZipFile, Rust)
         # en message clair sur le vrai problème.
-        if not data[:4] == b"PK\x03\x04":
+        from linexcel.macros import OLE_MAGIC
+
+        legacy_addin = name.lower().endswith(".xla") and data.startswith(OLE_MAGIC)
+        if not data[:4] == b"PK\x03\x04" and not legacy_addin:
             raise ValueError(
-                f"{name!r} is not an Excel file (xlsx/xlsm). "
+                f"{name!r} is not an Excel file (xlsx/xlsm/xlam or OLE xla). "
                 "Legacy .xls is not supported — re-save it as .xlsx first."
             ) from exc
         raise ValueError(f"Could not analyze {name!r}: {exc}") from exc
@@ -223,6 +241,13 @@ class LineageResult:
         than assuming a tabular header convention.
         """
         if self._workbook_context is None:
+            if self.graph.get("meta", {}).get("macroOnly"):
+                self._workbook_context = {
+                    "sheets": [],
+                    "macroOnly": True,
+                    "limitations": ["Add-in worksheet context was not extracted."],
+                }
+                return self._workbook_context
             from linexcel.insights import extract_workbook_context
 
             self._workbook_context = extract_workbook_context(
@@ -356,6 +381,7 @@ class LineageResult:
         max_tokens: int | None = None,
         token_budget: int | None = None,
         validation_results: dict[str, Any] | None = None,
+        specialized_review: bool = True,
     ) -> dict[str, str]:
         """Document nodes via AI from the deterministic lineage.
 
@@ -375,7 +401,12 @@ class LineageResult:
         are skipped with a :class:`UserWarning`; the cards that succeeded are
         still returned.
 
-        ``max_tokens`` caps output per node (approximate; provider-dependent).
+        ``specialized_review=True`` requests a draft and a separate editorial
+        review from the same provider. Both requests count toward usage; the
+        review is not independent factual certification. ``False`` explicitly
+        opts out. Failed reviews never silently publish their draft.
+
+        ``max_tokens`` caps output per request (approximate; provider-dependent).
 
         ``token_budget`` caps what the whole documentation run may cost, input
         and output tokens together. It is counted against :attr:`token_usage`,
@@ -412,6 +443,7 @@ class LineageResult:
             max_tokens=max_tokens,
             token_budget=token_budget,
             validation_results=validation_results,
+            specialized_review=specialized_review,
         )
 
     def document_workbook(
@@ -426,6 +458,7 @@ class LineageResult:
         token_budget: int | None = None,
         include_context: bool = True,
         validation_results: dict[str, Any] | None = None,
+        specialized_review: bool = True,
     ) -> str:
         """Document the workbook structure and calculation flow via AI.
 
@@ -442,9 +475,14 @@ class LineageResult:
 
         Provider resolution is the same as :meth:`document`, and tokens
         consumed are added to :attr:`token_usage`. ``max_tokens`` caps the
-        output length (approximate; provider-dependent), while ``token_budget``
-        caps cumulative spend on this result and raises :class:`AiDocError` if
-        earlier calls already exhausted it.
+        output length per request (approximate; provider-dependent), while
+        ``token_budget`` caps cumulative spend on this result and raises
+        :class:`AiDocError` if earlier calls already exhausted it.
+        By default, ``specialized_review`` makes a draft request followed by a
+        separate editorial review request to the same provider. Both consume
+        tokens; ``False`` opts out explicitly. An exhausted budget after the
+        draft prevents the review. A complete final response already in flight
+        may exceed the approximate ceiling and is retained with its usage.
         ``validation_results`` receives the quotation-check report and raw
         response under ``workbook``. No unqualified factual verdict is implied.
         """
@@ -469,6 +507,7 @@ class LineageResult:
             token_budget=token_budget,
             context=context,
             validation_results=validation_results,
+            specialized_review=specialized_review,
         )
 
     def describe_screenshots(
@@ -482,14 +521,16 @@ class LineageResult:
         language: str = "en",
         max_tokens: int | None = None,
         token_budget: int | None = None,
+        validation_results: dict[str, Any] | None = None,
+        evidence_dir: str | Path | None = None,
     ) -> dict[str, str]:
         """Describe each sheet screenshot with a multimodal model.
 
         Everything else linexcel documents is grounded in the graph. A
-        screenshot is the exception: colour conventions — blue inputs against
-        black formulas — conditional formatting, charts and the shape of a
-        layout are invisible to a text dossier however complete it is, and a
-        model looking at the picture is the only way to put them in words.
+        screenshot is the exception: its printed labels and values belong to
+        the renderer's pixels. Each page is covered by native crops. The model
+        returns short local quotations; the program computes their scope.
+        Interpretations of layout or calculation are excluded.
 
         Takes what :meth:`save_screenshots` returns and gives back
         ``{sheet name: markdown}``, ready for :meth:`save_html` as
@@ -501,13 +542,13 @@ class LineageResult:
         resolution is otherwise :meth:`document`'s. A text-only endpoint
         raises :class:`~linexcel.aidoc.AiDocError` rather than dropping the
         picture from the request. Tokens are added to :attr:`token_usage`.
+        ``validation_results`` retains complete regional evidence and raw
+        responses; ``evidence_dir`` saves the exact crop bytes for review.
         """
         from linexcel.aidoc import describe_images
 
         if isinstance(screenshots, Mapping):
-            by_sheet = cast("Mapping[str, Sequence[str | Path]]", screenshots)
-            paired = ((name, _first_shot(shots)) for name, shots in by_sheet.items())
-            images = {name: shot for name, shot in paired if shot is not None}
+            images = dict(screenshots)
         else:
             images = {Path(shot).stem: shot for shot in screenshots}
         return describe_images(
@@ -520,6 +561,8 @@ class LineageResult:
             usage=self.token_usage,
             max_tokens=max_tokens,
             token_budget=token_budget,
+            validation_results=validation_results,
+            evidence_dir=evidence_dir,
         )
 
     # -- visualization -----------------------------------------------------

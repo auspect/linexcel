@@ -24,7 +24,7 @@ from importlib.metadata import version as _installed_version
 from linexcel.analyzer import analyze_workbook
 from linexcel.execution import ExecutionPolicy
 from linexcel.insights import WorkbookRenderError
-from linexcel.result import LineageResult, analyze
+from linexcel.result import LineageResult, analyze, read_macros
 
 try:
     __version__ = _installed_version("linexcel")
@@ -33,6 +33,7 @@ except _PackageNotFoundError:  # pragma: no cover - source tree without install
 
 __all__ = [
     "analyze",
+    "read_macros",
     "ExecutionPolicy",
     "LineageResult",
     "WorkbookRenderError",

@@ -3,7 +3,6 @@
 import io
 import json
 import re
-import struct
 from functools import partial
 from pathlib import Path
 from typing import Any, cast
@@ -860,12 +859,11 @@ class TestAiProviders:
         result = partial(analyze, execution=ExecutionPolicy(isolated=False))(
             lineage_excel
         )
-        assert (
-            result.document_workbook(
-                base_url="http://localhost:11434/v1", model="qwen3.8"
-            )
-            == "# overview"
+        overview = result.document_workbook(
+            base_url="http://localhost:11434/v1", model="qwen3.8"
         )
+        assert overview.endswith("\n\n# overview")
+        assert overview.startswith("> AI evidence review")
         assert captured["base_url"] == "http://localhost:11434/v1"
         assert captured["model"] == "qwen3.8"
         assert captured["api_key"] is None  # left to the client to resolve
@@ -895,7 +893,9 @@ class TestAiProviders:
             lineage_excel
         )
         node_id = self._calc_ids(result)[0]
-        assert result.document([node_id]) == {node_id: "# card"}
+        card = result.document([node_id])[node_id]
+        assert card.endswith("\n\n# card")
+        assert card.startswith("> AI evidence review")
         assert captured["base_url"] == "https://openrouter.ai/api/v1"
         assert captured["model"] == "some-org/some-model"
 
@@ -927,7 +927,9 @@ class TestAiProviders:
 
         result = analyze(lineage_excel)
         node_id = self._calc_ids(result)[0]
-        assert result.document([node_id], provider=my_llm) == {node_id: "# card"}
+        card = result.document([node_id], provider=my_llm)[node_id]
+        assert card.endswith("\n\n# card")
+        assert card.startswith("> AI evidence review")
         assert seen[0][2] == 0.2
         assert node_id in seen[0][1]
 
@@ -938,18 +940,17 @@ class TestAiProviders:
 
         result = analyze(lineage_excel)
         node_id = self._calc_ids(result)[0]
-        assert result.document([node_id], provider=Provider()) == {
-            node_id: "# from object"
-        }
+        card = result.document([node_id], provider=Provider())[node_id]
+        assert card.endswith("\n\n# from object")
+        assert card.startswith("> AI evidence review")
 
     def test_workbook_overview_accepts_a_callable(self, lineage_excel):
         result = analyze(lineage_excel)
-        assert (
-            result.document_workbook(
-                provider=lambda system, user, *, temperature=0.2, **kw: "# overview"
-            )
-            == "# overview"
+        overview = result.document_workbook(
+            provider=lambda system, user, *, temperature=0.2, **kw: "# overview"
         )
+        assert overview.endswith("\n\n# overview")
+        assert overview.startswith("> AI evidence review")
 
     def test_provider_without_generate_is_rejected(self, lineage_excel):
         from linexcel.aidoc import AiDocError
@@ -1021,7 +1022,7 @@ class TestTokenUsage:
         result.document([node_id], provider=lambda s, u, *, temperature=0.2: "# card")
 
         usage = result.token_usage
-        assert usage.requests == 1
+        assert usage.requests == 2  # Draft and source-led review are separate calls.
         assert usage.estimated is True
         assert usage.input_tokens > 0 and usage.output_tokens > 0
         assert usage.total == usage.input_tokens + usage.output_tokens
@@ -1048,7 +1049,8 @@ class TestTokenUsage:
         result.document([self._calc_ids(result)[0]], provider=Reporting())
 
         usage = result.token_usage
-        assert (usage.input_tokens, usage.output_tokens) == (1234, 56)
+        assert (usage.input_tokens, usage.output_tokens) == (2468, 112)
+        assert usage.requests == 2
         assert usage.estimated is False
         assert usage.model == "m" and usage.provider == "p"
 
@@ -1061,8 +1063,8 @@ class TestTokenUsage:
         after_nodes = result.token_usage.requests
         result.document_workbook(provider=provider)
 
-        assert after_nodes == len(ids)
-        assert result.token_usage.requests == len(ids) + 1
+        assert after_nodes == 2 * len(ids)
+        assert result.token_usage.requests == 2 * (len(ids) + 1)
 
     def test_tokens_spent_before_a_failure_are_still_counted(self, lineage_excel):
         """Tokens already spent are billed even if a later node fails."""
@@ -1077,7 +1079,7 @@ class TestTokenUsage:
 
         with pytest.warns(UserWarning):
             result.document(ids, provider=flaky, max_workers=1)
-        assert result.token_usage.requests == len(ids) - 1
+        assert result.token_usage.requests == 2 * (len(ids) - 1)
 
     def test_usage_starts_empty_and_reads_cleanly(self, lineage_excel):
         usage = analyze(lineage_excel).token_usage
@@ -1397,19 +1399,28 @@ class TestTokenBudget:
         return provider
 
     def test_budget_stops_the_run_and_reports_what_was_skipped(self, lineage_excel):
+        from linexcel.aidoc import AiDocError
+
         calls: list[int] = []
         result = analyze(lineage_excel)
         ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
         assert len(ids) > 2, "fixture must offer several nodes to skip"
 
-        with pytest.warns(UserWarning, match="never sent"):
-            docs = result.document(
-                ids, provider=self._provider(calls), max_workers=1, token_budget=1
+        reports = {}
+        with pytest.warns(UserWarning, match="never sent"), pytest.raises(AiDocError):
+            result.document(
+                ids,
+                provider=self._provider(calls),
+                max_workers=1,
+                token_budget=1,
+                validation_results=reports,
             )
 
-        # One request establishes the cost; the budget then stops the rest.
+        # The spent draft is retained, but cannot be published as a reviewed card.
         assert len(calls) == 1
-        assert len(docs) == 1 and len(docs) < len(ids)
+        assert reports[ids[0]]["status"] == "failed"
+        stages = reports[ids[0]]["specialized_review"]["stages"]
+        assert [s["status"] for s in stages] == ["complete", "failed"]
         assert result.token_usage.requests == 1
 
     def test_a_budget_that_covers_the_run_changes_nothing(self, lineage_excel):
@@ -1421,7 +1432,7 @@ class TestTokenBudget:
             ids, provider=self._provider(calls), token_budget=10_000_000
         )
 
-        assert len(calls) == len(ids) and len(docs) == len(ids)
+        assert len(calls) == 2 * len(ids) and len(docs) == len(ids)
 
     def test_budget_is_cumulative_over_the_result(self, lineage_excel):
         """One ceiling covers every call: the user pays per workbook, not per call."""
@@ -1438,14 +1449,14 @@ class TestTokenBudget:
 
     def test_the_budget_holds_without_a_usage_accumulator(self, lineage_excel):
         """aidoc's own entry point takes no accumulator unless asked."""
-        from linexcel.aidoc import document_nodes
+        from linexcel.aidoc import AiDocError, document_nodes
 
         calls: list[int] = []
         result = analyze(lineage_excel)
         ids = [n["id"] for n in result.nodes if n["kind"] in ("cell", "group")]
 
-        with pytest.warns(UserWarning, match="never sent"):
-            docs = document_nodes(
+        with pytest.warns(UserWarning, match="never sent"), pytest.raises(AiDocError):
+            document_nodes(
                 result.graph,
                 ids,
                 provider=self._provider(calls),
@@ -1453,7 +1464,9 @@ class TestTokenBudget:
                 token_budget=1,
             )
 
-        assert len(calls) == 1 and len(docs) == 1
+        assert (
+            len(calls) == 1
+        )  # No unreviewed draft fallback when review is unaffordable.
 
     def test_a_non_positive_budget_is_rejected(self, lineage_excel):
         result = analyze(lineage_excel)
@@ -1579,7 +1592,8 @@ class TestWorkbookPresentationContext:
         overview = result.document_workbook(
             provider=lambda system, user, *, temperature=0.2: "overview"
         )
-        assert overview == "overview"
+        assert overview.endswith("\n\noverview")
+        assert overview.startswith("> AI evidence review")
 
     def test_an_oversized_dossier_sheds_the_preview_last(self):
         """Shrinking must cost the least useful part first, not the newest one."""
@@ -1674,7 +1688,7 @@ class TestVbaGraph:
     def _graph(workbook: bytes, monkeypatch, modules: dict[str, str]) -> dict:
         monkeypatch.setattr(
             "linexcel.graph.extract_vba_modules",
-            lambda data, filename, warnings=None: dict(modules),
+            lambda data, filename, warnings=None, **kwargs: dict(modules),
         )
         return partial(analyze_workbook, execution=ExecutionPolicy(isolated=False))(
             workbook, "macro.xlsm"
@@ -1704,6 +1718,56 @@ class TestVbaGraph:
         ]
         assert calls == [("vp:Module1.Refresh", "vp:Module1.Rate")]
 
+    def test_property_declarations_are_not_overwritten(
+        self, lineage_excel, monkeypatch
+    ):
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "M": "Property Get Rate() As Double\n Rate = 1\nEnd Property\n"
+                "Property Let Rate(ByVal x As Double)\n y = x\nEnd Property\n"
+            },
+        )
+        nodes = [n for n in graph["nodes"] if n["kind"] == "vba"]
+        assert len(nodes) == 2 and len({n["id"] for n in nodes}) == 2
+        assert {n["procKind"] for n in nodes} == {"Property Get", "Property Let"}
+
+    def test_addin_calls_keep_project_scope_and_ranges_stay_unresolved(
+        self, lineage_excel, monkeypatch, tmp_path
+    ):
+        (tmp_path / "tools.xlam").write_bytes(b"placeholder")
+        modules = {
+            "Module1": "Sub Helper()\n x = 1\nEnd Sub\n",
+            "Module2": "Sub Run()\n Module1.Helper\n "
+            'ThisWorkbook.Sheets("Summary").Range("B10") = 1\nEnd Sub\n',
+        }
+
+        def extract(data, filename, warnings=None, *, provenance=None):
+            if filename != "tools.xlam":
+                return {}
+            provenance.update({name: {"sourceFile": filename} for name in modules})
+            return modules
+
+        monkeypatch.setattr("linexcel.graph.extract_vba_modules", extract)
+        graph = analyze_workbook(
+            lineage_excel,
+            "main.xlsm",
+            refs_dir=tmp_path,
+            execution=ExecutionPolicy(isolated=False),
+        )["graph"]
+        edges = [e for e in graph["edges"] if e["kind"] == "call"]
+        assert any(
+            e["source"] == "vp:tools.xlam:Module2.Run"
+            and e["target"] == "vp:tools.xlam:Module1.Helper"
+            for e in edges
+        )
+        nodes = {n["id"]: n for n in graph["nodes"]}
+        writes = [e for e in graph["edges"] if e["kind"] == "vba-write"]
+        assert len(writes) == 1
+        assert nodes[writes[0]["target"]]["kind"] == "opaque"
+        assert "tools.xlam" in nodes[writes[0]["target"]]["label"]
+
     def test_read_and_write_edges_reach_the_sheets(self, lineage_excel, monkeypatch):
         graph = self._graph(
             lineage_excel,
@@ -1711,8 +1775,8 @@ class TestVbaGraph:
             {
                 "Module1": (
                     "Sub Refresh()\n"
-                    '    Worksheets("Summary").Range("B10").Value = 1\n'
-                    '    x = Sheets("Params").Range("A1").Value\n'
+                    '    ThisWorkbook.Worksheets("Summary").Range("B10").Value = 1\n'
+                    '    x = ThisWorkbook.Sheets("Params").Range("A1").Value\n'
                     "End Sub\n"
                 )
             },
@@ -1722,6 +1786,52 @@ class TestVbaGraph:
         reads = [e for e in graph["edges"] if e["kind"] == "vba-read"]
         assert [by_id[e["target"]]["label"] for e in writes] == ["Summary!B10"]
         assert [by_id[e["source"]]["label"] for e in reads] == ["Params!A1"]
+
+    @pytest.mark.parametrize("qualifier", ["", "ActiveWorkbook.", "otherBook."])
+    def test_only_explicit_thisworkbook_binds_source_cells(
+        self, lineage_excel, monkeypatch, qualifier
+    ):
+        """A matching sheet name is insufficient to identify the active file."""
+        graph = self._graph(
+            lineage_excel,
+            monkeypatch,
+            {
+                "M": "Sub Refresh()\n"
+                f'    {qualifier}Worksheets("Summary").Range("B10") = 1\n'
+                '    x = ThisWorkbook.Sheets("Params").Range("A1").Value\n'
+                "    Helper\nEnd Sub\nSub Helper()\nEnd Sub\n"
+            },
+        )
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        writes = [edge for edge in graph["edges"] if edge["kind"] == "vba-write"]
+        reads = [edge for edge in graph["edges"] if edge["kind"] == "vba-read"]
+        assert len(writes) == len(reads) == 1
+        unresolved = nodes[writes[0]["target"]]
+        assert unresolved["kind"] == "opaque"
+        assert unresolved["label"].endswith("Summary!B10")
+        assert nodes[reads[0]["source"]]["label"] == "Params!A1"
+        assert nodes[reads[0]["source"]]["kind"] != "opaque"
+        vba_edges = [
+            edge
+            for edge in graph["edges"]
+            if edge["kind"] in {"call", "vba-read", "vba-write"}
+        ]
+        assert {edge["kind"] for edge in vba_edges} == {
+            "call",
+            "vba-read",
+            "vba-write",
+        }
+        assert all(
+            edge["scope"] == "static_vba_heuristic" and edge["approx"] is True
+            for edge in vba_edges
+        )
+        assert all(
+            "scope" not in edge for edge in graph["edges"] if edge["kind"] == "dep"
+        )
+        assert (
+            "only explicit ThisWorkbook"
+            in nodes["vp:M.Refresh"]["vbaProvenance"]["referenceSemantics"]
+        )
 
     def test_call_resolves_in_the_calling_module_first(
         self, lineage_excel, monkeypatch
@@ -1821,10 +1931,10 @@ class TestVbaGraph:
 
 
 def png_bytes(width: int = 40, height: int = 30) -> bytes:
-    """Enough of a PNG for the renderer to read its dimensions back."""
-    return (
-        b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", width, height)
-    )
+    """A decodable PNG for dimension checks and native vision evidence."""
+    from vision_helpers import image_bytes
+
+    return image_bytes(width, height)
 
 
 class TestScreenshotsPerSheet:
@@ -2026,7 +2136,11 @@ class _VisionStub:
         )
         if isinstance(self.reply, Exception):
             raise self.reply
-        return self.reply, TokenUsage(input_tokens=800, output_tokens=40, requests=1)
+        from vision_helpers import region_response
+
+        return region_response(user_prompt, self.reply), TokenUsage(
+            input_tokens=800, output_tokens=40, requests=1
+        )
 
 
 class TestScreenshotDescriptions:
@@ -2044,8 +2158,8 @@ class TestScreenshotDescriptions:
         vision = _VisionStub()
         result = analyze(lineage_excel)
         docs = result.describe_screenshots({"Sales": [shot]}, provider=vision)
-        assert docs == {"Sales": "A grid of blue input cells."}
-        assert vision.calls[0]["user"] == "Sheet: Sales"
+        assert "A grid of blue input cells." in docs["Sales"]
+        assert json.loads(vision.calls[0]["user"])["sheet_label_untrusted"] == "Sales"
         assert vision.calls[0]["bytes"] == png_bytes()
 
     def test_the_sheet_name_reaches_the_model_but_the_dossier_does_not(
@@ -2060,12 +2174,12 @@ class TestScreenshotDescriptions:
         assert "formula" not in call["user"].lower()
         assert "screenshot" in call["system"].lower()
 
-    def test_the_media_type_follows_the_file(self, lineage_excel, tmp_path):
+    def test_the_media_type_follows_decoded_pixels(self, lineage_excel, tmp_path):
         shot = tmp_path / "Sales.jpg"
         shot.write_bytes(png_bytes())
         vision = _VisionStub()
         analyze(lineage_excel).describe_screenshots({"Sales": [shot]}, provider=vision)
-        assert vision.calls[0]["media_type"] == "image/jpeg"
+        assert vision.calls[0]["media_type"] == "image/png"
 
     def test_one_image_per_sheet_may_be_given_without_a_list(
         self, lineage_excel, tmp_path
@@ -2408,20 +2522,20 @@ class TestVbaOnARealWorkbook:
         ]
         assert calls == [("vp:Module1.Refresh", "vp:Module1.Rate")]
 
-    def test_the_sheet_reads_and_writes_reach_their_ranges(self, graph):
+    def test_bare_sheet_reads_and_writes_keep_their_ranges_unresolved(self, graph):
         by_id = {n["id"]: n for n in graph["nodes"]}
-        written = {
-            by_id[e["target"]]["label"]
-            for e in graph["edges"]
-            if e["kind"] == "vba-write"
-        }
-        read = {
-            by_id[e["source"]]["label"]
-            for e in graph["edges"]
-            if e["kind"] == "vba-read"
-        }
-        assert "Synthesis!B10" in written
-        assert "Params!A1" in read
+        written = [
+            by_id[e["target"]] for e in graph["edges"] if e["kind"] == "vba-write"
+        ]
+        read = [by_id[e["source"]] for e in graph["edges"] if e["kind"] == "vba-read"]
+        assert any(
+            node["kind"] == "opaque" and node["label"].endswith("Synthesis!B10")
+            for node in written
+        )
+        assert any(
+            node["kind"] == "opaque" and node["label"].endswith("Params!A1")
+            for node in read
+        )
 
     def test_a_reference_with_no_sheet_does_not_guess_one(self, graph):
         """``Cells(3, 2)`` acts on whatever sheet is active at run time.
@@ -2436,7 +2550,7 @@ class TestVbaOnARealWorkbook:
             if e["kind"] == "vba-write" and e["source"] == "vp:Module1.Refresh"
         ]
         unqualified = [n for n in targets if n["kind"] == "opaque"]
-        assert [n["label"] for n in unqualified] == ["VBA:?!B3"]
+        assert any(n["label"].endswith("?!B3") for n in unqualified)
 
     def test_the_extracted_source_is_carried_into_the_report(self, graph):
         refresh = next(n for n in graph["nodes"] if n["label"] == "Module1.Refresh")

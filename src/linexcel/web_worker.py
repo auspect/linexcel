@@ -6,12 +6,15 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 
 def main():
     root = Path(sys.argv[1])
     request = json.loads((root / "request.json").read_text("utf-8"))
     project = root.parent.parent
+    metadata = json.loads((project / "project.json").read_text("utf-8"))
+    output: dict[str, Any]
     try:
         if request["operation"] == "import":
             from linexcel.lazy_store import build_index
@@ -20,6 +23,7 @@ def main():
                 project / "workbook.xlsx",
                 root / "index.sqlite",
                 project / "references",
+                filename=metadata["filename"],
             )
         elif request["operation"] == "build_graph":
             from linexcel.graph_store import build_graph
@@ -37,9 +41,14 @@ def main():
         elif request["operation"] == "capture":
             from linexcel.insights import render_workbook_screenshots
 
+            if metadata["filename"].lower().endswith((".xla", ".xlam")):
+                raise ValueError(
+                    "An add-in is a static macro report; "
+                    "worksheet capture is unavailable."
+                )
             shots = render_workbook_screenshots(
                 project / "workbook.xlsx",
-                "workbook.xlsx",
+                metadata["filename"],
                 root / "captures",
             )
             mapping = shots if isinstance(shots, dict) else {"Pages imprimées": shots}
@@ -87,6 +96,19 @@ def main():
         if request["operation"] in {"document", "describe_capture"}:
             from linexcel.web_ai import WebAIError
 
+            review_evidence = None
+            if isinstance(exc, WebAIError) and exc.review_report is not None:
+                import hashlib
+
+                # Keep prompts and returned draft text in the owner-scoped task
+                # directory, not in coordinator metadata or a public error body.
+                proof = json.dumps(exc.review_report, ensure_ascii=False).encode()
+                (root / "ai-review-failed.json").write_bytes(proof)
+                review_evidence = {
+                    "file": "ai-review-failed.json",
+                    "sha256": hashlib.sha256(proof).hexdigest(),
+                    "scope": "private owner-scoped task evidence",
+                }
             output = (
                 {"error": {"kind": exc.kind, "message": str(exc), "usage": exc.usage}}
                 if isinstance(exc, WebAIError)
@@ -98,8 +120,31 @@ def main():
                     }
                 }
             )
+            if review_evidence is not None:
+                output["error"]["reviewEvidence"] = review_evidence
         else:
             output = {"error": {"kind": type(exc).__name__, "message": str(exc)}}
+            capture_error: dict[str, Any] = output["error"]
+            if request["operation"] == "capture":
+                from linexcel.insights import WorkbookRenderError
+
+                if isinstance(exc, WorkbookRenderError) and exc.exit_code is not None:
+                    from linexcel.execution import _failure_details
+
+                    failure = _failure_details("crashed", exc.exit_code, "")
+                    capture_error.update(renderer=exc.renderer, exitCode=exc.exit_code)
+                    if failure["kind"] != "unknown_exit":
+                        capture_error.update(
+                            kind=failure["kind"],
+                            message=f"{exc}. {failure['summary']}",
+                        )
+                    if failure["kind"] == "memory_limit":
+                        memory = request.get("memoryMb")
+                        budget = f" de {memory} Mio" if memory is not None else ""
+                        capture_error["message"] = (
+                            f"Budget mémoire{budget} insuffisant pour le rendu "
+                            f"des captures. Augmentez le budget puis réessayez. {exc}"
+                        )
     path = root / "result.json"
     path.write_text(json.dumps(output, ensure_ascii=False, allow_nan=False), "utf-8")
 

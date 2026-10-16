@@ -104,6 +104,60 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 | `--target SHEET!A1` | Trace the static upstream lineage of this cell without requesting global recalculation. Repeatable; comma-separated cells are accepted, with Excel quotes around sheet names containing commas (`'Costs, FY26'!A1`). Only relevant names, VBA and Power Query context remain. Dynamic references (INDIRECT/OFFSET) or a truncated trace can cause the engine to evaluate dependencies omitted from the graph; the report states this limitation. |
 | `--dry-run` | Say what the file declares — sheets, declared size, linked workbooks, the ceilings that will apply — and stop without analysing it. |
 
+## Lazy application
+
+```bash
+linexcel serve --port 8765
+```
+
+The application imports a structural index, then loads node pages and bounded
+neighborhoods as you explore. Selecting a formula cell immediately starts a
+fresh targeted calculation of that cell and its dependency closure, including
+when the graph first opens. Simultaneous visits to the same active calculation
+share its task. Source inputs and static VBA do not request calculation.
+
+The source formula and saved Excel value appear independently of the calculation.
+Its result, coverage and dependency steps arrive asynchronously. Those steps
+describe engine values after the targeted evaluation; they are not a trace of
+executed branches or separate evaluations of each sub-expression. Unknown,
+unsupported and failed results remain explicit and do not stop navigation.
+
+The graph retains its camera and existing node positions during selection and
+polling. Back restores a bounded navigation snapshot; Fit and Center remain
+explicit controls. Neighborhoods contain at most 200 nodes and can span 1–20
+levels. A small cache of six neighborhoods is scoped to the workbook revision,
+index generation, target and depth; it does not cache away the fresh calculation.
+Dense overview labels still need zoom or the reader panel for individual cells.
+
+AI documentation remains a separate explicit request. Browsing and targeted
+calculation do not call a model. For saved worksheet data, see
+[the embedded data browser](datasette.md).
+
+Enable documentation with an explicitly selected server configuration:
+
+```bash
+linexcel serve --ai --ai-base-url https://gateway.example/v1 \
+    --ai-model model-id --ai-vision-model vision-model-id \
+    --ai-token-budget 100000 --ai-max-tokens 12000
+```
+
+`LINEXCEL_AI_API_KEY` supplies the credential. For a remote endpoint,
+`OPENAI_API_KEY` is also accepted; this generic key is withheld from loopback
+endpoints. The server does not load `.env` automatically. Set its environment
+before starting it, and keep credentials out of command lines.
+
+Each text document normally uses two requests: drafting and specialized review.
+The per-task budget includes both. An empty, truncated or failed review fails
+that operation without blocking navigation; a finished operation that exceeds
+the server's budget is also reported as failed. Review improves the evidence
+checks but does not certify the prose.
+
+The optional `--ai-stream` collects a streamed response before validating it.
+`--ai-reasoning-split` and `--ai-thinking disabled|adaptive` explicitly forward
+those gateway-specific request fields. Use them only when the selected endpoint
+supports them. `--ai-max-tokens` caps each response separately; none of these
+options changes the selected endpoint or model.
+
 ## AI documentation
 
 Opt-in, and it needs the `ai` extra — which `uvx` can add on the fly:

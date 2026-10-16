@@ -70,6 +70,10 @@ class WebConfig:
     ai_model: str = "qwen3.8"
     ai_vision_model: str | None = None
     ai_token_budget: int = 16000
+    ai_max_tokens: int = 12000
+    ai_stream: bool = False
+    ai_reasoning_split: bool = False
+    ai_thinking: str | None = None
     allow_local_import: bool = False
 
     def __post_init__(self):
@@ -81,14 +85,23 @@ class WebConfig:
             "retention_days",
             "max_pending_tasks",
             "ai_token_budget",
+            "ai_max_tokens",
         ):
             value = getattr(self, key)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{key} must be a positive integer")
-        if not isinstance(self.ai_enabled, bool) or not isinstance(
-            self.allow_local_import, bool
+        if any(
+            not isinstance(value, bool)
+            for value in (
+                self.ai_enabled,
+                self.allow_local_import,
+                self.ai_stream,
+                self.ai_reasoning_split,
+            )
         ):
-            raise ValueError("ai_enabled and allow_local_import must be boolean")
+            raise ValueError("AI flags and allow_local_import must be boolean")
+        if self.ai_thinking not in (None, "disabled", "adaptive"):
+            raise ValueError("ai_thinking must be disabled, adaptive or None")
         if self.ai_enabled:
             endpoint = urlsplit(self.ai_base_url)
             if (
@@ -183,7 +196,14 @@ class TaskStore:
             "web_worker.py",
             "web.py",
             "web_ai.py",
+            "web_data.py",
             "aidoc.py",
+            "ai_validation.py",
+            "doc_evidence.py",
+            "documentation_proof.py",
+            "formula_source.py",
+            "macros.py",
+            "vision_evidence.py",
         ):
             cache.update(Path(__file__).with_name(name).read_bytes())
         for prompt in sorted(
@@ -292,12 +312,14 @@ class TaskStore:
         if (
             not isinstance(name, str)
             or len(name) > 180
-            or not re.fullmatch(r"[^/\\:\x00-\x1f]+\.(?:xlsx|xlsm)", name, re.I)
+            or not re.fullmatch(
+                r"[^/\\:\x00-\x1f]+\.(?:xlsx|xlsm|xlam|xla)", name, re.I
+            )
             or name.startswith(".")
             or name.rstrip(". ") != name
             or re.match(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\.", name, re.I)
         ):
-            raise APIError(400, "Nom de fichier .xlsx/.xlsm invalide")
+            raise APIError(400, "Nom de fichier .xlsx/.xlsm/.xlam/.xla invalide")
         return name
 
     @staticmethod
@@ -309,8 +331,12 @@ class TaskStore:
             data = base64.b64decode(value["data"], validate=True)
         except (KeyError, ValueError, TypeError):
             raise APIError(400, "Fichier base64 invalide") from None
-        if not data.startswith(b"PK"):
-            raise APIError(400, "Le fichier doit être un classeur OOXML")
+        from linexcel.macros import valid_excel_header
+
+        if not valid_excel_header(data[:8], name):
+            raise APIError(
+                400, "Le fichier doit être un classeur OOXML ou un add-in OLE .xla"
+            )
         return name, data
 
     def create(self, owner: str, body: dict) -> dict:
@@ -417,6 +443,7 @@ class TaskStore:
     def graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
         from linexcel.lazy_store import (
+            MAX_NEIGHBORHOOD_DEPTH,
             graph_neighborhood,
             graph_page,
             patterns_page,
@@ -435,8 +462,15 @@ class TaskStore:
             depth = int(value("depth", "1"))
         except ValueError:
             raise APIError(400, "Pagination invalide") from None
-        if offset < 0 or not 1 <= limit <= 200 or depth not in {1, 2}:
-            raise APIError(400, "Pagination : 1–200 éléments, profondeur 1 ou 2")
+        if (
+            offset < 0
+            or not 1 <= limit <= 200
+            or not 1 <= depth <= MAX_NEIGHBORHOOD_DEPTH
+        ):
+            raise APIError(
+                400,
+                f"Pagination : 1–200 éléments, profondeur 1–{MAX_NEIGHBORHOOD_DEPTH}",
+            )
         with self.lock:
             path = self.project_path(owner, project_id)
             index = path / "index.sqlite"
@@ -496,7 +530,19 @@ class TaskStore:
             kwargs = {"offset": offset, "limit": limit, "sheet": value("sheet") or None}
             if kind == "patterns":
                 return patterns_page(index, **kwargs)
-            return graph_page(index, query=value("q") or None, **kwargs)
+            node_kind = value("kind") or None
+            if node_kind not in {
+                None,
+                "cell",
+                "input",
+                "range",
+                "name",
+                "unresolved",
+                "vba",
+                "opaque",
+            }:
+                raise APIError(400, "Type de nœud invalide")
+            return graph_page(index, query=value("q") or None, kind=node_kind, **kwargs)
 
     @staticmethod
     def _save_result(root: Path, task: dict, result: dict) -> None:
@@ -669,7 +715,9 @@ class TaskStore:
                         graph = evidence_graph(path / "index.sqlite", node_id)
                     else:
                         graph = _read(path / "graph.json")
-                    ai_snapshot = evidence(graph, node_id, completed)
+                    ai_snapshot = evidence(
+                        graph, node_id, completed, revision=project["revision"]
+                    )
                 else:
                     if node_id is not None:
                         raise APIError(
@@ -734,6 +782,12 @@ class TaskStore:
                         "model": self.config.ai_model,
                         "visionModel": self.config.ai_vision_model
                         or self.config.ai_model,
+                        "responsePolicy": {
+                            "maxTokens": self.config.ai_max_tokens,
+                            "stream": self.config.ai_stream,
+                            "reasoningSplit": self.config.ai_reasoning_split,
+                            "thinking": self.config.ai_thinking,
+                        },
                         "credentialDigest": hashlib.sha256(
                             (self.config.ai_api_key or "").encode()
                         ).hexdigest(),
@@ -762,9 +816,27 @@ class TaskStore:
                         or (path / "hierarchy.sqlite").is_file()
                     )
                     and task.get("options", {}) == options
-                    and task["status"] in {"queued", "running", "succeeded"}
-                    and not (force and task["status"] == "succeeded")
                 ):
+                    if operation == "evaluate":
+                        # A node access may force a fresh isolated calculation,
+                        # while simultaneous accesses join the same active work.
+                        # Never join cancellation or silently fall back to an
+                        # older value after the latest attempt failed/refused.
+                        if task["status"] not in {"queued", "running", "succeeded"}:
+                            break
+                        if task["status"] in {"queued", "running"}:
+                            if self.events[task["id"]].is_set():
+                                break
+                        elif force or (
+                            (self._task_result(task) or {}).get("status") != "completed"
+                        ):
+                            # Worker transport success can carry unsupported
+                            # closure diagnostics; those remain retryable.
+                            break
+                    elif task["status"] not in {"queued", "running", "succeeded"} or (
+                        force and task["status"] == "succeeded"
+                    ):
+                        continue
                     return self.public(task)
             self._has_capacity()
             task_id = uuid.uuid4().hex
@@ -859,6 +931,7 @@ class TaskStore:
         event = self.events[task["id"]]
         memory = task["budget"]["memoryMb"]
         reserved = False
+        terminal_status = "failed"
         try:
             with self.capacity:
                 while self.used_memory + memory > self.config.total_memory_mb:
@@ -866,7 +939,7 @@ class TaskStore:
                         break
                     self.capacity.wait(0.1)
                 if event.is_set():
-                    task["status"] = "cancelled"
+                    terminal_status = "cancelled"
                     return
                 self.used_memory += memory
                 reserved = True
@@ -876,9 +949,9 @@ class TaskStore:
             result = self._worker(task, root, event)
             with self.lock:
                 if event.is_set():
-                    task["status"] = "cancelled"
+                    terminal_status = "cancelled"
                 elif result.get("error"):
-                    task.update(status="failed", error=result["error"])
+                    task["error"] = result["error"]
                 else:
                     payload: dict[str, Any] = result["result"]
                     if (
@@ -946,16 +1019,19 @@ class TaskStore:
                             project / "hierarchy.sqlite"
                         )
                     self._save_result(root, task, payload)
-                    task.update(status="succeeded")
+                    terminal_status = "succeeded"
         except Exception as exc:
             with self.lock:
                 task.update(
-                    status="failed",
                     error={"kind": type(exc).__name__, "message": str(exc)},
                 )
         finally:
             with self.capacity:
                 try:
+                    # Publish the terminal status and its persisted metadata
+                    # under one lock. A poll must not observe success between
+                    # saving result data and a failing final task write.
+                    task["status"] = terminal_status
                     # Server-generated task paths, never uploaded filenames.
                     root.resolve().relative_to(self.root)
                     for scratch in (
@@ -1021,6 +1097,10 @@ class TaskStore:
                     "apiKey": self.config.ai_api_key,
                     "model": self.config.ai_model,
                     "visionModel": self.config.ai_vision_model or self.config.ai_model,
+                    "maxTokens": self.config.ai_max_tokens,
+                    "stream": self.config.ai_stream,
+                    "reasoningSplit": self.config.ai_reasoning_split,
+                    "thinking": self.config.ai_thinking,
                 }
             )
             child_env["LINEXCEL_AI_TIMEOUT_SECONDS"] = str(task["budget"]["seconds"])
@@ -1128,8 +1208,12 @@ class WebApp:
         self.config = config
         self.store = TaskStore(config)
         self.resolve_user = resolve_user
+        from linexcel.web_data import DataBrowser
+
+        self.data_browser = DataBrowser(self.store)
 
     def close(self):
+        self.data_browser.close()
         self.store.close()
 
     def __call__(self, environ: dict, start_response: Callable):
@@ -1208,7 +1292,48 @@ class WebApp:
                     or host not in {"localhost", "127.0.0.1", "::1"}
                 ):
                     raise APIError(403, "Import local réservé au serveur loopback")
-            if path == "/" and method == "GET":
+            if data_match := re.fullmatch(
+                r"/api/projects/([a-f0-9]{32})/datasette(?P<path>/.*)?", path
+            ):
+                # The same owner check applies to HTML, assets and JSON requests.
+                # No cookies or host headers are forwarded to an external service.
+                self.store.project_path(owner, data_match[1])
+                data_host = environ.get("HTTP_HOST", "localhost")
+                data_scheme = environ.get("wsgi.url_scheme", "http")
+                if not re.fullmatch(
+                    r"[A-Za-z0-9_.:\[\]-]+", data_host
+                ) or data_scheme not in {"http", "https"}:
+                    raise APIError(400, "Origine de la vue des données invalide")
+                status, data_headers, payload = self.data_browser.request(
+                    owner,
+                    data_match[1],
+                    method,
+                    data_match["path"] or "",
+                    environ.get("QUERY_STRING", ""),
+                    origin=f"{data_scheme}://{data_host}",
+                )
+                headers.extend(
+                    (name, value)
+                    for name, value in data_headers
+                    if name.lower() != "content-type"
+                )
+                content_type = next(
+                    (
+                        value
+                        for name, value in data_headers
+                        if name.lower() == "content-type"
+                    ),
+                    "text/html; charset=utf-8",
+                )
+                headers.append(
+                    (
+                        "Content-Security-Policy",
+                        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                        "frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
+                    )
+                )
+            elif path == "/" and method == "GET":
                 # Ensure relative API URLs remain beneath the configured mount.
                 if not environ.get("PATH_INFO", "/").endswith("/"):
                     status = 303
@@ -1409,6 +1534,8 @@ class WebApp:
             "languages": list(LANGUAGES),
             "defaultSeconds": 600,
             "tokenBudget": self.config.ai_token_budget,
+            "specializedReview": True,
+            "maxTokens": self.config.ai_max_tokens,
         }
 
     def _route(
@@ -1454,6 +1581,8 @@ class WebApp:
                 return self.store.create(owner, body)
         if len(parts) >= 3 and parts[:2] == ["api", "projects"]:
             project_id = parts[2]
+            if parts[3:] == ["data"] and method == "GET":
+                return self.data_browser.metadata(owner, project_id)
             if (
                 len(parts) == 4
                 and parts[3]
@@ -1471,6 +1600,7 @@ class WebApp:
             if len(parts) == 3 and method == "GET":
                 return self.store.snapshot(owner, project_id)
             if len(parts) == 3 and method == "DELETE":
+                self.data_browser.invalidate(owner, project_id)
                 self.store.delete(owner, project_id)
                 return {}
             if parts[3:] == ["export"] and method == "GET":
@@ -1502,6 +1632,22 @@ def create_app(
     return WebApp(WebConfig(Path(data_dir), **options), resolve_user)
 
 
+def _serve_ai_key(base_url: str) -> str | None:
+    """Use an explicit key, or the remote gateway key; keep it off local defaults."""
+    import ipaddress
+
+    explicit = os.getenv("LINEXCEL_AI_API_KEY")
+    if explicit:
+        return explicit
+    host = (urlsplit(base_url).hostname or "").lower()
+    local = host == "localhost" or host.endswith(".localhost")
+    try:
+        local = local or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    return None if local else os.getenv("OPENAI_API_KEY")
+
+
 def serve(args) -> int:
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
@@ -1528,7 +1674,11 @@ def serve(args) -> int:
         ai_model=args.ai_model,
         ai_vision_model=args.ai_vision_model,
         ai_token_budget=args.ai_token_budget,
-        ai_api_key=os.getenv("LINEXCEL_AI_API_KEY"),
+        ai_api_key=_serve_ai_key(args.ai_base_url),
+        ai_max_tokens=args.ai_max_tokens,
+        ai_stream=args.ai_stream,
+        ai_reasoning_split=args.ai_reasoning_split,
+        ai_thinking=args.ai_thinking,
     )
     try:
         with make_server(

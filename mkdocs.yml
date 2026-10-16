@@ -55,6 +55,7 @@ nav:
       - Execution budgets: guide/execution.md
       - Engine safety: guide/engine-safety.md
       - Calculation investigation: guide/calculation-investigation.md
+      - Browsing worksheet data: guide/datasette.md
       - Acceptance evidence: guide/acceptance.md
       - Command line: guide/cli.md
       - Lineage coverage: guide/coverage.md
@@ -62,12 +63,16 @@ nav:
       - Workbook context & screenshots: guide/context.md
       - Choosing an AI provider: guide/providers.md
       - AI documentation: guide/ai.md
+      - Static VBA and add-ins: guide/macros.md
       - Languages: guide/languages.md
       - Data handling: guide/data-handling.md
       - Local acceptance: manual_validation.md
   - Audits:
+      - Continuous improvement plan: continuous_improvement_plan.md
+      - Factual AI review: ai_factual_review.md
       - Open-source packages: package_research.md
       - Power Query: powerquery_audit.md
+      - Historical records: history/index.md
   - API Reference:
       - result: api/result.md
       - analyzer: api/analyzer.md

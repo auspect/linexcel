@@ -151,8 +151,52 @@ def test_disk_queries_are_owner_scoped_and_validate_bounds(indexed):
     for endpoint in ("nodes", "node", "neighborhood", "patterns"):
         path = f"/api/projects/{project}/{endpoint}"
         assert call(app, "GET", path, user="bob")[0] == 404
-    for query in ("limit=201", "limit=0", "offset=-1", "depth=8", "limit=x", "q=a&q=b"):
+    for query in (
+        "limit=201",
+        "limit=0",
+        "offset=-1",
+        "depth=21",
+        "depth=0",
+        "depth=-1",
+        "depth=x",
+        "limit=x",
+        "q=a&q=b",
+        "kind=invalid",
+    ):
         assert call(app, "GET", f"/api/projects/{project}/nodes", query=query)[0] == 400
+
+
+@pytest.mark.parametrize("depth", [3, 8, 20])
+def test_disk_neighborhood_accepts_deeper_bounded_read_only_queries(indexed, depth):
+    app, project = indexed
+    original_tasks = set(app.store.tasks)
+    code, around = call(
+        app,
+        "GET",
+        f"/api/projects/{project}/neighborhood",
+        query=f"nodeId=Sheet%21B450&depth={depth}",
+    )
+    assert code == 200
+    assert around["depth"] == depth
+    assert {node["id"] for node in around["nodes"]} == {"Sheet!A450", "Sheet!B450"}
+    assert not around["pagination"]["truncated"]
+    assert around["pagination"]["limit"] == 200
+    assert set(app.store.tasks) == original_tasks
+
+
+def test_sheet_navigation_can_find_a_formula_beyond_the_first_page(indexed):
+    app, project = indexed
+    endpoint = f"/api/projects/{project}/nodes"
+    original_tasks = set(app.store.tasks)
+    code, page = call(app, "GET", endpoint, query="sheet=Sheet&kind=cell&limit=1")
+    assert code == 200
+    assert [node["id"] for node in page["nodes"]] == ["Sheet!B450"]
+    assert page["pagination"]["total"] == 1
+    code, page = call(app, "GET", endpoint, query="sheet=Sheet&kind=input&limit=1")
+    assert code == 200 and page["nodes"][0]["id"] == "Sheet!A1"
+    code, page = call(app, "GET", endpoint, query="q=Sheet!A1&kind=cell")
+    assert code == 200 and page["nodes"] == []
+    assert set(app.store.tasks) == original_tasks
 
 
 def test_evidence_counts_describe_full_index_not_sample(indexed):
@@ -164,7 +208,10 @@ def test_evidence_counts_describe_full_index_not_sample(indexed):
     graph = evidence_graph(app.store.project_path(owner, project) / "index.sqlite")
     dossier = evidence(graph, None, [])
     assert dossier["nodeCounts"] == {"cell": 1, "input": 450}
-    assert dossier["omittedNodes"] + len(dossier["sample"]) == 451
+    retained = len(dossier["formula_patterns"]) + len(dossier["value_samples"])
+    assert 0 < retained < 451
+    assert dossier["omittedNodes"] + retained == 451
+    assert [item["node_id"] for item in dossier["formula_patterns"]] == ["Sheet!B450"]
     assert dossier["perSheetCounts"]["Sheet"]["input"] == 450
 
 

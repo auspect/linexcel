@@ -7,6 +7,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-10-16
+
+### Added
+
+- Browse imported worksheet data in `serve` with an embedded, read-only Datasette
+  instance: Excel column letters, saved values, filtering, sorting and cell-level
+  formula/source provenance, protected by the workspace's existing ownership.
+
+- Preserve original OOXML formula text, canonical engine formulas and
+  decomposition separately, with file/part/cell fingerprints and shared-formula
+  translation status. Expose these sources in exported and live viewers.
+- Add versioned factual-review instructions across all prompt languages and
+  typed claim-to-evidence checks; distinguish these checks from semantic review.
+- Generate documentation through an initial draft and a bounded specialized
+  review against the same exact source dossier. Retain both prompts, responses,
+  checks and cumulative usage; a failed review cannot become a reviewed draft.
+- Journal received validation completions and their usage immediately, including
+  rejected responses, so an interrupted language does not erase completed calls.
+- Supply explicit engine/cache readings, reference intersection and union
+  facts, node/group identities, directed topology and omission scopes to the
+  factual-review v5 rubric. Check explicitly bound scalar arithmetic claims
+  without presenting these checks as certification of arbitrary prose.
+- Identify literal 3D references across worksheets without inventing their
+  sheet or cell counts; keep opaque decomposition counters separate from
+  established range geometry.
+- Measure XML/presentation spelling, literal cached strings and separate VBA
+  full/graph/excerpt bounds; retain exact sent dossier JSON and its hash
+  independently of the parsed evidence fingerprint.
+- Require explicit claim ledgers in new dossiers, flag missing, empty
+  or multiple ledgers, and distinguish presentation formulas from stored XML
+  in validation-report field roles.
+- Insert original, stored XML and canonical formula proofs deterministically
+  from focal-node fields or an exact retained overview node ID, with separate
+  insertion hashes and bounds,
+  rather than asking the model to copy long source expressions.
+- Read `.xlam` and legacy `.xla` VBA through the public `read_macros` API and
+  `linexcel macros` command. Include static add-in sources in `serve`; add-in
+  reports explicitly omit worksheet calculation and context.
+- Add a pinned public Excel corpus downloader and `--corpus-manifest` acceptance
+  replay. Verify source hashes before and after analysis and keep local source,
+  image, model and review evidence separate.
+- Add a prioritized continuous-improvement plan, open-issue evidence gates,
+  a Markdown cleanup inventory and a specialized factual-review methodology.
+  Study Excelize as an optional formatted-value oracle before adopting a reader.
+- Allow manual acceptance to load an explicitly selected `.env` and use a
+  separate vision endpoint. Authenticate gateway model discovery without
+  forwarding gateway credentials to a separate loopback runtime.
+- Add explicit `--reasoning-split` acceptance configuration for compatible
+  providers, keeping their reasoning blocks out of displayed documentation.
+- Add opt-in streamed text and vision responses with final token usage; require
+  a complete `stop` finish and close interrupted streams. Expose `--api-stream`
+  in manual acceptance without changing the default provider behavior.
+- Add explicit `--api-thinking` manual-validation configuration for providers
+  supporting it and retain final response text in completion receipts,
+  including rejected length-limited responses.
+- Expose response limits, streaming, reasoning split and thinking settings in
+  `serve`; accept the generic gateway API key only for remote endpoints and
+  invalidate completed documentation caches when response settings change.
+
+### Fixed
+
+- Keep a stable lazy graph canvas, common-node positions and camera while
+  selecting nodes, polling calculations or returning from another tab; restore
+  bounded navigation snapshots on Back instead of rebuilding the whole view.
+- Calculate each visited formula cell immediately in its own targeted worker,
+  including the first graph selection. Old manual-mode preferences no longer
+  suppress calculation; source inputs and static VBA remain read-only.
+- Keep result-loading and calculation failures local to their node; a delayed
+  stored result cannot interrupt a newer selection or prevent recalculation.
+- Retry refused or failed calculations without falling back to an older result,
+  share active work only before cancellation, and publish terminal task status
+  atomically with its metadata.
+- Show source formulas once in the graph reader, move canonical/XML proofs into
+  an expandable section, and shorten graph controls and help text.
+- Keep primary graph navigation compact on mobile and move secondary controls
+  into accessible options; make local exploration available from dense views.
+- Synchronize the canvas hit-test geometry after readability notices move it,
+  preserving native card clicks, camera and positions at desktop/mobile sizes.
+- Reset a newly selected source reader to its heading and restore its scroll
+  on Back; clear graph hover highlights when the pointer leaves the canvas.
+- Distinguish active cell, source input and static VBA guidance instead of
+  referring to the removed recalculation-mode switch; scope dense-view and
+  empty-graph guidance to static procedures when inspecting add-ins.
+- Keep the graph sheet picker complete, in workbook order and mounted during
+  refreshes; report selection progress and explain cells without relationships.
+- Explore graph neighborhoods from 1 to 20 levels with accessible increment
+  controls, mixed-direction paths and truthful node-budget/loading notices.
+- Open the Captures tab immediately, show loading and retry errors locally,
+  and recover older saved images when recent capture results are empty.
+- Keep lazy graph counts and edges within the actual loaded neighborhood;
+  prevent range memberships outside that neighborhood from crashing the canvas.
+- Preserve native renderer exit codes in capture failures and start with an
+  explicit 1024 MiB budget, bounded by server limits. Retain requested lower
+  budgets, worker memory isolation and the macro-disabled rendering profile.
+- Preserve literal string differences in the viewer's separator-heuristic label;
+  the label no longer claims numerical or textual equality.
+- Inspect large sheet images through complete, native-size evidence crops with
+  image hashes and coordinates; bound observations to the regions actually sent.
+- Isolate each native vision crop in its own request so a neighboring image
+  cannot supply its quotations.
+- Retry invalid vision JSON once with a complete new response; retain both
+  attempts, crop identity, receipts and token usage, without trimming output.
+- Preserve apostrophes and literal HTML entities in visual quotations in the
+  live and exported viewers.
+- Keep a searchable, paginated source reader available when the exported
+  viewer's graph library fails to load, with explicit bounds on relation lists.
+- Resolve misplaced focal formula tokens in workbook overviews to explicit
+  missing evidence, without borrowing source text from a sampled node.
+- Remove code wrappers around formula placeholders before inserting standalone
+  source blocks, preserving readable proof fences and the unchanged raw response.
+- Resolve exactly uniform or fully transparent image regions from their actual
+  decoded pixels. Record local evidence with zero model requests, reject text
+  claims on those regions and retain real vision requests for nonuniform crops.
+- Bind overview formula proofs to an explicitly selected retained node rather
+  than an unavailable focal field or a neighboring example.
+
+- Bound workbook overview examples with explicit omission counts while keeping
+  each retained formula's source evidence intact; preserve static VBA relation
+  types and uncertainty in the lazy index and compatibility export.
+- Keep sheetless VBA nodes in reproducible acceptance samples; expose explicit
+  API retry configuration and sanitized failure-stage evidence.
+- Use disposable LibreOffice profiles with no trusted macro locations when
+  rendering or recalculating validation workbooks; never execute imported VBA.
+- Keep expanded operation and AI settings inside the `serve` sidebar. Preserve
+  all-sheet navigation, open input cells before internal names on data-only
+  sheets, handle empty sheets and ignore stale selection replies.
+  Fit the workbook graph and allow its reader to be hidden for an overview.
+- Remove the unintended self-cycle from the broken-reference stress scenario;
+  record formula count, grouping, engine version and value provenance so its
+  timing cannot be confused with recovery or large-workbook acceptance.
+
+### Documentation
+
+- Archive eleven superseded task mandates and scoped reviews with their original
+  bodies, dated scope banners and search exclusion. Keep current policy,
+  acceptance requirements and surviving evidence gates in the active guides.
+- Document remaining uncertainty in AI prose and vision after specialized
+  review; source integrity and successful generation do not certify facts.
+
 ## [1.14.0] — 2026-10-08
 
 ### Added
@@ -1417,3 +1556,5 @@ workbook overview now sees the workbook, not only its formula graph.
 - Optional AI documentation via Google Gemini
 - LibreOffice screenshot rendering
 - PyPI trusted publishing
+- Cancel an embedded Datasette request when its deadline expires, return a
+  scoped timeout error and leave subsequent data browsing usable.
