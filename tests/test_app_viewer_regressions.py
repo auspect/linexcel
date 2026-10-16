@@ -23,10 +23,24 @@ def browser():
 
 
 @pytest.fixture(params=[(1440, 900), (390, 844)])
-def app(browser, request):
+def app(browser, request, project_response_delay_ms):
     width, height = request.param
     page = browser.new_page(viewport={"width": width, "height": height})
     page.add_init_script("localStorage.setItem('linexcel-manual-recalculation','true')")
+    if project_response_delay_ms:
+        page.add_init_script(
+            """(() => {
+                const originalFetch = window.fetch;
+                window.fetch = async (...args) => {
+                    const response = await originalFetch(...args);
+                    const path = new URL(args[0], location.href).pathname;
+                    if (path === '/api/projects/p') {
+                        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+                    }
+                    return response;
+                };
+            })();""".replace("DELAY_MS", str(project_response_delay_ms))
+        )
     project = {"id": "p", "name": "Navigation", "revision": 1}
     nodes = [
         {"id": "First!A1", "sheet": "First", "cell": "A1", "kind": "input", "value": 1},
@@ -177,6 +191,9 @@ def app(browser, request):
     page.route("**/*", handle)
     page.goto("http://localhost/")
     page.locator("[data-project='p']").click()
+    # A click does not await openProject's fetch or its localStorage update.
+    # Reload tests must start from the rendered, persisted initial project.
+    playwright.expect(page.locator("#node-list [data-node='First!A1']")).to_be_visible()
     yield page, requests, errors, delayed, fulfill
     for route, data in delayed:
         try:
@@ -184,6 +201,11 @@ def app(browser, request):
         except playwright.Error:
             pass
     page.close()
+
+
+@pytest.fixture
+def project_response_delay_ms(request):
+    return getattr(request, "param", 0)
 
 
 def test_expanded_sidebar_fields_stay_inside_sidebar(app):
@@ -554,6 +576,9 @@ def test_depth_change_restarts_pending_target_and_ignores_old_depth(app):
     assert not errors
 
 
+@pytest.mark.parametrize(
+    "project_response_delay_ms", [0, 200], indirect=True, ids=["immediate", "delayed"]
+)
 def test_project_intent_cancels_old_selection_before_project_response(app):
     page, requests, errors, _, fulfill = app
     next_project = {"id": "next", "name": "Next workbook", "revision": 1}
