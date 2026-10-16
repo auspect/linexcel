@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from graph_test_helpers import open_graph_options
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -243,11 +244,13 @@ def test_lazy_pages_search_neighborhood_and_scoped_notices(browser, viewport):
         )
         page.locator("[data-tab='graph']").click()
         assert "Data!A400" in page.locator("#graph-notice").inner_text()
+        open_graph_options(page)
         assert page.locator("#graph-lazy-notice").is_visible()
         page.locator("#graph-search").fill("A401")
         page.locator("#graph-results [data-related='Data!A401']").click()
         page.locator("#graph-preview h3").get_by_text("Data · A401").wait_for()
-        page.locator("#graph-depth").select_option("2")
+        page.locator("#graph-depth").fill("2")
+        page.locator("#graph-depth").press("Tab")
         page.wait_for_function(
             "document.querySelector('#graph-notice').textContent"
             ".includes('profondeur 2')"
@@ -465,14 +468,20 @@ def test_pending_result_cannot_evaluate_same_address_in_another_project(browser)
             delayed.append(route)
             return
         elif path.endswith("/tasks"):
-            operations.append(path)
+            payload = route.request.post_data_json
+            assert payload["operation"] == "evaluate"
+            assert payload["force"] is True
+            operations.append((path, payload))
             body = {
                 "task": {
-                    "id": "new",
+                    "id": path.split("/")[1] + "-new",
                     "nodeId": node["id"],
                     "operation": "evaluate",
                     "status": "succeeded",
-                    "result": {"status": "completed", "value": 2},
+                    "result": {
+                        "status": "completed",
+                        "value": 2 if "second" in path else 700,
+                    },
                 }
             }
         else:
@@ -485,6 +494,8 @@ def test_pending_result_cannot_evaluate_same_address_in_another_project(browser)
         page.locator("[data-project='first']").click()
         with page.expect_request("**/tasks/saved"):
             page.locator("[data-node='Data!A1']").click()
+        # The new calculation starts while the saved GET is still pending.
+        assert [path for path, _ in operations] == ["projects/first/tasks"]
         page.locator("[data-project='second']").click()
         page.get_by_text("second", exact=True).filter(
             has_not=page.locator("small")
@@ -494,20 +505,30 @@ def test_pending_result_cannot_evaluate_same_address_in_another_project(browser)
         with page.expect_response("**/tasks/saved"):
             delayed[0].fulfill(
                 body=json.dumps(
-                    {"task": {**saved, "result": {"status": "completed", "value": 2}}}
+                    {"task": {**saved, "result": {"status": "completed", "value": 999}}}
                 ),
                 content_type="application/json",
             )
         page.evaluate(
             "()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))"
         )
-        assert operations == ["projects/second/tasks"]
+        assert [path for path, _ in operations] == [
+            "projects/first/tasks",
+            "projects/second/tasks",
+        ]
+        assert (
+            page.locator("#node-detail .value-card")
+            .nth(1)
+            .locator("strong")
+            .inner_text()
+            == "2"
+        )
     finally:
         page.close()
 
 
 @pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
-def test_server_hierarchy_and_manual_calculation_are_independent(
+def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
     browser, viewport, tmp_path
 ):
     from openpyxl import Workbook
@@ -529,6 +550,7 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
     build_index(source, index)
     build_graph(index, artifact)
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    page.add_init_script("localStorage.setItem('linexcel-manual-recalculation','true')")
     errors, operations, requests = [], [], []
     page.on("pageerror", lambda error: errors.append(str(error)))
     project = {"id": "p", "name": "Structure without calculation"}
@@ -571,7 +593,10 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
                 "status": "running"
                 if delay_build and request["operation"] == "build_graph"
                 else "succeeded",
-                "result": {"status": "completed", "value": 205},
+                "result": {
+                    "status": "completed",
+                    "value": 410 if request.get("nodeId") == "Result!B2" else 205,
+                },
             }
             tasks.append(task)
             body = {"task": task}
@@ -595,6 +620,7 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
             "document.querySelectorAll('#node-list [data-node]').length===0"
         )
         page.locator("#tab-graph").click()
+        open_graph_options(page)
         page.locator("#graph-build").click()
         page.wait_for_function(
             "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
@@ -613,9 +639,10 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
         requests.clear()
         operations.clear()
         tasks.clear()
-        page.locator("#manual-recalculation").check()
+        assert page.locator("#manual-recalculation").count() == 0
         page.locator("#tab-graph").click()
         assert not any("graph-view" in r for r in requests)
+        open_graph_options(page)
         page.locator("#graph-build").click()
         page.wait_for_function(
             "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
@@ -623,6 +650,9 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
         assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
         assert operations[0]["budget"]["seconds"] == 600
         assert not any("/structure" in r for r in requests)
+        # The old canvas can already contain two nodes while the new hierarchy
+        # request is still completing. Wait for the committed mode too.
+        playwright.expect(page.locator("#graph-lazy-notice")).to_be_hidden()
         assert page.locator("#graph-lazy-notice").is_hidden()
         assert page.locator("#graph-depth").is_disabled()
         page.evaluate(
@@ -646,7 +676,12 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
             cy.zoom(.8);cy.pan({x:123,y:234});window.savedGraph=cy;
             cy.nodes().filter(n=>n.data('nodeId')==='Result!B1').emit('tap');} """)
         page.locator("#graph-preview h3").get_by_text("Result · B1").wait_for()
-        assert len(operations) == 1
+        page.wait_for_function("!document.querySelector('#graph-recalculate').disabled")
+        assert len(operations) == 2
+        assert operations[-1]["operation"] == "evaluate"
+        assert (
+            operations[-1]["nodeId"] == "Result!B1" and operations[-1]["force"] is True
+        )
         assert page.evaluate(
             "document.querySelector('#graph-canvas')._cy===window.savedGraph"
         )
@@ -656,10 +691,8 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
         page.wait_for_function(
             "document.querySelector('#graph-preview').textContent.includes('205')"
         )
-        assert len(operations) == 2 and operations[-1]["force"] is True
+        assert len(operations) == 3 and operations[-1]["force"] is True
         assert operations[-1]["budget"]["seconds"] == 120
-        page.locator("#manual-recalculation").uncheck()
-        assert len(operations) == 2
         page.evaluate(
             "window.savedGraph.nodes().filter(n=>n.data('nodeId')==='Result!B2').emit('tap')"
         )
@@ -667,28 +700,34 @@ def test_server_hierarchy_and_manual_calculation_are_independent(
             "document.querySelector('#graph-preview h3').textContent.includes('B2')"
         )
         page.wait_for_function("!document.querySelector('#graph-recalculate').disabled")
-        assert len(operations) == 3 and operations[-1]["force"] is False
-        page.locator("#manual-recalculation").check()
+        assert len(operations) == 4 and operations[-1]["force"] is True
+        assert operations[-1]["nodeId"] == "Result!B2"
+        assert "410" in page.locator("#graph-preview").inner_text()
         for name in ["nodes", "sheets", "captures", "tasks", "diagnostics"]:
             page.locator(f"#tab-{name}").click()
             assert page.locator("#graph-build-status").is_hidden()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.locator("#tab-graph").click()
+        open_graph_options(page)
         page.locator("#graph-neighborhood").click()
+        open_graph_options(page)
         assert page.locator("#graph-lazy-notice").is_visible()
         page.reload()
         page.locator("[data-project='p']").click()
-        assert page.locator("#manual-recalculation").is_checked()
+        assert page.locator("#manual-recalculation").count() == 0
         page.locator("#tab-graph").click()
         fail_view = True
+        open_graph_options(page)
         page.locator("#graph-build").click()
         page.locator("#graph-build-status").get_by_text("Structure modifiée").wait_for()
         playwright.expect(page.locator("#graph-build")).to_be_enabled()
         fail_view, delay_build = False, True
+        open_graph_options(page)
         page.locator("#graph-build").click()
         page.locator("#graph-build-cancel").wait_for()
         page.reload()
         page.locator("#tab-graph").click()
+        open_graph_options(page)
         page.locator("#graph-build-cancel").click()
         playwright.expect(page.locator("#graph-build")).to_be_enabled()
         assert tasks[-1]["status"] == "cancelled"

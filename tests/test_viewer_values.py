@@ -980,12 +980,13 @@ class TestSeparatorsAreNotADisagreement:
         html = render_html(graph(value="6.7 €", cachedValue="6,7 €"))
         assert "o.cachedAgreement ? o.cachedAgreement !== 'differ'" in html
 
-    def test_a_formatting_difference_is_named_rather_than_flagged(self):
+    def test_a_separator_heuristic_does_not_claim_string_equality(self):
         html = render_html(
             graph(value="6.7 €", cachedValue="6,7 €", cachedAgreement="format")
         )
         assert EN["value_match_format"] in html
-        assert "different number separators" in EN["value_match_format"]
+        assert "Different strings" in EN["value_match_format"]
+        assert "possible number separator difference" in EN["value_match_format"]
 
     def test_a_real_difference_is_still_loud(self):
         html = render_html(

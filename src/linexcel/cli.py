@@ -26,6 +26,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    macros = sub.add_parser(
+        "macros",
+        help="Read VBA source from a workbook or .xlam/.xla add-in; never execute it.",
+    )
+    macros.add_argument("workbook", type=Path)
+    macros.add_argument(
+        "-o", "--output", type=Path, help="JSON report (default: stdout)."
+    )
+
     serve = sub.add_parser("serve", help="Start the local lazy web application.")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--mount-path", default="")
@@ -62,6 +71,10 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--ai-model", default="qwen3.8")
     serve.add_argument("--ai-vision-model", default=None)
     serve.add_argument("--ai-token-budget", type=int, default=16000)
+    serve.add_argument("--ai-max-tokens", type=int, default=12000)
+    serve.add_argument("--ai-stream", action="store_true")
+    serve.add_argument("--ai-reasoning-split", action="store_true")
+    serve.add_argument("--ai-thinking", choices=("disabled", "adaptive"), default=None)
 
     analyze = sub.add_parser(
         "analyze",
@@ -71,7 +84,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "Deterministic only unless --ai-docs is passed."
         ),
     )
-    analyze.add_argument("workbook", type=Path, help="Path to an .xlsx/.xlsm file.")
+    analyze.add_argument(
+        "workbook",
+        type=Path,
+        help="Path to .xlsx/.xlsm/.xlam, or .xla (static VBA only).",
+    )
     analyze.add_argument(
         "-o",
         "--output",
@@ -360,6 +377,14 @@ def _run_analyze(args: argparse.Namespace) -> int:
     from linexcel.structure import inspect_workbook
 
     if args.dry_run:
+        if args.workbook.suffix.lower() in {".xla", ".xlam"}:
+            from linexcel.macros import valid_excel_header
+
+            with args.workbook.open("rb") as source:
+                if not valid_excel_header(source.read(8), args.workbook.name):
+                    raise ValueError("Expected an OOXML .xlam or OLE .xla add-in")
+            print("Add-in report: static VBA only; worksheet analysis is unavailable.")
+            return 0
         _report_dry_run(args.workbook, inspect_workbook(args.workbook.read_bytes()))
         return 0
     from linexcel.execution import ExecutionPolicy
@@ -520,6 +545,16 @@ def main(argv: list[str] | None = None) -> int:
             from linexcel.web import serve
 
             return serve(args)
+        if args.command == "macros":
+            from linexcel import read_macros
+
+            report = read_macros(args.workbook)
+            text = json.dumps(report, ensure_ascii=False, indent=2)
+            if args.output is None or str(args.output) == "-":
+                print(text)
+            else:
+                args.output.write_text(text, encoding="utf-8")
+            return 3 if report["status"] == "partial" else 0
         return _run_analyze(args)
     except KeyboardInterrupt:
         return 130

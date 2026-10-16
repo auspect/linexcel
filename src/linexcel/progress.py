@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -53,7 +53,9 @@ class Reporter:
         self._live = bool(self._console) and sys.stderr.isatty()
 
     @contextmanager
-    def phase(self, label: str, total: int | None = None) -> Iterator[Phase]:
+    def phase(
+        self, label: str, total: int | None = None
+    ) -> Generator[Phase, None, None]:
         """One named phase, timed, optionally with a known number of steps."""
         if _observer is not None:
             _observer(label)

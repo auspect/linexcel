@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from graph_test_helpers import open_graph_options, tap_graph_node
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -121,15 +122,15 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
         # Poll only the active task, not the potentially large project graph.
         assert "api/tasks/0" in requests
         assert requests.count("api/projects/p1") == 1
-        assert operations[0]["budget"] == {"seconds": 120, "memoryMb": 512}
+        assert operations[0]["budget"] == {"seconds": 120, "memoryMb": 1024}
         page.locator("[data-node='Budget!A1']").click()
         page.wait_for_function(
             "document.querySelector('#recalculate').disabled === false"
         )
-        # The server owns version-aware cache reuse, even for a known node.
+        # Each deliberate node access asks for a new targeted calculation.
         assert len(operations) == 2
-        assert operations[-1]["force"] is False
-        assert operations[0]["force"] is False
+        assert operations[-1]["force"] is True
+        assert operations[0]["force"] is True
         assert "3" in page.locator("#node-detail").inner_text()
         for name in ["nodes", "graph", "sheets", "captures", "tasks", "diagnostics"]:
             page.locator(f"[data-tab='{name}']").click()
@@ -165,7 +166,9 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
         assert operations[-1]["force"] is True
         page.locator("[data-tab='captures']").click()
         page.locator("#capture").click()
-        notice = page.locator("#capture-results .notice")
+        notice = page.locator("#capture-results > .notice").filter(
+            has_text="Rendu LibreOffice"
+        )
         notice.wait_for()
         assert "Rendu LibreOffice" in notice.inner_text()
         page.locator("[data-tab='nodes']").click()
@@ -357,21 +360,18 @@ def test_compact_range_membership_navigation(browser, viewport):
         page.mouse.up()
         assert canvas.evaluate("element => element._cy.pan()") != before_pan
         page.locator("#graph-fit").click()
-        page.locator("#graph-depth").select_option("2")
+        page.locator("#graph-depth").fill("2")
+        page.locator("#graph-depth").press("Tab")
         assert canvas.evaluate("element => element._cy.nodes().length") == 3
         page.locator("#graph-sheet").select_option("Data")
         assert canvas.evaluate("element => element._cy.nodes().length") == 3
         assert "Data · E4" in page.locator("#graph-preview").inner_text()
         page.locator("#graph-sheet").select_option("")
-        page.locator("#graph-depth").select_option("1")
+        page.locator("#graph-depth").fill("1")
+        page.locator("#graph-depth").press("Tab")
+        open_graph_options(page)
         page.locator("#graph-reset").click()
-        canvas.scroll_into_view_if_needed()
-        box = canvas.bounding_box()
-        position = canvas.evaluate(
-            "element => element._cy.getElementById('Data!E1:E1000000')"
-            ".renderedPosition()"
-        )
-        page.mouse.click(box["x"] + position["x"], box["y"] + position["y"])
+        tap_graph_node(page, "Data!E1:E1000000")
         page.wait_for_function(
             "document.querySelector('#graph-preview').textContent.includes('E1:E1000000')"
         )
@@ -539,6 +539,7 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
                 page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
                 < 0.65
             )
+            open_graph_options(page)
             page.locator("#graph-reset").click()
             assert (
                 page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
@@ -1014,6 +1015,7 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
         )
         if viewport[0] > 1100:
             before = page.locator("#graph-preview").bounding_box()["width"]
+            open_graph_options(page)
             page.locator("#graph-reader-width").focus()
             page.keyboard.press("ArrowRight")
             assert page.locator("#graph-preview").bounding_box()["width"] > before

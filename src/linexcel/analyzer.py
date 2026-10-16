@@ -19,6 +19,7 @@ from linexcel.doc_evidence import read_defined_name_evidence
 from linexcel.engine import CHAIN_LAYERS_WARNING, boot_engine
 from linexcel.execution import ExecutionPolicy, add_coverage, run_isolated
 from linexcel.external import find_workbooks, read_external_links, resolve_books
+from linexcel.formula_source import enrich_graph_sources
 from linexcel.graph import GraphBuilder
 from linexcel.limits import validate_limits
 from linexcel.loader import MAX_CELLS_PER_SHEET, MAX_DENSE_CELLS, load_cached_values
@@ -210,6 +211,16 @@ def analyze_workbook(
             policy,
         )
     warnings: list[str] = []
+    if filename.lower().endswith((".xlam", ".xla")):
+        from linexcel.macros import OLE_MAGIC, analyze_macro_addin, valid_excel_header
+
+        if not valid_excel_header(data[:8], filename):
+            raise ValueError("Expected an OOXML .xlam or an OLE .xla add-in")
+
+        if filename.lower().endswith(".xlam") or data.startswith(OLE_MAGIC):
+            return analyze_macro_addin(
+                data, filename, refs_dir=refs_dir, targets=targets
+            )
     _t0 = time.perf_counter()
     reporter = Reporter(verbose)
     target_cells = _parse_targets(targets) if targets else None
@@ -403,6 +414,7 @@ def analyze_workbook(
     if external_warning:
         warnings.append(external_warning)
 
+    enrich_graph_sources(data, nodes.values(), warnings)
     reporter.start_phase("graph assembly")
     graph = {
         "meta": {

@@ -46,7 +46,7 @@ def test_provider_receives_disagreement_and_partial_neighbor_evidence():
     received = []
 
     def provider(system, user, **kwargs):
-        received.append(json.loads(user.split("\n", 1)[1]))
+        received.append(json.JSONDecoder().raw_decode(user.split("\n", 1)[1])[0])
         return "A value differs from its cache; no evaluated breakdown available."
 
     document_nodes(graph, [node["id"]], provider=provider)
@@ -104,7 +104,10 @@ def test_whole_markdown_wrapper_is_removed_from_node_cards(fence):
         ["S!A1"],
         provider=lambda *args, **kwargs: f"```{fence}\n**Description**\n```",
     )
-    assert docs == {"S!A1": "**Description**"}
+    assert docs["S!A1"].endswith("\n\n**Description**")
+    # The fake response has no required ledger.
+    assert "AI evidence review" in docs["S!A1"]
+    assert "```" not in docs["S!A1"]
 
 
 def test_real_code_fences_and_surrounding_prose_are_preserved():
@@ -116,17 +119,19 @@ def test_real_code_fences_and_surrounding_prose_are_preserved():
         assert _unwrap_markdown(text) == text
 
 
-def test_vision_card_unwraps_only_the_complete_markdown_envelope():
+def test_vision_card_accepts_only_the_complete_region_json_envelope():
+    from vision_helpers import image_bytes, region_response
+
     class Provider:
         def generate(self, system_prompt, user_prompt, **kwargs):
             return "Unused"
 
         def generate_with_image(self, system_prompt, user_prompt, image, **kwargs):
-            return "```markdown\n**Layout**: two columns.\n```", TokenUsage()
+            return "```json\n" + region_response(user_prompt) + "\n```", TokenUsage()
 
-    assert describe_images({"Sheet": b"synthetic image"}, provider=Provider()) == {
-        "Sheet": "**Layout**: two columns."
-    }
+    docs = describe_images({"Sheet": image_bytes()}, provider=Provider())
+    assert "Readable header" in docs["Sheet"]
+    assert "r0-c0" in docs["Sheet"]
 
 
 def test_no_matching_names_does_not_mean_no_workbook_names():

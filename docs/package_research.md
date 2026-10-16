@@ -1,14 +1,17 @@
 # Open-source package research
 
-Findings checked on 2026-10-07. HTTPX provider configuration is implemented in
-the accompanying code change; the other candidates remain proposals.
+Initial findings checked on 2026-10-07; Excelize added on 2026-10-09.
+HTTPX provider configuration is implemented; the other candidates remain proposals.
 Package capabilities and licenses come from upstream sources.
 Integration priorities and expected benefits are judgments based on this
 repository. No candidate was benchmarked or security-audited in this task.
 
-Start with transport configurability, property testing, dependency auditing and
-repeatable profiling. Keep the existing Rust formula engine and cached-value
-reader until measurements demonstrate a better alternative.
+Start with reproduced interface defects, evidence-based AI review, property
+testing and repeatable profiling. Trial Excelize as an optional display-value
+oracle. Keep the existing Rust formula engine and cached-value reader until
+measurements demonstrate a better alternative. The
+[continuous improvement plan](continuous_improvement_plan.md) separates active
+work, issue evidence gates and historical Markdown cleanup.
 
 ## Repository evidence
 
@@ -19,7 +22,7 @@ dense worksheet allocations. Lazy analysis already uses SQLite and compressed
 payloads. Replacing these paths with pandas or another dataframe library needs
 a specific measured bottleneck.
 
-The historical [reliability study](reliability_study.md) records substantial
+The historical [reliability study](history/pre-1.15/reliability_study.md) records substantial
 improvements from fixing XML scanning and bounded sheet context. Those are
 earlier measurements, not measurements of the present tree or these packages.
 `loader.py`, `lazy_store.py` and `powerquery.py` still contain explicit stdlib
@@ -33,6 +36,7 @@ checks types, tests, browser behavior and builds. Dependabot updates the lockfil
 | Priority | Candidate | Benefit to test | Integration cost | Decision |
 | --- | --- | --- | --- | --- |
 | P1 | HTTPX | Custom gateways, proxies, TLS and deterministic transport tests | Low; declared in the optional AI extra | Configurable provider implemented; retain integration tests |
+| P1 | Excelize for Python | Compare source number formatting and displayed values independently | Medium; native library, locale policy, typed-value separation and fixtures | Trial as an optional display oracle; no loader or engine replacement yet |
 | P1 | Hypothesis | Find parser, date and lineage edge cases | Medium; test generators and independent invariants | Add to development tooling when those tests are implemented |
 | P1 | pip-audit | Detect published dependency vulnerabilities | Low; CI job and triage policy | Trial in CI against locked exported dependencies |
 | P1 | defusedxml | Explicit policy for DTDs and entities | Medium; audit parsing sites and failure semantics | Trial alongside archive limits |
@@ -46,6 +50,65 @@ checks types, tests, browser behavior and builds. Dependabot updates the lockfil
 P1 means a useful next experiment, not proof that the package fixes a reproduced
 defect. None of these candidates requires a paid service. Costs consist of
 integration time, CI runtime, profiling overhead and dependency maintenance.
+
+### Excelize for Python
+
+The Python project is distributed as `excelize`, uses BSD-3-Clause, and lists
+Windows, Linux and macOS binaries. It covers OOXML workbook families, charts,
+images and styles. These are useful capabilities to study alongside linexcel's
+read-only analysis; an editing API is not a reason to expand linexcel's scope.
+[Python project and license](https://github.com/xuri/excelize-py),
+[distribution setup](https://github.com/xuri/excelize-py/blob/main/setup.py).
+
+`get_cell_value` returns a string with number formatting applied when supported;
+otherwise it returns the unformatted value. `get_rows` has similar formatting
+behavior and omits trailing empty cells. Merged-cell reads repeat the merged
+value. The documented calculation API has limitations including arrays,
+intersections, table formulas and iteration. This supports a formatting trial,
+not a claim of complete Excel calculation parity.
+[Python cell API](https://xuri.me/excelize-py/en/cell.html#get-cell-value).
+
+`Options(raw_cell_value=True)` disables number formatting. Locale and date/time
+pattern options make the display policy explicit. Opening options also include
+ZIP expansion and worksheet/shared-string XML thresholds; use deliberate limits
+inside the existing supervised worker. A raw string remains distinct from a
+typed cache and from the original XML token.
+[Python workbook options](https://xuri.me/excelize-py/en/workbook.html).
+
+The wrapper exposes `get_cell_type`, `get_cell_style`, `get_cell_formula` and a
+streaming `rows()` iterator. Its Python implementation calls a native shared
+library; the inspected main-branch `go.mod` pins a Go Excelize pseudo-version.
+Record the installed Python distribution, native artifact hash and Go version
+actually used. Do not infer a released wheel's capabilities from the latest Go
+documentation or the Python main branch.
+[Python wrapper source](https://github.com/xuri/excelize-py/blob/main/excelize.py),
+[Go dependency pin](https://github.com/xuri/excelize-py/blob/main/go.mod).
+
+Decision: build a development-only comparator before adding a runtime extra.
+The user's experience of accurate formatting and good speed is a useful test
+hypothesis; this review has not installed or benchmarked Excelize. Compare the
+same immutable workbook bytes through linexcel, Excelize and worksheet XML.
+Keep separate records for raw source token/type, typed cached value, format code,
+formatted text, formatter version/options and any recalculated result.
+Formatted text must never become an engine input or an agreement verdict.
+
+Use small checked fixtures for currency, percentages, scientific notation,
+fractions, leading zeros, literal escapes, multi-section/conditional formats,
+locale tags, Unicode, dates/times in both epochs, serial 60, durations, errors,
+booleans, empty strings, missing caches and merged cells. Capture selected
+reference strings from Excel under a recorded locale; LibreOffice is a second
+implementation, not proof of exact Excel rendering. Separately inspect rich
+text, conditional styling, column-width clipping and visual layout in images:
+a formatted string alone does not establish the original screen appearance.
+
+Gate adoption on case-level mismatches, repeated fresh-process output equality
+under fixed options, worker peak memory, temporary-file cleanup, streaming versus
+materialized reads, cold/warm timings, packaging on supported Python versions
+and Windows/Linux. Benchmark against both the current calamine path and its
+openpyxl fallback on identical dense and sparse inputs. Promote a bounded,
+optional display adapter only if it improves verified formatting without losing
+typed-value provenance. Consider cache-reader replacement separately, after
+typed semantic and end-to-end performance evidence.
 
 ### HTTPX and RESPX
 
@@ -191,12 +254,14 @@ a whole large workbook index would undermine its memory design.
 
 ## Adoption sequence and evidence gates
 
-1. Retain the implemented AI transport and its offline request assertions.
-2. Add targeted generated tests and a locked dependency audit.
-3. Establish phase timing and worker-memory baselines on fixed synthetic files.
-4. Trial hardened XML parsing with streamed archive limits.
-5. Evaluate JSON acceleration and an M parser oracle independently.
-6. Prototype approximate viewer search only against a defined user task.
+1. Fix reproduced interface defects and retain the AI transport assertions.
+2. Version the specialized AI review method and its source-evidence checks.
+3. Trial Excelize display formatting with an independent reference corpus.
+4. Add targeted generated tests and a locked dependency audit.
+5. Establish phase timing and worker-memory baselines on fixed synthetic files.
+6. Trial hardened XML parsing with streamed archive limits.
+7. Evaluate JSON acceleration and an M parser oracle independently.
+8. Prototype approximate viewer search only against a defined user task.
 
 For each runtime change, require equal or clearer provenance and failure
 messages, semantic regression coverage, and measured benefit where performance

@@ -1,3 +1,15 @@
+---
+search:
+  exclude: true
+---
+
+> **Historical record, archived 2026-10-16.** This document describes an older
+> task, source snapshot or experiment. Its commands, ownership assignments,
+> validation waivers and merge verdicts are not current instructions or current
+> acceptance evidence. The original body follows unchanged. Use the
+> [current plan](../../continuous_improvement_plan.md) and
+> [local acceptance contract](../../manual_validation.md) for present work.
+
 # Mandat — Builder viewer linexcel
 
 Tu travailles dans le repo git `/home/phili/linexcel`, branche `polish/viewer-impeccable`. C'est le package PyPI linexcel (analyse de lignage Excel). Le fichier à améliorer : `src/linexcel/assets/viewer.html` (1945 lignes, un template autonome HTML+CSS+JS inline qui génère le dashboard interactif). Il est chargé par `src/linexcel/viewer.py` (render_html) et la sortie est `uvx linexcel analyze f.xlsx`.

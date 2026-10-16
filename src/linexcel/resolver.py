@@ -144,20 +144,18 @@ class _Budget:
 class _ValueResolver:
     """Single entry point for reading the value of a cell.
 
-    The engine is all-or-nothing: one cell pointing at a missing sheet makes
-    ``evaluate_all`` raise, and from then on every formula cell reads back as
-    ``None`` — the whole workbook loses its values because of one bad
-    reference. So each read is resolved in order: engine value, per-cell
-    recalculation, isolated re-evaluation of the formula in the scratch sheet
-    (with the IFERROR/IFNA fallback branch when the guarded expression itself
-    cannot be computed), and finally the value cached in the file.
+    Native Excel errors, including missing-sheet #REF! results, remain engine
+    readings. Missing values or evaluation failures use bounded recovery:
+    per-cell recalculation, scratch-sheet evaluation with resolved precedents,
+    then the value cached in the file. Scratch recovery with an inactive engine
+    refuses IFERROR/IFNA fallbacks when required precedents are unavailable.
+    Quarantined or unavailable formulas retain separate paths.
 
-    A scratch evaluation only sees constants: a reference to another *formula*
-    cell reads back as blank, so ``=A3+A4`` silently yielded 0 and
-    ``=SUM(A1:A7)`` counted the constants only. Recovery therefore resolves the
-    precedents of a formula first, deepest one first, and feeds each recovered
-    value back into the engine as a constant so the next evaluation — direct
-    reference or range — reads a number instead of a formula it cannot compute.
+    After an engine failure, scratch evaluation resolves formula precedents
+    first and feeds recovered readings back as constants. Otherwise an
+    unavailable formula precedent could read as blank and manufacture a partial
+    result. Depth, range and evaluation budgets bound this traversal; incomplete
+    recovery does not count as a recalculated value.
     """
 
     def __init__(

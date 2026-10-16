@@ -4,13 +4,15 @@ import io
 import json
 import re
 import struct
+import subprocess
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, Reference
 
 from linexcel import analyze
-from linexcel.insights import render_workbook_screenshots
+from linexcel.insights import WorkbookRenderError, render_workbook_screenshots
 
 
 def chart_workbook():
@@ -103,3 +105,28 @@ def test_embedded_images_do_not_become_giant_page_names():
     start = re.search(r"var\s+GRAPH\s*=\s*", html).end()
     graph = json.JSONDecoder().raw_decode(html, start)[0]
     assert graph["meta"]["screenshotNames"] == [None]
+
+
+@pytest.mark.parametrize("renderer", ["office", "poppler"])
+@pytest.mark.parametrize("diagnostic", ["", "renderer diagnostic"])
+def test_failed_render_retains_tool_exit_code(
+    monkeypatch, tmp_path, renderer, diagnostic
+):
+    monkeypatch.setattr("linexcel.insights.find_libreoffice", lambda: "office")
+    monkeypatch.setattr("linexcel.insights.find_pdftoppm", lambda: "poppler")
+
+    def render(command, **kwargs):
+        if command[0] == renderer:
+            raise subprocess.CalledProcessError(3221225725, command, stderr=diagnostic)
+        folder = Path(command[command.index("--outdir") + 1])
+        (folder / "workbook.pdf").write_bytes(b"pdf")
+
+    monkeypatch.setattr("linexcel.insights.subprocess.run", render)
+    with pytest.raises(WorkbookRenderError) as failure:
+        render_workbook_screenshots(chart_workbook(), "chart.xlsx", tmp_path)
+    assert failure.value.exit_code == 3221225725
+    assert failure.value.renderer == (
+        "LibreOffice" if renderer == "office" else "pdftoppm"
+    )
+    assert "3221225725" in str(failure.value)
+    assert (diagnostic or "no diagnostic output") in str(failure.value)

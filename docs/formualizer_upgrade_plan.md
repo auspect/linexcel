@@ -1,5 +1,11 @@
 # Formualizer : audit et amélioration continue
 
+> Dated engine evidence and candidate-version integration gates. Historical
+> test totals, branch instructions and validation exceptions below apply only
+> to their recorded intervention. Current work follows
+> [local acceptance](manual_validation.md) and the
+> [continuous improvement plan](continuous_improvement_plan.md).
+
 ## Addendum du 7 octobre 2026 : CI sur formualizer 0.11.0
 
 Le workflow de veille a résolu formualizer 0.11.0, publié sous le tag amont

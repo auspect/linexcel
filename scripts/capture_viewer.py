@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -173,7 +174,9 @@ def capture(report: Path) -> int:
     print(f"📸 Capturing {report.name} → {IMAGES_DIR.relative_to(ROOT)}/")
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = playwright.chromium.launch(
+            channel=os.environ.get("LINEXCEL_BROWSER_CHANNEL") or None
+        )
         # Written inline rather than hoisted to a constant: `viewport` wants
         # Playwright's ViewportSize TypedDict, which a module-level dict widens
         # away from.

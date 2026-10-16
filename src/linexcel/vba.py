@@ -8,6 +8,7 @@ Worksheets("X").Range(...)).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -22,7 +23,7 @@ _END_PROC_RE = re.compile(
 
 # Worksheets("Name").  /  Sheets("Name").  — captures sheet name
 _SHEET_QUAL = (
-    r"(?:(?:ThisWorkbook|ActiveWorkbook|\w+)\.)?"
+    r"(?:(?P<workbook>ThisWorkbook|ActiveWorkbook|\w+)\.)?"
     r"(?:Worksheets|Sheets)\(\s*\"(?P<sheet>[^\"]+)\"\s*\)\s*\."
 )
 # Range("A1") / Range("A1:B2") / Range("A1", "B2")
@@ -61,6 +62,7 @@ class VbaRef:
     ref: str
     access: str  # "read" | "write"
     line: int
+    workbook: str | None = None
 
 
 @dataclass
@@ -76,7 +78,11 @@ class VbaProc:
 
 
 def extract_vba_modules(
-    data: bytes, filename: str, warnings: list[str] | None = None
+    data: bytes,
+    filename: str,
+    warnings: list[str] | None = None,
+    *,
+    provenance: dict[str, dict] | None = None,
 ) -> dict[str, str]:
     """Extract ``{module_name: code}`` via olevba.
 
@@ -106,6 +112,7 @@ def extract_vba_modules(
         _warn(warnings, f"the VBA project could not be opened: {exc}")
         return {}
     modules: dict[str, str] = {}
+    source_hash = hashlib.sha256(data).hexdigest()
     try:
         if not parser.detect_vba_macros():
             return {}
@@ -122,6 +129,44 @@ def extract_vba_modules(
             if code and code.strip() and not _is_attribute_only(code):
                 existing = modules.get(name)
                 modules[name] = (existing + "\n" + code) if existing else code
+                if provenance is not None:
+                    previous = provenance.get(name, {})
+                    stream_origins = list(previous.get("streamOrigins", []))
+                    start = len(existing) + 1 if existing else 0
+                    stream_origins.append(
+                        {
+                            "streamPath": str(_path),
+                            "startCharacter": start,
+                            "endCharacter": start + len(code),
+                            "decodedSha256": hashlib.sha256(code.encode()).hexdigest(),
+                        }
+                    )
+                    provenance[name] = {
+                        "sourceFile": filename,
+                        "sourceSha256": source_hash,
+                        "moduleSha256": hashlib.sha256(
+                            modules[name].encode("utf-8")
+                        ).hexdigest(),
+                        "streamPath": str(_path) if not existing else None,
+                        "streamOrigins": stream_origins,
+                        "moduleMerged": bool(existing),
+                        "extractor": "oletools.olevba",
+                        "execution": "not_executed",
+                        "textSemantics": (
+                            "decoded VBA source, not original binary bytes"
+                        ),
+                        "lineSemantics": (
+                            "line positions in concatenated decoded streams"
+                            if existing
+                            else "line positions in decoded module text"
+                        ),
+                    }
+                if existing:
+                    _warn(
+                        warnings,
+                        f"VBA module name collision: {name}; decoded streams were "
+                        "concatenated, original module identity is ambiguous",
+                    )
         # Only the case where olevba announces macros and then hands back no
         # stream at all. A macro-enabled workbook nobody wrote code in — saved
         # from a template, say — yields the sheet shells and no module, and
@@ -206,11 +251,15 @@ def _split_procedures(module: str, code: str) -> list[VbaProc]:
     return procs
 
 
-def _detect_access(line: str, match_end: int) -> str:
+def _detect_access(line: str, match_start: int, match_end: int) -> str:
     """Write if the reference is followed by an assignment at statement level."""
     rest = line[match_end:]
     # skip members (.Value, .Formula, .Offset(...)) after the reference
     rest = re.sub(r"^(?:\.\w+(?:\([^()]*\))?)*", "", rest).lstrip()
+    prefix = line[:match_start].rsplit(":", 1)[-1].strip()
+    prefix = re.split(r"\b(?:Then|Else)\s*$", prefix, flags=re.I)[-1].strip()
+    if prefix.lower() not in {"", "let", "set", "."}:
+        return "read"
     if rest.startswith("=") and not rest.startswith("=="):
         return "write"
     return "read"
@@ -220,7 +269,16 @@ def _find_refs(proc: VbaProc) -> list[VbaRef]:
     refs: list[VbaRef] = []
     for offset, raw in enumerate(proc.code.splitlines()):
         line = _strip_comments(raw)
+        literal_spans = [
+            (m.start(), m.end()) for m in _STRING_LITERAL_RE.finditer(line)
+        ]
+
+        def in_string(position):
+            return any(start <= position < end for start, end in literal_spans)
+
         for m in _REF_RE.finditer(line):
+            if in_string(m.start()):
+                continue
             sheet = m.group("sheet")
             if m.group("range"):
                 a1, a2 = m.group("a1"), m.group("a2")
@@ -229,10 +287,16 @@ def _find_refs(proc: VbaProc) -> list[VbaRef]:
                 col = m.group("col")
                 col_txt = col if col.isalpha() else _num_col(int(col))
                 ref = f"{col_txt}{m.group('row')}"
-            access = _detect_access(line, m.end())
-            refs.append(VbaRef(sheet, ref, access, proc.line_start + offset))
+            access = _detect_access(line, m.start(), m.end())
+            refs.append(
+                VbaRef(
+                    sheet, ref, access, proc.line_start + offset, m.group("workbook")
+                )
+            )
         for m in _BRACKET_RE.finditer(line):
-            access = _detect_access(line, m.end())
+            if in_string(m.start()):
+                continue
+            access = _detect_access(line, m.start(), m.end())
             refs.append(VbaRef(None, m.group("ref"), access, proc.line_start + offset))
     return refs
 

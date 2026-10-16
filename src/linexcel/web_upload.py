@@ -268,10 +268,21 @@ class UploadStore:
                             target.write(chunk)
                             remaining -= len(chunk)
                         if offset == 0 and length >= 2:
+                            from linexcel.macros import OLE_MAGIC, valid_excel_header
+
                             target.seek(0)
-                            if target.read(2) != b"PK":
+                            header = target.read(min(8, length))
+                            xla_prefix = item["name"].lower().endswith(
+                                ".xla"
+                            ) and OLE_MAGIC.startswith(header)
+                            if (
+                                not valid_excel_header(header, item["name"])
+                                and not xla_prefix
+                            ):
                                 raise APIError(
-                                    400, "Le fichier doit être un classeur OOXML"
+                                    400,
+                                    "Le fichier doit être un classeur OOXML "
+                                    "ou un add-in OLE .xla",
                                 )
                         target.flush()
                         os.fsync(target.fileno())
@@ -330,8 +341,14 @@ class UploadStore:
                 if file.stat().st_size != item["size"]:
                     raise APIError(409, "Fichier du transfert incomplet")
                 with file.open("rb") as source:
-                    if source.read(2) != b"PK":
-                        raise APIError(400, "Le fichier doit être un classeur OOXML")
+                    from linexcel.macros import valid_excel_header
+
+                    if not valid_excel_header(source.read(8), item["name"]):
+                        raise APIError(
+                            400,
+                            "Le fichier doit être un classeur OOXML "
+                            "ou un add-in OLE .xla",
+                        )
             revision = self.store._revision(path)
             with self.store.lock:
                 if session.get("cancelRequested"):

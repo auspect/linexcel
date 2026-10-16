@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-10-09",
+  "files": [
+    {
+      "id": "dft-qra-template",
+      "filename": "qra-template.xlsm",
+      "role": "workbook",
+      "source_url": "https://assets.publishing.service.gov.uk/media/64d9fff6c8dee400127f1bcc/qra-template.xlsm",
+      "landing_url": "https://www.gov.uk/government/publications/greener-bus-tool",
+      "license": "OGL-UK-3.0",
+      "license_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+      "license_notes": "DfT publication page declares OGL v3.0 except where otherwise stated; source workbook is retained unchanged. Download last-modified 2023-08-14; the landing page also covers later bus-tool releases.",
+      "sha256": "fe58a5ecf86419e4e71cfc33cf7624b3a634a35ecfaf324656b853392ae51aec",
+      "max_bytes": 1048576,
+      "purpose": "Quantified risk calculation template: shared formulas, file-context CELL(), broken defined names, stored external references and VBA; no macro execution."
+    },
+    {
+      "id": "ons-mid2023-population",
+      "filename": "ons-mye23tablesuk.xlsx",
+      "role": "workbook",
+      "source_url": "https://www.ons.gov.uk/file?uri=/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/populationestimatesforukenglandandwalesscotlandandnorthernireland/mid2023/mye23tablesuk.xlsx",
+      "landing_url": "https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/populationestimatesforukenglandandwalesscotlandandnorthernireland",
+      "license": "OGL-UK-3.0",
+      "license_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+      "license_notes": "ONS dataset page declares OGL v3.0 except where otherwise stated. This deliberately selects the bounded Mid-2023 edition, not the latest or full longitudinal dataset.",
+      "sha256": "7ee5724ecf71abc3d811c89174cdddf1bce7f07d3eefc8b69b15ee8371414b16",
+      "max_bytes": 1048576,
+      "purpose": "Published official population tables: ten sheets, source notes, geography and period context, wide tables and static values; no formulas."
+    },
+    {
+      "id": "xlwings-addin",
+      "filename": "xlwings.xlam",
+      "role": "addin",
+      "source_url": "https://raw.githubusercontent.com/xlwings/xlwings/d5abd284704b60b65abf16bba8b1446db95d1d1a/xlwings/addin/xlwings.xlam",
+      "landing_url": "https://github.com/xlwings/xlwings/blob/d5abd284704b60b65abf16bba8b1446db95d1d1a/xlwings/addin/xlwings.xlam",
+      "source_revision": "d5abd284704b60b65abf16bba8b1446db95d1d1a",
+      "license": "BSD-3-Clause",
+      "license_url": "https://github.com/xlwings/xlwings/blob/d5abd284704b60b65abf16bba8b1446db95d1d1a/LICENSE.txt",
+      "license_notes": "Upstream license includes all xlwings package files except the pro subpackage; this binary is in xlwings/addin. PRO components have a separate license. Embedded third-party VBA retains its own copyright/license headers, including MIT notices for VBA-Web. Static inspection only; never install the add-in.",
+      "sha256": "fecb5bdca8b1f3fc89991f253f8e55f1f1c1497a79190ef849f68d1f52e9338c",
+      "max_bytes": 1048576,
+      "purpose": "Real OOXML Excel add-in with VBA and ribbon, pinned upstream revision; macro source review rather than a sheet calculation benchmark.",
+      "support_files": [
+        {
+          "filename": "xlwings-LICENSE.txt",
+          "source_url": "https://raw.githubusercontent.com/xlwings/xlwings/d5abd284704b60b65abf16bba8b1446db95d1d1a/LICENSE.txt",
+          "sha256": "4f007e4249b3017095326b52358c909aa7a1e20f2d006a0241d016344b9c7aca",
+          "max_bytes": 65536
+        }
+      ]
+    },
+    {
+      "id": "excel-toolbox-legacy-addin",
+      "filename": "Toolbox.xla",
+      "role": "addin",
+      "source_url": "https://downloads.sourceforge.net/project/excel-toolbox/Toolbox_0/Toolbox.xla",
+      "landing_url": "https://sourceforge.net/projects/excel-toolbox/files/Toolbox_0/",
+      "source_revision": "Toolbox_0, version 0.07d; upstream file modified 2021-09-01",
+      "license": "MIT-0",
+      "license_url": "https://sourceforge.net/projects/excel-toolbox/files/Toolbox_0/LICENSE.txt/download",
+      "license_notes": "Project release by Ernst Dijk; downloaded LICENSE.txt explicitly states MIT No Attribution. This is the actual legacy OLE/BIFF add-in, not a renamed XML fixture. Static inspection only.",
+      "sha256": "dfa758bba37b73518eeb3cdc1129e9c89c314544e3241c17dd2ccc9ecf678311",
+      "max_bytes": 1048576,
+      "redirect_host_suffixes": ["dl.sourceforge.net"],
+      "purpose": "Real legacy Excel add-in with menu, help and hidden source sheets, complementing the OOXML add-in container.",
+      "support_files": [
+        {
+          "filename": "Toolbox-LICENSE.txt",
+          "source_url": "https://downloads.sourceforge.net/project/excel-toolbox/Toolbox_0/LICENSE.txt",
+          "sha256": "71e1e692019c14916ff1ad0fb8ddc112d41d0be6c7dc3e00fbbb232fb286099c",
+          "max_bytes": 65536,
+          "redirect_host_suffixes": ["dl.sourceforge.net"]
+        },
+        {
+          "filename": "Toolbox-readme.txt",
+          "source_url": "https://downloads.sourceforge.net/project/excel-toolbox/Toolbox_0/readme.txt",
+          "sha256": "060e59bdb7391911318807c0963c3dc2e6a5d094cc87eb2bd965f3d66897afc7",
+          "max_bytes": 65536,
+          "redirect_host_suffixes": ["dl.sourceforge.net"]
+        }
+      ]
+    }
+  ]
+}

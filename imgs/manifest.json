@@ -1,9 +1,9 @@
 {
-  "captured": "2026-09-26",
+  "captured": "2026-10-16",
   "sources": {
     "src/linexcel/viewer.py": "822eed057876fc7d8cc2bf353a87f94c0ff11e1ede563eaed7bc49f6326edd37",
-    "src/linexcel/assets/viewer.html": "900cb75e39dce75a1cff2633c4999e16cb003c3f28503dbf5a85ae57dacce01c",
-    "src/linexcel/i18n.py": "6ca99f82cd55da25f7c120b0342d9ecfbefddbc2a9956c343e104596b8dae03e"
+    "src/linexcel/assets/viewer.html": "7284a3b9b8e9f4733c50683a7bf9629692316c80bf2e976431b6065fc79fcdaa",
+    "src/linexcel/i18n.py": "1e06d3e30429961fbf54197d91e55180dfdc52f69d8c824456d6d70163944918"
   },
   "images": {
     "viewer_graph.png": "Dependency graph, workbook-wide",
