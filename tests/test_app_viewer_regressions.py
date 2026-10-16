@@ -23,8 +23,9 @@ def browser():
 
 
 @pytest.fixture(params=[(1440, 900), (390, 844)])
-def app(browser, request, project_response_delay_ms):
-    width, height = request.param
+def app(browser, request):
+    width, height, *response_delays = request.param
+    project_response_delay_ms = response_delays[0] if response_delays else 0
     page = browser.new_page(viewport={"width": width, "height": height})
     page.add_init_script("localStorage.setItem('linexcel-manual-recalculation','true')")
     if project_response_delay_ms:
@@ -201,11 +202,6 @@ def app(browser, request, project_response_delay_ms):
         except playwright.Error:
             pass
     page.close()
-
-
-@pytest.fixture
-def project_response_delay_ms(request):
-    return getattr(request, "param", 0)
 
 
 def test_expanded_sidebar_fields_stay_inside_sidebar(app):
@@ -577,7 +573,10 @@ def test_depth_change_restarts_pending_target_and_ignores_old_depth(app):
 
 
 @pytest.mark.parametrize(
-    "project_response_delay_ms", [0, 200], indirect=True, ids=["immediate", "delayed"]
+    "app",
+    [(1440, 900, 0), (390, 844, 0), (1440, 900, 200), (390, 844, 200)],
+    indirect=True,
+    ids=["desktop-immediate", "mobile-immediate", "desktop-delayed", "mobile-delayed"],
 )
 def test_project_intent_cancels_old_selection_before_project_response(app):
     page, requests, errors, _, fulfill = app
