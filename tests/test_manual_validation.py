@@ -884,14 +884,68 @@ def test_retry_coverage_checks_every_attempt_and_final_selection(
         batch["usage_total"]["requests"] = 3
     manual.link_vision_receipts(checks, receipts)
     coverage = manual.vision_region_coverage(["S"], checks)
-    assert coverage["passed"] is (damage is None)
+    accepted = damage in {None, "duplicate_response_id"}
+    assert coverage["passed"] is accepted
     assert not coverage["factual_certification"]
-    if damage is None:
+    if accepted:
         assert [receipt["vision_evidence"]["selected"] for receipt in receipts] == [
             False,
             True,
         ]
         assert [receipt["vision_evidence"]["attempt"] for receipt in receipts] == [1, 2]
+        assert [attempt["provider_receipt_index"] for attempt in attempts] == [0, 1]
+        assert [attempt["response_id"] for attempt in attempts] == [
+            receipt["response_id"] for receipt in receipts
+        ]
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "reused_index", "ambiguous_receipt", "prompt", "content", "id"]
+)
+def test_vision_receipts_require_unique_local_evidence(manual, damage):
+    batches, receipts = [], []
+    for index in range(2):
+        batches.append(
+            {
+                "id": f"batch-{index}",
+                "prompt_text_sha256": f"prompt-{index}",
+                "content_sha256": f"content-{index}",
+                "original_sha256": "source-image",
+                "json_prompt_sha256": f"json-{index}",
+                "images": [],
+            }
+        )
+        receipts.append(
+            {
+                "response_id": "chatcmpl-51",
+                "prompt_text_sha256": f"prompt-{index}",
+                "content_sha256": f"content-{index}",
+                "status": "complete",
+                "finish_reason": "stop",
+            }
+        )
+    if damage == "reused_index":
+        batches[1].update(prompt_text_sha256="prompt-0", content_sha256="content-0")
+        receipts.pop()
+    elif damage == "ambiguous_receipt":
+        receipts.append(receipts[1].copy())
+    elif damage == "prompt":
+        receipts[1]["prompt_text_sha256"] = "different"
+    elif damage == "content":
+        receipts[1]["content_sha256"] = "different"
+    elif damage == "id":
+        receipts[1]["response_id"] = ""
+    checks = {"S": {"pages": [{"page": 1, "batches": batches}]}}
+    manual.link_vision_receipts(checks, receipts)
+    assert batches[0]["receipt_link_complete"]
+    assert batches[1]["receipt_link_complete"] is (damage is None)
+    assert batches[0]["provider_receipt_index"] == 0
+    if damage is None:
+        assert batches[1]["provider_receipt_index"] == 1
+        assert [batch["response_id"] for batch in batches] == [
+            "chatcmpl-51",
+            "chatcmpl-51",
+        ]
 
 
 def test_real_acceptance_provider_retry_receipts_pass_native_gate(manual, tmp_path):

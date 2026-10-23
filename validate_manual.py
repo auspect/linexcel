@@ -675,7 +675,6 @@ def link_documentation_receipts(checks: dict, expected: list[str]) -> dict:
     acceptance of the final Markdown or of the reviewer's own verdict.
     """
     receipts = checks.get("request_receipts", [])
-    identifiers = [receipt.get("response_id") for receipt in receipts]
     assigned: set[int] = set()
     records = []
     for target in expected:
@@ -728,7 +727,6 @@ def link_documentation_receipts(checks: dict, expected: list[str]) -> dict:
                 and index not in assigned
                 and isinstance(response_id, str)
                 and bool(response_id)
-                and identifiers.count(response_id) == 1
                 and receipt.get("status") == "complete"
                 and receipt.get("finish_reason") == "stop"
                 and receipt.get("raw_response") == raw
@@ -788,7 +786,7 @@ def link_documentation_receipts(checks: dict, expected: list[str]) -> dict:
 
 def link_vision_receipts(checks: dict, receipts: list) -> None:
     """Bind receipts to exact native crop batches, including invalid responses."""
-    response_ids = [receipt.get("response_id") for receipt in receipts]
+    assigned: set[int] = set()
     for report in checks.values():
         for page in report.get("pages", []):
             for batch in page.get("batches", []):
@@ -802,14 +800,19 @@ def link_vision_receipts(checks: dict, receipts: list) -> None:
                 for target in targets:
                     target["receipt_link_complete"] = False
                     matches = [
-                        receipt
-                        for receipt in receipts
+                        (index, receipt)
+                        for index, receipt in enumerate(receipts)
                         if receipt.get("prompt_text_sha256")
                         == target.get("prompt_text_sha256")
+                        and receipt.get("content_sha256")
+                        == target.get("content_sha256")
                     ]
                     if len(matches) != 1:
                         continue
-                    receipt = matches[0]
+                    index, receipt = matches[0]
+                    if index in assigned:
+                        continue
+                    assigned.add(index)
                     response_id = receipt.get("response_id")
                     raw = target.get("raw_response")
                     receipt["vision_evidence"] = {
@@ -822,6 +825,7 @@ def link_vision_receipts(checks: dict, receipts: list) -> None:
                         "images": batch["images"],
                     }
                     target["response_id"] = response_id
+                    target["provider_receipt_index"] = index
                     if isinstance(attempts, list):
                         target["provider_receipt"] = {
                             key: value
@@ -833,7 +837,8 @@ def link_vision_receipts(checks: dict, receipts: list) -> None:
                         and receipt.get("finish_reason") == "stop"
                         and receipt.get("content_sha256")
                         == target.get("content_sha256")
-                        and (not response_id or response_ids.count(response_id) == 1)
+                        and isinstance(response_id, str)
+                        and bool(response_id)
                         and (
                             not isinstance(attempts, list)
                             or (
@@ -847,6 +852,9 @@ def link_vision_receipts(checks: dict, receipts: list) -> None:
                     )
                 if isinstance(attempts, list) and attempts:
                     batch["response_id"] = attempts[-1].get("response_id")
+                    batch["provider_receipt_index"] = attempts[-1].get(
+                        "provider_receipt_index"
+                    )
                     batch["provider_receipt"] = attempts[-1].get("provider_receipt")
                     batch["receipt_link_complete"] = attempts[-1].get(
                         "receipt_link_complete", False

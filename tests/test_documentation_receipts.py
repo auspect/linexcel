@@ -77,6 +77,32 @@ def test_two_actual_phases_link_and_stay_distinct_from_factual_acceptance(manual
     assert checks["S!B2"]["raw_response"].endswith("supplied evidence.")
 
 
+def test_recycled_provider_ids_preserve_distinct_local_documentation_receipts(manual):
+    receipts = []
+    checks = {key: reviewed(key, receipts) for key in ("workbook", "S!B2")}
+    checks["request_receipts"] = receipts
+    for receipt in receipts:
+        receipt["response_id"] = "chatcmpl-51"
+    result = manual.link_documentation_receipts(checks, ["workbook", "S!B2"])
+    assert result["passed"] and result["linked_stages"] == 4
+    stages = [
+        stage
+        for target in ("workbook", "S!B2")
+        for stage in checks[target]["specialized_review"]["stages"]
+    ]
+    assert {stage["provider_receipt_index"] for stage in stages} == {0, 1, 2, 3}
+    assert all(stage["response_id"] == "chatcmpl-51" for stage in stages)
+    assert all(receipt["response_id"] == "chatcmpl-51" for receipt in receipts)
+
+
+def test_one_local_receipt_cannot_cover_repeated_documentation_targets(manual):
+    receipts = []
+    checks = {"S!B2": reviewed("S!B2", receipts), "request_receipts": receipts}
+    result = manual.link_documentation_receipts(checks, ["S!B2", "S!B2"])
+    assert not result["passed"]
+    assert result["linked_stages"] == 2
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -89,7 +115,7 @@ def test_two_actual_phases_link_and_stay_distinct_from_factual_acceptance(manual
         "wrong_system_hash",
         "length",
         "usage",
-        "duplicate_id",
+        "missing_id",
         "unassigned_receipt",
         "wrong_role",
         "missing_dossier",
@@ -135,8 +161,8 @@ def test_phase_coverage_rejects_incomplete_or_misattributed_evidence(manual, mut
         receipts[1]["finish_reason"] = "length"
     elif mutation == "usage":
         receipts[1]["usage"]["output_tokens"] = 99
-    elif mutation == "duplicate_id":
-        receipts[1]["response_id"] = receipts[0]["response_id"]
+    elif mutation == "missing_id":
+        receipts[1]["response_id"] = ""
     elif mutation == "unassigned_receipt":
         receipts.append(copy.deepcopy(receipts[0]))
     elif mutation == "wrong_role":

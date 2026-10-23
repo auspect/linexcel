@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Match acceptance completions through exact prompt/content fingerprints and
+  unique local receipt indices, retaining raw provider IDs when a runtime
+  recycles them. Reject ambiguous or reused vision receipts.
 - Bound glibc allocation arenas in Linux worker subprocesses to reduce
   virtual-address pressure on hosts with many CPU cores, including repeated
   imports for external and quarantined workbooks. Honor explicit settings.
