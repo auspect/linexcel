@@ -1677,11 +1677,22 @@ def _serve_ai_key(base_url: str) -> str | None:
 
 def serve(args) -> int:
     import errno
+    import socket
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
     class Server(ThreadingMixIn, WSGIServer):
         daemon_threads = True
+
+        # Windows reuse can share listeners or report WSAEACCES for a collision.
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            allow_reuse_address = False
+            allow_reuse_port = False
+
+        def server_bind(self):
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
 
     class Handler(WSGIRequestHandler):
         def setup(self):

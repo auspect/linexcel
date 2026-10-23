@@ -9,6 +9,8 @@ the prose.
 
 import json
 
+import pytest
+
 from linexcel.aidoc import _insert_tables, render_markdown_table
 
 
@@ -110,6 +112,23 @@ class TestInsertTables:
         payload = [{"id": "T1", "columns": "oops", "rows": []}, "junk", 42]
         text = "Hi.\n```json_tables\n" + json.dumps(payload) + "\n```"
         assert _insert_tables(text) == "Hi."
+
+    @pytest.mark.parametrize("row", [None, 42, {"A": "one"}, "not an array"])
+    def test_non_array_rows_drop_only_the_invalid_table_and_keep_prose(self, row):
+        payload = [
+            {"id": "T1", "columns": ["A"], "rows": [["valid"], row]},
+            {"id": "T2", "columns": ["B"], "rows": [["retained"]]},
+        ]
+        text = (
+            "Prose before.\n\n{{T1}}\n\nProse between.\n\n{{T2}}\n\n"
+            "Prose after.\n```json_tables\n" + json.dumps(payload) + "\n```"
+        )
+        out = _insert_tables(text)
+        assert "Prose before." in out and "Prose between." in out
+        assert out.endswith("Prose after.")
+        assert "| B |" in out and "| retained |" in out
+        assert "| A |" not in out and "| valid |" not in out
+        assert "{{T" not in out and "```" not in out
 
 
 class TestNumericAlignment:

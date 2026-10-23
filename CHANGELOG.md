@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Validate serve ports before creating storage and provide a recovery hint for
   an occupied port. A failed browser launch leaves the copyable URL available.
+- Use exclusive Windows server sockets so an occupied local port receives the
+  same recovery hint without reclassifying genuine permission errors.
+- Discard malformed AI table rows without losing the surrounding documentation
+  or other valid tables.
 - Scope calculation guidance to Nodes and Graph, support arrow/Home/End
   navigation between the main tabs, and provide a skip link to the workbook.
 - Keep formatted presentation separate from raw Datasette values and exports;

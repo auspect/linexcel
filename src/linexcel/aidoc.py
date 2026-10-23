@@ -1922,6 +1922,7 @@ def _insert_tables(text: str) -> str:
                 isinstance(tid, str)
                 and isinstance(cols, list)
                 and isinstance(rows, list)
+                and all(isinstance(row, list) for row in rows)
             ):
                 caption = entry.get("caption")
                 tables[tid] = render_markdown_table(

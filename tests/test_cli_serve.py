@@ -1,9 +1,10 @@
 """Exercise the launcher with real loopback ports and browser failure recovery."""
 
+import errno
 import socket
 import threading
 import webbrowser
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -33,6 +34,48 @@ def test_serve_reports_occupied_port_and_releases_app(capsys, monkeypatch):
     error = capsys.readouterr().err
     assert f"Port {port} is already in use" in error
     assert "--port 0" in error
+    app.close.assert_called_once()
+
+
+def test_serve_binds_exclusively_when_windows_socket_option_is_available(
+    capsys, monkeypatch
+):
+    app = Mock()
+    listener = Mock()
+    listener.bind.side_effect = OSError(errno.EADDRINUSE, "Address already in use")
+    exclusive_option = getattr(socket, "SO_EXCLUSIVEADDRUSE", -5)
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", exclusive_option, raising=False)
+    monkeypatch.setattr("linexcel.web.create_app", lambda *args, **kwargs: app)
+
+    def make_server(host, port, app, *, server_class, handler_class):
+        server = server_class.__new__(server_class)
+        server.server_address = (host, port)
+        server.socket = listener
+        server.server_bind()
+        pytest.fail("binding to an occupied port must fail")
+
+    monkeypatch.setattr("wsgiref.simple_server.make_server", make_server)
+    assert main(["serve", "--port", "8765"]) == 2
+    assert "Port 8765 is already in use" in capsys.readouterr().err
+    assert listener.method_calls == [
+        call.setsockopt(socket.SOL_SOCKET, exclusive_option, 1),
+        call.bind(("127.0.0.1", 8765)),
+    ]
+    app.close.assert_called_once()
+
+
+@pytest.mark.parametrize("winerror", [None, 10013])
+def test_serve_preserves_bind_permission_errors(winerror, capsys, monkeypatch):
+    app = Mock()
+    failure = PermissionError(errno.EACCES, "Binding is forbidden")
+    if winerror is not None:
+        failure.winerror = winerror
+    monkeypatch.setattr("linexcel.web.create_app", lambda *args, **kwargs: app)
+    monkeypatch.setattr("wsgiref.simple_server.make_server", Mock(side_effect=failure))
+    assert main(["serve", "--port", "8765"]) == 2
+    error = capsys.readouterr().err
+    assert "Binding is forbidden" in error
+    assert "already in use" not in error
     app.close.assert_called_once()
 
 
