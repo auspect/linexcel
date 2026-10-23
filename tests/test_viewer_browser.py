@@ -575,6 +575,45 @@ def test_history_restores_filters_and_camera_after_revealing_result(report):
     assert not errors
 
 
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_history_restore_invalidates_deferred_sheet_framing(report, width, height):
+    page, errors = report(filtered_graph(), width=width, height=height)
+    page.evaluate("""() => {
+        window.heldFilterFrames = [];
+        const original = window.requestAnimationFrame;
+        window.restoreAnimationFrame = () => {
+            window.requestAnimationFrame = original;
+        };
+        window.requestAnimationFrame = function (callback) {
+            const fitCode = "frameEles(cy, cy.elements(':visible'), 0)";
+            if (String(callback).includes(fitCode)) {
+                window.heldFilterFrames.push(callback);
+                return -window.heldFilterFrames.length;
+            }
+            return original(callback);
+        };
+    }""")
+    page.select_option("#lin-sheet-filter", "Out")
+    page.evaluate("() => { window.restoreAnimationFrame(); }")
+    assert page.evaluate("window.heldFilterFrames.length") == 1
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.evaluate("() => { cy.stop(); cy.zoom(.8); cy.pan({x: 42, y: 63}); }")
+    before = page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})")
+    page.fill("#lin-search", "Unrelated")
+    page.select_option("#lin-search-scope", "workbook")
+    page.locator("#lin-result-list button").click()
+    page.click("#lin-history-back")
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    page.evaluate("""() => {
+        const callbacks = window.heldFilterFrames.splice(0);
+        callbacks.forEach(callback => callback(performance.now()));
+    }""")
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    assert page.locator("#lin-sheet-filter").input_value() == "Out"
+    assert page.locator("#lin-panel h2").inner_text() == "Output"
+    assert not errors
+
+
 def test_copy_formula_and_local_selection_link_are_exact(report):
     graph = filtered_graph()
     formula = '=LET(x,"<tag>&value", A1*B1 + C1*D1)'

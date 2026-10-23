@@ -994,6 +994,7 @@
         function (b) { return b.getAttribute('aria-pressed'); }) };
   }
   function restoreSnapshot(cy, state) {
+    cancelSheetFraming(cy);
     cy.stop(true, false);
     CUR_SHEET = state.sheet;
     exploration = state.exploration && Object.assign({}, state.exploration);
@@ -1468,6 +1469,10 @@
       style: buildStyle(big), layout: layoutOpts(initial, hasFcose)
     });
     activeCy = cy;
+    cy.on('pan zoom', function () {
+      var pending = cy.scratch('linexcelSheetFrame');
+      if (pending && pending.frame !== null) cancelSheetFraming(cy);
+    });
     setupCoverage(cy);
     document.getElementById('lin-export-view').onclick = function () {
       // Rasterize the current viewport, not the private workbook or off-screen nodes.
@@ -2419,7 +2424,16 @@
   // Narrow the graph to one sheet. Nodes of another sheet are kept — dimmed —
   // when an edge ties them to the selected one, because a formula that reads
   // from elsewhere is only readable if that "elsewhere" is on screen.
+  function cancelSheetFraming(cy) {
+    var pending = cy.scratch('linexcelSheetFrame');
+    if (!pending) return;
+    // stop() can emit layoutstop; retire the token before stopping its layout.
+    cy.removeScratch('linexcelSheetFrame');
+    if (pending.frame !== null) cancelAnimationFrame(pending.frame);
+    if (pending.layout) pending.layout.stop();
+  }
   function applySheetFilter(cy, sheet, layoutName, hasFcose) {
+    cancelSheetFraming(cy);
     clearExploration(cy);
     CUR_SHEET = sheet || ALL_SHEETS;
     cy.batch(function () {
@@ -2441,8 +2455,14 @@
     // New positions need a fresh frame even when two sheets have equal counts.
     // Clearing the reader can also change the mobile canvas dimensions.
     var layout = visible.layout(layoutOpts(layoutName, hasFcose));
+    var pending = {layout: layout, frame: null};
+    cy.scratch('linexcelSheetFrame', pending);
     layout.one('layoutstop', function () {
-      requestAnimationFrame(function () {
+      if (cy.scratch('linexcelSheetFrame') !== pending) return;
+      pending.layout = null;
+      pending.frame = requestAnimationFrame(function () {
+        if (cy.scratch('linexcelSheetFrame') !== pending) return;
+        cy.removeScratch('linexcelSheetFrame');
         frameEles(cy, cy.elements(':visible'), 0);
       });
     });
@@ -2464,6 +2484,7 @@
   // the zoom back, keeping the set centred.
   var FOCUS_MAX_ZOOM = 1.2;
   function frameEles(cy, eles, duration) {
+    cancelSheetFraming(cy);
     if (!eles || !eles.length) return;
     // Opening the mobile detail pane changes the canvas height. Refresh its
     // dimensions before fitting rather than waiting for ResizeObserver.

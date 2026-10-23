@@ -320,8 +320,20 @@ def test_export_dense_selection_has_a_direct_local_exploration(report, size):
     page, errors = report(graph, width=size[0], height=size[1])
     assert page.evaluate("cy.nodes().length") == 96
     search_one(page, "Hub")
+    page.evaluate("window.localExplorationFrame = null")
     page.locator("#lin-explore-selection").click()
-    page.wait_for_function("cy.nodes(':visible').length < 96")
+    page.wait_for_function("""() => {
+        const nodes = cy.nodes(':visible');
+        const status = document.querySelector('#lin-explore-status');
+        if (nodes.length <= 1 || nodes.length > 13 || cy.animated()
+                || !status?.getClientRects().length
+                || !cy.getElementById('hub').selected()) return false;
+        const frame = JSON.stringify({ids: nodes.map(n=>n.id()).sort(),
+            bounds: nodes.renderedBoundingBox(), zoom: cy.zoom(), pan: cy.pan()});
+        const stable = window.localExplorationFrame === frame;
+        window.localExplorationFrame = frame;
+        return stable;
+    }""")
     export_tests.capture(page, f"export-dense-local-{size[0]}")
     visible = page.evaluate("cy.nodes(':visible').length")
     assert 1 < visible <= 13
