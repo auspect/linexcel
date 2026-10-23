@@ -43,6 +43,27 @@ def test_default_isolated_and_explicit_live_engine(lineage_excel):
     assert live.edges == isolated.edges
 
 
+@pytest.mark.parametrize("arena_limit", [None, "7", "0"])
+def test_worker_arena_default_preserves_parent_settings(monkeypatch, arena_limit):
+    if arena_limit is None:
+        monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    else:
+        monkeypatch.setenv("MALLOC_ARENA_MAX", arena_limit)
+    workload(
+        monkeypatch,
+        """
+(root/'result.json').write_text(json.dumps({
+    'status':'completed',
+    'graph':{'meta':{'workerArenaLimit':os.environ.get('MALLOC_ARENA_MAX')},
+             'nodes':[], 'edges':[]}}))
+""",
+    )
+    result = run_isolated(b"", {}, ExecutionPolicy(seconds=5))
+    expected = "2" if arena_limit is None and sys.platform == "linux" else arena_limit
+    assert result["graph"]["meta"]["workerArenaLimit"] == expected
+    assert os.environ.get("MALLOC_ARENA_MAX") == arena_limit
+
+
 @pytest.mark.parametrize("seconds", [-1, float("inf"), float("nan"), True])
 def test_invalid_budget_before_any_work(seconds):
     with pytest.raises((ValueError, TypeError)):

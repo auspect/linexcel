@@ -1097,6 +1097,9 @@ class TaskStore:
         }
         _write(root / "request.json", request)
         child_env = os.environ.copy()
+        if sys.platform == "linux":
+            # Reduce CPU-scaled glibc arena reservations under RLIMIT_AS.
+            child_env.setdefault("MALLOC_ARENA_MAX", "2")
         child_env.pop("LINEXCEL_WEB_AI_CONFIG", None)
         if task["operation"] in AI_OPERATIONS:
             child_env["LINEXCEL_WEB_AI_CONFIG"] = json.dumps(

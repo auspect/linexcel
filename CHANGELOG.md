@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound glibc allocation arenas in Linux worker subprocesses to reduce
+  virtual-address pressure on hosts with many CPU cores, including repeated
+  imports for external and quarantined workbooks. Honor explicit settings.
 - Validate serve ports before creating storage and provide a recovery hint for
   an occupied port. A failed browser launch leaves the copyable URL available.
 - Use exclusive Windows server sockets so an occupied local port receives the
