@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -246,6 +247,9 @@ def test_sheet_navigation_handles_blank_empty_and_stale_response(app):
     assert page.locator("#graph-sheet-status").is_hidden()
     page.locator("#tab-graph").click()
     page.locator("#graph-sheet").select_option("Slow")
+    deadline = time.monotonic() + 5
+    while not delayed and time.monotonic() < deadline:
+        page.wait_for_timeout(10)
     assert delayed
     page.locator("#graph-sheet").select_option("First")
     playwright.expect(
