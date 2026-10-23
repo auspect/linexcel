@@ -122,6 +122,103 @@ def test_search_does_not_select_hidden_results(report):
     assert not errors
 
 
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("reader_open", [False, True])
+def test_sheet_filter_frames_changed_and_equal_node_counts(
+    report, width, height, reader_open
+):
+    sheets = [("Café", 6), ("Sales Data", 35), ("Hidden Config", 6), ("Same Count", 6)]
+    graph = {"nodes": [], "edges": []}
+    for sheet, count in [*sheets, ("Large scope", 43)]:
+        graph["nodes"].extend(
+            {
+                "id": f"{sheet}!A{index}",
+                "sheet": sheet,
+                "kind": "cell",
+                "label": f"{sheet}!A{index}",
+                "formula": "=1",
+            }
+            for index in range(count)
+        )
+        graph["edges"].extend(
+            {
+                "id": f"{sheet}-{index}",
+                "source": f"{sheet}!A{index - 1}",
+                "target": f"{sheet}!A{index}",
+                "kind": "ref",
+            }
+            for index in range(1, count)
+        )
+    page, errors = report(graph, width=width, height=height)
+    if width <= 900:
+        page.click("#lin-options-toggle")
+    page.click("#lin-lay-fcose")
+    if width <= 900:
+        page.click("#lin-options-close")
+    for index, (sheet, count) in enumerate(sheets, start=1):
+        if reader_open:
+            page.evaluate("() => { cy.nodes(':visible').first().emit('tap'); }")
+            playwright.expect(page.locator(".lin-close")).to_be_visible()
+        page.wait_for_function("""() => {
+            const box = document.querySelector('#lin-cy').getBoundingClientRect();
+            return Math.abs(cy.width() - box.width) < 1
+                && Math.abs(cy.height() - box.height) < 1;
+        }""")
+        page.evaluate("window.filterFrame = null")
+        page.select_option("#lin-sheet-filter", sheet)
+        page.wait_for_function(
+            """ids => {
+                const nodes = cy.nodes(':visible');
+                const box = document.querySelector('#lin-cy').getBoundingClientRect();
+                if (cy.animated() || JSON.stringify(nodes.map(n=>n.id()).sort())
+                        !== JSON.stringify(ids.slice().sort())
+                        || Math.abs(cy.width() - box.width) >= 1
+                        || Math.abs(cy.height() - box.height) >= 1) return false;
+                const bounds = nodes.map(n => n.renderedBoundingBox());
+                if (!bounds.every(b => b.x2 > 0 && b.x1 < box.width
+                        && b.y2 > 0 && b.y1 < box.height)) return false;
+                const frame = JSON.stringify(bounds);
+                const stable = window.filterFrame === frame;
+                window.filterFrame = frame;
+                return stable;
+            }""",
+            arg=[f"{sheet}!A{index}" for index in range(count)],
+        )
+        page.evaluate("""() => new Promise(resolve => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+        })""")
+        page.wait_for_function("!cy.animated()")
+        metrics = page.evaluate("""() => {
+            const box = document.querySelector('#lin-cy').getBoundingClientRect();
+            const nodes = cy.nodes(':visible').map(node => {
+                const b = node.renderedBoundingBox();
+                return {id: node.id(), label: node.style('label'),
+                    far: node.hasClass('far'), intersects: b.x2 > 0 && b.x1 < box.width
+                    && b.y2 > 0 && b.y1 < box.height};
+            });
+            return {nodes, width: box.width, height: box.height,
+                cyWidth: cy.width(), cyHeight: cy.height(), zoom: cy.zoom()};
+        }""")
+        assert len(metrics["nodes"]) == count
+        assert all(node["intersects"] for node in metrics["nodes"]), metrics
+        assert metrics["cyWidth"] == pytest.approx(metrics["width"], abs=1)
+        assert metrics["cyHeight"] == pytest.approx(metrics["height"], abs=1)
+        if metrics["zoom"] >= 0.55:
+            assert all(node["label"] and not node["far"] for node in metrics["nodes"])
+        capture(page, f"sheet-filter-{width}-{reader_open}-{index}")
+    page.select_option("#lin-sheet-filter", "__all__")
+    page.wait_for_function("cy.nodes(':visible').length === 96")
+    page.evaluate("""() => new Promise(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })""")
+    for zoom, hidden_count in [(1.2, 96), (1.8, 0), (0.4, 96)]:
+        page.evaluate("zoom => { cy.zoom(zoom); }", zoom)
+        page.wait_for_function(
+            "count => cy.nodes(':visible.far').length === count", arg=hidden_count
+        )
+    assert not errors
+
+
 def test_portrait_flow_stays_readable_and_respects_explicit_layout(report):
     graph = {
         "nodes": [

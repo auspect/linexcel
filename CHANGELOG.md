@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or other valid tables.
 - Recognize structured AI fences only as complete Markdown blocks, preserving
   prose and formula proofs after inline mentions of table or claim blocks.
+- Reframe exported graphs after changing sheets, including equal-sized subsets
+  and mobile layouts whose canvas resizes when the node reader closes. Keep
+  labels readable in small filtered views of a larger workbook.
+- Describe input and named-reference values read through the engine as readings
+  rather than recalculations in the exported viewer.
 - Scope calculation guidance to Nodes and Graph, support arrow/Home/End
   navigation between the main tabs, and provide a skip link to the workbook.
 - Keep formatted presentation separate from raw Datasette values and exports;

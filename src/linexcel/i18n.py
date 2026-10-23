@@ -191,6 +191,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Value samples",
         "value_from_file": "Read from Excel file",
         "value_recalc": "Recalculated by linexcel",
+        "value_engine_read": "Read through the linexcel engine",
+        "value_engine_read_desc": (
+            "linexcel read or resolved this value through the engine; no "
+            "formula recalculation is recorded for this node."
+        ),
+        "value_col_read": "linexcel engine reading",
+        "value_read_match": "The engine reading matches the file",
+        "value_read_mismatch": "The engine reading differs from the file",
+        "value_read_no_cache_desc": "No saved value was supplied for comparison.",
         "value_fallback": "linexcel fallback (error-guarded)",
         "value_recalc_desc": (
             "linexcel recomputed this value from the workbook's own inputs."
@@ -406,6 +415,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Échantillons de valeurs",
         "value_from_file": "Lue du fichier Excel",
         "value_recalc": "Recalculée par linexcel",
+        "value_engine_read": "Lue via le moteur linexcel",
+        "value_engine_read_desc": (
+            "linexcel a lu ou résolu cette valeur via le moteur ; aucun "
+            "recalcul de formule n’est enregistré pour ce nœud."
+        ),
+        "value_col_read": "Lecture du moteur linexcel",
+        "value_read_match": "La lecture du moteur correspond au fichier",
+        "value_read_mismatch": "La lecture du moteur diffère du fichier",
+        "value_read_no_cache_desc": (
+            "Aucune valeur enregistrée n’a été fournie pour la comparaison."
+        ),
         "value_fallback": "repli linexcel (erreur protégée)",
         "value_recalc_desc": (
             "linexcel a recalculé cette valeur à partir des données du classeur."
@@ -625,6 +645,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Muestras de valores",
         "value_from_file": "Leído del archivo Excel",
         "value_recalc": "Recalculado por linexcel",
+        "value_engine_read": "Leído mediante el motor linexcel",
+        "value_engine_read_desc": (
+            "linexcel leyó o resolvió este valor mediante el motor; no se "
+            "registra un recálculo de fórmula para este nodo."
+        ),
+        "value_col_read": "Lectura del motor linexcel",
+        "value_read_match": "La lectura del motor coincide con el archivo",
+        "value_read_mismatch": "La lectura del motor difiere del archivo",
+        "value_read_no_cache_desc": (
+            "No se proporcionó un valor guardado para la comparación."
+        ),
         "value_fallback": "valor alternativo de linexcel (error protegido)",
         "value_recalc_desc": (
             "linexcel ha recalculado este valor a partir de los datos del libro."
@@ -846,6 +877,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Wertebeispiele",
         "value_from_file": "Aus der Excel-Datei gelesen",
         "value_recalc": "Von linexcel neu berechnet",
+        "value_engine_read": "Über die linexcel-Engine gelesen",
+        "value_engine_read_desc": (
+            "linexcel hat diesen Wert über die Engine gelesen oder aufgelöst; "
+            "für diesen Knoten ist keine Formelneuberechnung erfasst."
+        ),
+        "value_col_read": "linexcel-Engine-Lesewert",
+        "value_read_match": "Der Engine-Lesewert stimmt mit der Datei überein",
+        "value_read_mismatch": "Der Engine-Lesewert weicht von der Datei ab",
+        "value_read_no_cache_desc": (
+            "Es wurde kein gespeicherter Vergleichswert bereitgestellt."
+        ),
         "value_fallback": "linexcel-Ersatzwert (fehlergeschützt)",
         "value_recalc_desc": (
             "linexcel hat diesen Wert aus den Daten der Arbeitsmappe neu berechnet."
@@ -1065,6 +1107,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Campioni di valori",
         "value_from_file": "Letto dal file Excel",
         "value_recalc": "Ricalcolato da linexcel",
+        "value_engine_read": "Letto tramite il motore linexcel",
+        "value_engine_read_desc": (
+            "linexcel ha letto o risolto questo valore tramite il motore; non "
+            "è registrato un ricalcolo di formula per questo nodo."
+        ),
+        "value_col_read": "Lettura del motore linexcel",
+        "value_read_match": "La lettura del motore coincide con il file",
+        "value_read_mismatch": "La lettura del motore differisce dal file",
+        "value_read_no_cache_desc": (
+            "Non è stato fornito un valore salvato per il confronto."
+        ),
         "value_fallback": "valore di ripiego di linexcel (errore protetto)",
         "value_recalc_desc": (
             "linexcel ha ricalcolato questo valore a partire dai dati della "
@@ -1279,6 +1332,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Amostras de valores",
         "value_from_file": "Lido do ficheiro Excel",
         "value_recalc": "Recalculado pelo linexcel",
+        "value_engine_read": "Lido pelo motor linexcel",
+        "value_engine_read_desc": (
+            "O linexcel leu ou resolveu este valor pelo motor; não há "
+            "recálculo de fórmula registado para este nó."
+        ),
+        "value_col_read": "Leitura do motor linexcel",
+        "value_read_match": "A leitura do motor coincide com o ficheiro",
+        "value_read_mismatch": "A leitura do motor difere do ficheiro",
+        "value_read_no_cache_desc": (
+            "Não foi fornecido um valor guardado para comparação."
+        ),
         "value_fallback": "valor alternativo do linexcel (erro protegido)",
         "value_recalc_desc": (
             "O linexcel recalculou este valor a partir dos dados da pasta de trabalho."
@@ -1497,6 +1561,17 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "Voorbeeldwaarden",
         "value_from_file": "Gelezen uit het Excel-bestand",
         "value_recalc": "Herberekend door linexcel",
+        "value_engine_read": "Gelezen via de linexcel-engine",
+        "value_engine_read_desc": (
+            "linexcel heeft deze waarde via de engine gelezen of opgezocht; "
+            "voor deze knoop is geen formuleherberekening vastgelegd."
+        ),
+        "value_col_read": "Lezing van de linexcel-engine",
+        "value_read_match": "De enginelezing komt overeen met het bestand",
+        "value_read_mismatch": "De enginelezing wijkt af van het bestand",
+        "value_read_no_cache_desc": (
+            "Er is geen opgeslagen waarde voor vergelijking geleverd."
+        ),
         "value_fallback": "terugvalwaarde van linexcel (foutbeveiligd)",
         "value_recalc_desc": (
             "linexcel heeft deze waarde opnieuw berekend op basis van de "
@@ -1704,6 +1779,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "値のサンプル",
         "value_from_file": "Excel ファイルから読み取り",
         "value_recalc": "linexcel が再計算",
+        "value_engine_read": "linexcel エンジンで読み取り",
+        "value_engine_read_desc": (
+            "linexcel はエンジンを通じてこの値を読み取り、または名前を解決しました。"
+            "このノードの数式の再計算は記録されていません。"
+        ),
+        "value_col_read": "linexcel エンジンの読み取り値",
+        "value_read_match": "エンジンの読み取り値はファイルと一致します",
+        "value_read_mismatch": "エンジンの読み取り値はファイルと異なります",
+        "value_read_no_cache_desc": "比較用の保存値は提供されていません。",
         "value_fallback": "linexcel の代替値（エラー保護）",
         "value_recalc_desc": ("linexcel がブックの入力値からこの値を再計算しました。"),
         "value_from_file_desc": (
@@ -1899,6 +1983,14 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_samples": "取值示例",
         "value_from_file": "读取自 Excel 文件",
         "value_recalc": "由 linexcel 重新计算",
+        "value_engine_read": "由 linexcel 引擎读取",
+        "value_engine_read_desc": (
+            "linexcel 通过引擎读取或解析了此值；没有记录此节点的公式重算。"
+        ),
+        "value_col_read": "linexcel 引擎读取值",
+        "value_read_match": "引擎读取值与文件一致",
+        "value_read_mismatch": "引擎读取值与文件不同",
+        "value_read_no_cache_desc": "未提供用于比较的保存值。",
         "value_fallback": "linexcel 回退值（已防错）",
         "value_recalc_desc": ("linexcel 已根据工作簿中的输入重新计算该值。"),
         "value_from_file_desc": (
