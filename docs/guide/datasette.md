@@ -55,7 +55,7 @@ which can itself recalculate formulas and differ from Excel's saved values.
 
 The source format has distinct rules for [cell styles, row/column styles and
 merged cells](https://openpyxl.readthedocs.io/en/stable/styles.html). Datasette's
-[render-cell hook](https://docs.datasette.io/en/0.65.5/plugin_hooks.html#render-cell)
+[render-cell hook](https://docs.datasette.io/en/stable/plugin_hooks.html#render-cell)
 customizes scalar display; preserving worksheet coordinates and merges while
 filtering/reordering rows requires a separate presentation. The application keeps
 both views available through the same authenticated project.
