@@ -130,6 +130,28 @@ class TestInsertTables:
         assert "| A |" not in out and "| valid |" not in out
         assert "{{T" not in out and "```" not in out
 
+    def test_inline_table_fence_mention_cannot_consume_prose_or_formula_proofs(self):
+        text = (
+            "Prose before.\n- Add a block ```json_tables.\n"
+            "Prose and source proof stay.\n{{SOURCE_FORMULA}}\n"
+            "{{STORED_XML_FORMULA}}\n{{CANONICAL_FORMULA}}\n\n"
+            '```json\n[{"statement":"Generic ledger stays unqualified."}]\n```'
+        )
+        assert _insert_tables(text) == text
+
+    def test_table_fence_label_must_be_complete_and_own_a_line(self):
+        payload = json.dumps([{"id": "T1", "columns": ["A"], "rows": [[1]]}])
+        for opening in ("```json_tables.", "```json_tables_extra", "```json_tables []"):
+            text = "Prose.\n" + opening + "\n" + payload + "\n```"
+            assert _insert_tables(text) == text
+
+    def test_valid_table_fences_accept_crlf_and_markdown_indentation(self):
+        payload = json.dumps([{"id": "T1", "columns": ["A"], "rows": [[1]]}])
+        text = "Prose.\r\n{{T1}}\r\n  ```json_tables \r\n" + payload + "\r\n ```\r\n"
+        out = _insert_tables(text)
+        assert "Prose." in out and "| A |" in out and "| 1 |" in out
+        assert "```" not in out and "{{T1}}" not in out
+
 
 class TestNumericAlignment:
     def test_version_strings_are_not_quantities(self):

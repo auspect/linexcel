@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same recovery hint without reclassifying genuine permission errors.
 - Discard malformed AI table rows without losing the surrounding documentation
   or other valid tables.
+- Recognize structured AI fences only as complete Markdown blocks, preserving
+  prose and formula proofs after inline mentions of table or claim blocks.
 - Scope calculation guidance to Nodes and Graph, support arrow/Home/End
   navigation between the main tabs, and provide a skip link to the workbook.
 - Keep formatted presentation separate from raw Datasette values and exports;

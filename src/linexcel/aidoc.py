@@ -1836,7 +1836,10 @@ def _compact_preview(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # below render the Markdown deterministically. Malformed JSON costs the
 # tables, never the prose.
 
-_TABLE_BLOCK_RE = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_TABLE_BLOCK_RE = re.compile(
+    r"^ {0,3}```json_tables[ \t]*\r?\n(.*?)^ {0,3}```[ \t]*\r?$",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
 _PLACEHOLDER_RE = re.compile(r"\{\{(T\d+)\}\}")
 # A quantity: optional sign, digits with optional thousands spacing or US
 # comma grouping, at most one decimal separator, optional %. Version strings

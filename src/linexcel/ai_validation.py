@@ -22,9 +22,17 @@ MAX_QUOTES = 256
 MAX_CLAIMS = 96
 MAX_CLAIM_BLOCK_CHARS = 32_000
 REVIEW_VERSION = "linexcel-factual-review-v5"
-_CLAIMS = re.compile(r"```json_claims\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-_CLAIM_START = re.compile(r"```json_claims\b", re.IGNORECASE)
-_TABLES = re.compile(r"```json_tables\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_CLAIMS = re.compile(
+    r"^ {0,3}```json_claims[ \t]*\r?\n(.*?)^ {0,3}```[ \t]*\r?$",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
+_CLAIM_START = re.compile(
+    r"^ {0,3}```json_claims[ \t]*\r?$", re.IGNORECASE | re.MULTILINE
+)
+_TABLES = re.compile(
+    r"^ {0,3}```json_tables[ \t]*\r?\n(.*?)^ {0,3}```[ \t]*\r?$",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
 _FUNCTION = re.compile(r"[A-Za-z_][A-Za-z_0-9.]*\(")
 _CODE = re.compile(r"(?<!`)(`{1,3})(?!`)(.*?)\1(?!`)", re.DOTALL)
 
