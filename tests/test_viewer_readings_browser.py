@@ -122,8 +122,8 @@ def select(page, node_id, *, fallback):
         page.locator(f'.lin-fallback-list button[data-node-id="{node_id}"]').click()
     else:
         page.evaluate(
-            "id => document.querySelector('#lin-cy')._cyreg.cy"
-            ".getElementById(id).emit('tap')",
+            "id => { document.querySelector('#lin-cy')._cyreg.cy"
+            ".getElementById(id).emit('tap'); }",
             node_id,
         )
     page.locator("#lin-panel .lin-vcard").first.wait_for()
