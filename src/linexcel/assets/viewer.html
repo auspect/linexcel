@@ -882,6 +882,7 @@
   // able to tell Excel's own number from the one linexcel recomputed.
   var SRC = {
     engine:   { labelKey: 'value_recalc',    descKey: 'value_recalc_desc',    color: PALETTE.blue },
+    'engine-read': { labelKey: 'value_engine_read', descKey: 'value_engine_read_desc', color: PALETTE.blue },
     file:     { labelKey: 'value_from_file', descKey: 'value_from_file_desc', color: PALETTE.green },
     fallback: { labelKey: 'value_fallback',  descKey: 'value_fallback_desc',  color: PALETTE.amber },
     // Grey, not green: the volatile column states an abstention, and a colour
@@ -993,6 +994,7 @@
         function (b) { return b.getAttribute('aria-pressed'); }) };
   }
   function restoreSnapshot(cy, state) {
+    cancelSheetFraming(cy);
     cy.stop(true, false);
     CUR_SHEET = state.sheet;
     exploration = state.exploration && Object.assign({}, state.exploration);
@@ -1467,6 +1469,10 @@
       style: buildStyle(big), layout: layoutOpts(initial, hasFcose)
     });
     activeCy = cy;
+    cy.on('pan zoom', function () {
+      var pending = cy.scratch('linexcelSheetFrame');
+      if (pending && pending.frame !== null) cancelSheetFraming(cy);
+    });
     setupCoverage(cy);
     document.getElementById('lin-export-view').onclick = function () {
       // Rasterize the current viewport, not the private workbook or off-screen nodes.
@@ -1495,18 +1501,18 @@
     // restyle per frame — a wheel gesture fires dozens of zoom events.
     var LABEL_MIN_ZOOM = 0.55;
     var LABEL_FULL_ZOOM = 1.6;
-    var CROWDED = GRAPH.nodes.length > 80;
     function syncLabelLod() {
       var z = cy.zoom();
+      var crowded = cy.nodes(':visible').length > 80;
       var hood = null;
-      if (CROWDED && z >= LABEL_MIN_ZOOM && z < LABEL_FULL_ZOOM) {
+      if (crowded && z >= LABEL_MIN_ZOOM && z < LABEL_FULL_ZOOM) {
         var sel = cy.nodes(':selected');
         if (sel.length) hood = sel.closedNeighborhood().nodes();
       }
       cy.batch(function () {
         cy.nodes().forEach(function (n) {
           var show = z >= LABEL_FULL_ZOOM
-            || (z >= LABEL_MIN_ZOOM && (!CROWDED || n.selected()
+            || (z >= LABEL_MIN_ZOOM && (!crowded || n.selected()
               || (hood !== null && hood.contains(n))))
             || (z < LABEL_MIN_ZOOM && n.selected());
           if (show) n.removeClass('far'); else n.addClass('far');
@@ -1517,7 +1523,7 @@
     // Coalesce them with zoom events so a broad search never scans the whole
     // graph once per match.
     cy.on('zoom select unselect', scheduleSelectionUpdate);
-    cy.one('layoutstop', syncLabelLod);
+    cy.on('layoutstop', syncLabelLod);
     // A synchronous layout (dagre, animate: false) fires layoutstop *inside*
     // the cytoscape() call, before the handler above exists; the zoom handler
     // misses the layout's own fit for the same reason. The direct call is
@@ -1770,6 +1776,7 @@
           else node.removeClass('diff-off');
         });
       });
+      resolveDisplayStyles(cy);
       clearSel(cy);  // the selection may have just left the canvas
       var visible = cy.elements(':visible');
       if (!visible.nodes().length) return;
@@ -2392,6 +2399,7 @@
           });
         });
         // The selection may have just left the canvas with its kind.
+        resolveDisplayStyles(cy);
         clearSel(cy);
         var visible = cy.elements(':visible');
         if (!visible.nodes().length) return;
@@ -2415,12 +2423,25 @@
     return String(v);
   }
 
+  function resolveDisplayStyles(cy) {
+    // Resolve lazy display styles before visibility reads reuse the old cache.
+    cy.nodes().forEach(function (node) { node.style('display'); });
+  }
+
   // Narrow the graph to one sheet. Nodes of another sheet are kept — dimmed —
   // when an edge ties them to the selected one, because a formula that reads
   // from elsewhere is only readable if that "elsewhere" is on screen.
+  function cancelSheetFraming(cy) {
+    var pending = cy.scratch('linexcelSheetFrame');
+    if (!pending) return;
+    // stop() can emit layoutstop; retire the token before stopping its layout.
+    cy.removeScratch('linexcelSheetFrame');
+    if (pending.frame !== null) cancelAnimationFrame(pending.frame);
+    if (pending.layout) pending.layout.stop();
+  }
   function applySheetFilter(cy, sheet, layoutName, hasFcose) {
+    cancelSheetFraming(cy);
     clearExploration(cy);
-    var before = cy.nodes(':visible').length;
     CUR_SHEET = sheet || ALL_SHEETS;
     cy.batch(function () {
       cy.elements().removeClass('dimmed hl');
@@ -2435,11 +2456,25 @@
       // Cytoscape hides edges automatically when either endpoint is hidden.
       cy.nodes().not(keep).addClass('sheet-off');
     });
+    resolveDisplayStyles(cy);
     clearSel(cy);  // the previously selected node may now be hidden
     var visible = cy.elements(':visible');
     if (!visible.nodes().length) return;
-    visible.layout(layoutOpts(layoutName, hasFcose)).run();
-    if (cy.nodes(':visible').length !== before) cy.fit(visible, 40);
+    // New positions need a fresh frame even when two sheets have equal counts.
+    // Clearing the reader can also change the mobile canvas dimensions.
+    var layout = visible.layout(layoutOpts(layoutName, hasFcose));
+    var pending = {layout: layout, frame: null};
+    cy.scratch('linexcelSheetFrame', pending);
+    layout.one('layoutstop', function () {
+      if (cy.scratch('linexcelSheetFrame') !== pending) return;
+      pending.layout = null;
+      pending.frame = requestAnimationFrame(function () {
+        if (cy.scratch('linexcelSheetFrame') !== pending) return;
+        cy.removeScratch('linexcelSheetFrame');
+        frameEles(cy, cy.elements(':visible'), 0);
+      });
+    });
+    layout.run();
   }
   // Cross-sheet neighbours read as "external": dimmed, but present. Reapplied
   // after every selection change, which clears the class wholesale.
@@ -2457,6 +2492,7 @@
   // the zoom back, keeping the set centred.
   var FOCUS_MAX_ZOOM = 1.2;
   function frameEles(cy, eles, duration) {
+    cancelSheetFraming(cy);
     if (!eles || !eles.length) return;
     // Opening the mobile detail pane changes the canvas height. Refresh its
     // dimensions before fitting rather than waiting for ResizeObserver.
@@ -2468,6 +2504,14 @@
     var needed = Math.min((cy.width() - 80) / bounds.w, (cy.height() - 80) / bounds.h);
     if (isFinite(needed) && needed > 0 && needed < cy.minZoom()) {
       cy.minZoom(Math.max(0.000001, needed * 0.95));
+    }
+    if (duration === 0) {
+      cy.fit(eles, 40);
+      if (cy.zoom() > FOCUS_MAX_ZOOM) {
+        cy.zoom({level: FOCUS_MAX_ZOOM, position: {
+          x: (bounds.x1 + bounds.x2) / 2, y: (bounds.y1 + bounds.y2) / 2 }});
+      }
+      return;
     }
     cy.animate({ fit: { eles: eles, padding: 40 }, duration: duration,
       complete: function () {
@@ -2990,10 +3034,17 @@
   // the two is on screen is the question this tool exists to answer. A column
   // with nothing to show says so — "not stored", "not recalculated" — because
   // an empty cell reads as a rendering bug rather than as a fact.
-  function readings(o) {
+  function readings(o, parent) {
     // The graph names these valueSource/valueDate, as it does on a node; the
     // range samples say source/date, so both spellings are read.
     var src = o.valueSource || o.source;
+    var kind = o.kind || (parent && parent.kind);
+    var formula = o.sourceFormula || o.formula || o.canonicalFormula ||
+      (parent && (parent.sourceFormula || parent.formula || parent.canonicalFormula));
+    // Reading an input or resolving a name does not establish a formula
+    // recalculation at this node, even when upstream formulas were evaluated.
+    var engineRead = src === 'engine' && (kind === 'input' || kind === 'name') &&
+      !(typeof formula === 'string' && formula.trim());
     var dateText = o.valueDate || o.date;
     var shown = dateText || fmt(o.value);
     var hasValue = o.value !== undefined && o.value !== null;
@@ -3009,7 +3060,7 @@
     var stored = !!STORED_SOURCES[src];
     var comparable = hasValue && hasCached && src === 'engine';
     return {
-      source: src, shown: shown, hasValue: hasValue,
+      source: src, shown: shown, hasValue: hasValue, engineRead: engineRead,
       file: stored ? shown : cached,
       calc: (stored || !hasValue) ? null : shown,
       comparable: comparable,
@@ -3035,7 +3086,7 @@
     var sv = section(_t('value_heading'));
     var main = readings(n);
     var rows = (n.samples || []).map(function (s) {
-      var r = readings(s); r.addr = s.addr; return r;
+      var r = readings(s, n); r.addr = s.addr; return r;
     });
     var judged = rows.length ? rows : [main];
     var comparable = judged.filter(function (r) { return r.comparable; });
@@ -3049,8 +3100,10 @@
       if (!agree) card.className = 'lin-vcard is-diff';
       var verdict = el('div', 'lin-verdict');
       verdict.appendChild(icon(agree ? 'check' : 'warn'));
-      verdict.appendChild(document.createTextNode(
-        _t(!agree ? 'value_mismatch' : formatted ? 'value_match_format' : 'value_match')));
+      var verdictKey = !agree ? 'value_mismatch' : formatted ? 'value_match_format' : 'value_match';
+      if (!formatted && comparable.every(function (r) { return r.engineRead; }))
+        verdictKey = agree ? 'value_read_match' : 'value_read_mismatch';
+      verdict.appendChild(document.createTextNode(_t(verdictKey)));
       card.appendChild(verdict);
     } else if (main.source === 'fallback') {
       card.className = 'lin-vcard is-guarded';
@@ -3066,13 +3119,14 @@
     // The provenance sentence speaks of one figure. Over a sample table it
     // would only repeat the column header in the singular, so it is kept for
     // the states a header cannot express: a file reading, or a guarded one.
-    var src = SRC[main.source];
+    var src = SRC[main.engineRead ? 'engine-read' : main.source];
     if (src && !(rows.length && main.source === 'engine'))
       sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
     // Only one column carries a figure: name the reason rather than let the
     // reader take the empty half for a bug or for a disagreement.
     if (!comparable.length && main.source === 'engine')
-      sv.appendChild(el('p', 'lin-hint', _t('value_no_cache_desc')));
+      sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?
+        'value_read_no_cache_desc' : 'value_no_cache_desc')));
     return sv;
   }
   // One cell, two columns. Without a recorded provenance neither column can be
@@ -3089,13 +3143,19 @@
     // Swatched by where the figure came from, not by the column it sits in: a
     // guarded fallback and a value fetched from another workbook are both
     // "not the engine reading this file", and the colour says so.
-    grid.appendChild(reading(_t('value_col_calc'), r.calc,
-      (SRC[r.source] || SRC.engine).color, notRecalculated(r)));
+    if (r.engineRead) {
+      grid.appendChild(reading(_t('value_col_read'), r.calc, SRC.engine.color,
+        _t('coverage_unavailable')));
+    } else {
+      grid.appendChild(reading(_t('value_col_calc'), r.calc,
+        (SRC[r.source] || SRC.engine).color, notRecalculated(r)));
+    }
     return grid;
   }
   // Why the recalculation column is empty. "Volatile" is the sharper answer
   // when there is one: linexcel did not decline, it deliberately abstained.
   function notRecalculated(r) {
+    if (r.engineRead) return _t('coverage_unavailable');
     return _t(r.source === 'volatile' ? 'value_volatile' : 'value_not_recalc');
   }
   // The sampled cells of a stretched group, one row each. A row whose two
@@ -3106,7 +3166,11 @@
     var head = el('tr');
     head.appendChild(colHead(_t('value_col_cell'), null));
     head.appendChild(colHead(_t('value_col_file'), SRC.file.color));
-    head.appendChild(colHead(_t('value_col_calc'), SRC.engine.color));
+    if (rows.every(function (r) { return r.engineRead; })) {
+      head.appendChild(colHead(_t('value_col_read'), SRC.engine.color));
+    } else {
+      head.appendChild(colHead(_t('value_col_calc'), SRC.engine.color));
+    }
     var thead = el('thead'); thead.appendChild(head); tbl.appendChild(thead);
     var body = el('tbody');
     rows.forEach(function (r) {

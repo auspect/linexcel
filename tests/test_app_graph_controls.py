@@ -400,6 +400,8 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
     )
 
     def assert_exact_neighborhood():
+        # Selecting a new center keeps the previous canvas while its request loads.
+        playwright.expect(page.locator("#graph-notice")).to_contain_text("2 nœuds")
         assert set(canvas.evaluate("el=>el._cy.nodes().map(n=>n.id())")) == {
             "QRA!H2",
             "QRA!H3",

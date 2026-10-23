@@ -122,6 +122,103 @@ def test_search_does_not_select_hidden_results(report):
     assert not errors
 
 
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("reader_open", [False, True])
+def test_sheet_filter_frames_changed_and_equal_node_counts(
+    report, width, height, reader_open
+):
+    sheets = [("Café", 6), ("Sales Data", 35), ("Hidden Config", 6), ("Same Count", 6)]
+    graph = {"nodes": [], "edges": []}
+    for sheet, count in [*sheets, ("Large scope", 43)]:
+        graph["nodes"].extend(
+            {
+                "id": f"{sheet}!A{index}",
+                "sheet": sheet,
+                "kind": "cell",
+                "label": f"{sheet}!A{index}",
+                "formula": "=1",
+            }
+            for index in range(count)
+        )
+        graph["edges"].extend(
+            {
+                "id": f"{sheet}-{index}",
+                "source": f"{sheet}!A{index - 1}",
+                "target": f"{sheet}!A{index}",
+                "kind": "ref",
+            }
+            for index in range(1, count)
+        )
+    page, errors = report(graph, width=width, height=height)
+    if width <= 900:
+        page.click("#lin-options-toggle")
+    page.click("#lin-lay-fcose")
+    if width <= 900:
+        page.click("#lin-options-close")
+    for index, (sheet, count) in enumerate(sheets, start=1):
+        if reader_open:
+            page.evaluate("() => { cy.nodes(':visible').first().emit('tap'); }")
+            playwright.expect(page.locator(".lin-close")).to_be_visible()
+        page.wait_for_function("""() => {
+            const box = document.querySelector('#lin-cy').getBoundingClientRect();
+            return Math.abs(cy.width() - box.width) < 1
+                && Math.abs(cy.height() - box.height) < 1;
+        }""")
+        page.evaluate("window.filterFrame = null")
+        page.select_option("#lin-sheet-filter", sheet)
+        page.wait_for_function(
+            """ids => {
+                const nodes = cy.nodes(':visible');
+                const box = document.querySelector('#lin-cy').getBoundingClientRect();
+                if (cy.animated() || JSON.stringify(nodes.map(n=>n.id()).sort())
+                        !== JSON.stringify(ids.slice().sort())
+                        || Math.abs(cy.width() - box.width) >= 1
+                        || Math.abs(cy.height() - box.height) >= 1) return false;
+                const bounds = nodes.map(n => n.renderedBoundingBox());
+                if (!bounds.every(b => b.x2 > 0 && b.x1 < box.width
+                        && b.y2 > 0 && b.y1 < box.height)) return false;
+                const frame = JSON.stringify(bounds);
+                const stable = window.filterFrame === frame;
+                window.filterFrame = frame;
+                return stable;
+            }""",
+            arg=[f"{sheet}!A{index}" for index in range(count)],
+        )
+        page.evaluate("""() => new Promise(resolve => {
+            requestAnimationFrame(() => requestAnimationFrame(resolve));
+        })""")
+        page.wait_for_function("!cy.animated()")
+        metrics = page.evaluate("""() => {
+            const box = document.querySelector('#lin-cy').getBoundingClientRect();
+            const nodes = cy.nodes(':visible').map(node => {
+                const b = node.renderedBoundingBox();
+                return {id: node.id(), label: node.style('label'),
+                    far: node.hasClass('far'), intersects: b.x2 > 0 && b.x1 < box.width
+                    && b.y2 > 0 && b.y1 < box.height};
+            });
+            return {nodes, width: box.width, height: box.height,
+                cyWidth: cy.width(), cyHeight: cy.height(), zoom: cy.zoom()};
+        }""")
+        assert len(metrics["nodes"]) == count
+        assert all(node["intersects"] for node in metrics["nodes"]), metrics
+        assert metrics["cyWidth"] == pytest.approx(metrics["width"], abs=1)
+        assert metrics["cyHeight"] == pytest.approx(metrics["height"], abs=1)
+        if metrics["zoom"] >= 0.55:
+            assert all(node["label"] and not node["far"] for node in metrics["nodes"])
+        capture(page, f"sheet-filter-{width}-{reader_open}-{index}")
+    page.select_option("#lin-sheet-filter", "__all__")
+    page.wait_for_function("cy.nodes(':visible').length === 96")
+    page.evaluate("""() => new Promise(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })""")
+    for zoom, hidden_count in [(1.2, 96), (1.8, 0), (0.4, 96)]:
+        page.evaluate("zoom => { cy.zoom(zoom); }", zoom)
+        page.wait_for_function(
+            "count => cy.nodes(':visible.far').length === count", arg=hidden_count
+        )
+    assert not errors
+
+
 def test_portrait_flow_stays_readable_and_respects_explicit_layout(report):
     graph = {
         "nodes": [
@@ -169,6 +266,160 @@ def test_portrait_flow_stays_readable_and_respects_explicit_layout(report):
     page.set_viewport_size({"width": 844, "height": 390})
     page.set_viewport_size({"width": 390, "height": 844})
     assert page.locator("#lin-lay-fcose").get_attribute("aria-pressed") == "true"
+    assert not errors
+
+
+@pytest.fixture(scope="module")
+def sales_source_graph():
+    import runpy
+
+    from linexcel import analyze
+
+    builders = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "validation_workbooks.py")
+    )
+    return analyze(builders["build_sales_workbook"](), filename="sales.xlsx").graph
+
+
+def assert_separate_cards(page, expected):
+    page.evaluate("() => { window.cardBounds = null; window.cardFrames = 0; }")
+    page.wait_for_function(
+        """ids => {
+            if (cy.scratch('linexcelSheetFrame') || cy.animated()) return false;
+            const nodes = cy.nodes(':visible');
+            if (JSON.stringify(nodes.map(n=>n.id()).sort())
+                    !== JSON.stringify(ids.slice().sort())) return false;
+            const state = JSON.stringify(nodes.map(n=>n.renderedBoundingBox()));
+            window.cardFrames = window.cardBounds === state ? window.cardFrames + 1 : 0;
+            window.cardBounds = state;
+            return window.cardFrames >= 3;
+        }""",
+        arg=sorted(expected),
+    )
+    # Exact outer card rectangles exclude Cytoscape's extra bounding-box margin.
+    bounds = page.evaluate("""() => cy.nodes(':visible').map(n=>{
+        const p=n.renderedPosition();
+        const w=n.renderedOuterWidth(), h=n.renderedOuterHeight();
+        return {id:n.id(), box:{x1:p.x-w/2, x2:p.x+w/2, y1:p.y-h/2, y2:p.y+h/2}};
+    })""")
+    overlaps = []
+    for index, first in enumerate(bounds):
+        for second in bounds[index + 1 :]:
+            a, b = first["box"], second["box"]
+            overlap_width = min(a["x2"], b["x2"]) - max(a["x1"], b["x1"])
+            overlap_height = min(a["y2"], b["y2"]) - max(a["y1"], b["y1"])
+            if overlap_width > 1 and overlap_height > 1:
+                overlaps.append((first["id"], second["id"], a, b))
+    assert not overlaps, overlaps
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_sales_sheet_filters_keep_every_card_separate(
+    report, sales_source_graph, width, height, language
+):
+    graph = sales_source_graph
+    page, errors = report(graph, width=width, height=height, language=language)
+    for sheet in ["__all__", "Params", "Sales", "Summary"]:
+        expected = {node["id"] for node in graph["nodes"]}
+        if sheet != "__all__":
+            local = {node["id"] for node in graph["nodes"] if node["sheet"] == sheet}
+            expected = local | {
+                edge[end]
+                for edge in graph["edges"]
+                if edge["source"] in local or edge["target"] in local
+                for end in ["source", "target"]
+            }
+        page.select_option("#lin-sheet-filter", sheet)
+        for fitted in [False, True]:
+            if fitted:
+                page.click("#lin-fit")
+            assert_separate_cards(page, expected)
+        capture(page, f"sales-filter-{language}-{width}-{sheet}")
+    assert not errors
+
+
+@pytest.fixture(scope="module", params=["sales", "stress"])
+def cached_filter_source_graph(request):
+    import io
+    import re
+    import runpy
+    import zipfile
+
+    from linexcel import analyze
+
+    builders = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "validation_workbooks.py")
+    )
+    data = builders[f"build_{request.param}_workbook"]()
+    if request.param == "stress":
+        graph = analyze(data, filename="stress.xlsx").graph
+        # Raw Stress has no comparable formula cache. Exercise this public
+        # comparison marker as a UI fixture, without claiming a native result.
+        group = next(node for node in graph["nodes"] if node["kind"] == "group")
+        group["groupCachedAgreement"] = "differ"
+        return graph
+    patched = io.BytesIO()
+    cache_pattern = rb'(<c\b[^>]*\br="C5"[^>]*>.*?</f>)<v(?:\s*/>|></v>)'
+    # A real wrong saved result enables Sales' discrepancy filter.
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as source,
+        zipfile.ZipFile(patched, "w") as out,
+    ):
+        for part in source.infolist():
+            payload = source.read(part.filename)
+            if part.filename == "xl/worksheets/sheet2.xml":
+                payload, count = re.subn(
+                    cache_pattern,
+                    rb"\1<v>987654321</v>",
+                    payload,
+                    count=1,
+                )
+                assert count == 1
+            out.writestr(part, payload)
+    return analyze(patched.getvalue(), filename=f"{request.param}.xlsx").graph
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_kind_and_discrepancy_filters_relayout_the_current_cards(
+    report, cached_filter_source_graph, width, height
+):
+    graph = cached_filter_source_graph
+    page, errors = report(graph, width=width, height=height)
+    # Fix the user's Flow choice so incidental organic packing is independent.
+    if width <= 900:
+        page.click("#lin-options-toggle")
+    page.click("#lin-lay-dagre")
+    if width <= 900:
+        page.click("#lin-options-close")
+    all_ids = {node["id"] for node in graph["nodes"]}
+    for kind, label in [("input", "Source data"), ("group", "Stretched formulas")]:
+        for enabled in [False, True]:
+            if width <= 900:
+                page.click("#lin-options-toggle")
+            page.locator("#lin-rail-kinds button").filter(has_text=label).click()
+            if width <= 900:
+                page.click("#lin-options-close")
+            expected = (
+                all_ids
+                if enabled
+                else {node["id"] for node in graph["nodes"] if node["kind"] != kind}
+            )
+            assert_separate_cards(page, expected)
+    different_ids = {
+        node["id"]
+        for node in graph["nodes"]
+        if node.get("cachedAgreement") == "differ"
+        or node.get("groupCachedAgreement") == "differ"
+    }
+    assert different_ids and different_ids != all_ids
+    for enabled in [True, False]:
+        if width <= 900:
+            page.click("#lin-options-toggle")
+        page.click("#lin-diffs-only")
+        if width <= 900:
+            page.click("#lin-options-close")
+        assert_separate_cards(page, different_ids if enabled else all_ids)
     assert not errors
 
 
@@ -475,6 +726,45 @@ def test_history_restores_filters_and_camera_after_revealing_result(report):
     page.click("#lin-history-forward")
     assert page.locator("#lin-panel h2").inner_text() == "Unrelated"
     assert page.locator("#lin-sheet-filter").input_value() == "__all__"
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_history_restore_invalidates_deferred_sheet_framing(report, width, height):
+    page, errors = report(filtered_graph(), width=width, height=height)
+    page.evaluate("""() => {
+        window.heldFilterFrames = [];
+        const original = window.requestAnimationFrame;
+        window.restoreAnimationFrame = () => {
+            window.requestAnimationFrame = original;
+        };
+        window.requestAnimationFrame = function (callback) {
+            const fitCode = "frameEles(cy, cy.elements(':visible'), 0)";
+            if (String(callback).includes(fitCode)) {
+                window.heldFilterFrames.push(callback);
+                return -window.heldFilterFrames.length;
+            }
+            return original(callback);
+        };
+    }""")
+    page.select_option("#lin-sheet-filter", "Out")
+    page.evaluate("() => { window.restoreAnimationFrame(); }")
+    assert page.evaluate("window.heldFilterFrames.length") == 1
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    page.evaluate("() => { cy.stop(); cy.zoom(.8); cy.pan({x: 42, y: 63}); }")
+    before = page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})")
+    page.fill("#lin-search", "Unrelated")
+    page.select_option("#lin-search-scope", "workbook")
+    page.locator("#lin-result-list button").click()
+    page.click("#lin-history-back")
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    page.evaluate("""() => {
+        const callbacks = window.heldFilterFrames.splice(0);
+        callbacks.forEach(callback => callback(performance.now()));
+    }""")
+    assert page.evaluate("({zoom: cy.zoom(), pan: cy.pan()})") == before
+    assert page.locator("#lin-sheet-filter").input_value() == "Out"
+    assert page.locator("#lin-panel h2").inner_text() == "Output"
     assert not errors
 
 

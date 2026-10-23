@@ -56,6 +56,7 @@ nav:
       - Engine safety: guide/engine-safety.md
       - Calculation investigation: guide/calculation-investigation.md
       - Browsing worksheet data: guide/datasette.md
+      - Agent workflow proposals: guide/agent-workflows.md
       - Acceptance evidence: guide/acceptance.md
       - Command line: guide/cli.md
       - Lineage coverage: guide/coverage.md

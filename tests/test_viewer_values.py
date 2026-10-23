@@ -169,8 +169,8 @@ class TestReadVersusRecalculated:
         assert "_t('value_not_in_file')));" in html
         assert (
             "if (!comparable.length && main.source === 'engine')\n"
-            "      sv.appendChild(el('p', 'lin-hint', _t('value_no_cache_desc')));"
-            in html
+            "      sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?\n"
+            "        'value_read_no_cache_desc' : 'value_no_cache_desc')));" in html
         )
         assert EN["value_no_cache_desc"] in html
 
@@ -580,10 +580,8 @@ class TestSheetFilter:
 
     def test_the_filter_relayouts_the_visible_graph(self):
         html = render_html(two_sheet_graph())
-        assert "visible.layout(layoutOpts(layoutName, hasFcose)).run();" in html
-        assert (
-            "if (cy.nodes(':visible').length !== before) cy.fit(visible, 40);" in html
-        )
+        assert "var layout = visible.layout(layoutOpts(layoutName, hasFcose));" in html
+        assert "frameEles(cy, cy.elements(':visible'), 0);" in html
 
     def test_the_nodes_carry_their_sheet_into_cytoscape(self):
         html = render_html(two_sheet_graph())

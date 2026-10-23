@@ -16,6 +16,18 @@ from linexcel import __version__
 from linexcel.i18n import LANGUAGES
 
 
+def _serve_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer from 0 to 65535") from None
+    if not 0 <= port <= 65535:
+        raise argparse.ArgumentTypeError(
+            "must be from 0 to 65535 (0 selects a free port)"
+        )
+    return port
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linexcel",
@@ -36,7 +48,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     serve = sub.add_parser("serve", help="Start the local lazy web application.")
-    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument(
+        "--port",
+        type=_serve_port,
+        default=8765,
+        help="Loopback port (default: 8765); 0 selects a free port.",
+    )
+    serve.add_argument(
+        "--open",
+        dest="open_browser",
+        action="store_true",
+        help="Open the local application in your default browser.",
+    )
     serve.add_argument("--mount-path", default="")
     serve.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
     serve.add_argument("--workers", type=int, default=2)
@@ -75,6 +98,12 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--ai-stream", action="store_true")
     serve.add_argument("--ai-reasoning-split", action="store_true")
     serve.add_argument("--ai-thinking", choices=("disabled", "adaptive"), default=None)
+    serve.add_argument(
+        "--ai-chat-template-thinking",
+        choices=("enabled", "disabled"),
+        default=None,
+        help="Explicit llama.cpp chat_template_kwargs.enable_thinking setting.",
+    )
 
     analyze = sub.add_parser(
         "analyze",

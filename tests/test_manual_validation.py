@@ -567,8 +567,9 @@ def test_provider_request_options_apply_to_documentation_and_vision(
 
 @pytest.mark.parametrize("thinking", [None, "disabled", "adaptive"])
 @pytest.mark.parametrize("reasoning_split", [False, True])
+@pytest.mark.parametrize("chat_template_thinking", [None, "enabled", "disabled"])
 def test_explicit_thinking_merges_with_reasoning_split(
-    manual, monkeypatch, thinking, reasoning_split
+    manual, monkeypatch, thinking, reasoning_split, chat_template_thinking
 ):
     captured = []
     monkeypatch.setattr(
@@ -581,12 +582,17 @@ def test_explicit_thinking_merges_with_reasoning_split(
         vision_model=None,
         reasoning_split=reasoning_split,
         api_thinking=thinking,
+        chat_template_thinking=chat_template_thinking,
     )
     expected = {}
     if reasoning_split:
         expected["reasoning_split"] = True
     if thinking is not None:
         expected["thinking"] = {"type": thinking}
+    if chat_template_thinking is not None:
+        expected["chat_template_kwargs"] = {
+            "enable_thinking": chat_template_thinking == "enabled"
+        }
     manual.acceptance_provider(args)
     manual.acceptance_provider(args, vision=True)
     assert [entry["request_kwargs"] for entry in captured] == [
@@ -634,6 +640,8 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
             "http://localhost:11434/v1",
             "--api-thinking",
             "disabled",
+            "--chat-template-thinking",
+            "disabled",
             "--output-dir",
             str(output),
         ],
@@ -647,6 +655,10 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
     assert "synthetic-secret" not in manifest_text
     assert "api_key" not in json.loads(manifest_text)["configuration"]
     assert json.loads(manifest_text)["configuration"]["api_thinking"] == "disabled"
+    assert (
+        json.loads(manifest_text)["configuration"]["chat_template_thinking"]
+        == "disabled"
+    )
     # Even an already populated environment must not switch a default run.
     seen.clear()
     monkeypatch.setattr(
@@ -658,6 +670,7 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
         (tmp_path / "local-run" / "validation.json").read_text()
     )
     assert local_manifest["configuration"]["api_thinking"] is None
+    assert local_manifest["configuration"]["chat_template_thinking"] is None
 
 
 @pytest.mark.parametrize(
@@ -871,14 +884,68 @@ def test_retry_coverage_checks_every_attempt_and_final_selection(
         batch["usage_total"]["requests"] = 3
     manual.link_vision_receipts(checks, receipts)
     coverage = manual.vision_region_coverage(["S"], checks)
-    assert coverage["passed"] is (damage is None)
+    accepted = damage in {None, "duplicate_response_id"}
+    assert coverage["passed"] is accepted
     assert not coverage["factual_certification"]
-    if damage is None:
+    if accepted:
         assert [receipt["vision_evidence"]["selected"] for receipt in receipts] == [
             False,
             True,
         ]
         assert [receipt["vision_evidence"]["attempt"] for receipt in receipts] == [1, 2]
+        assert [attempt["provider_receipt_index"] for attempt in attempts] == [0, 1]
+        assert [attempt["response_id"] for attempt in attempts] == [
+            receipt["response_id"] for receipt in receipts
+        ]
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "reused_index", "ambiguous_receipt", "prompt", "content", "id"]
+)
+def test_vision_receipts_require_unique_local_evidence(manual, damage):
+    batches, receipts = [], []
+    for index in range(2):
+        batches.append(
+            {
+                "id": f"batch-{index}",
+                "prompt_text_sha256": f"prompt-{index}",
+                "content_sha256": f"content-{index}",
+                "original_sha256": "source-image",
+                "json_prompt_sha256": f"json-{index}",
+                "images": [],
+            }
+        )
+        receipts.append(
+            {
+                "response_id": "chatcmpl-51",
+                "prompt_text_sha256": f"prompt-{index}",
+                "content_sha256": f"content-{index}",
+                "status": "complete",
+                "finish_reason": "stop",
+            }
+        )
+    if damage == "reused_index":
+        batches[1].update(prompt_text_sha256="prompt-0", content_sha256="content-0")
+        receipts.pop()
+    elif damage == "ambiguous_receipt":
+        receipts.append(receipts[1].copy())
+    elif damage == "prompt":
+        receipts[1]["prompt_text_sha256"] = "different"
+    elif damage == "content":
+        receipts[1]["content_sha256"] = "different"
+    elif damage == "id":
+        receipts[1]["response_id"] = ""
+    checks = {"S": {"pages": [{"page": 1, "batches": batches}]}}
+    manual.link_vision_receipts(checks, receipts)
+    assert batches[0]["receipt_link_complete"]
+    assert batches[1]["receipt_link_complete"] is (damage is None)
+    assert batches[0]["provider_receipt_index"] == 0
+    if damage is None:
+        assert batches[1]["provider_receipt_index"] == 1
+        assert [batch["response_id"] for batch in batches] == [
+            "chatcmpl-51",
+            "chatcmpl-51",
+        ]
 
 
 def test_real_acceptance_provider_retry_receipts_pass_native_gate(manual, tmp_path):

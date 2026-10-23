@@ -60,6 +60,13 @@ on closure. POSIX installs `RLIMIT_AS` before importing linexcel and cleans up t
 worker process group: this is a per-process virtual-address limit, **not an
 aggregate RSS limit**. The `memoryLimitKind` field records this distinction.
 
+Linux analysis and `serve` worker subprocesses default to `MALLOC_ARENA_MAX=2`.
+This bounds glibc's allocation arenas and reduces virtual-address pressure when
+the native engine uses many threads or imports another workbook. An explicit
+value in the caller's environment is retained, including `0`; the caller's
+environment and native thread settings are preserved. Memory and time budgets
+still apply. See the [GNU allocator documentation](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html).
+
 ## Coverage and semantic evidence
 
 `meta.analysisCoverage` records the requested scope, extracted formula count,

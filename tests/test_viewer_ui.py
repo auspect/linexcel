@@ -544,7 +544,7 @@ class TestLabelLevelOfDetail:
 
     def test_a_small_graph_stays_fully_labelled(self):
         script = script_of(render_html(demo_graph()))
-        assert "var CROWDED = GRAPH.nodes.length > 80;" in script
+        assert "var crowded = cy.nodes(':visible').length > 80;" in script
 
 
 class TestLayoutAutoSwitch:

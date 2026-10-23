@@ -195,6 +195,38 @@ def test_incomplete_claim_block_cannot_leak_review_scaffolding_into_prose():
     assert _insert_tables(raw) == "Actual prose."
 
 
+@pytest.mark.parametrize(
+    "label", ["json_claims.", "json_claims_extra", "json_claims []"]
+)
+def test_claim_fence_mentions_and_partial_labels_do_not_create_a_ledger(label):
+    from linexcel.ai_validation import strip_claims
+
+    raw = "Actual prose.\nMention ```" + label + '\n```json\n{"v": 1}\n```'
+    report = validate_documentation(raw, {"review_protocol": {"claims_required": True}})
+    assert {"kind": "missing_required_claim_block"} in report["issues"]
+    assert {"kind": "incomplete_claim_block"} not in report["issues"]
+    assert strip_claims(raw) == raw
+
+
+def test_inline_table_fence_mention_cannot_hide_actual_prose_evidence():
+    raw = (
+        'Mention a block ```json_tables.\nVisible proof.\n```json\n{"other": 1}\n```\n'
+        + response("Visible proof.", "/v", 1).split("\n", 1)[1]
+    )
+    report = validate_documentation(raw, {"v": 1})
+    assert report["factual_review"]["checks"][0]["verdict"] == "supported"
+
+
+def test_claim_fences_accept_crlf_and_markdown_indentation():
+    raw = (
+        response("Visible proof.", "/v", 1)
+        .replace("```json_claims", "  ```json_claims ")
+        .replace("\n", "\r\n")
+    )
+    report = validate_documentation(raw, {"v": 1})
+    assert report["factual_review"]["checks"][0]["verdict"] == "supported"
+
+
 def test_private_table_json_is_not_visible_statement_evidence():
     raw = (
         'Actual prose.\n```json_tables\n[{"caption":"Hidden claim."}]\n```\n'

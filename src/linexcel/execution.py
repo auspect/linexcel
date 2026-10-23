@@ -330,6 +330,9 @@ def _run_isolated_once(
                         str(root),
                     ]
                 environment = os.environ.copy()
+                if sys.platform == "linux":
+                    # Reduce CPU-scaled glibc arena reservations under RLIMIT_AS.
+                    environment.setdefault("MALLOC_ARENA_MAX", "2")
                 environment.setdefault("RUST_BACKTRACE", "1")
                 process = subprocess.Popen(
                     command,

@@ -3,12 +3,13 @@
 Start the local application and import a workbook:
 
 ```bash
-linexcel serve --port 8765
+uvx linexcel serve --open --port 8765
 ```
 
-Open **Données** to browse the workbook in the embedded Datasette interface.
-Choose a worksheet, sort a column, add a filter or facet, and move through
-the result pages. The interface also provides JSON and CSV exports of the
+Open **Données / Data** and choose a worksheet. **Excel presentation** shows
+a bounded area with saved values, direct styles and worksheet geometry.
+Select **Datasette filters and exports** to sort columns, add filters or facets,
+and move through the result pages. The interface also provides JSON and CSV exports of the
 selected data. Datasette is included in the normal installation; it does not
 require an AI provider or a second server process.
 
@@ -17,6 +18,47 @@ so on, in workbook order. Column names are Excel letters rather than guessed
 headers. The `row` key is the original Excel row number, so gaps remain gaps.
 Only rows containing imported source cells with provenance from this workbook
 are present. Blank dependency placeholders synthesized for the graph are excluded.
+
+## Excel presentation and its limits
+
+The presentation adapter reads the original OOXML styles, theme/indexed colors,
+fonts, solid fills, borders, alignment, row heights, column widths, hidden rows
+and columns, and merged ranges. It keeps formatting-only cells in this preview;
+the raw Datasette tables retain their source-cell semantics. Values and formulas
+come from the imported index, bound to the workbook hash. No workbook is modified
+and no formula or macro is executed by this view.
+
+Common decimal, grouping, percentage and numeric date/time formats have an
+explicit formatter status. A complex or unsupported format displays the raw
+value and is counted in the notice below the grid. A missing formula cache is
+shown as `∅`; selecting that cell explains the missing saved value. Empty strings
+and actual blanks remain distinct in the cell detail. Select cells with a click
+or use the arrow keys, Home/End and Ctrl+Home/End to read their raw value, number
+format and source formula. Datasette's `cells` table retains the fuller source
+provenance and exact imported JSON.
+
+The initial area is 60 rows by 20 columns. **First row** and **First column**
+accept original Excel coordinates; row navigation moves through subsequent
+areas. The API caps requests at 100 rows and 40 columns and rejects oversized
+XML parts, format codes longer than 1,024 characters and responses exceeding
+2 MiB. A merged range crossing the visible area is
+shown as separate cells with a notice; it does not borrow an unseen anchor's
+value. Scrolling stays inside the grid on narrow screens.
+
+This is an approximate browser presentation. Column widths, fonts and borders
+can differ from Excel; custom indexed palettes and some implicit cell alignments
+are not reproduced. Conditional formatting, drawings, charts, text rotation,
+print layout, number-format color directives and complex number formats are not reproduced. Frozen-pane metadata
+is extracted but the preview pins only its own row/column headers. Hidden sheets
+remain available for analysis. Use **Captures** for a separate LibreOffice render,
+which can itself recalculate formulas and differ from Excel's saved values.
+
+The source format has distinct rules for [cell styles, row/column styles and
+merged cells](https://openpyxl.readthedocs.io/en/stable/styles.html). Datasette's
+[render-cell hook](https://docs.datasette.io/en/stable/plugin_hooks.html#render-cell)
+customizes scalar display; preserving worksheet coordinates and merges while
+filtering/reordering rows requires a separate presentation. The application keeps
+both views available through the same authenticated project.
 
 ## What the values mean
 
@@ -78,6 +120,7 @@ actor management and other databases are outside this mounted surface.
 ```json
 {
   "available": true,
+  "presentationAvailable": true,
   "revision": "project revision hash",
   "sourceSha256": "primary workbook hash",
   "url": "/api/projects/{project_id}/datasette/source",
@@ -97,6 +140,17 @@ actor management and other databases are outside this mounted surface.
   ]
 }
 ```
+
+`GET /api/projects/{project_id}/data/presentation?sheet=Sheet1&row=1&column=1&rows=60&columns=20`
+returns `cells`, a reusable `styles` map, `rowDimensions`, `columnDimensions`,
+`merges`, `extent`, `defaults`, `freezePane`, the actual `window`, explicit `limits`
+and `notices`, with the same workbook hash and project revision. Each cell has
+`display`, `formatStatus`, `styleId`, `numberFormat`, its raw `value` and source
+`formula`, with `formulaRole` distinguishing original source text from a
+canonical fallback; `sourceFormula` and `canonicalFormula` remain separate.
+This endpoint has the same owner check, stale-source rejection and
+read-only policy as the data browser. Oversized presentation sources return 413;
+Datasette remains available independently.
 
 The response also includes `semantics` describing these bounds. URLs include
 the configured mount prefix. For macro-only imports, the response is

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "capturedAt": "2026-10-16T17:53:28.052117+00:00",
+  "capturedAt": "2026-10-23T14:55:18.041236+00:00",
   "uiLanguage": "en",
   "documentLanguage": "en",
   "viewport": {
@@ -9,14 +9,14 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "99f9a64754c8b324ec120f7e5ca367f7c63ab807a943034698deffb9745eda43",
+    "src/linexcel/assets/app.html": "372c33dda4534ba627b852499570bacf0cdd366fd580ac54455eced4ae8610e5",
     "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
     "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
     "scripts/capture_app.py": "8a70aa5f31c899cb5f851a7334bbe0bdf81f105fbd3b2e187b331ba449d86de1"
   },
   "fixture": {
     "name": "validation_demo.xlsx",
-    "sha256": "93c4a8e9efdd580b82be678449e873f5e8bfea29dbada67fe3aa81eafcd13b1e",
+    "sha256": "4af6f36dfbc8994aa737b19a765594abf62445d6258258ec16ddc249d94eac08",
     "generator": "validation_workbooks.build_sales_workbook",
     "generatorSha256": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
@@ -24,7 +24,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "20592438ed05799e5093d765b7a9c3f453996c11590053de4425056618186be8",
+      "sha256": "294a5110964f61f25f5ebbfabaf2633e0cdd8773623f70444d574310e6b51e26",
       "pixels": [
         2880,
         1800
@@ -32,7 +32,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with a separate English AI documentation tab",
-      "sha256": "d38cfc5e7e04535a8498a713e9c4be3b6466743c648fb6ddf640dcc8b2f9b00b",
+      "sha256": "87293da27ee71efca0f2bfd0dcf10892a22616815070c6f55b8d6f7087f42ec2",
       "pixels": [
         2880,
         1800
@@ -40,7 +40,7 @@
     },
     "app_node_documented.png": {
       "caption": "English node documentation in the full detail panel, with separate input and output token counts",
-      "sha256": "1c5af66f9337be2739a3e6ee9587759c3f20f2a70c20f34ca4cfae546ae30007",
+      "sha256": "141771903a7532d0e9226a8ab67bfb15f0eb53ef6b5ce8676b5a54af03bf4205",
       "pixels": [
         2880,
         1800
@@ -48,7 +48,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "91ea17c770f433fd5fd3d1ad9664deeaacb70d5686f3e5b21568c978253ec894",
+      "sha256": "1632f0d244da6e68fcd40081bc5067f53d175a68cb121e9d761ed7eefddd67df",
       "pixels": [
         2880,
         1800
@@ -56,7 +56,7 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "11a88cd188ed0503f25527b1f6bd3bb3f046b512e8e100ebf999e663fc1ad73d",
+      "sha256": "1535ac861b3f95a805afe9a08cfb6b1ce252f4a4308bd7559444e5c82cc2f205",
       "pixels": [
         2880,
         1800
@@ -64,22 +64,22 @@
     }
   },
   "document": {
-    "taskId": "832102027dfc4c29850bc782b417d186",
+    "taskId": "6d5861804d784e30ba9834d21c103554",
     "nodeId": "Summary!C5",
     "language": "en",
-    "model": "MiniMax-M3",
+    "model": "/home/phili/Bonsai-demo/models/bonsai2-gguf/27B/Ternary-Bonsai-2-27B-PQ2_0.gguf",
     "usage": {
-      "inputTokens": 15308,
-      "outputTokens": 5145,
-      "totalTokens": 20453,
+      "inputTokens": 12699,
+      "outputTokens": 3315,
+      "totalTokens": 16014,
       "estimated": false
     },
     "providerRequests": 2,
-    "markdownSha256": "66bf5c97b543e80b2c0abb7499eb4eddfa2d60d280edfb6265db7ddf598e4314"
+    "markdownSha256": "3d1e7d1c65f1dc0d32ab9530c479fe617dbce91a257a36c985d521a656617e43"
   },
   "capture": {
-    "taskId": "dd2fcba3d77e456fbaedd9afdb486548",
+    "taskId": "c80898da4d084ed3826092d9e6801a2a",
     "imageCount": 3
   },
-  "modelRequestsDuringCapture": 0
+  "modelRequestsDuringCapture": 1
 }

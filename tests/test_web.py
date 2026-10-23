@@ -6,6 +6,7 @@ import base64
 import io
 import json
 import os
+import sys
 import threading
 import time
 
@@ -64,6 +65,35 @@ def app(tmp_path):
     app = create_app(tmp_path, resolve_user=lambda env: env.get("user"))
     yield app
     app.close()
+
+
+@pytest.mark.parametrize("arena_limit", [None, "7", "0"])
+def test_worker_arena_default_preserves_parent_settings(
+    app, tmp_path, monkeypatch, arena_limit
+):
+    if arena_limit is None:
+        monkeypatch.delenv("MALLOC_ARENA_MAX", raising=False)
+    else:
+        monkeypatch.setenv("MALLOC_ARENA_MAX", arena_limit)
+    root = tmp_path / "worker"
+    root.mkdir()
+    seen = []
+
+    def capture_worker(command, *, env, **kwargs):
+        seen.append(env.get("MALLOC_ARENA_MAX"))
+        raise RuntimeError("worker launch intercepted")
+
+    monkeypatch.setattr("linexcel.web.subprocess.Popen", capture_worker)
+    task = {
+        "operation": "import",
+        "nodeId": None,
+        "budget": {"memoryMb": 512, "seconds": 60, "tokens": 16000},
+    }
+    with pytest.raises(RuntimeError, match="worker launch intercepted"):
+        app.store._worker(task, root, threading.Event())
+    expected = "2" if arena_limit is None and sys.platform == "linux" else arena_limit
+    assert seen == [expected]
+    assert os.environ.get("MALLOC_ARENA_MAX") == arena_limit
 
 
 def test_full_import_evaluate_reconnect_export_and_delete(app):

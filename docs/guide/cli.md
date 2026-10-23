@@ -107,8 +107,14 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 ## Lazy application
 
 ```bash
-linexcel serve --port 8765
+uvx linexcel serve --open --port 8765
 ```
+
+Use `uv run linexcel serve` from a development checkout. `--open` opens the
+default browser while retaining a copyable terminal URL. `--port 0` chooses a
+free port and prints its actual address. Invalid ports fail before creating
+workspace storage; an occupied port suggests selecting another port. Closing
+the browser leaves the server running; stop it with Ctrl+C.
 
 The application imports a structural index, then loads node pages and bounded
 neighborhoods as you explore. Selecting a formula cell immediately starts a
@@ -157,6 +163,14 @@ The optional `--ai-stream` collects a streamed response before validating it.
 those gateway-specific request fields. Use them only when the selected endpoint
 supports them. `--ai-max-tokens` caps each response separately; none of these
 options changes the selected endpoint or model.
+
+For llama.cpp templates that support it, use
+`--ai-chat-template-thinking disabled` (or `enabled`) to send
+`chat_template_kwargs.enable_thinking`. This is separate from `--ai-thinking`:
+a server accepting `thinking.type` may still ignore it. Omit the template option
+unless the endpoint supports it; both settings contribute to documentation cache
+identity. Manual acceptance exposes the same choice as
+`--chat-template-thinking disabled`.
 
 ## AI documentation
 

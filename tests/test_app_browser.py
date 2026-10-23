@@ -1163,7 +1163,7 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert page.locator("#ui-language").input_value() == "en"
         assert page.locator("#ai-language").input_value() == "fr"
         assert page.locator("#workbook").get_attribute("type") == "file"
-        assert page.get_by_role("button", name="＋ Choose workbook").is_visible()
+        assert page.get_by_role("button", name="+ Choose workbook").is_visible()
         page.locator('[data-project="english"]').click()
         page.get_by_role("tab", name="Operations", exact=True).click()
         page.locator("#task-list").get_by_text("Whole workbook", exact=True).wait_for()
