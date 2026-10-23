@@ -31,9 +31,13 @@ Start the application, then upload the main workbook and optional reference
 workbooks in the browser:
 
 ```Shell
-uv run linexcel serve --port 8765
+uvx linexcel serve --open --port 8765
 # http://127.0.0.1:8765/
+# From a development checkout: uv run linexcel serve --open --port 8765
 ```
+
+`--open` opens the browser; the terminal always prints the local URL. Use
+`--port 0` to select a free port when the default is occupied.
 
 This separate path imports a structural graph without evaluating formulas.
 It shows source formulas, defined names, saved inputs and Excel caches;
@@ -157,10 +161,13 @@ Text documentation makes two provider requests: a draft and a specialized
 review against the same bounded source dossier. Both consume the token budget.
 The review improves guidance and traceability but cannot certify the final prose.
 
-The **Data** tab embeds a read-only Datasette browser with worksheet filters,
-sorting and exports. It shows source inputs and saved formula caches, with
-cell-level formula provenance; it does not substitute later calculation results
-or reproduce Excel's formatted display. See the [data browser guide](docs/guide/datasette.md).
+The **Data** tab offers a static Excel presentation with direct cell styles,
+row and column dimensions, merged cells and common number/date formats. Choose
+**Datasette filters and exports** for filtering, sorting and CSV/JSON exports.
+Both views retain source inputs and saved formula caches; missing caches remain
+explicit. Unsupported formats use raw display, and conditional formatting, charts
+and print layout are outside the preview. See the [data browser guide](docs/guide/datasette.md)
+and [proposed agent workflows](docs/guide/agent-workflows.md).
 For `.xlam` and `.xla` add-ins, use the [static VBA reader](docs/guide/macros.md)
 to inspect decoded modules and procedures without opening Excel or executing
 macros. Add-in reports explicitly have no worksheet calculation or data view.

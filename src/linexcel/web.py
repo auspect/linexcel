@@ -74,6 +74,7 @@ class WebConfig:
     ai_stream: bool = False
     ai_reasoning_split: bool = False
     ai_thinking: str | None = None
+    ai_chat_template_thinking: str | None = None
     allow_local_import: bool = False
 
     def __post_init__(self):
@@ -102,6 +103,10 @@ class WebConfig:
             raise ValueError("AI flags and allow_local_import must be boolean")
         if self.ai_thinking not in (None, "disabled", "adaptive"):
             raise ValueError("ai_thinking must be disabled, adaptive or None")
+        if self.ai_chat_template_thinking not in (None, "enabled", "disabled"):
+            raise ValueError(
+                "ai_chat_template_thinking must be enabled, disabled or None"
+            )
         if self.ai_enabled:
             endpoint = urlsplit(self.ai_base_url)
             if (
@@ -787,6 +792,9 @@ class TaskStore:
                             "stream": self.config.ai_stream,
                             "reasoningSplit": self.config.ai_reasoning_split,
                             "thinking": self.config.ai_thinking,
+                            "chatTemplateThinking": (
+                                self.config.ai_chat_template_thinking
+                            ),
                         },
                         "credentialDigest": hashlib.sha256(
                             (self.config.ai_api_key or "").encode()
@@ -1101,6 +1109,7 @@ class TaskStore:
                     "stream": self.config.ai_stream,
                     "reasoningSplit": self.config.ai_reasoning_split,
                     "thinking": self.config.ai_thinking,
+                    "chatTemplateThinking": self.config.ai_chat_template_thinking,
                 }
             )
             child_env["LINEXCEL_AI_TIMEOUT_SECONDS"] = str(task["budget"]["seconds"])
@@ -1583,6 +1592,24 @@ class WebApp:
             project_id = parts[2]
             if parts[3:] == ["data"] and method == "GET":
                 return self.data_browser.metadata(owner, project_id)
+            if parts[3:] == ["data", "presentation"] and method == "GET":
+                params = query or {}
+                options = {}
+                for name, default in (
+                    ("row", 1),
+                    ("column", 1),
+                    ("rows", 60),
+                    ("columns", 20),
+                ):
+                    try:
+                        options[name] = int(params.get(name, [default])[0])
+                    except (ValueError, TypeError, IndexError):
+                        raise APIError(
+                            400, "Fenêtre de présentation invalide"
+                        ) from None
+                return self.data_browser.presentation(
+                    owner, project_id, params.get("sheet", [""])[0], **options
+                )
             if (
                 len(parts) == 4
                 and parts[3]
@@ -1649,6 +1676,7 @@ def _serve_ai_key(base_url: str) -> str | None:
 
 
 def serve(args) -> int:
+    import errno
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
@@ -1679,16 +1707,39 @@ def serve(args) -> int:
         ai_stream=args.ai_stream,
         ai_reasoning_split=args.ai_reasoning_split,
         ai_thinking=args.ai_thinking,
+        ai_chat_template_thinking=getattr(args, "ai_chat_template_thinking", None),
     )
     try:
-        with make_server(
-            "127.0.0.1", args.port, app, server_class=Server, handler_class=Handler
-        ) as server:
-            print(
-                f"Linexcel : http://127.0.0.1:{server.server_port}{args.mount_path}/",
-                flush=True,
+        try:
+            server = make_server(
+                "127.0.0.1", args.port, app, server_class=Server, handler_class=Handler
             )
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                raise ValueError(
+                    f"Port {args.port} is already in use. Choose another --port "
+                    "or use --port 0 to select a free port."
+                ) from None
+            raise
+        with server:
+            url = f"http://127.0.0.1:{server.server_port}{args.mount_path}/"
+            print(f"Linexcel : {url}", flush=True)
+            if getattr(args, "open_browser", False):
+                threading.Thread(
+                    target=_open_serve_browser, args=(url,), daemon=True
+                ).start()
             server.serve_forever()
     finally:
         app.close()
     return 0
+
+
+def _open_serve_browser(url: str) -> None:
+    import webbrowser
+
+    try:
+        opened = webbrowser.open(url)
+    except (OSError, webbrowser.Error):
+        opened = False
+    if not opened:
+        print(f"Open {url} in your browser to continue.", file=sys.stderr, flush=True)

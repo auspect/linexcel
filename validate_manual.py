@@ -384,6 +384,10 @@ def acceptance_provider(
         extra_body["reasoning_split"] = True
     if getattr(args, "api_thinking", None) is not None:
         extra_body["thinking"] = {"type": args.api_thinking}
+    if getattr(args, "chat_template_thinking", None) is not None:
+        extra_body["chat_template_kwargs"] = {
+            "enable_thinking": args.chat_template_thinking == "enabled"
+        }
     return AcceptanceProvider(
         response_receipts=response_receipts,
         response_journal=getattr(args, "_receipt_journal", None),
@@ -1625,6 +1629,15 @@ def main() -> int:
         help=(
             "explicit provider thinking.type for documentation and vision "
             "(default: omit; requires model support)"
+        ),
+    )
+    parser.add_argument(
+        "--chat-template-thinking",
+        choices=("enabled", "disabled"),
+        default=None,
+        help=(
+            "explicit llama.cpp chat_template_kwargs.enable_thinking for "
+            "documentation and vision (default: omit; requires template support)"
         ),
     )
     parser.add_argument(

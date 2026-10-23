@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an Excel presentation to the Data tab alongside Datasette filters and
+  exports: extract direct styles, theme/indexed colors, row/column dimensions,
+  hidden cells and merged ranges from the source OOXML. Browse bounded areas
+  with common number/date formatting and keyboard-accessible source details.
+- Open the local application with `serve --open`; use `--port 0` to select a
+  free port and report its actual mounted URL.
+- Configure llama.cpp template thinking explicitly in `serve` and manual
+  acceptance, separately from gateway thinking settings, and include it in
+  documentation cache identity.
+- Propose seven source-grounded agent workflows for workbook audits, KPI
+  explanations, version comparisons, SQL migration, reconciliation, handover
+  documentation and calculation discrepancies.
+
+### Fixed
+
+- Validate serve ports before creating storage and provide a recovery hint for
+  an occupied port. A failed browser launch leaves the copyable URL available.
+- Scope calculation guidance to Nodes and Graph, support arrow/Home/End
+  navigation between the main tabs, and provide a skip link to the workbook.
+- Keep formatted presentation separate from raw Datasette values and exports;
+  distinguish missing caches, unsupported formats and canonical formula
+  fallbacks. Bound XML, format codes and response size, reject entity
+  declarations, and discard stale replies after project or sheet changes.
+
+### Documentation
+
+- Explain the presentation limits: approximate browser geometry, complex number
+  formats, conditional formatting, number-format colors, charts, frozen panes
+  and print layout do not establish an exact Excel rendering.
+
 ## [1.15.0] — 2026-10-16
 
 ### Added

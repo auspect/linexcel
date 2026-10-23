@@ -21,7 +21,9 @@ def browser():
         instance.close()
 
 
-def open_app(browser, viewport, *, payload=None, delayed=False, language="fr"):
+def open_app(
+    browser, viewport, *, payload=None, delayed=False, language="fr", presentation=None
+):
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
     requests, errors, pending = [], [], []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -83,6 +85,11 @@ def open_app(browser, viewport, *, payload=None, delayed=False, language="fr"):
                 pending.append(route)
             else:
                 fulfill(route, data)
+        elif path == "/api/projects/p/data/presentation":
+            if callable(presentation):
+                presentation(route)
+            else:
+                fulfill(route, presentation or {})
         elif path == "/api/projects/q/data":
             fulfill(route, {"available": False, "reason": "macro_only", "sheets": []})
         elif "/datasette/" in path:
@@ -192,3 +199,189 @@ def test_only_the_current_projects_datasette_url_can_be_embedded(browser, url):
     assert not any("/datasette/" in path for path in requests)
     assert not errors
     page.close()
+
+
+def presentation_payload():
+    return {
+        "sheet": "Country <2023>",
+        "sourceSha256": "a" * 64,
+        "window": {"row": 1, "column": 1, "rows": 60, "columns": 20},
+        "extent": {"rows": 100, "columns": 4},
+        "defaults": {"rowHeight": 20, "columnWidth": 64},
+        "styles": {
+            "1": {
+                "css": {"fontWeight": "bold", "backgroundColor": "#123456"},
+                "numberFormat": "#,##0.00",
+            }
+        },
+        "columnDimensions": {"3": {"hidden": True}},
+        "rowDimensions": {"3": {"hidden": True}},
+        "merges": [{"row": 1, "column": 1, "lastRow": 1, "lastColumn": 2}],
+        "cells": [
+            {
+                "row": 1,
+                "column": 1,
+                "address": "A1",
+                "value": "<script>",
+                "display": "<script>",
+                "styleId": 1,
+                "numberFormat": "General",
+            },
+            {
+                "row": 2,
+                "column": 2,
+                "address": "B2",
+                "value": 1234.5,
+                "display": "1,234.50",
+                "styleId": 1,
+                "numberFormat": "#,##0.00",
+                "formatStatus": "formatted",
+            },
+            {
+                "row": 2,
+                "column": 4,
+                "address": "D2",
+                "value": None,
+                "display": "",
+                "formula": "=SUM(B2:C2)",
+                "numberFormat": "0.00",
+                "valueStatus": "missing",
+            },
+            {
+                "row": 4,
+                "column": 1,
+                "address": "A4",
+                "value": 42,
+                "display": "42",
+                "numberFormat": "0.00E+00",
+                "formatStatus": "unsupported",
+            },
+        ],
+        "notices": [],
+    }
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_excel_presentation_preserves_source_details_and_datasette(
+    browser, viewport, language
+):
+    data = {
+        "available": True,
+        "presentationAvailable": True,
+        "sourceSha256": "a" * 64,
+        "cellsUrl": "/api/projects/p/datasette/source/cells",
+        "sheets": [
+            {
+                "sheet": "Country <2023>",
+                "url": "/api/projects/p/datasette/source/sheet_001",
+            }
+        ],
+    }
+    page, requests, errors, _, _ = open_app(
+        browser,
+        viewport,
+        payload=data,
+        language=language,
+        presentation=presentation_payload(),
+    )
+    try:
+        page.locator("#excel-window td[data-cell='B2']").wait_for()
+        assert page.locator("#data-frame").is_hidden()
+        assert (
+            page.locator("#excel-window td[data-cell='A1']").inner_text() == "<script>"
+        )
+        assert (
+            page.locator("#excel-window td[data-cell='A1']").get_attribute("colspan")
+            == "2"
+        )
+        assert (
+            page.locator("#excel-window td[data-cell='B2']").inner_text() == "1,234.50"
+        )
+        assert page.locator("#excel-window td[data-cell='C2']").count() == 0
+        assert page.locator("#excel-window td[data-cell='A3']").count() == 0
+        assert (
+            page.locator("#excel-window td[data-cell='B2']").evaluate(
+                "el => getComputedStyle(el).backgroundColor"
+            )
+            == "rgb(18, 52, 86)"
+        )
+        page.locator("#excel-window td[data-cell='D2']").click()
+        assert "SUM(B2:C2)" in page.locator("#excel-cell-detail").inner_text()
+        assert page.locator("#excel-window td[data-cell='D2']").inner_text() == "∅"
+        page.locator("#excel-window td[data-cell='B2']").click()
+        page.keyboard.press("ArrowLeft")
+        assert page.locator("#excel-window td[data-cell='A2']").evaluate(
+            "el => el === document.activeElement"
+        )
+        page.keyboard.press("ArrowRight")
+        assert "1234.5" in page.locator("#excel-cell-detail").inner_text()
+        assert (
+            "unsupported" in page.locator("#excel-notices").inner_text()
+            if language == "en"
+            else "pas pris en charge" in page.locator("#excel-notices").inner_text()
+        )
+        assert page.locator("#calculation-policy").is_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.locator("#data-mode").select_option("datasette")
+        page.frame_locator("#data-frame").locator("h1").wait_for()
+        assert page.locator("#data-excel").is_hidden()
+        assert not errors
+        assert not any(path.endswith("/tasks") for path in requests)
+    finally:
+        page.close()
+
+
+def test_late_presentation_reply_cannot_cross_projects(browser):
+    pending = []
+    data = {
+        "available": True,
+        "presentationAvailable": True,
+        "sourceSha256": "a" * 64,
+        "sheets": [
+            {
+                "sheet": "Country <2023>",
+                "url": "/api/projects/p/datasette/source/sheet_001",
+            }
+        ],
+    }
+    page, _, errors, _, _ = open_app(
+        browser, (390, 844), payload=data, presentation=pending.append
+    )
+    try:
+        page.wait_for_function(
+            "document.querySelector('#excel-window')"
+            ".getAttribute('aria-busy') === 'true'"
+        )
+        page.locator("[data-project='q']").click()
+        page.locator("#data-status").filter(has_text="complément").wait_for()
+        assert len(pending) == 1
+        pending[0].fulfill(
+            body=json.dumps(presentation_payload()), content_type="application/json"
+        )
+        page.wait_for_timeout(100)
+        assert page.locator("#data-excel").is_hidden()
+        assert page.locator("#excel-window td").count() == 0
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_main_tabs_support_keyboard_navigation_and_scoped_calculation_notice(browser):
+    page, _, errors, _, _ = open_app(browser, (390, 844))
+    try:
+        page.locator("#tab-data").focus()
+        page.keyboard.press("End")
+        assert page.locator("#tab-diagnostics").get_attribute("aria-selected") == "true"
+        assert page.locator("#calculation-policy").is_hidden()
+        page.keyboard.press("ArrowRight")
+        assert page.locator("#tab-nodes").get_attribute("aria-selected") == "true"
+        assert page.locator("#calculation-policy").is_visible()
+        assert page.locator("[data-tab][tabindex='0']").count() == 1
+        page.keyboard.press("ArrowLeft")
+        assert page.locator("#tab-diagnostics").get_attribute("aria-selected") == "true"
+        page.keyboard.press("Home")
+        assert page.locator("#tab-nodes").get_attribute("aria-selected") == "true"
+        assert not errors
+    finally:
+        page.close()

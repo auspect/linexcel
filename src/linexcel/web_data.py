@@ -14,11 +14,13 @@ import os
 import sqlite3
 import tempfile
 import threading
+import zipfile
 from collections import OrderedDict
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlencode
+from xml.etree import ElementTree as ET
 
 from datasette.app import Datasette, PrefixedUrlString, Urls
 from datasette.database import Database
@@ -374,6 +376,7 @@ class DataBrowser:
         metadata = dict(saved["metadata"])
         metadata.update(
             available=True,
+            presentationAvailable=True,
             revision=project["revision"],
             url=prefix + "/source",
             cellsUrl=prefix + "/source/cells",
@@ -399,6 +402,66 @@ class DataBrowser:
             _, metadata = self._snapshot(owner, project_id)
             metadata.pop("signature", None)
             return metadata
+
+    def presentation(
+        self,
+        owner: str,
+        project_id: str,
+        sheet: str,
+        *,
+        row=1,
+        column=1,
+        rows=60,
+        columns=20,
+    ) -> dict:
+        """Return a static source worksheet window behind the same owner check."""
+        from linexcel.excel_presentation import (
+            PresentationLimitError,
+            sheet_presentation,
+        )
+        from linexcel.lazy_store import file_sha256
+        from linexcel.web import APIError, _read
+
+        with self._lock, self.store.lock:
+            path = self.store.project_path(owner, project_id)
+            project = _read(path / "project.json")
+            if self.store._revision(path) != project["revision"]:
+                raise APIError(409, "Sources modifiées ; importez une nouvelle version")
+            if project["filename"].lower().endswith((".xla", ".xlam")):
+                raise APIError(409, "Cet add-in ne contient pas de feuille de calcul")
+            index = path / "index.sqlite"
+            if not index.is_file():
+                raise APIError(
+                    409, "Importez le classeur avant de parcourir les données"
+                )
+            before = generation(index)
+            with WorkbookIndex(index) as source:
+                source_sha = source.meta.get("sha256")
+            if file_sha256(path / "workbook.xlsx") != source_sha:
+                raise APIError(409, "Sources modifiées ; importez une nouvelle version")
+            try:
+                result = sheet_presentation(
+                    path / "workbook.xlsx",
+                    path / "index.sqlite",
+                    sheet,
+                    row=row,
+                    column=column,
+                    rows=rows,
+                    columns=columns,
+                )
+            except KeyError:
+                raise APIError(404, "Feuille introuvable") from None
+            except PresentationLimitError as exc:
+                raise APIError(413, str(exc)) from None
+            except (ValueError, OSError, zipfile.BadZipFile, ET.ParseError):
+                raise APIError(400, "Présentation de la feuille indisponible") from None
+            if (
+                self.store._revision(path) != project["revision"]
+                or generation(index) != before
+                or result.get("sourceSha256") != source_sha
+            ):
+                raise APIError(409, "Sources modifiées pendant la lecture")
+            return {"available": True, "revision": project["revision"], **result}
 
     def request(
         self,

@@ -421,7 +421,10 @@ def test_cli_gateway_key_is_not_forwarded_to_local_defaults(monkeypatch, url):
     assert _serve_ai_key(url) == "explicit-endpoint-key"
 
 
-def test_web_provider_options_are_explicit_and_two_phase_usage_is_retained(monkeypatch):
+@pytest.mark.parametrize("chat_template_thinking", [None, "enabled", "disabled"])
+def test_web_provider_options_are_explicit_and_two_phase_usage_is_retained(
+    monkeypatch, chat_template_thinking
+):
     provider = FakeProvider()
     configured = []
 
@@ -437,13 +440,17 @@ def test_web_provider_options_are_explicit_and_two_phase_usage_is_retained(monke
         "stream": True,
         "reasoningSplit": True,
         "thinking": "disabled",
+        "chatTemplateThinking": chat_template_thinking,
     }
     result = generate(evidence(graph(), "S!B1", []), config, {"language": "en"}, 100000)
     assert len(provider.calls) == 2
     assert configured[0]["streaming"] is True
-    assert configured[0]["request_kwargs"] == {
-        "extra_body": {"reasoning_split": True, "thinking": {"type": "disabled"}}
-    }
+    extra = {"reasoning_split": True, "thinking": {"type": "disabled"}}
+    if chat_template_thinking is not None:
+        extra["chat_template_kwargs"] = {
+            "enable_thinking": chat_template_thinking == "enabled"
+        }
+    assert configured[0]["request_kwargs"] == {"extra_body": extra}
     assert all(call[-1]["max_tokens"] == 32768 for call in provider.calls)
     assert result["usage"]["totalTokens"] == 300
     assert CONFIG["apiKey"] not in json.dumps(result)
@@ -467,6 +474,43 @@ def test_server_response_policy_changes_invalidate_completed_ai_cache(
     second = store.submit("alice", project, "document", "Sheet!B1", {})
     wait(store, second["id"])
     assert second["id"] != first["id"]
+    store.config = replace(store.config, ai_chat_template_thinking="disabled")
+    third = store.submit("alice", project, "document", "Sheet!B1", {})
+    wait(store, third["id"])
+    assert third["id"] != second["id"]
+
+
+def test_chat_template_thinking_reaches_private_worker_configuration(
+    store, tmp_path, monkeypatch
+):
+    import threading
+
+    store.config = replace(store.config, ai_chat_template_thinking="disabled")
+    root = tmp_path / "worker"
+    root.mkdir()
+    seen = []
+
+    def capture_worker(command, *, env, **kwargs):
+        seen.append(json.loads(env["LINEXCEL_WEB_AI_CONFIG"]))
+        raise RuntimeError("worker launch intercepted")
+
+    monkeypatch.setattr("linexcel.web.subprocess.Popen", capture_worker)
+    task = {
+        "operation": "document",
+        "nodeId": None,
+        "budget": {"memoryMb": 1024, "seconds": 60, "tokens": 16000},
+    }
+    with pytest.raises(RuntimeError, match="worker launch intercepted"):
+        store._worker(task, root, threading.Event())
+    assert seen[0]["chatTemplateThinking"] == "disabled"
+    assert seen[0]["thinking"] is None
+    assert "chatTemplateThinking" not in (root / "request.json").read_text()
+
+
+@pytest.mark.parametrize("value", ["adaptive", True, 0])
+def test_web_config_rejects_invalid_chat_template_thinking(tmp_path, value):
+    with pytest.raises(ValueError, match="ai_chat_template_thinking"):
+        WebConfig(tmp_path, ai_chat_template_thinking=value)
 
 
 @pytest.fixture

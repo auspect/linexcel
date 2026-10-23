@@ -567,8 +567,9 @@ def test_provider_request_options_apply_to_documentation_and_vision(
 
 @pytest.mark.parametrize("thinking", [None, "disabled", "adaptive"])
 @pytest.mark.parametrize("reasoning_split", [False, True])
+@pytest.mark.parametrize("chat_template_thinking", [None, "enabled", "disabled"])
 def test_explicit_thinking_merges_with_reasoning_split(
-    manual, monkeypatch, thinking, reasoning_split
+    manual, monkeypatch, thinking, reasoning_split, chat_template_thinking
 ):
     captured = []
     monkeypatch.setattr(
@@ -581,12 +582,17 @@ def test_explicit_thinking_merges_with_reasoning_split(
         vision_model=None,
         reasoning_split=reasoning_split,
         api_thinking=thinking,
+        chat_template_thinking=chat_template_thinking,
     )
     expected = {}
     if reasoning_split:
         expected["reasoning_split"] = True
     if thinking is not None:
         expected["thinking"] = {"type": thinking}
+    if chat_template_thinking is not None:
+        expected["chat_template_kwargs"] = {
+            "enable_thinking": chat_template_thinking == "enabled"
+        }
     manual.acceptance_provider(args)
     manual.acceptance_provider(args, vision=True)
     assert [entry["request_kwargs"] for entry in captured] == [
@@ -634,6 +640,8 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
             "http://localhost:11434/v1",
             "--api-thinking",
             "disabled",
+            "--chat-template-thinking",
+            "disabled",
             "--output-dir",
             str(output),
         ],
@@ -647,6 +655,10 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
     assert "synthetic-secret" not in manifest_text
     assert "api_key" not in json.loads(manifest_text)["configuration"]
     assert json.loads(manifest_text)["configuration"]["api_thinking"] == "disabled"
+    assert (
+        json.loads(manifest_text)["configuration"]["chat_template_thinking"]
+        == "disabled"
+    )
     # Even an already populated environment must not switch a default run.
     seen.clear()
     monkeypatch.setattr(
@@ -658,6 +670,7 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
         (tmp_path / "local-run" / "validation.json").read_text()
     )
     assert local_manifest["configuration"]["api_thinking"] is None
+    assert local_manifest["configuration"]["chat_template_thinking"] is None
 
 
 @pytest.mark.parametrize(

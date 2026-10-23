@@ -471,6 +471,10 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
             extra["reasoning_split"] = True
         if config.get("thinking") is not None:
             extra["thinking"] = {"type": config["thinking"]}
+        if config.get("chatTemplateThinking") is not None:
+            extra["chat_template_kwargs"] = {
+                "enable_thinking": config["chatTemplateThinking"] == "enabled"
+            }
         configured = None
         if extra or config.get("stream"):
             from linexcel.aidoc import OpenAICompatProvider
