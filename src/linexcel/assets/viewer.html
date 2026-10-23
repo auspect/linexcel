@@ -1776,6 +1776,7 @@
           else node.removeClass('diff-off');
         });
       });
+      resolveDisplayStyles(cy);
       clearSel(cy);  // the selection may have just left the canvas
       var visible = cy.elements(':visible');
       if (!visible.nodes().length) return;
@@ -2398,6 +2399,7 @@
           });
         });
         // The selection may have just left the canvas with its kind.
+        resolveDisplayStyles(cy);
         clearSel(cy);
         var visible = cy.elements(':visible');
         if (!visible.nodes().length) return;
@@ -2419,6 +2421,11 @@
       return JSON.stringify(v);
     }
     return String(v);
+  }
+
+  function resolveDisplayStyles(cy) {
+    // Resolve lazy display styles before visibility reads reuse the old cache.
+    cy.nodes().forEach(function (node) { node.style('display'); });
   }
 
   // Narrow the graph to one sheet. Nodes of another sheet are kept — dimmed —
@@ -2449,6 +2456,7 @@
       // Cytoscape hides edges automatically when either endpoint is hidden.
       cy.nodes().not(keep).addClass('sheet-off');
     });
+    resolveDisplayStyles(cy);
     clearSel(cy);  // the previously selected node may now be hidden
     var visible = cy.elements(':visible');
     if (!visible.nodes().length) return;

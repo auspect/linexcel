@@ -269,6 +269,160 @@ def test_portrait_flow_stays_readable_and_respects_explicit_layout(report):
     assert not errors
 
 
+@pytest.fixture(scope="module")
+def sales_source_graph():
+    import runpy
+
+    from linexcel import analyze
+
+    builders = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "validation_workbooks.py")
+    )
+    return analyze(builders["build_sales_workbook"](), filename="sales.xlsx").graph
+
+
+def assert_separate_cards(page, expected):
+    page.evaluate("() => { window.cardBounds = null; window.cardFrames = 0; }")
+    page.wait_for_function(
+        """ids => {
+            if (cy.scratch('linexcelSheetFrame') || cy.animated()) return false;
+            const nodes = cy.nodes(':visible');
+            if (JSON.stringify(nodes.map(n=>n.id()).sort())
+                    !== JSON.stringify(ids.slice().sort())) return false;
+            const state = JSON.stringify(nodes.map(n=>n.renderedBoundingBox()));
+            window.cardFrames = window.cardBounds === state ? window.cardFrames + 1 : 0;
+            window.cardBounds = state;
+            return window.cardFrames >= 3;
+        }""",
+        arg=sorted(expected),
+    )
+    # Exact outer card rectangles exclude Cytoscape's extra bounding-box margin.
+    bounds = page.evaluate("""() => cy.nodes(':visible').map(n=>{
+        const p=n.renderedPosition();
+        const w=n.renderedOuterWidth(), h=n.renderedOuterHeight();
+        return {id:n.id(), box:{x1:p.x-w/2, x2:p.x+w/2, y1:p.y-h/2, y2:p.y+h/2}};
+    })""")
+    overlaps = []
+    for index, first in enumerate(bounds):
+        for second in bounds[index + 1 :]:
+            a, b = first["box"], second["box"]
+            overlap_width = min(a["x2"], b["x2"]) - max(a["x1"], b["x1"])
+            overlap_height = min(a["y2"], b["y2"]) - max(a["y1"], b["y1"])
+            if overlap_width > 1 and overlap_height > 1:
+                overlaps.append((first["id"], second["id"], a, b))
+    assert not overlaps, overlaps
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_sales_sheet_filters_keep_every_card_separate(
+    report, sales_source_graph, width, height, language
+):
+    graph = sales_source_graph
+    page, errors = report(graph, width=width, height=height, language=language)
+    for sheet in ["__all__", "Params", "Sales", "Summary"]:
+        expected = {node["id"] for node in graph["nodes"]}
+        if sheet != "__all__":
+            local = {node["id"] for node in graph["nodes"] if node["sheet"] == sheet}
+            expected = local | {
+                edge[end]
+                for edge in graph["edges"]
+                if edge["source"] in local or edge["target"] in local
+                for end in ["source", "target"]
+            }
+        page.select_option("#lin-sheet-filter", sheet)
+        for fitted in [False, True]:
+            if fitted:
+                page.click("#lin-fit")
+            assert_separate_cards(page, expected)
+        capture(page, f"sales-filter-{language}-{width}-{sheet}")
+    assert not errors
+
+
+@pytest.fixture(scope="module", params=["sales", "stress"])
+def cached_filter_source_graph(request):
+    import io
+    import re
+    import runpy
+    import zipfile
+
+    from linexcel import analyze
+
+    builders = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "validation_workbooks.py")
+    )
+    data = builders[f"build_{request.param}_workbook"]()
+    if request.param == "stress":
+        graph = analyze(data, filename="stress.xlsx").graph
+        # Raw Stress has no comparable formula cache. Exercise this public
+        # comparison marker as a UI fixture, without claiming a native result.
+        group = next(node for node in graph["nodes"] if node["kind"] == "group")
+        group["groupCachedAgreement"] = "differ"
+        return graph
+    patched = io.BytesIO()
+    cache_pattern = rb'(<c\b[^>]*\br="C5"[^>]*>.*?</f>)<v(?:\s*/>|></v>)'
+    # A real wrong saved result enables Sales' discrepancy filter.
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as source,
+        zipfile.ZipFile(patched, "w") as out,
+    ):
+        for part in source.infolist():
+            payload = source.read(part.filename)
+            if part.filename == "xl/worksheets/sheet2.xml":
+                payload, count = re.subn(
+                    cache_pattern,
+                    rb"\1<v>987654321</v>",
+                    payload,
+                    count=1,
+                )
+                assert count == 1
+            out.writestr(part, payload)
+    return analyze(patched.getvalue(), filename=f"{request.param}.xlsx").graph
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_kind_and_discrepancy_filters_relayout_the_current_cards(
+    report, cached_filter_source_graph, width, height
+):
+    graph = cached_filter_source_graph
+    page, errors = report(graph, width=width, height=height)
+    # Fix the user's Flow choice so incidental organic packing is independent.
+    if width <= 900:
+        page.click("#lin-options-toggle")
+    page.click("#lin-lay-dagre")
+    if width <= 900:
+        page.click("#lin-options-close")
+    all_ids = {node["id"] for node in graph["nodes"]}
+    for kind, label in [("input", "Source data"), ("group", "Stretched formulas")]:
+        for enabled in [False, True]:
+            if width <= 900:
+                page.click("#lin-options-toggle")
+            page.locator("#lin-rail-kinds button").filter(has_text=label).click()
+            if width <= 900:
+                page.click("#lin-options-close")
+            expected = (
+                all_ids
+                if enabled
+                else {node["id"] for node in graph["nodes"] if node["kind"] != kind}
+            )
+            assert_separate_cards(page, expected)
+    different_ids = {
+        node["id"]
+        for node in graph["nodes"]
+        if node.get("cachedAgreement") == "differ"
+        or node.get("groupCachedAgreement") == "differ"
+    }
+    assert different_ids and different_ids != all_ids
+    for enabled in [True, False]:
+        if width <= 900:
+            page.click("#lin-options-toggle")
+        page.click("#lin-diffs-only")
+        if width <= 900:
+            page.click("#lin-options-close")
+        assert_separate_cards(page, different_ids if enabled else all_ids)
+    assert not errors
+
+
 def test_readme_capture_selects_result_before_photographing(report):
     import runpy
 
