@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
@@ -624,17 +624,17 @@ wheels = [
 
 [[package]]
 name = "formualizer"
-version = "0.11.1"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/af/bc/13bed4683a0e97c4024e00b60a1dfba135011978cb99cd87020abf948645/formualizer-0.11.1.tar.gz", hash = "sha256:ee3d4198060e1262511b0ac1f4bd350266707f7ffa5924312bcdd2628426ca05", size = 2991795, upload-time = "2026-10-07T23:53:46.009Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/42/c8d4c2915ff047263672849a62c63ac7adfa04430f8f81c51403f3da0cd5/formualizer-0.12.0.tar.gz", hash = "sha256:10e8eca9b1d913662a115e702a4ccc8baedf48b46bb80e565ccc12f1c630d732", size = 3192574, upload-time = "2026-10-19T18:46:40.218Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/63/f6f4d33c47a89b360aec46567bf15ef924121dbb0088c1268181e82ef533/formualizer-0.11.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:60504e731097108413e673633b77f5986ffaeb052df517e9d82e87ebe58bf6ed", size = 8091645, upload-time = "2026-10-07T23:53:32.21Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/2c/b76982489dbbb79ae2d236e3cc819583858337a3e6413f4bffa47ce1677d/formualizer-0.11.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f4dff40449bda7d6ac573a8d03a5f2a6dc360b4d51d189e273587fff30ae1b3e", size = 7735960, upload-time = "2026-10-07T23:53:34.187Z" },
-    { url = "https://files.pythonhosted.org/packages/27/a4/5be75dd30b5a13653e0c05eeb9b17a14ae2c865322f24990adafeeeb8900/formualizer-0.11.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:66c3b588571295fbd3ff7988b7bba74ddfb6db9ebb23c7021e515d011bde83d4", size = 8127231, upload-time = "2026-10-07T23:53:36.012Z" },
-    { url = "https://files.pythonhosted.org/packages/17/f7/09959831451bcd2add8d2ca919ea592c99612be9fedc464bb81ea5ef7e4a/formualizer-0.11.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fe6c290aa5a3d8d4130a86dbe34380d953359cc7094be6ac395f2681a26d10a6", size = 8496765, upload-time = "2026-10-07T23:53:37.589Z" },
-    { url = "https://files.pythonhosted.org/packages/09/8e/61135877ec8c5812f440f79b37a8ae023534dde96f9f3d69a765312b5300/formualizer-0.11.1-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:743edc8b3fc1b7ce1db82b1be6c42a2a4a632bcfc78e24dc064a0ee754d39bcc", size = 8335301, upload-time = "2026-10-07T23:53:39.877Z" },
-    { url = "https://files.pythonhosted.org/packages/28/7d/89a1899ad1ecd1d385bdd29184f6019f3f2f476f3c4b3f66d7713e08b664/formualizer-0.11.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:045d7ca702d1934cc8fcc85a2229104dced7c3869a83d82d22d39a865a1c7711", size = 8744801, upload-time = "2026-10-07T23:53:41.981Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/e1/9052a053a13ef74842416bc3b17efbc6f57cc6d7612232770f0dc14890e9/formualizer-0.11.1-cp310-abi3-win_amd64.whl", hash = "sha256:52c3d4e9714cee12c9e4eca0e57717a2443088930dfcdb669f6921974b758ca6", size = 8101817, upload-time = "2026-10-07T23:53:44.021Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/3f/e3a8b795cc5c99b9a2726c6df0d18687806b1102aa41c2d0e32e423c0917/formualizer-0.12.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:e4e2a2ca346cf83168889f3f66caea5b1d4a443f0a35a83d6ae59a45cbb13dc1", size = 8465535, upload-time = "2026-10-19T18:46:21.026Z" },
+    { url = "https://files.pythonhosted.org/packages/18/7a/d232696085d4a55c8acefafb9ee773da047bc9dd1c044da5da2068858740/formualizer-0.12.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:b6aec02750d48ef69ffa53b8511881ebc4dc25d317c98832ada073c40784b858", size = 8009352, upload-time = "2026-10-19T18:46:23.707Z" },
+    { url = "https://files.pythonhosted.org/packages/24/4c/d8136d7eacf19206a63dd71d468c8e671fa1dca185d3ef4f970d02a19ace/formualizer-0.12.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c1aaeb4bcdfe11221942865da6b42e2b87b3e3d7487039cb26049147f135bedd", size = 8413813, upload-time = "2026-10-19T18:46:26.402Z" },
+    { url = "https://files.pythonhosted.org/packages/80/2e/27c77ff92b191031296ce63342d9796b8947c3212c5c36f5073c92575468/formualizer-0.12.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d2f8b7ca04e0d52fbabc36a60a457b146e4f319d66a1535ae8d19fc20eac9292", size = 8774502, upload-time = "2026-10-19T18:46:28.994Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/0c/43e19bae49ff1db81ed2e8a3b64c8a31a8f111390d7f7c398ff5a631d08a/formualizer-0.12.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:d1165b64bbe7198b2aff0951b4a218d2ed9896334b07a2a3132cad7786d8a0a7", size = 8619779, upload-time = "2026-10-19T18:46:32.403Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/2d/f43b358f15d04cac02c907204e5dc89020ba6182825520693b51f2657a0a/formualizer-0.12.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:1470feb21ccf3b17c65f6b8303290b7555f1f888342b606823f1c4dd3b2e4e00", size = 9022226, upload-time = "2026-10-19T18:46:35.148Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/dd/b1c64370d4dec6fb7ed5124c0d39016d5e85989f8d7ad9b6ffa097c13949/formualizer-0.12.0-cp310-abi3-win_amd64.whl", hash = "sha256:bdb6dae2df849fbe06a641c1335ba3bfd8fc7a1165a1d4cb019d5e80fa3367ce", size = 8390265, upload-time = "2026-10-19T18:46:37.958Z" },
 ]
 
 [[package]]
@@ -1298,7 +1298,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorclass" },
     { name = "easygui" },
-    { name = "msoffcrypto-tool", marker = "(platform_python_implementation != 'PyPy' and sys_platform == 'darwin') or (platform_python_implementation != 'PyPy' and sys_platform == 'win32') or (sys_platform != 'darwin' and sys_platform != 'win32')" },
+    { name = "msoffcrypto-tool", marker = "platform_python_implementation != 'PyPy' or (sys_platform != 'darwin' and sys_platform != 'win32')" },
     { name = "olefile" },
     { name = "pcodedmp" },
     { name = "pyparsing" },
