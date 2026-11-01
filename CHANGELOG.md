@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace the synthetic showcase workbook in `validation_workbooks.py` with a
+  realistic four-sheet B2B commercial and margin review
+  (`fy26_commercial_review.xlsx`: `Summary`, `Sales`, `Catalog`, `Assumptions`),
+  combining an executive KPI scorecard, regional plan vs. actuals, a 40-order
+  enterprise ledger, an 8-SKU pricing catalog, defined policy rates, charts,
+  comments, frozen panes, merged banners and hidden baseline/cost columns.
+- Update manual validation, screenshot capture harnesses (`Summary!C10`) and
+  showcase/browser regression tests for the new commercial review workbook.
+
 ## [1.16.0] — 2026-10-23
 
 ### Added

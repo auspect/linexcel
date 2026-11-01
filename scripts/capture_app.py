@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Capture the English web app from the synthetic Sales validation workbook.
+r"""Capture the English web app from the B2B commercial review showcase workbook.
 
 Unlike capture_viewer.py, this exercises the running, lazy web application.
 No model is called unless --generate-doc is explicitly supplied, and an existing
@@ -9,11 +9,11 @@ project evidence without writing repository screenshots.
 Examples (use a dedicated preview server, never a user's active workspace):
     uv run --extra screenshots python scripts/capture_app.py \
       --base-url http://127.0.0.1:8877/review/ \
-      --workbook validation_screenshots/run/validation_demo.xlsx \
+      --workbook validation_screenshots/run/fy26_commercial_review.xlsx \
       --generate-doc --prepare --save-state validation_screenshots/app/state.json
     uv run --extra screenshots python scripts/capture_app.py \
       --base-url http://127.0.0.1:8877/review/ \
-      --workbook validation_screenshots/run/validation_demo.xlsx \
+      --workbook validation_screenshots/run/fy26_commercial_review.xlsx \
       --reuse-project PROJECT_ID --storage-state validation_screenshots/app/state.json
     python -S scripts/capture_app.py --check
 
@@ -44,8 +44,8 @@ DEFAULT_OUTPUT = ROOT / "imgs"
 MANIFEST_NAME = "app_manifest.json"
 SCHEMA = 1
 WIDTH, HEIGHT, SCALE = 1440, 900, 2
-NODE = "Summary!C5"
-PROJECT_NAME = "Synthetic sales workbook"
+NODE = "Summary!C10"
+PROJECT_NAME = "FY26 B2B Commercial Review"
 SOURCES = (
     "src/linexcel/assets/app.html",
     "src/linexcel/assets/cytoscape.min.js",
@@ -171,9 +171,9 @@ def verify_fixture(workbook: Path) -> dict:
     sys.path.insert(0, str(ROOT))
     from validation_workbooks import build_sales_workbook
 
-    if workbook.name != "validation_demo.xlsx":
+    if workbook.name != "fy26_commercial_review.xlsx":
         raise ValueError(
-            "Only validation_demo.xlsx from build_sales_workbook is accepted."
+            "Only fy26_commercial_review.xlsx from build_sales_workbook is accepted."
         )
     with zipfile.ZipFile(workbook) as archive:
         if any(name.startswith("xl/media/") for name in archive.namelist()):
@@ -506,7 +506,7 @@ def capture(args) -> int:
             expect(page.locator("#graph-recalculate")).to_be_enabled()
             expect(
                 page.locator("#graph-preview .value-pair .value-card").nth(1)
-            ).to_contain_text("6724.5")
+            ).to_contain_text("816668.1")
             require_english(page)
             output.mkdir(parents=True, exist_ok=True)
 
@@ -659,7 +659,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--workbook",
         type=Path,
-        help="Generated validation_demo.xlsx; required except for --check.",
+        help="Generated fy26_commercial_review.xlsx; required except for --check.",
     )
     result.add_argument(
         "--output",

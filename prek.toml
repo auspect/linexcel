@@ -43,5 +43,5 @@ hooks = [
     entry = "uv run python scripts/capture_app.py --check",
     language = "system",
     pass_filenames = false,
-    files = '^(src/linexcel/assets/app\.html|scripts/capture_app\.py|imgs/app_.*)$' }
+    files = '^(src/linexcel/assets/app\.html|scripts/capture_app\.py|validation_workbooks\.py|imgs/app_.*)$' }
 ]

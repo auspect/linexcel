@@ -242,7 +242,7 @@ before result; review new responses independently, without carrying old verdicts
 over to changed text.
 
 1. Run the required full acceptance from [manual validation](manual_validation.md).
-   Compare Sales in French and English (all four formula/group cards in each
+   Compare Sales in French and English (every formula/group card in each
    language), Stress in English, all three overviews and all screenshot
    descriptions. Reuse Stress sampling seed `20260912` and the 27 target IDs from
    the baseline ignored `factual-review.json`. Changing fixtures requires a source

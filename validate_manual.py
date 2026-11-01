@@ -4,9 +4,9 @@
 Two workbooks, analysed then documented, rendered to PNG and written out as
 standalone HTML reports to open by hand:
 
-``sales``   a small readable sales report — a table that does not start at A1,
-            a hidden column, merged cells, a chart, a comment, a defined name,
-            cross-sheet aggregation. This is what the README screenshots show.
+``sales``   a realistic 4-sheet B2B commercial and margin review — executive
+            KPIs, regional plan vs. actuals, 40 enterprise orders, product
+            catalog, hidden columns, charts, comments and defined names.
 ``stress``  a much larger English workbook built to break things: every Excel
             error value, unresolvable and external references, sheet names
             needing quotes, a circular pair, formulas past the truncation
@@ -130,14 +130,14 @@ class Case:
 CASES = {
     "sales": Case(
         name="sales",
-        headline="readable sales report",
+        headline="B2B commercial and margin review",
         build=validation_workbooks.build_sales_workbook,
-        workbook=Path("validation_demo.xlsx"),
+        workbook=Path("fy26_commercial_review.xlsx"),
         languages=("fr", "en"),
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
-            "  It should name the title in B2, the hidden Price column and the",
-            "  comment on B3, none of which any formula reveals.",
+            "  It should name the title in B2, the hidden baseline/cost columns",
+            "  and the FP&A comment on C5, none of which any formula reveals.",
             "'Sheets' — every sheet shows its own rendered image and its first",
             "  cells, alongside comments, frozen panes and merged ranges.",
             "'Graph' — select a node, read its card against the decomposition.",

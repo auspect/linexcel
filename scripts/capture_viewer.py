@@ -72,15 +72,15 @@ SHOTS = (
         clicks=("lin-tab-graph", "lin-fit"),
     ),
     Shot(
-        # C5 rather than C7: both are documented, but C7 concatenates a number
-        # into text and LibreOffice writes the French decimal comma when it
-        # recalculates the fixture, so its card shows a genuine — and genuinely
-        # confusing — disagreement over `OK: 6,7k` against `OK: 6.7k`. C5 agrees
-        # exactly, which is what the value card is meant to demonstrate here.
+        # Summary!C10 (Net Commercial Contribution) combines Gross Profit, Net
+        # Revenue, RebateRate and Commission in a pure numeric
+        # formula whose cached value agrees identically between LibreOffice and
+        # Formualizer, while showcasing multi-step subexpression evaluation.
+        # Values and provenance align cleanly without locale comma ambiguity.
         name="viewer_node_documented.png",
         caption="A node selected: formula, step-by-step evaluation, AI card",
         clicks=("lin-tab-graph",),
-        search="Summary!C5",
+        search="Summary!C10",
     ),
     Shot(
         name="viewer_workbook_overview.png",
