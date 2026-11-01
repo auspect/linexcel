@@ -59,6 +59,18 @@ def test_curated_corpus_deterministic_typed_and_contains_declared_families():
     assert load_workbook(io.BytesIO(sources["scalar-1904.xlsx"])).epoch.year == 1904
     external = load_workbook(io.BytesIO(sources["external-local.xlsx"]))
     assert external._external_links[0].file_link.Target == "refs/source.xlsx"
+    assert external._external_links[0].externalBook.id == "rId1"
+    visibility = load_workbook(io.BytesIO(sources["visibility.xlsx"]))
+    assert visibility["Hidden"]["D3"].value == "=_xlfn.AGGREGATE(9,5,B2:B4)"
+    dynamic = load_workbook(io.BytesIO(sources["dynamic-context.xlsx"]))
+    assert dynamic["Dynamic"]["A3"].value == "=_xlfn.FORMULATEXT(A1)"
+    assert dynamic["Dynamic"]["A4"].value == "=_xlfn.SHEETS()"
+    tables = next(case for case in cases if case["id"] == "tables")
+    table_formulas = {action["cell"]: action["formula"] for action in tables["actions"]}
+    assert table_formulas["C2"] == "=[@Amount]*[@Qty]"
+    assert table_formulas["E2"] == "=SUM(SalesTable[[#Totals],[Amount]])"
+    table_book = load_workbook(io.BytesIO(sources["tables.xlsx"]))
+    assert all(table_book["Tables"][cell].value == 1 for cell in table_formulas)
     arrays = next(case for case in cases if case["id"] == "arrays")
     assert arrays["targets"][0]["shape"] == [3, 2]
     assert arrays["actions"][0]["formula"] == "=SEQUENCE(3,2)"
@@ -141,6 +153,129 @@ def test_native_receipt_requires_excel_settings_and_every_target(missing):
     del native[missing]
     with pytest.raises(ValueError):
         oracle.validate_native(cases[0], native)
+
+
+def test_native_pending_calculation_cannot_certify_iteration():
+    _, cases = oracle.corpus()
+    case = next(case for case in cases if case["id"] == "cycles-convergent")
+    native = native_result(case)
+    native["calculation"]["stateAfterRebuild"] = 2
+    with pytest.raises(ValueError, match="did not finish"):
+        oracle.validate_native(case, native)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell marshaling regression")
+def test_worker_reads_hresult_errors_without_confusing_literal_text(tmp_path):
+    """Execute the actual reader with typed mocks; never launch native Excel."""
+    script = tmp_path / "read-cell.ps1"
+    script.write_text(
+        r"""param([string]$Worker)
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $Worker, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) { throw 'Invalid worker syntax' }
+$reader = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Read-Cell'
+}, $true)
+Invoke-Expression $reader.Extent.Text
+$functions = [pscustomobject]@{}
+$functions | Add-Member ScriptMethod IsError { param($cell) return $cell.NativeIsError }
+$excel = [pscustomobject]@{ WorksheetFunction = $functions }
+$samples = @(
+    @{ Value2 = [int]-2146826281; NativeIsError = $true; Text = '#DIV/0!' },
+    @{ Value2 = [int]-2146826259; NativeIsError = $true; Text = '#NOM?' },
+    @{ Value2 = [int]-2146826246; NativeIsError = $true; Text = '#N/A' },
+    @{ Value2 = '#N/A'; NativeIsError = $false; Text = '#N/A' },
+    @{ Value2 = [int]-2146826246; NativeIsError = $false; Text = '-2146826246' },
+    @{ Value2 = [Runtime.InteropServices.ErrorWrapper]::new(-2146826265);
+       NativeIsError = $true; Text = '#REF!' },
+    @{ Value2 = [int]-2146826238; NativeIsError = $true; Text = '#UNKNOWN!' }
+)
+$results = foreach ($sample in $samples) {
+    $sample.HasFormula = $false
+    Read-Cell ([pscustomobject]$sample)
+}
+ConvertTo-Json -InputObject @($results) -Depth 5 -Compress
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            oracle.windows_powershell(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(script),
+            "-Worker",
+            str(oracle.WORKER),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    observations = json.loads(result.stdout)
+    assert [item["value"] for item in observations] == [
+        {"kind": "error", "value": "#DIV/0!"},
+        {"kind": "error", "value": "#NAME?"},
+        {"kind": "error", "value": "#N/A"},
+        {"kind": "text", "value": "#N/A"},
+        {"kind": "number", "value": -2146826246},
+        {"kind": "error", "value": "#REF!"},
+        {"kind": "uncomparable", "value": "#UNKNOWN!"},
+    ]
+
+
+@pytest.mark.parametrize("array", [False, True])
+def test_untyped_native_errors_are_incomplete_not_calculation_differences(
+    tmp_path, monkeypatch, array
+):
+    selection = oracle.target("Scalar", "B10", "coercion_errors")
+    spec = {
+        "id": "scalar",
+        "file": "scalar.xlsx",
+        "references": [],
+        "targets": [selection],
+    }
+    native_value = {"kind": "uncomparable", "value": "#DIV/0!"}
+    if array:
+        native_value = {
+            "kind": "array",
+            "rows": 1,
+            "columns": 1,
+            "values": [[native_value]],
+        }
+    receipt = {
+        "manifestSha256": "test-only",
+        "cases": [
+            {
+                "id": "scalar",
+                "status": "completed",
+                "excel": {"observations": {"Scalar!B10": {"value": native_value}}},
+                "outputs": {"scalar.xlsx": {"path": "runs/probe/scalar.xlsx"}},
+            }
+        ],
+    }
+    path = tmp_path / "receipt.json"
+    oracle.write_json(path, receipt)
+    monkeypatch.setattr(oracle, "validate_bundle", lambda _: {"cases": [spec]})
+    monkeypatch.setattr(oracle, "validate_receipt", lambda *_: receipt)
+
+    def calculate(argv, **kwargs):
+        request = json.loads(Path(argv[-1]).read_text())
+        oracle.write_json(
+            Path(request["result"]),
+            {"calculated": True, "value": oracle.typed("#DIV/0!", "error")},
+        )
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(oracle.subprocess, "run", calculate)
+    report = json.loads(oracle.compare(tmp_path, path, 5).read_text())
+    assert report["counts"] == {"oracle_uncomparable": 2}
+    assert report["status"] == "differences_or_incomplete"
 
 
 def test_nonwindows_run_does_not_fabricate_excel_receipt(tmp_path):

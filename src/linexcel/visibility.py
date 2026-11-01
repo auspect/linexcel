@@ -10,13 +10,17 @@ when the requested mode includes manually hidden rows.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import statistics
+import zipfile
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from xml.etree import ElementTree
 
+from linexcel.refs import parse_ref
 from linexcel.structured_refs import formula_tokens
 from linexcel.values import _error_kind, _is_uncomputed
 
@@ -32,6 +36,106 @@ class VisibilityPlan:
     formula: str
     functions: list[tuple[str, Callable, int]] = field(default_factory=list)
     evidence: list[dict] = field(default_factory=list)
+
+
+def batch_visibility_resolver(data: bytes, workbook):
+    """Resolve bounded aggregate ranges against the imported source package.
+
+    Row visibility is package evidence, not an engine capability or a cached
+    formula value. A filter can hide the whole row, including cells outside its
+    table, so any active sheet/table filter keeps include-hidden modes
+    conservative. Formulas are read through the original-formula facade to
+    identify nested totals after compatibility rewrites.
+    """
+    from linexcel.loader import _parse_sheet_targets
+    from linexcel.tables import _part_rels, _xml_part
+
+    metadata = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        paths = _parse_sheet_targets(
+            archive.read("xl/workbook.xml").decode("utf-8"),
+            archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+        )
+        for sheet, part in paths.items():
+            hidden_rows = set()
+            active_filters = False
+            known = True
+            table_ids = []
+            with archive.open(part) as source:
+                for _, element in ElementTree.iterparse(source, events=("end",)):
+                    tag = element.tag.rsplit("}", 1)[-1]
+                    if tag == "row":
+                        if element.get("hidden", "0") in {"1", "true"}:
+                            try:
+                                row = int(element.get("r", ""))
+                            except ValueError:
+                                known = False
+                            else:
+                                if 1 <= row <= 1_048_576:
+                                    hidden_rows.add(row)
+                                else:
+                                    known = False
+                    elif tag == "filterColumn" or (
+                        tag == "sheetPr"
+                        and element.get("filterMode", "0") in {"1", "true"}
+                    ):
+                        active_filters = True
+                    elif tag == "tablePart":
+                        table_ids.append(
+                            next(
+                                (
+                                    value
+                                    for key, value in element.attrib.items()
+                                    if key.rsplit("}", 1)[-1] == "id"
+                                ),
+                                "",
+                            )
+                        )
+                    element.clear()
+            table_parts = _part_rels(archive, part, kind="table")
+            for table_id in table_ids:
+                table_part = table_parts.get(table_id)
+                table = _xml_part(archive, table_part) if table_part else None
+                if table is None:
+                    known = False
+                elif any(
+                    item.tag.rsplit("}", 1)[-1] == "filterColumn"
+                    for item in table.iter()
+                ):
+                    active_filters = True
+            metadata[sheet] = {
+                "hiddenRows": hidden_rows,
+                "activeFilters": active_filters,
+                "visibilityKnown": known,
+            }
+    canonical_sheets = {sheet.casefold(): sheet for sheet in metadata}
+
+    def resolve(reference, sheet):
+        rectangle = parse_ref(reference, default_sheet=sheet)
+        if rectangle is None or rectangle.ncells > MAX_POSITIONS:
+            raise VisibilityError(
+                "Visibility reference is unresolved or exceeds 20000 positions."
+            )
+        source_sheet = canonical_sheets.get((rectangle.sheet or "").casefold())
+        if source_sheet is None:
+            raise VisibilityError("Source row visibility is unavailable.")
+        rectangle = replace(rectangle, sheet=source_sheet)
+        return {
+            **metadata[source_sheet],
+            "expression": rectangle.to_a1(),
+            "bounds": [rectangle.r1, rectangle.c1, rectangle.r2, rectangle.c2],
+            "cells": (
+                {
+                    "row": row,
+                    "column": column,
+                    "formula": workbook.get_formula(source_sheet, row, column),
+                }
+                for row in range(rectangle.r1, rectangle.r2 + 1)
+                for column in range(rectangle.c1, rectangle.c2 + 1)
+            ),
+        }
+
+    return resolve
 
 
 def _error(kind):

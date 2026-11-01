@@ -24,6 +24,22 @@ not extend historical batch measurements or establish full Excel equivalence.
 | Volatile functions | Recorded UTC operation clock and random seed for replay | Random sequence parity with Excel is not established |
 | Iterative cycles | Source iteration settings and explicit native convergence telemetry | Disabled/malformed settings, nonconvergence and incompatible external settings |
 
+Batch calculation also resolves declared table references and applies the bounded
+visibility adapter and supported 3D aggregate expansion. Its graph still keeps
+structured references as opaque nodes; previews needing `#This Row` context can
+remain unavailable. `FORMULATEXT` retains the saved reading with an explicit
+limitation, because engine-normalized syntax does not establish Excel's original
+formula text. External ranges retain their types and dimensions, with external
+reading provenance carried through their dependent calculations; this batch
+path reads supplied files' saved values rather than recalculating their closure.
+
+Excel-saved array children are removed from the engine's
+private input copy so their anchor can calculate a fresh spill; the original
+workbook and saved values remain available for provenance. Changed spill extents
+and unsupported visibility readings invalidate dependent calculations, including
+error-handler fallbacks. Active filters still prevent include-hidden modes from
+distinguishing filtered rows from rows hidden manually.
+
 The versioned `capabilities` metadata lists extraction, resolution, calculation,
 verification and limitations independently. Unsupported prerequisites produce an
 explicit result rather than a saved-cache substitution. A successful engine

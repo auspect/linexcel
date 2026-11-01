@@ -246,7 +246,10 @@ def test_corpus_refuses_addin_artifact_collisions(manual, tmp_path):
 @pytest.mark.parametrize(
     "missing", ["nodes", "overview", "vision", "images", "sheet", "regions", None]
 )
-def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, missing):
+@pytest.mark.parametrize("ai_mode", ["full", "text", "none"])
+def test_each_requested_stage_must_complete(
+    manual, monkeypatch, tmp_path, missing, ai_mode
+):
     image = tmp_path / "sheet.png"
     image_module = pytest.importorskip("PIL.Image")
     image_module.new("RGB", (40, 30), "white").save(image)
@@ -273,6 +276,7 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     )
 
     def document(result, args, language, *, validation_results=None):
+        assert ai_mode != "none", "Skipped AI documentation must not run"
         from test_documentation_receipts import reviewed
 
         receipts = []
@@ -290,6 +294,7 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     monkeypatch.setattr(manual, "document", document)
 
     def describe(result, shots, args, language, **kwargs):
+        assert ai_mode == "full", "Skipped AI vision must not run"
         from linexcel.vision_evidence import persist_image, prepare_image
 
         native = prepare_image(image.read_bytes())
@@ -347,18 +352,74 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
         generated=False,
         root=tmp_path,
     )
-    args = Namespace(no_recalc=True, max_nodes=None, seed=1, check_max_tokens=False)
-    outcome = manual.run_case(case, args, True, True)
-    assert outcome["passed"] is (missing is None)
+    args = Namespace(
+        no_recalc=True,
+        max_nodes=None,
+        seed=1,
+        check_max_tokens=False,
+        no_ai=ai_mode == "none",
+        vision=ai_mode == "full",
+    )
+    outcome = manual.run_case(case, args, ai_mode != "none", ai_mode == "full")
+    required = {"images", "sheet"}
+    if ai_mode != "none":
+        required.update({"nodes", "overview"})
+    if ai_mode == "full":
+        required.update({"vision", "regions"})
+    assert outcome["passed"] is (missing not in required)
     assert (tmp_path / "sample-en-ai.json").exists()
     evidence = json.loads((tmp_path / "sample-en-ai.json").read_text())
-    assert evidence["documentation_checks"]["S!A1"]["status"] == "qualified"
-    assert evidence["documentation_checks"]["S!A1"]["raw_response"].startswith(
-        "S!A1: review response"
-    )
+    if ai_mode != "none":
+        assert evidence["documentation_checks"]["S!A1"]["status"] == "qualified"
+        assert evidence["documentation_checks"]["S!A1"]["raw_response"].startswith(
+            "S!A1: review response"
+        )
+    else:
+        assert evidence["docs"] is None and evidence["workbook_doc"] is None
+        assert evidence["documentation_checks"] == {}
+        assert evidence["coverage"]["ai_stages"]["documentation"] == "skipped"
+    if ai_mode != "full":
+        assert evidence["screenshot_docs"] is None
+        assert evidence["vision_request_receipts"] == []
+        assert evidence["coverage"]["ai_stages"]["vision"] == "skipped"
     assert json.loads((tmp_path / "sample-validation.json").read_text())["passed"] is (
-        missing is None
+        missing not in required
     )
+
+
+@pytest.mark.parametrize("flags", [["--no-ai"], ["--no-vision"]])
+def test_optional_ai_does_not_make_complete_run_partial(
+    manual, monkeypatch, tmp_path, flags
+):
+    output = tmp_path / "run"
+    monkeypatch.setattr(
+        sys, "argv", ["validate_manual.py", *flags, "--output-dir", str(output)]
+    )
+    probes = []
+    monkeypatch.setattr(
+        manual, "check_local_provider", lambda *a: probes.append(a) or True
+    )
+    seen = []
+
+    def run(case, args, ai, vision):
+        seen.append((ai, vision))
+        return {"case": case.name, "passed": True}
+
+    monkeypatch.setattr(manual, "run_case", run)
+    assert manual.main() == 0
+    evidence = json.loads((output / "validation.json").read_text())
+    assert evidence["status"] == "passed"
+    assert evidence["acceptance"]["delivery"] == "not_ready"
+    assert evidence["acceptance"]["visual_review"] == "pending"
+    assert not evidence["acceptance"]["ai_vision_requested"]
+    if flags == ["--no-ai"]:
+        assert not probes
+        assert seen == [(False, False), (False, False)]
+        assert evidence["acceptance"]["scope"] == "deterministic"
+    else:
+        assert len(probes) == 1
+        assert seen == [(True, False), (True, False)]
+        assert evidence["acceptance"]["scope"] == "documentation"
 
 
 def test_missing_provider_is_nonzero_and_recorded(manual, monkeypatch, tmp_path):

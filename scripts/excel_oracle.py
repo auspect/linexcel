@@ -193,6 +193,22 @@ def corpus() -> tuple[dict[str, bytes], list[dict]]:
         "E6": "=E1*2",
     }.items():
         sheet[address] = formula
+    # Let Excel serialize its structured-reference syntax. These exact Formula2
+    # assignments are part of the curated manifest, just like native spills.
+    # openpyxl's bare structured formulas can make Excel reject the whole file.
+    table_actions = []
+    for row in sheet:
+        for cell in row:
+            if cell.data_type == "f":
+                table_actions.append(
+                    {
+                        "kind": "formula2",
+                        "sheet": sheet.title,
+                        "cell": cell.coordinate,
+                        "formula": cell.value,
+                    }
+                )
+                cell.value = 1
     add(
         "tables",
         book,
@@ -200,6 +216,7 @@ def corpus() -> tuple[dict[str, bytes], list[dict]]:
             target("Tables", address, "tables")
             for address in ["C2", "C3", "E1", "E2", "E3", "E4", "E5", "E6"]
         ],
+        actions=table_actions,
     )
 
     book = Workbook()
@@ -231,15 +248,15 @@ def corpus() -> tuple[dict[str, bytes], list[dict]]:
         for address, formula in {
             "D1": "=SUBTOTAL(9,B2:B4)",
             "D2": "=SUBTOTAL(109,B2:B4)",
-            "D3": "=AGGREGATE(9,5,B2:B4)",
+            "D3": "=_xlfn.AGGREGATE(9,5,B2:B4)",
             "D4": "=SUM(B2:B4)",
             "D5": "=D1*2",
-            "G1": "=AGGREGATE(12,5,Z1:Z2)",
-            "G2": "=AGGREGATE(14,5,B2:B4,1.5)",
-            "G3": "=AGGREGATE(15,5,B2:B4,0.2)",
-            "G4": "=AGGREGATE(17,5,B2:B4,1.5)",
-            "G5": "=AGGREGATE(19,5,B2:B4,1.5)",
-            "G6": "=AGGREGATE(13,6,J1:J4)",
+            "G1": "=_xlfn.AGGREGATE(12,5,Z1:Z2)",
+            "G2": "=_xlfn.AGGREGATE(14,5,B2:B4,1.5)",
+            "G3": "=_xlfn.AGGREGATE(15,5,B2:B4,0.2)",
+            "G4": "=_xlfn.AGGREGATE(17,5,B2:B4,1.5)",
+            "G5": "=_xlfn.AGGREGATE(19,5,B2:B4,1.5)",
+            "G6": "=_xlfn.AGGREGATE(13,6,J1:J4)",
             "G7": "=SUBTOTAL(109,B2:B4)",
             "G8": "=D2+G7",
         }.items():
@@ -299,8 +316,8 @@ def corpus() -> tuple[dict[str, bytes], list[dict]]:
     formulas = {
         "A1": "=INDIRECT(Inputs!B1)*2",
         "A2": "=SUM(OFFSET(Inputs!A1,0,0,3,1))",
-        "A3": "=FORMULATEXT(A1)",
-        "A4": "=SHEETS()",
+        "A3": "=_xlfn.FORMULATEXT(A1)",
+        "A4": "=_xlfn.SHEETS()",
         "A5": "=NOW()",
         "A6": "=RAND()",
         "D1": "=A5-A5",
@@ -371,7 +388,9 @@ def corpus() -> tuple[dict[str, bytes], list[dict]]:
     sheet["A2"] = "=SUM('[1]Data'!B1:B2)"
     sheet["B1"] = "=A1+A2"
     link = ExternalLink(
-        externalBook=ExternalBook(sheetNames=ExternalSheetNames(sheetName=["Data"]))
+        externalBook=ExternalBook(
+            id="rId1", sheetNames=ExternalSheetNames(sheetName=["Data"])
+        )
     )
     link.file_link = Relationship(
         type="externalLinkPath", Target="refs/source.xlsx", TargetMode="External"
@@ -836,6 +855,13 @@ def validate_typed(value: dict) -> None:
         raise ValueError("Oracle value is missing a valid explicit type")
 
 
+def comparable(value: dict) -> bool:
+    """An unknown native error is missing evidence, not a numerical difference."""
+    if value["kind"] == "array":
+        return all(comparable(cell) for row in value["values"] for cell in row)
+    return value["kind"] != "uncomparable"
+
+
 def validate_native(spec: dict, native: dict) -> None:
     identity, settings = native.get("excel", {}), native.get("calculation", {})
     if (
@@ -854,6 +880,8 @@ def validate_native(spec: dict, native: dict) -> None:
         raise ValueError("Excel calculation settings differ from the declared case")
     if settings.get("date1904") is not (spec["id"] == "scalar-1904"):
         raise ValueError("Excel date epoch differs from the declared case")
+    if settings.get("stateAfterRebuild", 0) != 0:
+        raise ValueError("Native Excel did not finish the requested calculation")
     observations = native.get("observations", {})
     if set(observations) != {item["nodeId"] for item in spec["targets"]}:
         raise ValueError("Excel observations do not cover the declared targets exactly")
@@ -941,6 +969,15 @@ def compare(bundle: Path, receipt_path: Path | None, seconds: float) -> Path:
                 }
                 observations = native.get("excel", {}).get("observations", {})
                 oracle = observations.get(selection["nodeId"])
+                if native.get("status") != "completed":
+                    row["oracleFailure"] = {
+                        "status": native.get("status", "missing"),
+                        **{
+                            key: native["excel"][key]
+                            for key in ("stage", "error", "calculation")
+                            if key in native.get("excel", {})
+                        },
+                    }
                 if native.get("status") == "completed" and oracle is not None:
                     row["oracle"] = oracle
                     workbook = safe_output(
@@ -996,7 +1033,9 @@ def compare(bundle: Path, receipt_path: Path | None, seconds: float) -> Path:
                                     if actual["calculated"]
                                     else "not_recalculated"
                                 )
-                                if selection["comparison"] == "observation_only":
+                                if not comparable(oracle["value"]):
+                                    row["status"] = "oracle_uncomparable"
+                                elif selection["comparison"] == "observation_only":
                                     row["status"] = "observation_only"
                             else:
                                 row.update(

@@ -12,12 +12,13 @@ import io
 import math
 import re
 import zipfile
+from collections.abc import Callable
 from typing import Any
 from xml.etree import ElementTree as ET
 
 import formualizer as fz
 
-from linexcel.refs import parse_ref, split_sheet_prefix
+from linexcel.refs import Rect, parse_ref, split_sheet_prefix
 from linexcel.values import _error_kind
 
 _CONCAT = "LINEXCEL.COMPAT.CONCAT"
@@ -329,7 +330,7 @@ def register_excel_functions(workbook, date_system: str = "1900") -> None:
     )
 
 
-def read_name_bindings(data: bytes) -> dict[tuple[str | None, str], str]:
+def read_name_bindings(data: bytes) -> NameBindings:
     """Read source expressions including constants and sheet-local shadowing."""
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         root = ET.fromstring(archive.read("xl/workbook.xml"))
@@ -477,6 +478,12 @@ def rewrite_formula(
 class CompatibleWorkbook:
     """Native evaluation with original formulas retained for lineage readers."""
 
+    array_regions: dict[tuple[str, int, int], Rect]
+    source_limitations: dict[tuple[str, int, int], str]
+    visibility_nonresults: set[str]
+    visibility_cells: dict[tuple[str, int, int], set[str]]
+    source_formula_adapter: Callable[[str, str], str] | None
+
     def __init__(self, native, names=None):
         self.native = native
         self.names = names or {}
@@ -489,10 +496,12 @@ class CompatibleWorkbook:
         return _CompatibleSheet(self, name)
 
     def qualify_formula(self, formula, source_sheet):
-        return rewrite_formula(formula, source_sheet, self.names)
+        rewritten = rewrite_formula(formula, source_sheet, self.names)
+        adapter = self.__dict__.get("source_formula_adapter")
+        return adapter(rewritten, source_sheet) if adapter is not None else rewritten
 
     def set_formula(self, sheet, row, col, formula):
-        rewritten = rewrite_formula(formula, sheet, self.names)
+        rewritten = self.qualify_formula(formula, sheet)
         self.native.set_formula(sheet, row, col, rewritten)
         if rewritten != formula:
             self.originals[(sheet, row, col)] = formula

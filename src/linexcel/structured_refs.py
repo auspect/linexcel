@@ -212,37 +212,91 @@ def resolve_table_reference(
     store, text: str, sheet: str | None, row: int | None, column: int | None
 ) -> TableSelection | None:
     """Resolve a declared table or return None for an ordinary/external token."""
+    import json
+
+    def lookup(name, sheet, row, column):
+        if name:
+            records = store.db.execute(
+                "SELECT data FROM table_definitions WHERE name_key=? LIMIT 2",
+                (name.casefold(),),
+            ).fetchall()
+        else:
+            records = store.db.execute(
+                "SELECT data FROM table_definitions WHERE sheet=? "
+                "AND ? BETWEEN r1 AND r2 AND ? BETWEEN c1 AND c2 LIMIT 2",
+                (sheet, row, column),
+            ).fetchall()
+        return [json.loads(record[0]) for record in records]
+
+    return _resolve_table_reference(lookup, text, sheet, row, column)
+
+
+def batch_table_resolver(data: bytes):
+    """Read declared table metadata once, sharing the indexed resolver semantics."""
+    import hashlib
+    import io
+    import zipfile
+    from collections import defaultdict
+
+    from linexcel.loader import _parse_sheet_targets
+    from linexcel.tables import _part_rels
+
+    names, sheets = defaultdict(list), defaultdict(list)
+    metadata_error = None
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        paths = _parse_sheet_targets(
+            archive.read("xl/workbook.xml").decode("utf-8"),
+            archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+        )
+        digest = hashlib.sha256(data).hexdigest()
+        for sheet, part in paths.items():
+            for table_part in _part_rels(archive, part, kind="table").values():
+                try:
+                    table = read_table(archive, table_part, sheet, digest)
+                except (KeyError, ValueError, ET.ParseError) as exc:
+                    metadata_error = str(exc)
+                    continue
+                names[table["name"].casefold()].append(table)
+                sheets[sheet.casefold()].append(table)
+
+    def lookup(name, sheet, row, column):
+        if metadata_error:
+            raise TableReferenceError("table_metadata_invalid", metadata_error)
+        if name:
+            return names.get(name.casefold(), [])
+        return [
+            table
+            for table in sheets.get((sheet or "").casefold(), [])
+            if row is not None
+            and column is not None
+            and table["bounds"][0] <= row <= table["bounds"][2]
+            and table["bounds"][1] <= column <= table["bounds"][3]
+        ][:2]
+
+    def resolve(text, sheet, row=None, column=None):
+        _prefix, body = split_sheet_prefix(text)
+        if "[" not in body and body.casefold() not in names:
+            return None
+        return _resolve_table_reference(lookup, text, sheet, row, column)
+
+    return resolve, tuple(names)
+
+
+def _resolve_table_reference(lookup, text, sheet, row, column):
     prefix, body = split_sheet_prefix(text)
     if prefix is not None and "[" in prefix:
         return None
     opening = body.find("[")
     name = body if opening < 0 else body[:opening]
-    if opening < 0:
-        records = store.db.execute(
-            "SELECT data FROM table_definitions WHERE name_key=? LIMIT 2",
-            (name.casefold(),),
-        ).fetchall()
-        if not records:
-            return None
-    elif name:
-        records = store.db.execute(
-            "SELECT data FROM table_definitions WHERE name_key=? LIMIT 2",
-            (name.casefold(),),
-        ).fetchall()
-    else:
-        records = store.db.execute(
-            "SELECT data FROM table_definitions WHERE sheet=? "
-            "AND ? BETWEEN r1 AND r2 AND ? BETWEEN c1 AND c2 LIMIT 2",
-            (sheet, row, column),
-        ).fetchall()
+    records = lookup(name, sheet, row, column)
+    if opening < 0 and not records:
+        return None
     if len(records) != 1:
         raise TableReferenceError(
             "table_missing" if not records else "table_ambiguous",
             "Unresolved structured reference; no unique declared table: " + text,
         )
-    import json
-
-    table = json.loads(records[0][0])
+    table = records[0]
     if prefix is not None and prefix.casefold() != table["sheet"].casefold():
         raise TableReferenceError(
             "table_sheet_mismatch", "Table and sheet qualifier disagree: " + text

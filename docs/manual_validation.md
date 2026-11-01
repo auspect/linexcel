@@ -5,10 +5,21 @@ analysis, evaluation, documentation, screenshots or the viewer. Automated tests
 complement this run; they do not replace it.
 
 ```powershell
+uv run --extra screenshots validate_manual.py --workbook both --no-ai
+```
+
+AI documentation and image analysis are optional. This command validates both
+workbooks, all report languages and sheet captures without contacting a model.
+The manifest marks AI stages as `skipped`; it does not claim AI coverage.
+Use `--no-vision` to retain text documentation but skip image analysis.
+
+To include both AI stages:
+
+```powershell
 uv run --extra ai --extra screenshots validate_manual.py --workbook both --vision --model qwen3.8 --vision-model qwen3.8 --token-budget 1000000
 ```
 
-For the default command, Ollama must serve the selected model locally.
+For AI validation, Ollama must serve the selected model locally.
 LibreOffice and Poppler must be available for workbook rendering. The default
 endpoint is `http://localhost:11434/v1`; there is no cloud fallback. Both
 generated workbooks and image analysis are enabled by default. Calls use one
@@ -85,11 +96,12 @@ screenshots. Inspect the generated descriptions against their original images.
 If vision needs a separate explicitly chosen endpoint, use `--vision-base-url`
 and its matching `--vision-model`; record both configurations in the run. Do not
 silently retry a failed gateway against an unrelated provider. The documentation
-and vision endpoints can differ without weakening the required vision stage.
+and vision endpoints can differ; an explicitly requested stage must complete.
 
 The generated Sales fixture requests French and English; the Stress fixture
-requests English. Complete every requested language, node card, workbook
-overview, screenshot and image description. A multilingual product does not
+requests English. Complete every requested report language and screenshot.
+When AI is requested, complete each node card, workbook overview and image
+description for the selected stages. A multilingual product does not
 make every fixture request all nine supported languages.
 
 ## Native visual evidence
@@ -209,13 +221,16 @@ trace and unknown usage when the SDK supplies no final counts.
 immediately, including rejected responses, before a language finishes. This
 private recovery journal preserves completed calls if a long run is interrupted;
 it does not prove coverage or recover usage for requests still in flight.
-Missing providers, incomplete languages and empty or truncated model responses
-fail. Diagnostic options `--no-ai`, `--no-vision`, `--no-recalc` and `--max-nodes`
-produce partial evidence and return a nonzero exit status. A node limit uses
+Missing providers and empty or truncated responses fail when the AI stage is
+requested. `--no-ai` and `--no-vision` explicitly skip optional stages and can
+succeed without them. The manifest records the scope and per-language stage
+status. Incomplete languages, missing captures, `--no-recalc`, `--no-screenshots`
+and `--max-nodes` still return a nonzero exit status. A node limit uses
 reproducible sampling across sheets; `--seed` controls that sample.
 
-Every expected text card and overview must complete both drafting and specialized
-review. The `documentation_phases` gate binds their exact system/user prompts,
+When AI documentation is requested, every expected text card and overview must
+complete both drafting and specialized review. The `documentation_phases` gate
+binds their exact system/user prompts,
 dossier hash, raw responses and usage to two distinct successful provider
 receipts. A missing, disabled, truncated, duplicated or unlinked phase fails
 acceptance; the final report must match the reviewed response. Both calls count

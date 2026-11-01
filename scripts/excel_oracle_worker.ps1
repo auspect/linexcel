@@ -55,13 +55,20 @@ function Read-Cell($Cell) {
     }
     # COM error values and literal strings such as '#N/A' must remain distinct.
     if ($excel.WorksheetFunction.IsError($Cell)) {
-        $errorType = $null
-        try { $errorType = [int]$excel.WorksheetFunction.Error_Type($Cell) } catch {}
-        $errors = @{ 1 = '#NULL!'; 2 = '#DIV/0!'; 3 = '#VALUE!'; 4 = '#REF!'; 5 = '#NAME?'; 6 = '#NUM!'; 7 = '#N/A'; 8 = '#GETTING_DATA' }
-        if ($null -ne $errorType -and $errors.ContainsKey($errorType)) {
-            return @{ value = @{ kind = 'error'; value = $errors[$errorType] }; formula = $formula; errorType = $errorType }
+        # PowerShell marshals VT_ERROR as a signed HRESULT (or ErrorWrapper).
+        # WorksheetFunction exposes no Error_Type method. Do not infer errors
+        # from localized Cell.Text: French #NOM? and literal text are ambiguous.
+        $errorCode = $null
+        if ($value -is [Runtime.InteropServices.ErrorWrapper]) {
+            $errorCode = $value.ErrorCode -band 0xffff
+        } elseif ($value -is [int] -or $value -is [long]) {
+            $errorCode = [int]$value -band 0xffff
         }
-        return @{ value = @{ kind = 'uncomparable'; value = [string]$Cell.Text }; formula = $formula; errorType = $errorType }
+        $errors = @{ 2000 = '#NULL!'; 2007 = '#DIV/0!'; 2015 = '#VALUE!'; 2023 = '#REF!'; 2029 = '#NAME?'; 2036 = '#NUM!'; 2042 = '#N/A'; 2043 = '#GETTING_DATA'; 2045 = '#SPILL!' }
+        if ($null -ne $errorCode -and $errors.ContainsKey($errorCode)) {
+            return @{ value = @{ kind = 'error'; value = $errors[$errorCode] }; formula = $formula; errorCode = $errorCode }
+        }
+        return @{ value = @{ kind = 'uncomparable'; value = [string]$Cell.Text }; formula = $formula; errorCode = $errorCode }
     }
     if ($null -eq $value) { $kind = 'blank' }
     elseif ($value -is [bool]) { $kind = 'boolean' }
@@ -72,6 +79,7 @@ function Read-Cell($Cell) {
 }
 
 try {
+    $resultData.stage = 'activation'
     $excel = New-Object -ComObject Excel.Application
     [uint32]$oracleProcessId = 0
     [OracleExcelWindow]::GetWindowThreadProcessId([IntPtr]$excel.Hwnd, [ref]$oracleProcessId) | Out-Null
@@ -92,11 +100,13 @@ try {
     $resultData.excel = @{ version = [string]$excel.Version; build = [string]$excel.Build; operatingSystem = [string]$excel.OperatingSystem; automationSecurity = [int]$excel.AutomationSecurity }
 
     foreach ($reference in $case.references) {
+        $resultData.stage = "open reference: $reference"
         $referencePath = Join-Path $directory $reference
         $referenceBook = $excel.Workbooks.Open($referencePath, 0, $false)
         $books.Add($referenceBook)
     }
     $workbookPath = Join-Path $directory $case.file
+    $resultData.stage = "open workbook: $($case.file)"
     $workbook = $excel.Workbooks.Open($workbookPath, 0, $false)
     $books.Add($workbook)
     $excel.Calculation = -4135 # xlCalculationManual, set after a workbook exists.
@@ -109,6 +119,7 @@ try {
         if ($book.HasVBProject) { throw 'Unexpected VBA project' }
     }
     foreach ($action in $case.actions) {
+        $resultData.stage = "action: $($action.kind) $($action.sheet)"
         $sheet = $workbook.Worksheets.Item($action.sheet)
         if ($action.kind -eq 'formula2') {
             $sheet.Range($action.cell).Formula2 = $action.formula
@@ -117,12 +128,19 @@ try {
         } else { throw 'Unknown curated action' }
     }
     $resultData.calculation = @{ mode = [int]$excel.Calculation; iteration = [bool]$excel.Iteration; maxIterations = [int]$excel.MaxIterations; maxChange = [double]$excel.MaxChange; date1904 = [bool]$workbook.Date1904; calculateBeforeSave = [bool]$excel.CalculateBeforeSave }
+    $resultData.stage = 'full calculation'
     $excel.CalculateFullRebuild()
-    if ($excel.CalculationState -ne 0) { throw 'Excel calculation did not finish' }
+    # Wait for an asynchronous calculation, bounded by the controller watchdog.
+    # xlPending is not xlDone, including when an iterative case returns values.
+    while ([int]$excel.CalculationState -eq 1) { Start-Sleep -Milliseconds 50 }
+    $resultData.calculation.stateAfterRebuild = [int]$excel.CalculationState
+    if ([int]$excel.CalculationState -ne 0) { throw "Excel calculation did not finish (CalculationState=$([int]$excel.CalculationState))" }
     # Saving in manual mode cannot recalculate volatile/circular cells again.
+    $resultData.stage = 'save calculated workbooks'
     foreach ($book in $books) { $book.Save() }
     $resultData.calculatedAt = [DateTime]::UtcNow.ToString('o')
     foreach ($selection in $case.targets) {
+        $resultData.stage = "read target: $($selection.nodeId)"
         $sheet = $workbook.Worksheets.Item($selection.sheet)
         $range = $sheet.Range($selection.range)
         if ($selection.shape) {
@@ -156,9 +174,12 @@ try {
         $resultData.observations[$selection.nodeId] = $observation
     }
     $resultData.status = 'completed'
+    $resultData.stage = 'completed'
     $exitCode = 0
 } catch {
     $resultData.error = $_.Exception.Message
+    $resultData.errorHResult = $_.Exception.HResult
+    $resultData.errorLine = $_.InvocationInfo.ScriptLineNumber
 } finally {
     Write-Receipt $Result $resultData
     if ($owned) {

@@ -31,8 +31,8 @@ under several ceilings and reports which of them cut the response.
     uv run validate_manual.py --workbook both
     uv run validate_manual.py --file macros.xlsm     # your own workbook (VBA)
     uv run validate_manual.py --model <tag>          # another local model
-    uv run validate_manual.py --no-vision            # partial diagnostic, exit 1
-    uv run validate_manual.py --no-ai                # partial diagnostic, exit 1
+    uv run validate_manual.py --no-vision            # documentation, no image AI
+    uv run validate_manual.py --no-ai                # deterministic acceptance
     uv run validate_manual.py --token-budget 50000 --max-nodes 8
     uv run validate_manual.py --check-max-tokens     # does the endpoint obey?
 """
@@ -1394,6 +1394,8 @@ def run_case(
             screenshot_docs=seen,
             language=language,
         )
+        ai_requested = not getattr(args, "no_ai", False)
+        vision_requested = ai_requested and getattr(args, "vision", True)
         status = {
             "nodes": coverage(expected_nodes, docs),
             "overview": useful_text(workbook_doc),
@@ -1402,15 +1404,37 @@ def run_case(
             "vision_regions": vision_region_coverage(expected_images, vision_checks),
             "report": str(path.resolve()),
         }
-        status["passed"] = bool(
+        documentation_complete = bool(
             use_ai
-            and use_vision
-            and expected_images
             and status["nodes"]["passed"]
             and status["overview"]
             and status["documentation_phases"]["passed"]
+        )
+        vision_complete = bool(
+            use_vision
             and status["vision"]["passed"]
             and status["vision_regions"]["passed"]
+        )
+        status["ai_stages"] = {
+            "documentation": (
+                "skipped"
+                if not ai_requested
+                else "completed"
+                if documentation_complete
+                else "failed"
+            ),
+            "vision": (
+                "skipped"
+                if not vision_requested
+                else "completed"
+                if vision_complete
+                else "failed"
+            ),
+        }
+        status["passed"] = bool(
+            expected_images
+            and (not ai_requested or documentation_complete)
+            and (not vision_requested or vision_complete)
         )
         outcome["languages"][language] = status
         evidence = {
@@ -1669,7 +1693,9 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--no-ai", action="store_true", help="skip AI documentation entirely"
+        "--no-ai",
+        action="store_true",
+        help="validate without optional AI documentation or image analysis",
     )
     parser.add_argument(
         "--no-screenshots",
@@ -1740,6 +1766,11 @@ def main() -> int:
         "status": "running",
         "acceptance": {
             "generation": "running",
+            "scope": "deterministic"
+            if args.no_ai
+            else ("documentation_and_vision" if args.vision else "documentation"),
+            "ai_documentation_requested": not args.no_ai,
+            "ai_vision_requested": not args.no_ai and args.vision,
             "factual_review": "pending",
             "visual_review": "pending",
             "delivery": "not_ready",
@@ -1801,13 +1832,7 @@ def main() -> int:
                 }
             )
         save_manifest()
-    partial = (
-        args.no_ai
-        or not args.vision
-        or args.max_nodes is not None
-        or args.no_recalc
-        or args.no_screenshots
-    )
+    partial = args.max_nodes is not None or args.no_recalc or args.no_screenshots
     passed = (
         all(item["passed"] for item in manifest["cases"])
         and all(item["passed"] for item in manifest["addins"])

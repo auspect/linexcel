@@ -33,6 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve native Excel error types independently of localized display text in
+  the Windows oracle; repair generated table/external-link inputs and declare
+  modern formula assignments explicitly.
+- Recalculate Excel-saved spill dependents without treating saved array results
+  as user inputs. Apply source visibility masks and bounded 3D aggregate
+  expansion in batch calculations, including their displayed intermediate steps.
+- Resolve declared table references during batch calculation, and refuse
+  `FORMULATEXT` readings that would expose normalized engine syntax as source text.
+- Preserve external ranges and their element types instead of reading only the
+  first cell; carry external-value provenance through dependent calculations.
+- Allow local acceptance without optional AI documentation or vision. Record
+  skipped stages explicitly while retaining workbook, screenshot, language and
+  independent visual-review requirements.
 - Require Datasette 0.65.5 or newer; the previously declared 0.65 minimum
   imports `pkg_resources`, which current setuptools no longer supplies.
 - Drain and stop Datasette's internal writer and close its memory connections
