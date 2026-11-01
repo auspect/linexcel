@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-r"""Capture the English web app from the synthetic Sales validation workbook.
+r"""Capture the English web app from the B2B commercial review showcase workbook.
 
 Unlike capture_viewer.py, this exercises the running, lazy web application.
-No model is called unless --generate-doc is explicitly supplied, and an existing
-English node document is reused. --prepare saves a reusable browser context and
-project evidence without writing repository screenshots.
+No model is called unless --generate-doc is explicitly supplied. An existing
+English node document is reused when available; otherwise the screenshots show
+deterministic calculation. --no-ai also excludes existing documents. --prepare
+saves a reusable browser context and project evidence without writing images.
 
 Examples (use a dedicated preview server, never a user's active workspace):
     uv run --extra screenshots python scripts/capture_app.py \
       --base-url http://127.0.0.1:8877/review/ \
-      --workbook validation_screenshots/run/validation_demo.xlsx \
+      --workbook validation_screenshots/run/fy26_commercial_review.xlsx --no-ai
+    uv run --extra screenshots python scripts/capture_app.py \
+      --base-url http://127.0.0.1:8877/review/ \
+      --workbook validation_screenshots/run/fy26_commercial_review.xlsx \
       --generate-doc --prepare --save-state validation_screenshots/app/state.json
     uv run --extra screenshots python scripts/capture_app.py \
       --base-url http://127.0.0.1:8877/review/ \
-      --workbook validation_screenshots/run/validation_demo.xlsx \
+      --workbook validation_screenshots/run/fy26_commercial_review.xlsx \
       --reuse-project PROJECT_ID --storage-state validation_screenshots/app/state.json
     python -S scripts/capture_app.py --check
 
@@ -42,10 +46,10 @@ from urllib.parse import urlsplit, urlunsplit
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "imgs"
 MANIFEST_NAME = "app_manifest.json"
-SCHEMA = 1
+SCHEMA = 2
 WIDTH, HEIGHT, SCALE = 1440, 900, 2
-NODE = "Summary!C5"
-PROJECT_NAME = "Synthetic sales workbook"
+NODE = "Summary!C10"
+PROJECT_NAME = "FY26 B2B Commercial Review"
 SOURCES = (
     "src/linexcel/assets/app.html",
     "src/linexcel/assets/cytoscape.min.js",
@@ -59,6 +63,17 @@ SHOTS = {
     "app_captures.png": "Sheet capture gallery and the selected full-resolution image",
     "app_import.png": "Accessible main-workbook and reference-file selection",
 }
+DETERMINISTIC_SHOTS = {
+    **SHOTS,
+    # Keep published image URLs stable; their contents and captions describe
+    # the selected mode, not the historical filename.
+    "app_graph_documented.png": "Wide graph reader with deterministic dependency values; AI documentation skipped",
+    "app_node_documented.png": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
+}
+
+
+def shot_captions(documented: bool) -> dict[str, str]:
+    return SHOTS if documented else DETERMINISTIC_SHOTS
 
 
 def digest(path: Path) -> str:
@@ -91,11 +106,8 @@ def check(output: Path, workbook: Path | None = None) -> int:
         for name, expected in source_hashes().items():
             if manifest.get("sources", {}).get(name) != expected:
                 problems.append(f"changed source: {name}")
-        if (
-            manifest.get("uiLanguage") != "en"
-            or manifest.get("documentLanguage") != "en"
-        ):
-            problems.append("screenshots or documentation are not recorded as English")
+        if manifest.get("uiLanguage") != "en":
+            problems.append("screenshots are not recorded as English")
         if manifest.get("viewport") != {
             "width": WIDTH,
             "height": HEIGHT,
@@ -103,6 +115,8 @@ def check(output: Path, workbook: Path | None = None) -> int:
         }:
             problems.append("unexpected viewport or pixel density")
         fixture = manifest.get("fixture", {})
+        if fixture.get("name") != "fy26_commercial_review.xlsx":
+            problems.append("source is not the current commercial review fixture")
         if fixture.get("generator") != "validation_workbooks.build_sales_workbook":
             problems.append("source is not the synthetic Sales fixture")
         if fixture.get("generatorSha256") != source_digest(
@@ -113,27 +127,63 @@ def check(output: Path, workbook: Path | None = None) -> int:
             problems.append("missing fixture hash")
         if workbook is not None and digest(workbook) != fixture.get("sha256"):
             problems.append("supplied workbook differs from the captured fixture")
-        doc = manifest.get("document", {})
-        if doc.get("language") != "en" or not doc.get("taskId") or not doc.get("model"):
-            problems.append("missing English document provenance")
-        if doc.get("providerRequests") != 2:
-            problems.append("missing draft/review provider-call evidence")
-        for field in ("inputTokens", "outputTokens"):
-            value = doc.get("usage", {}).get(field)
+        documentation = manifest.get("documentation", {})
+        documented = documentation.get("status") == "completed"
+        doc = manifest.get("document")
+        if documented:
+            doc = doc or {}
             if (
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not math.isfinite(value)
-                or value < 0
+                manifest.get("documentLanguage") != "en"
+                or doc.get("language") != "en"
+                or doc.get("nodeId") != NODE
+                or not doc.get("taskId")
+                or not doc.get("model")
             ):
-                problems.append(f"missing document usage: {field}")
+                problems.append("missing English document provenance")
+            if doc.get("providerRequests") != 2:
+                problems.append("missing draft/review provider-call evidence")
+            if not re.fullmatch(r"[0-9a-f]{64}", doc.get("markdownSha256", "")):
+                problems.append("missing document content hash")
+            for field in ("inputTokens", "outputTokens"):
+                value = doc.get("usage", {}).get(field)
+                if (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not math.isfinite(value)
+                    or value < 0
+                ):
+                    problems.append(f"missing document usage: {field}")
+        elif (
+            documentation.get("status") != "skipped"
+            or documentation.get("reason")
+            not in ("--no-ai", "no existing English document")
+            or documentation.get("requested") is not False
+            or doc is not None
+            or manifest.get("documentLanguage") is not None
+            or manifest.get("modelRequestsDuringCapture") != 0
+        ):
+            problems.append("missing or inconsistent skipped documentation evidence")
+        if type(documentation.get("requested")) is not bool:
+            problems.append("missing documentation request selection")
+        requests = manifest.get("modelRequestsDuringCapture")
+        if type(requests) is not int or requests not in (0, 1):
+            problems.append("unexpected model request count")
+        elif requests and not documentation.get("requested"):
+            problems.append("model request without explicit documentation selection")
         if not manifest.get("capture", {}).get("taskId"):
             problems.append("missing sheet-capture provenance")
-        if set(manifest.get("images", {})) != set(SHOTS):
-            problems.append("the four expected app screenshots are not recorded")
-        for name in SHOTS:
+        if manifest.get("capture", {}).get("imageCount") != 4:
+            problems.append("missing captures for the four showcase sheets")
+        expected_shots = shot_captions(documented)
+        if set(manifest.get("images", {})) != set(expected_shots):
+            problems.append("the five expected app screenshots are not recorded")
+        for name, caption in expected_shots.items():
             path = output / name
             record = manifest.get("images", {}).get(name, {})
+            if record.get("caption") != caption:
+                problems.append(
+                    f"image caption does not match the documentation mode: {name}"
+                )
             if not path.is_file():
                 problems.append(f"missing image: {name}")
                 continue
@@ -171,9 +221,9 @@ def verify_fixture(workbook: Path) -> dict:
     sys.path.insert(0, str(ROOT))
     from validation_workbooks import build_sales_workbook
 
-    if workbook.name != "validation_demo.xlsx":
+    if workbook.name != "fy26_commercial_review.xlsx":
         raise ValueError(
-            "Only validation_demo.xlsx from build_sales_workbook is accepted."
+            "Only fy26_commercial_review.xlsx from build_sales_workbook is accepted."
         )
     with zipfile.ZipFile(workbook) as archive:
         if any(name.startswith("xl/media/") for name in archive.namelist()):
@@ -291,14 +341,88 @@ def english_document(data: dict) -> dict | None:
     return task
 
 
-def require_english(page) -> None:
+def require_english(page, *, documentation: bool = False) -> None:
     if page.locator("html").get_attribute("lang") != "en":
         raise ValueError("The application did not activate its real English UI.")
     if page.locator("#ui-language").input_value() != "en":
         raise ValueError("English UI selection is missing.")
-    if page.locator("#ai-language").input_value() != "en":
+    if documentation and page.locator("#ai-language").input_value() != "en":
         raise ValueError(
             "Documentation language must be English independently of the UI."
+        )
+
+
+def open_workspace_menu(page) -> None:
+    menu = page.locator("#workspace-menu")
+    if menu.is_visible() and menu.get_attribute("aria-expanded") != "true":
+        menu.click()
+
+
+def close_workspace_menu(page) -> None:
+    close = page.locator("#workspace-close")
+    if close.is_visible():
+        close.click()
+
+
+def set_document_language(page) -> None:
+    open_workspace_menu(page)
+    setting = page.locator("#ai-language")
+    if not setting.is_visible():
+        page.get_by_text("On-demand AI documentation", exact=True).click()
+    setting.select_option("en")
+    close_workspace_menu(page)
+
+
+def document_evidence(document: dict | None, args) -> dict:
+    if document is None:
+        if args.generate_doc:
+            raise ValueError("Requested documentation did not complete.")
+        return {
+            "documentation": {
+                "status": "skipped",
+                "requested": False,
+                "reason": "--no-ai" if args.no_ai else "no existing English document",
+            },
+            "documentLanguage": None,
+            "document": None,
+        }
+    result = document["result"]
+    return {
+        "documentation": {"status": "completed", "requested": args.generate_doc},
+        "documentLanguage": "en",
+        "document": {
+            "taskId": document["id"],
+            "nodeId": NODE,
+            "language": result["language"],
+            "model": result["model"],
+            "usage": result["usage"],
+            "providerRequests": sum(
+                stage.get("usage", {}).get("requests", 0)
+                for stage in result["validation"]["specialized_review"]["stages"]
+            ),
+            "markdownSha256": hashlib.sha256(result["markdown"].encode()).hexdigest(),
+        },
+    }
+
+
+def guard_model_request(route, *, allowed: bool, requests: list) -> None:
+    request = route.request
+    if request.method == "POST" and urlsplit(request.url).path.endswith("/tasks"):
+        body = request.post_data_json
+        if body.get("operation") in ("document", "describe_capture"):
+            requests.append(body)
+            if not allowed or body.get("operation") != "document" or len(requests) > 1:
+                route.abort()
+                return
+    route.continue_()
+
+
+def check_model_requests(requests: list, *, allowed: bool) -> None:
+    if requests and (
+        not allowed or len(requests) != 1 or requests[0].get("operation") != "document"
+    ):
+        raise ValueError(
+            "Unexpected model request(s); only one explicit English node request is allowed."
         )
 
 
@@ -310,6 +434,17 @@ def frame(page, selector: str, offset: int = 0) -> None:
     page.wait_for_timeout(150)
     if page.evaluate("document.documentElement.scrollWidth > innerWidth"):
         raise ValueError("The screenshot contains horizontal page overflow.")
+
+
+def fit_graph(page) -> None:
+    """Show the complete loaded neighborhood before photographing its cards."""
+    page.locator("#graph-fit").click()
+    page.wait_for_function(
+        "() => !document.querySelector('#graph-canvas')._cy.animated()"
+    )
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
 
 
 def capture(args) -> int:
@@ -350,17 +485,17 @@ def capture(args) -> int:
         errors, model_requests = [], []
         page.on("pageerror", lambda error: errors.append(str(error)))
 
-        def record_request(request):
-            if request.method == "POST" and request.url.endswith("/tasks"):
-                body = request.post_data_json
-                if body.get("operation") in ("document", "describe_capture"):
-                    model_requests.append(body)
-
-        page.on("request", record_request)
+        context.route(
+            "**/api/**",
+            lambda route: guard_model_request(
+                route, allowed=args.generate_doc, requests=model_requests
+            ),
+        )
         try:
             page.goto(base + "?lang=en")
             expect(page.locator("#connection")).to_have_text("Server connected")
             projects = api(page, base, "projects").get("projects", [])
+            open_workspace_menu(page)
             if args.reuse_project:
                 if any(p["id"] != args.reuse_project for p in projects):
                     raise ValueError(
@@ -389,8 +524,9 @@ def capture(args) -> int:
                 )
             page.reload()
             expect(page.locator("#project-title")).to_have_text(PROJECT_NAME)
-            page.get_by_text("On-demand AI documentation", exact=True).click()
-            page.locator("#ai-language").select_option("en")
+            close_workspace_menu(page)
+            if not args.no_ai:
+                set_document_language(page)
             require_english(page)
             page.locator("#tab-graph").click()
             page.locator("#graph-search").fill(NODE)
@@ -402,12 +538,8 @@ def capture(args) -> int:
             ):
                 page.locator(f'#graph-results [data-related="{NODE}"]').click()
             data = wait_tasks(page, base, project, args.timeout)
-            document = english_document(data)
-            if document is None:
-                if not args.generate_doc:
-                    raise ValueError(
-                        "No successful English node document exists. French documents are not relabelled. Prepare one explicitly with --generate-doc."
-                    )
+            document = None if args.no_ai else english_document(data)
+            if document is None and args.generate_doc:
                 with page.expect_response(
                     lambda response: (
                         response.request.method == "POST"
@@ -422,10 +554,7 @@ def capture(args) -> int:
                     raise ValueError(
                         "English documentation failed or was cancelled; no screenshot will pretend it succeeded."
                     )
-            if model_requests and (not args.generate_doc or len(model_requests) != 1):
-                raise ValueError(
-                    "Unexpected model request(s); only one explicit English node request is allowed."
-                )
+            check_model_requests(model_requests, allowed=args.generate_doc)
             captures = sorted(
                 (
                     t
@@ -461,13 +590,15 @@ def capture(args) -> int:
                     "No successful sheet images exist; capture screenshots cannot be substituted."
                 )
             captured = captures[-1]
+            check_model_requests(model_requests, allowed=args.generate_doc)
             if state_out:
                 state_out.parent.mkdir(parents=True, exist_ok=True)
                 context.storage_state(path=str(state_out))
                 evidence = {
                     "projectId": project,
                     "fixture": fixture,
-                    "documentTaskId": document["id"],
+                    "documentTaskId": document["id"] if document else None,
+                    "documentation": document_evidence(document, args)["documentation"],
                     "captureTaskId": captured["id"],
                     "baseUrl": base,
                     "modelRequests": len(model_requests),
@@ -484,14 +615,20 @@ def capture(args) -> int:
                     "Browser errors or source changes occurred during preparation."
                 )
             if args.prepare:
+                status = (
+                    f"English document {document['id']}"
+                    if document
+                    else "AI documentation skipped"
+                )
                 print(
-                    f"Prepared synthetic project {project}; English document {document['id']}; no repository images written."
+                    f"Prepared synthetic project {project}; {status}; no repository images written."
                 )
                 return 0
             page.reload()
             expect(page.locator("#project-title")).to_have_text(PROJECT_NAME)
-            page.get_by_text("On-demand AI documentation", exact=True).click()
-            page.locator("#ai-language").select_option("en")
+            close_workspace_menu(page)
+            if document:
+                set_document_language(page)
             page.locator("#tab-graph").click()
             page.locator("#graph-search").fill(NODE)
             with page.expect_response(
@@ -506,37 +643,50 @@ def capture(args) -> int:
             expect(page.locator("#graph-recalculate")).to_be_enabled()
             expect(
                 page.locator("#graph-preview .value-pair .value-card").nth(1)
-            ).to_contain_text("6724.5")
-            require_english(page)
+            ).to_contain_text("816668.1")
+            require_english(page, documentation=bool(document))
             output.mkdir(parents=True, exist_ok=True)
+            captions = shot_captions(bool(document))
 
             def shot(name: str, selector: str, offset: int = 0):
                 frame(page, selector, offset)
                 path = output / name
                 page.screenshot(path=str(path))
                 images[name] = {
-                    "caption": SHOTS[name],
+                    "caption": captions[name],
                     "sha256": digest(path),
                     "pixels": list(png_dimensions(path)),
                 }
 
+            fit_graph(page)
             shot("app_graph.png", ".graph-investigation", 70)
-            page.locator("#graph-tab-ai").click()
-            page.locator("#graph-ai .ai-result").wait_for()
-            page.locator("#graph-ai .token-usage").wait_for()
+            if document:
+                page.locator("#graph-tab-ai").click()
+                page.locator("#graph-ai .ai-result").wait_for()
+                page.locator("#graph-ai .token-usage").wait_for()
             page.locator("#graph-options > summary").click()
             page.locator("#graph-reader-width").focus()
             page.keyboard.press("End")
             expect(page.locator("#graph-reader-width")).to_have_value("62")
             page.locator("#graph-options > summary").click()
-            page.locator("#graph-panel-ai").evaluate(
-                """panel => {
-                    const heading = panel.querySelector('.ai-result h3');
-                    if (!heading) throw new Error('Missing rendered document heading');
-                    panel.scrollTop += heading.getBoundingClientRect().top
-                        - panel.getBoundingClientRect().top - 16;
-                }"""
-            )
+            if document:
+                page.locator("#graph-panel-ai").evaluate(
+                    """panel => {
+                        const heading = panel.querySelector('.ai-result h3');
+                        if (!heading) throw new Error('Missing rendered document heading');
+                        panel.scrollTop += heading.getBoundingClientRect().top
+                            - panel.getBoundingClientRect().top - 16;
+                    }"""
+                )
+            else:
+                page.locator("#graph-panel-calculation").evaluate(
+                    """panel => {
+                        const heading = panel.querySelector('.detail-section h3');
+                        panel.scrollTop += heading.getBoundingClientRect().top
+                            - panel.getBoundingClientRect().top - 16;
+                    }"""
+                )
+            fit_graph(page)
             shot("app_graph_documented.png", ".graph-investigation", 70)
             # Opening the same cell's full reader can reuse the active result.
             # Verify the visible state instead of requiring an extra operation.
@@ -547,13 +697,19 @@ def capture(args) -> int:
                 "() => document.querySelector('#recalculate')"
                 " && !document.querySelector('#recalculate').disabled"
             )
-            page.locator("#node-ai .token-usage").wait_for()
-            shot("app_node_documented.png", "#node-ai", 80)
-            usage = page.locator("#node-ai .token-usage").bounding_box()
-            if not usage or usage["y"] < 0 or usage["y"] + usage["height"] > HEIGHT:
-                raise ValueError(
-                    "Input/output token counts are not visible in the documentation screenshot."
+            if document:
+                page.locator("#node-ai .token-usage").wait_for()
+                shot("app_node_documented.png", "#node-ai", 80)
+                usage = page.locator("#node-ai .token-usage").bounding_box()
+                if not usage or usage["y"] < 0 or usage["y"] + usage["height"] > HEIGHT:
+                    raise ValueError(
+                        "Input/output token counts are not visible in the documentation screenshot."
+                    )
+            else:
+                expect(page.locator("#node-detail .value-pair")).to_contain_text(
+                    "816668.1"
                 )
+                shot("app_node_documented.png", "#node-detail", 40)
             page.locator("#tab-captures").click()
             page.wait_for_function(
                 "() => document.querySelector('#capture-selected figure img')"
@@ -576,52 +732,44 @@ def capture(args) -> int:
                 device_scale_factor=SCALE,
                 storage_state=state,
             )
+            import_context.route(
+                "**/api/**",
+                lambda route: guard_model_request(
+                    route, allowed=False, requests=model_requests
+                ),
+            )
             import_page = import_context.new_page()
+            import_page.on("pageerror", lambda error: errors.append(str(error)))
             import_page.goto(base + "?lang=en")
             expect(import_page.locator("#welcome")).to_be_visible()
+            open_workspace_menu(import_page)
             import_page.locator("#workbook").set_input_files(workbook)
             import_page.locator("#project-name").fill(PROJECT_NAME)
             import_page.locator("#project-name").blur()
             image_path = output / "app_import.png"
             import_page.screenshot(path=str(image_path))
             images["app_import.png"] = {
-                "caption": SHOTS["app_import.png"],
+                "caption": captions["app_import.png"],
                 "sha256": digest(image_path),
                 "pixels": list(png_dimensions(image_path)),
             }
             import_context.close()
+            check_model_requests(model_requests, allowed=args.generate_doc)
             if errors:
                 raise ValueError(f"Browser errors occurred: {errors}")
             if source_hashes() != watched or digest(workbook) != fixture["sha256"]:
                 raise ValueError(
                     "Sources or workbook changed during capture; retry after freezing the tree."
                 )
-            result = document["result"]
             manifest = {
                 "schema": SCHEMA,
                 "capturedAt": datetime.now(UTC).isoformat(),
                 "uiLanguage": "en",
-                "documentLanguage": "en",
+                **document_evidence(document, args),
                 "viewport": {"width": WIDTH, "height": HEIGHT, "scale": SCALE},
                 "sources": watched,
                 "fixture": fixture,
                 "images": images,
-                "document": {
-                    "taskId": document["id"],
-                    "nodeId": NODE,
-                    "language": result["language"],
-                    "model": result["model"],
-                    "usage": result["usage"],
-                    "providerRequests": sum(
-                        stage.get("usage", {}).get("requests", 0)
-                        for stage in result["validation"]["specialized_review"][
-                            "stages"
-                        ]
-                    ),
-                    "markdownSha256": hashlib.sha256(
-                        result["markdown"].encode()
-                    ).hexdigest(),
-                },
                 "capture": {
                     "taskId": captured["id"],
                     "imageCount": len(captured["result"]["screenshots"]),
@@ -655,7 +803,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--workbook",
         type=Path,
-        help="Generated validation_demo.xlsx; required except for --check.",
+        help="Generated fy26_commercial_review.xlsx; required except for --check.",
     )
     result.add_argument(
         "--output",
@@ -677,10 +825,16 @@ def parser() -> argparse.ArgumentParser:
         "--reuse-project",
         help="Reuse the sole synthetic project in the supplied browser context.",
     )
-    result.add_argument(
+    ai = result.add_mutually_exclusive_group()
+    ai.add_argument(
         "--generate-doc",
         action="store_true",
         help="Allow one English documentation operation (draft and review calls).",
+    )
+    ai.add_argument(
+        "--no-ai",
+        action="store_true",
+        help="Capture deterministic calculation only, ignoring any existing AI document.",
     )
     result.add_argument(
         "--prepare",
@@ -700,7 +854,7 @@ def main(argv: list[str] | None = None) -> int:
     cli = parser()
     args = cli.parse_args(argv)
     if args.check:
-        if args.generate_doc or args.prepare:
+        if args.generate_doc or args.no_ai or args.prepare:
             cli.error(
                 "--check cannot generate documentation or prepare a server project"
             )

@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -31,10 +32,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 IMAGES_DIR = ROOT / "imgs"
 MANIFEST = IMAGES_DIR / "manifest.json"
-DEFAULT_REPORT = ROOT / "validate_out_en.html"
+DEFAULT_REPORT = ROOT / "validation_screenshots" / "readme" / "validate_out_en.html"
 
 #: Changing any of these changes what the report looks like.
 WATCHED_SOURCES = (
+    Path("scripts/capture_viewer.py"),
+    Path("validation_workbooks.py"),
     Path("src/linexcel/viewer.py"),
     # The report itself. It left viewer.py for its own file, and it is what
     # actually decides how a screenshot looks, so watching only the Python
@@ -63,6 +66,9 @@ class Shot:
     search: str | None = None
     #: Capture this element rather than the viewport.
     selector: str | None = None
+    #: Select a named source sheet, then optionally bring its render into view.
+    sheet: str | None = None
+    show_render: bool = False
 
 
 SHOTS = (
@@ -72,25 +78,28 @@ SHOTS = (
         clicks=("lin-tab-graph", "lin-fit"),
     ),
     Shot(
-        # C5 rather than C7: both are documented, but C7 concatenates a number
-        # into text and LibreOffice writes the French decimal comma when it
-        # recalculates the fixture, so its card shows a genuine — and genuinely
-        # confusing — disagreement over `OK: 6,7k` against `OK: 6.7k`. C5 agrees
-        # exactly, which is what the value card is meant to demonstrate here.
+        # Summary!C10 (Net Commercial Contribution) combines Gross Profit, Net
+        # Revenue, RebateRate and Commission in a pure numeric
+        # formula whose cached value agrees identically between LibreOffice and
+        # Formualizer, while showcasing multi-step subexpression evaluation.
+        # Values and provenance align cleanly without locale comma ambiguity.
         name="viewer_node_documented.png",
-        caption="A node selected: formula, step-by-step evaluation, AI card",
+        caption="Selected KPI: source formula, values, provenance and calculation steps",
         clicks=("lin-tab-graph",),
-        search="Summary!C5",
+        search="Summary!C10",
     ),
     Shot(
         name="viewer_workbook_overview.png",
-        caption="AI overview, grounded in the deterministic dossier",
-        clicks=("lin-tab-overview",),
+        caption="Workbook summary: rendered Summary sheet",
+        clicks=("lin-tab-sheets",),
+        sheet="Summary",
+        show_render=True,
     ),
     Shot(
         name="viewer_sheets_context.png",
-        caption="Sheet context: the sheet rendered, its first cells, its comments",
+        caption="Sales sheet context: source rendering, metadata and comments",
         clicks=("lin-tab-sheets",),
+        sheet="Sales",
     ),
 )
 
@@ -115,12 +124,20 @@ def check() -> int:
         print("   Run: uv run python scripts/capture_viewer.py")
         return 1
 
-    recorded = json.loads(MANIFEST.read_text(encoding="utf-8")).get("sources", {})
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    recorded = manifest.get("sources", {})
     current = hash_sources()
     stale = [name for name, digest in current.items() if recorded.get(name) != digest]
     missing = [shot.name for shot in SHOTS if not (IMAGES_DIR / shot.name).exists()]
+    changed = [
+        shot.name
+        for shot in SHOTS
+        if (IMAGES_DIR / shot.name).exists()
+        and manifest.get("image_sha256", {}).get(shot.name)
+        != hashlib.sha256((IMAGES_DIR / shot.name).read_bytes()).hexdigest()
+    ]
 
-    if not stale and not missing:
+    if not stale and not missing and not changed:
         print("✅ README screenshots match the current viewer.")
         return 0
     if stale:
@@ -129,9 +146,15 @@ def check() -> int:
             print(f"     {name}")
     if missing:
         print("❌ Missing screenshots: " + ", ".join(missing))
+    if changed:
+        print("❌ Unverified or changed screenshots: " + ", ".join(changed))
     print("\n   Regenerate them, then commit imgs/ with your change:")
-    print("     uv run python validate_manual.py --model <local-model>")
-    print("     uv run python scripts/capture_viewer.py")
+    print(
+        "     uv run --extra screenshots validate_manual.py --workbook both --no-ai --output-dir validation_screenshots/readme-<new-run>"
+    )
+    print(
+        "     uv run --extra screenshots scripts/capture_viewer.py --report validation_screenshots/readme-<new-run>/validate_out_en.html"
+    )
     print("\n   (If the change cannot affect the report, re-record the hashes with")
     print("    --accept instead.)")
     return 1
@@ -139,20 +162,72 @@ def check() -> int:
 
 def accept() -> int:
     """Re-record the source hashes without recapturing."""
-    write_manifest()
+    if not MANIFEST.exists():
+        print("❌ Capture the screenshots before accepting source-only changes.")
+        return 1
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    for shot in SHOTS:
+        path = IMAGES_DIR / shot.name
+        if (
+            not path.exists()
+            or payload.get("image_sha256", {}).get(shot.name)
+            != hashlib.sha256(path.read_bytes()).hexdigest()
+        ):
+            print(
+                "❌ Capture missing, changed or unverified screenshots before accepting."
+            )
+            return 1
+    payload["sources"] = hash_sources()
+    payload["accepted_without_recapture"] = date.today().isoformat()
+    MANIFEST.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     print(f"✅ {MANIFEST.relative_to(ROOT)} updated without recapturing.")
     return 0
 
 
-def write_manifest() -> None:
+def write_manifest(report: Path, content: dict | None = None) -> None:
+    report = report.resolve()
     payload = {
         "captured": date.today().isoformat(),
         "sources": hash_sources(),
         "images": {shot.name: shot.caption for shot in SHOTS},
+        "image_sha256": {
+            shot.name: hashlib.sha256((IMAGES_DIR / shot.name).read_bytes()).hexdigest()
+            for shot in SHOTS
+        },
+        "report": {
+            "path": report.relative_to(ROOT).as_posix()
+            if report.is_relative_to(ROOT)
+            else report.name,
+            "sha256": hashlib.sha256(report.read_bytes()).hexdigest(),
+        },
+        "viewport": {
+            "width": VIEWPORT_WIDTH,
+            "height": VIEWPORT_HEIGHT,
+            "scale": SCALE,
+        },
+        "content": content or {},
     }
     MANIFEST.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+
+
+def report_content(report: Path) -> dict[str, bool]:
+    """Record AI presence from the exported graph without assuming a model run."""
+    _before, separator, after = report.read_text(encoding="utf-8").partition(
+        "  var GRAPH = "
+    )
+    if not separator:
+        raise ValueError("Report does not contain the exported viewer graph")
+    graph, _end = json.JSONDecoder().raw_decode(after)
+    meta = graph.get("meta", {})
+    return {
+        "aiNodeDocumentation": any(node.get("doc") for node in graph["nodes"]),
+        "aiWorkbookOverview": bool(meta.get("workbookDoc")),
+        "aiImageDescriptions": any(meta.get("screenshotDocs", {}).values()),
+    }
 
 
 def capture(report: Path) -> int:
@@ -165,15 +240,24 @@ def capture(report: Path) -> int:
 
     if not report.exists():
         print(f"❌ No report at {report}. Generate one first:")
-        print("     uv run python validate_manual.py --model <local-model>")
-        print("   The AI tabs stay empty without a provider, so the overview shot")
-        print("   would show an interface the README describes as documented.")
+        print(
+            "     uv run --extra screenshots validate_manual.py --workbook both --no-ai --output-dir validation_screenshots/readme"
+        )
+        print(
+            "   Optional AI content is captured only when the supplied report contains it."
+        )
         return 1
 
     IMAGES_DIR.mkdir(exist_ok=True)
+    content = report_content(report)
     print(f"📸 Capturing {report.name} → {IMAGES_DIR.relative_to(ROOT)}/")
 
-    with sync_playwright() as playwright:
+    with (
+        tempfile.TemporaryDirectory(
+            prefix=".viewer-capture-", dir=IMAGES_DIR
+        ) as temporary,
+        sync_playwright() as playwright,
+    ):
         browser = playwright.chromium.launch(
             channel=os.environ.get("LINEXCEL_BROWSER_CHANNEL") or None
         )
@@ -187,12 +271,12 @@ def capture(report: Path) -> int:
         page.goto(report.resolve().as_uri())
         page.wait_for_selector("#lin-cy canvas", timeout=30_000)
         page.wait_for_timeout(LAYOUT_SETTLE_MS)
-
         for shot in SHOTS:
-            target = IMAGES_DIR / shot.name
+            target = Path(temporary) / shot.name
             if not apply_shot(page, shot):
-                print(f"   ⏭️  {shot.name} — its tab is absent from this report")
-                continue
+                print(f"   ❌ {shot.name} — the required tab or node is unavailable")
+                browser.close()
+                return 1
             element = page.query_selector(shot.selector) if shot.selector else None
             if element is not None:
                 element.screenshot(path=str(target))
@@ -201,8 +285,15 @@ def capture(report: Path) -> int:
             print(f"   ✅ {shot.name} — {shot.caption}")
 
         browser.close()
+        for shot in SHOTS:
+            # TemporaryDirectory has a private Windows ACL. Moving its files
+            # preserves that ACL and can make committed images unreadable to
+            # other users/tools. Write bytes into imgs/ so its ACL is inherited.
+            (IMAGES_DIR / shot.name).write_bytes(
+                (Path(temporary) / shot.name).read_bytes()
+            )
 
-    write_manifest()
+    write_manifest(report, content)
     print(f"   ✅ {MANIFEST.relative_to(ROOT).as_posix()}")
     return 0
 
@@ -210,9 +301,8 @@ def capture(report: Path) -> int:
 def apply_shot(page, shot: Shot) -> bool:
     """Drive the report into the state ``shot`` documents.
 
-    Returns ``False`` when the shot's tab does not exist in this report — an
-    overview tab needs an AI run, and a half-rendered screenshot is worse than
-    a missing one.
+    Returns ``False`` when a required tab or node is unavailable. The Visual
+    and Sheets tabs contain source evidence without requiring an AI provider.
     """
     for element_id in shot.clicks:
         button = page.query_selector(f"#{element_id}")
@@ -238,6 +328,28 @@ def apply_shot(page, shot: Shot) -> bool:
             match.click()
         page.wait_for_timeout(1200)
 
+    if shot.sheet:
+        button = page.locator("#lin-sheets-sidebar").get_by_role(
+            "button", name=f"📄 {shot.sheet}", exact=True
+        )
+        if button.count() != 1:
+            return False
+        button.click()
+        preview = page.locator("#lin-sheet-details .lin-shot-viewer img").first
+        if preview.count() != 1:
+            return False
+        preview.scroll_into_view_if_needed()
+        page.wait_for_function(
+            "() => { const image = document.querySelector('#lin-sheet-details .lin-shot-viewer img'); return image && image.complete && image.naturalWidth > 0; }"
+        )
+        if shot.show_render:
+            page.locator("#lin-sheet-details .lin-shot-viewer").first.evaluate(
+                "element => element.scrollIntoView({block: 'start'})"
+            )
+        else:
+            page.locator(".lin-sheet-body").evaluate("element => element.scrollTop = 0")
+        page.wait_for_timeout(200)
+
     return True
 
 
@@ -253,7 +365,7 @@ def main() -> int:
         "--report",
         type=Path,
         default=DEFAULT_REPORT,
-        help=f"report to capture (default: {DEFAULT_REPORT.name})",
+        help=f"report to capture (default: {DEFAULT_REPORT.relative_to(ROOT)})",
     )
     parser.add_argument(
         "--check",

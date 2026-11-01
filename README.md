@@ -117,9 +117,9 @@ These are engine snapshots, not a trace of executed branches or subexpressions.
 The separate **AI documentation** tab shares the graph's wide, adjustable reader.
 Long documents scroll inside the panel; on narrow screens it sits below the graph.
 
-![Graph with a separate AI documentation reader](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
+![Graph reader with optional AI documentation](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
 
-![Selected node with AI documentation and separate token counts](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
+![Selected node with source and calculation evidence](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
 
 The interface provides sheets, a selected-node graph neighbourhood, dependency
 decomposition, cache comparison, task cancellation, deterministic screenshots
@@ -479,21 +479,22 @@ Every image below is captured from a real report by
 `scripts/capture_viewer.py`, so they cannot drift from the viewer without the
 `readme-shots` commit hook noticing.
 The application images above come from `scripts/capture_app.py`, using the
-generated Sales fixture, real English documentation and real sheet captures.
-Its manifest records the fixture and image hashes and separate token counts;
+generated B2B commercial review fixture and real sheet captures. The current
+images use deterministic analysis without AI documentation.
+Its manifest records the fixture, image hashes and selected documentation mode;
 `--check` verifies those assets without a browser or model. Both screenshot
 checks also run in CI. Workbook sources and full validation reports stay local.
 
-### A node, documented
+### A node, explained
 
-Formula, step-by-step evaluation, precedents and dependents, and the AI card
-written from that same deterministic dossier.
+Source formula, step-by-step evaluation, precedents and dependents. AI cards
+can be generated separately from that same deterministic dossier.
 
 ![A node selected in the viewer](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_node_documented.png)
 
-### Workbook overview
+### Workbook summary
 
-![AI-written workbook overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_workbook_overview.png)
+![Rendered executive summary](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_workbook_overview.png)
 
 ### Sheet context
 
@@ -505,8 +506,9 @@ comments, frozen panes, merged ranges and hidden columns.
 ## Contributing
 
 Run the [local acceptance workflow](docs/manual_validation.md) before delivering
-changes: both fixtures, local Ollama documentation and image analysis, followed
-by inspection of dashboard tabs and sampled nodes. The script preserves each
+changes: both fixtures, all report languages and sheet captures, followed
+by inspection of dashboard tabs and sampled nodes. AI documentation and image
+analysis are optional; use `--no-ai` for deterministic validation. The script preserves each
 run and reports incomplete coverage as a failure. See [AGENTS.md](AGENTS.md) for
 the repository's validation requirements.
 

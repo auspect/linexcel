@@ -13,6 +13,12 @@ workbooks, all report languages and sheet captures without contacting a model.
 The manifest marks AI stages as `skipped`; it does not claim AI coverage.
 Use `--no-vision` to retain text documentation but skip image analysis.
 
+The `sales` case generates `fy26_commercial_review.xlsx`, a four-sheet B2B
+commercial review (`Summary`, `Sales`, `Catalog`, `Assumptions`). Inspect the
+contribution calculation at `Summary!C10`, the four regional totals and a sample
+of the 40 orders. Sales direct costs and regional plans are fixture inputs;
+they are not formula links back to Catalog or Assumptions.
+
 To include both AI stages:
 
 ```powershell

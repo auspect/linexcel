@@ -75,6 +75,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifests. Document local recovery, archive and investigation-report limits.
 - Mark historical calculation experiments as evidence of their recorded engine
   versions rather than the current application support contract.
+### Changed
+
+- Replace the synthetic showcase workbook in `validation_workbooks.py` with a
+  realistic four-sheet B2B commercial and margin review
+  (`fy26_commercial_review.xlsx`: `Summary`, `Sales`, `Catalog`, `Assumptions`),
+  combining an executive KPI scorecard, regional plan vs. actuals, a 40-order
+  enterprise ledger, an 8-SKU pricing catalog, defined policy rates, charts,
+  comments, frozen panes, merged banners and hidden baseline/cost columns.
+- Update manual validation, screenshot capture harnesses (`Summary!C10`) and
+  showcase/browser regression tests for the new commercial review workbook.
+- Refresh the application and viewer README captures from the new showcase
+  without requiring AI documentation. Record the selected capture mode and
+  check fixture and capture-script freshness alongside viewer sources. Preserve
+  readable Windows file permissions when publishing screenshots.
 
 ## [1.16.0] — 2026-10-23
 

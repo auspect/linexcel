@@ -1,8 +1,14 @@
 {
-  "schema": 1,
-  "capturedAt": "2026-10-30T12:24:08.838011+00:00",
+  "schema": 2,
+  "capturedAt": "2026-11-01T20:25:45.029491+00:00",
   "uiLanguage": "en",
-  "documentLanguage": "en",
+  "documentation": {
+    "status": "skipped",
+    "requested": false,
+    "reason": "--no-ai"
+  },
+  "documentLanguage": null,
+  "document": null,
   "viewport": {
     "width": 1440,
     "height": 900,
@@ -11,36 +17,36 @@
   "sources": {
     "src/linexcel/assets/app.html": "26a821d91276d0c54c8fa25fd1ffada962e04986b21f801a261cc7e29d749610",
     "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
-    "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
-    "scripts/capture_app.py": "9b70b934b7af42307baa7782a8ce7bdfcc8330234175360ddca1899625e6107c"
+    "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
+    "scripts/capture_app.py": "29e9a2a6b3b4ec4feb52040c631660956543d43d2c43a50bd00d747b964adb99"
   },
   "fixture": {
-    "name": "validation_demo.xlsx",
-    "sha256": "8a6e2528524ffdc81b68e53c785e9f1e898a6037730cd7e30743a1ddcd367cb9",
+    "name": "fy26_commercial_review.xlsx",
+    "sha256": "b51ac68f0ee71ed549b1a6d0f2be5e07f60c35a0e26e20986040fdee1df41414",
     "generator": "validation_workbooks.build_sales_workbook",
-    "generatorSha256": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
+    "generatorSha256": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
   },
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "0978381374b409b7ea1b973e39b9cdf71fa6e41d1e5caf006d974ca161cb6fc3",
+      "sha256": "7e7cfc29776c1b9385e7727aad497d4c8d4a61028b2ac69fcb37959dcd79fdca",
       "pixels": [
         2880,
         1800
       ]
     },
     "app_graph_documented.png": {
-      "caption": "Wide graph reader with a separate English AI documentation tab",
-      "sha256": "c7f925b45d9d201da88cd4d4af7b98e62082b15178dfe9ce4bfbb35abb7e7970",
+      "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
+      "sha256": "936dec89c9fc7abfa84f62f96f86499baf489ac45aa009552b33b39df97b1852",
       "pixels": [
         2880,
         1800
       ]
     },
     "app_node_documented.png": {
-      "caption": "English node documentation in the full detail panel, with separate input and output token counts",
-      "sha256": "428a0ad62fd75b941183c1d9c315f13a85992e553a44f35c9a5c5a714f503170",
+      "caption": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
+      "sha256": "1fbeea50425058ec3e75a24c03644a82f7b138daf29e68d92f199d37d3c71cfe",
       "pixels": [
         2880,
         1800
@@ -48,7 +54,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "a11400d6c4877365a4503405345af12cb6de2ac2400995ee56045b92f07eb48e",
+      "sha256": "4a4a922893349474e0e0a4e87db2f3cc5831d40a88b2bf47b5dadb16b58db9bc",
       "pixels": [
         2880,
         1800
@@ -56,30 +62,16 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "8f7ccbd87fb8f8f7ef58a0cccd1168acbb440bb3ea515989594ed948fc87878b",
+      "sha256": "7be835d78195a24c68cf08e11bc8a8a512057b2e98f9bf4c7d02aa1a019aea74",
       "pixels": [
         2880,
         1800
       ]
     }
   },
-  "document": {
-    "taskId": "5a001d8bd0c5490da796eda5174f981e",
-    "nodeId": "Summary!C5",
-    "language": "en",
-    "model": "qwen3.8",
-    "usage": {
-      "inputTokens": 12248,
-      "outputTokens": 1194,
-      "totalTokens": 13442,
-      "estimated": false
-    },
-    "providerRequests": 2,
-    "markdownSha256": "90de91a1a720930869250f5f8a8fc504445768186aa22aaa32b7f55defdbe504"
-  },
   "capture": {
-    "taskId": "602c277e166f45a885c249e35555fa1f",
-    "imageCount": 3
+    "taskId": "9fb2dc5a476344059cf44d5d9daca83d",
+    "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
 }
