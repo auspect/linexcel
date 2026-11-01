@@ -21,6 +21,44 @@ from linexcel.doc_evidence import (
 )
 
 
+def test_reference_anchor_facts_distinguish_relative_absolute_and_mixed():
+    facts = formula_evidence("=C4*D4+$B$2+C$3+$D4+SUM('Other Sheet'!A1:$B4)")
+    anchors = {f["reference"]: f["endpoints"] for f in facts["reference_anchors"]}
+    assert anchors["C4"] == [
+        {
+            "address": "C4",
+            "column_absolute": False,
+            "row_absolute": False,
+            "mode": "relative",
+        }
+    ]
+    assert anchors["D4"][0]["mode"] == "relative"
+    assert anchors["$B$2"][0]["mode"] == "absolute"
+    assert anchors["C$3"][0]["row_absolute"] is True
+    assert anchors["C$3"][0]["column_absolute"] is False
+    assert anchors["$D4"][0]["mode"] == "mixed"
+    range_fact = next(v for k, v in anchors.items() if "Other Sheet" in k)
+    assert [v["mode"] for v in range_fact] == ["relative", "mixed"]
+
+
+def test_reference_anchor_facts_do_not_classify_names_or_string_literals():
+    facts = formula_evidence('=CompanyName+LEN("$A$1")+SUM(Revenue[Amount])')
+    assert facts["reference_anchors"] == []
+
+
+def test_editorial_rubric_versions_anchor_and_cache_evidence_in_every_language():
+    from pathlib import Path
+
+    from linexcel.ai_validation import REVIEW_VERSION
+
+    root = Path(__file__).parents[1] / "src/linexcel/assets/prompts"
+    for prompt in root.glob("*/review.md"):
+        content = prompt.read_text()
+        assert REVIEW_VERSION in content
+        assert "formula_facts.reference_anchors" in content
+        assert "linexcel never writes" in content
+
+
 def package(names, *, sheets='<sheet name="Data"/><sheet name="Other"/>'):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as z:

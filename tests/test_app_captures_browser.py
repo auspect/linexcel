@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from graph_test_helpers import close_workspace_menu, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -92,6 +93,7 @@ def _route_app(page, projects, tasks_by_project, task_result, config=None):
 
     page.route("**/*", handle)
     page.goto("http://localhost/mounted/")
+    open_workspace_menu(page)
     page.locator(f"[data-project='{projects[0]['id']}']").click()
     page.locator("#project-title").get_by_text(
         projects[0]["name"], exact=True
@@ -241,6 +243,7 @@ def test_pending_capture_from_another_project_cannot_replace_current_gallery(bro
         )
         page.locator("#tab-captures").click()
         page.locator("#capture-load-status").wait_for()
+        open_workspace_menu(page)
         page.locator("[data-project='p2']").click()
         page.locator("#capture-selected h3").get_by_text(
             "Current", exact=True
@@ -422,8 +425,10 @@ def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_defau
         )
         assert page.locator("#memory").input_value() == str(initial_memory)
         assert page.locator("#memory").get_attribute("max") == str(server_memory)
+        open_workspace_menu(page)
         page.get_by_text("Limites par opération", exact=True).click()
         page.locator("#memory").fill(str(user_memory))
+        close_workspace_menu(page)
 
         def capture(route):
             submitted.append(route.request.post_data_json)

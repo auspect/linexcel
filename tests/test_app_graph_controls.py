@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from graph_test_helpers import open_graph_options
+from graph_test_helpers import open_graph_depth, open_graph_options, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -149,6 +149,7 @@ def graph_app(browser, request):
 
     page.route("**/*", handle)
     page.goto("http://localhost/")
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     yield page, sheets, requests, errors, state
     page.close()
@@ -180,12 +181,15 @@ def test_sheet_picker_retains_complete_workbook_order_and_option_identity(graph_
 def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app, lazy):
     page, _, requests, errors, state = graph_app
     state["lazy"] = lazy
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#tab-graph").click()
     page.wait_for_function(
         "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
     )
+    open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
+    open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
     page.wait_for_function(
         "document.querySelector('#graph-canvas')._cy?.nodes().length===4"
@@ -200,6 +204,7 @@ def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app
     open_graph_options(page)
     assert page.locator("#graph-neutral-key").is_visible()
     for depth, count in [(5, 6), (20, 21)]:
+        open_graph_depth(page)
         page.locator("#graph-depth").fill(str(depth))
         page.locator("#graph-depth").press("Tab")
         page.wait_for_function(
@@ -208,6 +213,7 @@ def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app
         )
         assert f"profondeur {depth}" in page.locator("#graph-notice").inner_text()
     assert page.locator("#graph-depth-plus").is_disabled()
+    open_graph_depth(page)
     page.locator("#graph-depth-minus").click()
     assert page.locator("#graph-depth").input_value() == "19"
     if lazy:
@@ -245,6 +251,7 @@ def test_pending_depth_keeps_the_previous_view_truthfully_labelled(graph_app):
             route.fallback()
 
     page.route("**/api/projects/p/neighborhood?*", delay_third)
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("3")
     page.locator("#graph-depth").press("Tab")
     page.wait_for_timeout(100)
@@ -299,6 +306,7 @@ def test_depth_failure_stops_loading_and_retains_previous_graph(graph_app):
             route.fallback()
 
     page.route("**/api/projects/p/neighborhood?*", reject_third)
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("3")
     page.locator("#graph-depth").press("Tab")
     playwright.expect(page.locator("#graph-depth-help")).to_contain_text(
@@ -310,6 +318,7 @@ def test_depth_failure_stops_loading_and_retains_previous_graph(graph_app):
     page.locator("#tab-captures").click()
     assert page.locator("#graph-depth-help").is_hidden()
     page.locator("#tab-graph").click()
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("1")
     page.locator("#graph-depth").press("Tab")
     playwright.expect(page.locator("#graph-depth-help")).not_to_contain_text(
@@ -385,6 +394,7 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
             route.fulfill(json=neighborhood)
 
     page.route("**/api/projects/p/neighborhood?*", load_neighborhood)
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#tab-graph").click()
     canvas = page.locator("#graph-canvas")
@@ -423,6 +433,7 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
     ).to_contain_text("H2")
     assert_exact_neighborhood()
     assert "0 source(s), 1 usage(s)" in page.locator("#graph-notice").inner_text()
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("20")
     page.locator("#graph-depth").press("Tab")
     playwright.expect(page.locator("#graph-notice")).to_contain_text("profondeur 20")

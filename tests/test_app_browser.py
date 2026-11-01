@@ -5,7 +5,13 @@ import os
 from pathlib import Path
 
 import pytest
-from graph_test_helpers import open_graph_options, tap_graph_node
+from graph_test_helpers import (
+    close_workspace_menu,
+    open_graph_depth,
+    open_graph_options,
+    open_workspace_menu,
+    tap_graph_node,
+)
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -110,6 +116,7 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("[data-project='p1']").click()
         page.locator("[data-node]").first.wait_for()
         assert operations == []
@@ -202,6 +209,8 @@ def test_upload_file_validation_and_accessible_removal(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        if page.locator("#workspace-menu").is_visible():
+            page.locator("#workspace-menu").click()
         page.locator("#workbook").set_input_files(
             {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"hello"}
         )
@@ -336,6 +345,7 @@ def test_compact_range_membership_navigation(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator('[data-project="ranges"]').click()
         page.locator('[data-node="Data!E4"]').click()
         assert "incluse dans cette plage" in page.locator("#node-detail").inner_text()
@@ -360,6 +370,7 @@ def test_compact_range_membership_navigation(browser, viewport):
         page.mouse.up()
         assert canvas.evaluate("element => element._cy.pan()") != before_pan
         page.locator("#graph-fit").click()
+        open_graph_depth(page)
         page.locator("#graph-depth").fill("2")
         page.locator("#graph-depth").press("Tab")
         assert canvas.evaluate("element => element._cy.nodes().length") == 3
@@ -367,6 +378,7 @@ def test_compact_range_membership_navigation(browser, viewport):
         assert canvas.evaluate("element => element._cy.nodes().length") == 3
         assert "Data · E4" in page.locator("#graph-preview").inner_text()
         page.locator("#graph-sheet").select_option("")
+        open_graph_depth(page)
         page.locator("#graph-depth").fill("1")
         page.locator("#graph-depth").press("Tab")
         open_graph_options(page)
@@ -510,6 +522,7 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
     try:
         page.goto("http://localhost/mounted/")
         for destination in ("b", "c"):
+            open_workspace_menu(page)
             page.locator('[data-project="a"]').click()
             page.locator('[data-tab="nodes"]').click()
             page.locator('[data-node="Volatile!A1"]').click()
@@ -545,6 +558,7 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
                 page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
                 >= 0.65
             )
+            open_workspace_menu(page)
             page.locator(f'[data-project="{destination}"]').click()
             page.wait_for_function(
                 "name => document.querySelector('#project-title').textContent === name",
@@ -735,6 +749,7 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         picker = page.locator('[data-file-pick="workbook"]')
         with page.expect_file_chooser() as event:
             picker.press("Enter")
@@ -746,6 +761,7 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
             }
         )
         assert "keyboard.xlsx" in page.locator("#workbook-files").inner_text()
+        open_workspace_menu(page)
         page.locator('[data-project="modern"]').click()
         page.locator('[data-node="Deals!A1"]').click()
         page.locator("#node-ai [data-ai-start]").wait_for()
@@ -762,6 +778,7 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         doc_task = next(t for t in reversed(tasks) if t["operation"] == "document")
         saved_calculation = doc_task["result"]["sources"]["calculationTaskId"]
         doc_task["result"]["sources"]["calculationTaskId"] = None
+        open_workspace_menu(page)
         page.locator('[data-project="modern"]').click()
         page.locator('[data-node="Deals!A2"]').click()
         page.locator("#node-ai").get_by_text(
@@ -772,6 +789,7 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
             "Un recalcul est maintenant disponible.", exact=False
         ).wait_for()
         doc_task["result"]["sources"]["calculationTaskId"] = saved_calculation
+        open_workspace_menu(page)
         page.locator('[data-project="modern"]').click()
         page.locator('[data-node="Deals!A2"]').click()
         assert page.locator("#node-ai .ai-result table").count() == 1
@@ -781,11 +799,16 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         )
         assert page.evaluate("window.bad") is None
         ai_count = len([r for r in requests if r["operation"] == "document"])
+        open_workspace_menu(page)
         page.get_by_text("Documentation IA à la demande", exact=True).click()
+        open_workspace_menu(page)
         page.locator("#ai-language").select_option("en")
+        close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 0
         assert len([r for r in requests if r["operation"] == "document"]) == ai_count
+        open_workspace_menu(page)
         page.locator("#ai-language").select_option("fr")
+        close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 1
         page.locator("#recalculate").click()
         page.locator("#node-ai").get_by_text(
@@ -964,6 +987,7 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/?lang=en")
+        open_workspace_menu(page)
         page.locator('[data-project="reader"]').click()
         page.locator("#tab-graph").click()
         calculation = page.locator("#graph-panel-calculation")
@@ -1163,7 +1187,10 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert page.locator("#ui-language").input_value() == "en"
         assert page.locator("#ai-language").input_value() == "fr"
         assert page.locator("#workbook").get_attribute("type") == "file"
+        open_workspace_menu(page)
         assert page.get_by_role("button", name="+ Choose workbook").is_visible()
+        close_workspace_menu(page)
+        open_workspace_menu(page)
         page.locator('[data-project="english"]').click()
         page.get_by_role("tab", name="Operations", exact=True).click()
         page.locator("#task-list").get_by_text("Whole workbook", exact=True).wait_for()
@@ -1192,6 +1219,7 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert "Input: 10" in usage and "Output: 5" in usage and "Total: 15" in usage
         assert "Model-reported counts" in usage
         saved["result"]["usage"] = {"outputTokens": 7, "estimated": True}
+        open_workspace_menu(page)
         page.locator('[data-project="english"]').click()
         page.get_by_role("tab", name="AI documentation", exact=True).click()
         page.locator("#graph-ai .token-usage .badge").get_by_text(
@@ -1207,8 +1235,11 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
             in page.locator("#node-ai").inner_text()
         )
         assert not [r for r in requests if r["operation"] == "document"]
+        open_workspace_menu(page)
         page.get_by_text("On-demand AI documentation", exact=True).click()
+        open_workspace_menu(page)
         page.locator("#ai-language").select_option("en")
+        close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 0
         page.get_by_role("tab", name="Graph", exact=True).click()
         assert page.locator("#graph-ai .ai-result").count() == 0
@@ -1228,7 +1259,9 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         page.get_by_role("tab", name="Graph", exact=True).click()
         assert page.locator("#graph-ai [data-ai-cancel]").count() == 0
         assert page.locator("#graph-ai [data-ai-start]").is_enabled()
+        open_workspace_menu(page)
         page.locator("#ai-language").select_option("fr")
+        close_workspace_menu(page)
         assert page.locator("#graph-ai .ai-result").count() == 1
         assert page.locator("#node-ai .ai-result").count() == 1
         # Changing UI language does not change documentation language or request AI.

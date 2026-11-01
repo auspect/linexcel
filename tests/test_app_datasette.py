@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+from graph_test_helpers import open_data_options, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -102,6 +103,7 @@ def open_app(
 
     page.route("**/*", handle)
     page.goto("http://localhost/?lang=" + language)
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#tab-data").click()
     return page, requests, errors, pending, data
@@ -119,6 +121,7 @@ def test_sheet_and_provenance_navigation_keep_the_frame_when_switching_tabs(
     page.wait_for_function(
         "document.getElementById('data-frame').src.endsWith('/sheet_002')"
     )
+    open_data_options(page)
     assert "5" in page.locator("#data-source").inner_text()
     page.locator("#tab-nodes").click()
     page.locator("#tab-data").click()
@@ -139,6 +142,7 @@ def test_late_data_reply_cannot_replace_the_next_projects_frame(browser):
     page.wait_for_function(
         "document.getElementById('data-status').textContent.includes('Chargement')"
     )
+    open_workspace_menu(page)
     page.locator("[data-project='q']").click()
     page.locator("#data-status").filter(has_text="complément").wait_for()
     assert len(pending) == 1
@@ -176,6 +180,7 @@ def test_multiple_wide_sheets_keep_separate_filtered_cells_views(browser):
     page.locator("#data-sheet option").first.wait_for(state="attached")
     page.locator("#data-sheet").select_option(label="Wide Two")
     assert "sheet__exact=Wide+Two" in page.locator("#data-frame").get_attribute("src")
+    open_data_options(page)
     assert "Wide Two" in page.locator("#data-source").inner_text()
     assert "4 cellules" in page.locator("#data-source").inner_text()
     assert not errors
@@ -353,6 +358,7 @@ def test_late_presentation_reply_cannot_cross_projects(browser):
             "document.querySelector('#excel-window')"
             ".getAttribute('aria-busy') === 'true'"
         )
+        open_workspace_menu(page)
         page.locator("[data-project='q']").click()
         page.locator("#data-status").filter(has_text="complément").wait_for()
         assert len(pending) == 1

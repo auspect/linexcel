@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -37,6 +38,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--version", action="version", version=f"linexcel {__version__}"
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    session = sub.add_parser(
+        "session-link", help="Open the running local workspace in another browser."
+    )
+    session.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
+
+    doctor = sub.add_parser(
+        "doctor", help="Check local features without generating AI."
+    )
+    doctor.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
+    doctor.add_argument("--max-storage-mb", type=int, default=2048)
+    doctor.add_argument("--ai", action="store_true")
+    doctor.add_argument("--ai-base-url", default="http://localhost:11434/v1")
+    doctor.add_argument("--ai-model", default="qwen3.8")
+    doctor.add_argument("--ai-vision-model", default=None)
 
     macros = sub.add_parser(
         "macros",
@@ -69,7 +85,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=2048,
         help="Aggregate worker memory admission budget in MiB.",
     )
-    serve.add_argument("--retention-days", type=int, default=7)
+    serve.add_argument(
+        "--retention-days",
+        type=int,
+        default=None,
+        help="Delete projects older than N days on startup; "
+        "default: keep until deleted.",
+    )
     serve.add_argument(
         "--max-upload-mb",
         type=int,
@@ -103,6 +125,13 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("enabled", "disabled"),
         default=None,
         help="Explicit llama.cpp chat_template_kwargs.enable_thinking setting.",
+    )
+
+    serve.add_argument(
+        "--ai-reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high"),
+        default=None,
+        help="Explicit OpenAI-compatible reasoning_effort (requires provider support).",
     )
 
     analyze = sub.add_parser(
@@ -570,6 +599,28 @@ def _run_analyze(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        if args.command == "doctor":
+            from linexcel.web import WebConfig
+            from linexcel.web_health import directory_health
+
+            report = directory_health(
+                WebConfig(
+                    args.data_dir,
+                    max_storage_mb=args.max_storage_mb,
+                    ai_enabled=args.ai,
+                    ai_base_url=args.ai_base_url,
+                    ai_model=args.ai_model,
+                    ai_vision_model=args.ai_vision_model,
+                    ai_api_key=os.getenv("LINEXCEL_AI_API_KEY") if args.ai else None,
+                )
+            )
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "session-link":
+            from linexcel.web_local import session_link
+
+            print(session_link(args.data_dir))
+            return 0
         if args.command == "serve":
             from linexcel.web import serve
 

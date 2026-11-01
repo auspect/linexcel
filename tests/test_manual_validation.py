@@ -568,8 +568,14 @@ def test_provider_request_options_apply_to_documentation_and_vision(
 @pytest.mark.parametrize("thinking", [None, "disabled", "adaptive"])
 @pytest.mark.parametrize("reasoning_split", [False, True])
 @pytest.mark.parametrize("chat_template_thinking", [None, "enabled", "disabled"])
+@pytest.mark.parametrize("reasoning_effort", [None, "none"])
 def test_explicit_thinking_merges_with_reasoning_split(
-    manual, monkeypatch, thinking, reasoning_split, chat_template_thinking
+    manual,
+    monkeypatch,
+    thinking,
+    reasoning_split,
+    chat_template_thinking,
+    reasoning_effort,
 ):
     captured = []
     monkeypatch.setattr(
@@ -583,6 +589,7 @@ def test_explicit_thinking_merges_with_reasoning_split(
         reasoning_split=reasoning_split,
         api_thinking=thinking,
         chat_template_thinking=chat_template_thinking,
+        reasoning_effort=reasoning_effort,
     )
     expected = {}
     if reasoning_split:
@@ -595,8 +602,11 @@ def test_explicit_thinking_merges_with_reasoning_split(
         }
     manual.acceptance_provider(args)
     manual.acceptance_provider(args, vision=True)
+    request_kwargs = {"extra_body": expected} if expected else {}
+    if reasoning_effort is not None:
+        request_kwargs["reasoning_effort"] = reasoning_effort
     assert [entry["request_kwargs"] for entry in captured] == [
-        {"extra_body": expected} if expected else None
+        request_kwargs or None
     ] * 2
     assert all(entry["client_kwargs"] == {"max_retries": 0} for entry in captured)
     assert all(entry["streaming"] is False for entry in captured)

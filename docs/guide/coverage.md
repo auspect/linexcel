@@ -1,29 +1,63 @@
 # What is in the lineage, and what is not
 
-A lineage tool is only useful if you know where it stops. This page lists what
-linexcel reads out of a workbook, and — more importantly — what it does not, so
-that a graph which looks complete can be trusted to be complete.
+A lineage graph describes extracted relationships. Extraction, reference
+resolution, calculation and agreement with Excel are separate capabilities.
+Read the calculation status and declared omissions alongside the graph.
+
+## Indexed application and batch analysis
+
+`linexcel serve` builds a disk-backed structural index and calculates selected
+dependency closures. `linexcel analyze` and `LineageResult` use the batch path.
+The two paths have different loading, calculation and volatile-value policies.
+The following table describes the indexed application's tested subset; it does
+not extend historical batch measurements or establish full Excel equivalence.
+
+| Feature | Indexed calculation | Remaining limits |
+| --- | --- | --- |
+| Tables | Source-declared headers, data, totals and row references resolve to exact rectangles | Empty data regions, disjoint selections, invalid metadata |
+| Defined names | Scoped constants, absolute references and bounded static computed definitions | Relative definitions without a known anchor, dynamic/cyclic definitions; expansion is bounded |
+| 3D references | Exact source sheet order in supported direct aggregate arguments | Computed arguments and other contexts |
+| Supplied external files | Sparse transitive formulas, ranges, names and tables without replacing formulas by caches | Missing files, mixed-calendar formulas/dates, external arrays and dynamic contexts |
+| `SUBTOTAL` / `AGGREGATE` | Source hidden rows, nested totals and typed reference aggregates; up to 20,000 positions | Active filters with modes including manually hidden rows, computed references/options, external visibility, unverified empty MEDIAN and fractional ranks |
+| Arrays and spills | Declared source regions, anchor calculation and observed extent verification, including unsaved children | Undeclared/changing extents, data tables, external or cyclic regions |
+| `INDIRECT` / `OFFSET` | Exact references from bounded source scalar arithmetic/concatenation and contiguous offsets, including A1/R1C1 | Volatile/runtime address expressions, dynamic names, external contexts and fractional offsets |
+| Volatile functions | Recorded UTC operation clock and random seed for replay | Random sequence parity with Excel is not established |
+| Iterative cycles | Source iteration settings and explicit native convergence telemetry | Disabled/malformed settings, nonconvergence and incompatible external settings |
+
+The versioned `capabilities` metadata lists extraction, resolution, calculation,
+verification and limitations independently. Unsupported prerequisites produce an
+explicit result rather than a saved-cache substitution. A successful engine
+result remains an engine observation; native Excel comparison requires an
+actual Windows Excel oracle receipt for the same source and context.
+
+An observed engine limitation in a dependency invalidates the targeted result,
+including when an error handler would otherwise hide it. It is distinct from
+an Excel error value such as `#N/A`, which can legitimately participate in error
+handling. A dependency value that the engine cannot expose remains separately
+labelled unavailable; the absence of a readable step does not identify a cause.
+
+VBA and Power Query remain static source analysis in both paths. Neither is
+executed or refreshed by linexcel.
 
 ## In the graph
 
 | | |
 | --- | --- |
-| Formulas | Every formula cell, with its computed value and a step-by-step decomposition. Cells sharing an R1C1 pattern are grouped into one node |
+| Formulas | Extracted formula source, calculation status and available decomposition. Batch analysis can group cells sharing an R1C1 pattern; the index retains individual cells with separate pattern metadata |
 | Cells and ranges | Precedent and dependent edges, including across sheets |
 | Defined names | Workbook-scoped and sheet-scoped, resolved to the cells they point at |
 | VBA | Procedures as nodes, their internal call graph, and the ranges they read and write when the reference is written literally — `Range("A1")`, `Cells(2, 3)`, `[A1:B4]`, `Worksheets("X").Range(...)` |
 | Power Query | Each query as a node with its M source, the range it loads into, the sources it names and the queries it chains from |
-| Values | Read back from the workbook and recomputed, with both readings shown side by side |
+| Values | Source readings and available engine results, shown separately with their provenance |
 
 ## Represented, but not resolved
 
-These appear in the graph as grey **external reference** nodes. The dependency
-is visible; what sits at the other end of it is not, because it is not in the
-file:
+Unresolved dependencies remain explicit graph nodes and diagnostics. Common
+examples include:
 
-- links to another workbook — `'[1]Annual'!B4`
-- 3-D references spanning sheets — `Sheet1:Sheet3!A1`
-- structured table references the engine cannot resolve
+- links to a workbook that was not supplied — `'[1]Annual'!B4`
+- 3-D references outside the supported aggregate contexts — `Sheet1:Sheet3!A1`
+- structured table references outside the supported source metadata
 - a defined name pointing outside the workbook
 
 Showing them as nodes rather than dropping them is deliberate: a formula whose
@@ -73,13 +107,19 @@ recalculation that never happened.
 `TODAY()`, `NOW()`, `RAND()`, `RANDBETWEEN()` and `RANDARRAY()` answer
 differently every time they are computed, so there is nothing to check them
 against: a value recomputed today can never agree with a file saved last week.
-linexcel does not recompute them. The card shows the value the file stores and
+The batch analysis policy preserves them. The card shows the value the file stores and
 says *Not recalculated (volatile)* in the other column, and the cell is not
 decomposed step by step — every step would carry a figure from today's clock.
 
 `OFFSET`, `INDIRECT`, `CELL` and `INFO` are volatile to Excel in that they
 recalculate on every edit, but they return the same value for the same
 workbook, so those are still computed.
+
+In the indexed application, an explicit targeted calculation instead records
+its operation clock and seed. Its value is a fresh engine reading, with a
+separate comparison to the saved cache. Dynamic and metadata-sensitive
+functions follow the bounded support contract above; batch behavior must not
+be assumed for this path.
 
 ### Other workbooks
 

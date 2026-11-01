@@ -17,6 +17,16 @@ between requests; it includes documentation and image descriptions across
 languages for each workbook. Increase it explicitly when the manifest reports
 missing responses.
 
+For a local runtime supporting the OpenAI-compatible `reasoning_effort` field,
+`--reasoning-effort none` explicitly disables separate reasoning. The option is
+omitted by default and is recorded in the run configuration. It applies to both
+documentation and vision; it does not change the selected model, response
+completeness requirements or factual review requirements.
+
+The manifest separates pipeline generation from factual and visual review in
+its `acceptance` fields. A generation success alone leaves delivery not ready.
+Review evidence must identify the inspected sources, reports and screenshots.
+
 ## Explicitly selected gateway
 
 The user can choose a different provider and model. `--env-file` explicitly

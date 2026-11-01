@@ -93,7 +93,7 @@ def code_fingerprints() -> dict[str, str]:
     paths.extend(
         path
         for path in (root / "src").rglob("*")
-        if path.is_file() and path.suffix in {".py", ".html", ".md", ".json"}
+        if path.is_file() and path.suffix in {".py", ".html", ".md", ".json", ".css"}
     )
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -388,6 +388,9 @@ def acceptance_provider(
         extra_body["chat_template_kwargs"] = {
             "enable_thinking": args.chat_template_thinking == "enabled"
         }
+    request_kwargs = {"extra_body": extra_body} if extra_body else {}
+    if getattr(args, "reasoning_effort", None) is not None:
+        request_kwargs["reasoning_effort"] = args.reasoning_effort
     return AcceptanceProvider(
         response_receipts=response_receipts,
         response_journal=getattr(args, "_receipt_journal", None),
@@ -396,7 +399,7 @@ def acceptance_provider(
         api_key=provider_api_key(base),
         client_kwargs={"max_retries": getattr(args, "api_retries", 0)},
         streaming=getattr(args, "api_stream", False),
-        request_kwargs={"extra_body": extra_body} if extra_body else None,
+        request_kwargs=request_kwargs or None,
     )
 
 
@@ -1649,6 +1652,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high"),
+        default=None,
+        help=(
+            "explicit OpenAI-compatible reasoning_effort for documentation and "
+            "vision (default: omit; requires provider support)"
+        ),
+    )
+    parser.add_argument(
         "--check-max-tokens",
         action="store_true",
         help=(
@@ -1726,6 +1738,13 @@ def main() -> int:
         "cases": [],
         "addins": [],
         "status": "running",
+        "acceptance": {
+            "generation": "running",
+            "factual_review": "pending",
+            "visual_review": "pending",
+            "delivery": "not_ready",
+            "review_evidence": [],
+        },
         "manual_review": "pending: inspect tabs, sampled nodes, and image claims",
         "provider_receipt_journal": "provider_receipts.jsonl",
     }
@@ -1795,6 +1814,7 @@ def main() -> int:
         and not partial
     )
     manifest["status"] = "passed" if passed else "incomplete" if partial else "failed"
+    manifest["acceptance"]["generation"] = manifest["status"]
     manifest["finished_utc"] = datetime.now(UTC).isoformat()
     save_manifest()
     print(f"\nValidation {manifest['status']}: {root / 'validation.json'}")

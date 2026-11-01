@@ -116,6 +116,30 @@ free port and prints its actual address. Invalid ports fail before creating
 workspace storage; an occupied port suggests selecting another port. Closing
 the browser leaves the server running; stop it with Ctrl+C.
 
+Standalone `serve` keeps projects until you delete them. Use
+`--retention-days N` only when you want automatic expiry. The private local
+profile lives in `--data-dir` (default `~/.linexcel`); keep this directory to
+retain your workspace across server restarts. A newly opened browser uses the
+single-use link printed by `serve`. To reconnect another browser while the
+server is running, use:
+
+```bash
+linexcel session-link --data-dir ~/.linexcel
+linexcel doctor --data-dir ~/.linexcel --ai --ai-model qwen3.8
+```
+
+The session link expires after ten minutes. `doctor` checks installed tools,
+storage and configured model discovery without generating documentation.
+Model discovery does not establish that image analysis works.
+
+The workspace actions provide an archive download and restoration. An archive
+contains the workbook, supplied references, retained results and captures;
+it excludes browser credentials and indexes. Restoration creates a new project
+and rebuilds its index. Prior results remain historical evidence and are not
+reused as current calculations. Keep archives private when their sources are
+private. Older browser-owned projects can be recovered explicitly from the
+local workspace; recovery preserves the original project.
+
 The application imports a structural index, then loads node pages and bounded
 neighborhoods as you explore. Selecting a formula cell immediately starts a
 fresh targeted calculation of that cell and its dependency closure, including
@@ -134,6 +158,10 @@ explicit controls. Neighborhoods contain at most 200 nodes and can span 1–20
 levels. A small cache of six neighborhoods is scoped to the workbook revision,
 index generation, target and depth; it does not cache away the fresh calculation.
 Dense overview labels still need zoom or the reader panel for individual cells.
+
+From a selected cell, add the finding to an investigation and export the
+selection as [offline HTML](html.md#selected-investigation-from-the-local-application).
+The report freezes the source revision and available evidence at export time.
 
 AI documentation remains a separate explicit request. Browsing and targeted
 calculation do not call a model. For saved worksheet data, see
@@ -171,6 +199,12 @@ a server accepting `thinking.type` may still ignore it. Omit the template option
 unless the endpoint supports it; both settings contribute to documentation cache
 identity. Manual acceptance exposes the same choice as
 `--chat-template-thinking disabled`.
+
+For runtimes supporting `reasoning_effort`, `--ai-reasoning-effort none` requests
+direct answers explicitly; manual acceptance exposes `--reasoning-effort none`.
+The field is omitted by default, contributes to documentation cache identity,
+and applies to both text and vision requests. Check support on the selected
+runtime before setting it.
 
 ## AI documentation
 

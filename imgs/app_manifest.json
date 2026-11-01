@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "capturedAt": "2026-10-23T14:55:18.041236+00:00",
+  "capturedAt": "2026-10-30T12:24:08.838011+00:00",
   "uiLanguage": "en",
   "documentLanguage": "en",
   "viewport": {
@@ -9,14 +9,14 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "372c33dda4534ba627b852499570bacf0cdd366fd580ac54455eced4ae8610e5",
+    "src/linexcel/assets/app.html": "26a821d91276d0c54c8fa25fd1ffada962e04986b21f801a261cc7e29d749610",
     "src/linexcel/assets/cytoscape.min.js": "9c2a3bf2592e0b14a1f7bec07c03a54f16dedf32af9cd0af155c716aa6c87bc3",
     "validation_workbooks.py": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
-    "scripts/capture_app.py": "8a70aa5f31c899cb5f851a7334bbe0bdf81f105fbd3b2e187b331ba449d86de1"
+    "scripts/capture_app.py": "9b70b934b7af42307baa7782a8ce7bdfcc8330234175360ddca1899625e6107c"
   },
   "fixture": {
     "name": "validation_demo.xlsx",
-    "sha256": "4af6f36dfbc8994aa737b19a765594abf62445d6258258ec16ddc249d94eac08",
+    "sha256": "8a6e2528524ffdc81b68e53c785e9f1e898a6037730cd7e30743a1ddcd367cb9",
     "generator": "validation_workbooks.build_sales_workbook",
     "generatorSha256": "035fcd723f8aebf2e509329e7131d95182f7c561c8c2480b09aa0ce2a9985fbf",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
@@ -24,7 +24,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "294a5110964f61f25f5ebbfabaf2633e0cdd8773623f70444d574310e6b51e26",
+      "sha256": "0978381374b409b7ea1b973e39b9cdf71fa6e41d1e5caf006d974ca161cb6fc3",
       "pixels": [
         2880,
         1800
@@ -32,7 +32,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with a separate English AI documentation tab",
-      "sha256": "87293da27ee71efca0f2bfd0dcf10892a22616815070c6f55b8d6f7087f42ec2",
+      "sha256": "c7f925b45d9d201da88cd4d4af7b98e62082b15178dfe9ce4bfbb35abb7e7970",
       "pixels": [
         2880,
         1800
@@ -40,7 +40,7 @@
     },
     "app_node_documented.png": {
       "caption": "English node documentation in the full detail panel, with separate input and output token counts",
-      "sha256": "141771903a7532d0e9226a8ab67bfb15f0eb53ef6b5ce8676b5a54af03bf4205",
+      "sha256": "428a0ad62fd75b941183c1d9c315f13a85992e553a44f35c9a5c5a714f503170",
       "pixels": [
         2880,
         1800
@@ -48,7 +48,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "1632f0d244da6e68fcd40081bc5067f53d175a68cb121e9d761ed7eefddd67df",
+      "sha256": "a11400d6c4877365a4503405345af12cb6de2ac2400995ee56045b92f07eb48e",
       "pixels": [
         2880,
         1800
@@ -56,7 +56,7 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "1535ac861b3f95a805afe9a08cfb6b1ce252f4a4308bd7559444e5c82cc2f205",
+      "sha256": "8f7ccbd87fb8f8f7ef58a0cccd1168acbb440bb3ea515989594ed948fc87878b",
       "pixels": [
         2880,
         1800
@@ -64,22 +64,22 @@
     }
   },
   "document": {
-    "taskId": "6d5861804d784e30ba9834d21c103554",
+    "taskId": "5a001d8bd0c5490da796eda5174f981e",
     "nodeId": "Summary!C5",
     "language": "en",
-    "model": "/home/phili/Bonsai-demo/models/bonsai2-gguf/27B/Ternary-Bonsai-2-27B-PQ2_0.gguf",
+    "model": "qwen3.8",
     "usage": {
-      "inputTokens": 12699,
-      "outputTokens": 3315,
-      "totalTokens": 16014,
+      "inputTokens": 12248,
+      "outputTokens": 1194,
+      "totalTokens": 13442,
       "estimated": false
     },
     "providerRequests": 2,
-    "markdownSha256": "3d1e7d1c65f1dc0d32ab9530c479fe617dbce91a257a36c985d521a656617e43"
+    "markdownSha256": "90de91a1a720930869250f5f8a8fc504445768186aa22aaa32b7f55defdbe504"
   },
   "capture": {
-    "taskId": "c80898da4d084ed3826092d9e6801a2a",
+    "taskId": "602c277e166f45a885c249e35555fa1f",
     "imageCount": 3
   },
-  "modelRequestsDuringCapture": 1
+  "modelRequestsDuringCapture": 0
 }

@@ -25,7 +25,6 @@ from typing import Any
 from urllib.parse import quote, unquote
 from xml.etree import ElementTree as ET
 
-from openpyxl.formula import Tokenizer
 from openpyxl.formula.translate import Translator
 from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
 from openpyxl.utils.cell import coordinate_to_tuple
@@ -39,8 +38,9 @@ from openpyxl.utils.datetime import (
 
 from linexcel.formula_source import cell_source_fields
 from linexcel.refs import a1, parse_ref, split_sheet_prefix
+from linexcel.structured_refs import formula_tokens
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_PAGE_SIZE = 200
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
@@ -290,7 +290,7 @@ class WorkbookIndex(Mapping):
             node.setdefault("context", {})["nearbyLabels"] = nearby
         if context and node.get("formula"):
             try:
-                tokens = Tokenizer(node["formula"]).items
+                tokens = formula_tokens(node["formula"])
                 if len(tokens) <= 512:
                     node["formulaTokens"] = [
                         {"value": t.value, "type": t.type, "subtype": t.subtype}
@@ -315,7 +315,7 @@ class WorkbookIndex(Mapping):
             if only_if_absent
             else (
                 " ON CONFLICT(id) DO UPDATE SET "
-                "data=excluded.data,pattern_id=excluded.pattern_id"
+                "data=excluded.data,pattern_id=excluded.pattern_id,kind=excluded.kind"
             )
         )
         self.db.execute(
@@ -340,8 +340,16 @@ class WorkbookIndex(Mapping):
 
     def range_members(self, sheet, bounds, *, kind=None):
         r1, c1, r2, c2 = bounds
-        clause = "kind=?" if kind else "kind IN ('cell','input')"
-        arguments = (sheet, r1, r2, c1, c2) + ((kind,) if kind else ())
+        clause = (
+            "kind IN ('cell','array_result')"
+            if kind == "calculated"
+            else "kind=?"
+            if kind
+            else "kind IN ('cell','input','array_result')"
+        )
+        arguments = (sheet, r1, r2, c1, c2) + (
+            (kind,) if kind and kind != "calculated" else ()
+        )
         for row in self.db.execute(
             "SELECT id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
             f"AND col BETWEEN ? AND ? AND {clause} ORDER BY row,col",
@@ -415,6 +423,14 @@ def _schema(db):
             PRIMARY KEY(sheet,id)) WITHOUT ROWID;
         CREATE TABLE arrays(sheet TEXT NOT NULL,r1 INTEGER,c1 INTEGER,
             r2 INTEGER,c2 INTEGER);
+        CREATE TABLE array_definitions(sheet TEXT NOT NULL,anchor TEXT NOT NULL,
+            r1 INTEGER,c1 INTEGER,r2 INTEGER,c2 INTEGER,kind TEXT NOT NULL,
+            PRIMARY KEY(sheet,anchor)) WITHOUT ROWID;
+        CREATE TABLE table_definitions(name_key TEXT NOT NULL,sheet TEXT NOT NULL,
+            r1 INTEGER,c1 INTEGER,r2 INTEGER,c2 INTEGER,
+            part TEXT NOT NULL,data TEXT NOT NULL);
+        CREATE INDEX tables_name ON table_definitions(name_key);
+        CREATE INDEX tables_position ON table_definitions(sheet,r1,r2);
     """)
 
 
@@ -429,6 +445,9 @@ def _read_source(path, store):
     diagnostics = []
     with zipfile.ZipFile(path) as archive:
         workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        from linexcel.calculation_context import iteration_settings
+
+        calculation_settings = iteration_settings(workbook.find("{*}calcPr"))
         rels = _relationships(archive, "xl/workbook.xml")
         prop = workbook.find("{*}workbookPr")
         epoch1904 = prop is not None and prop.get("date1904", "0") in {"1", "true"}
@@ -508,6 +527,8 @@ def _read_source(path, store):
                     "formulas": 0,
                     "inputs": 0,
                     "status": "complete",
+                    "activeFilters": False,
+                    "hiddenRows": [],
                     "diagnostics": [],
                 }
             )
@@ -566,13 +587,16 @@ def _read_source(path, store):
             try:
                 if not sheet["part"]:
                     raise ValueError("Worksheet relationship is missing")
+                sheet_relationships = _relationships(archive, sheet["part"])
                 with archive.open(sheet["part"]) as source:
                     stack = []
                     for event, element in ET.iterparse(source, events=("start", "end")):
                         tag = element.tag.rsplit("}", 1)[-1]
                         if event == "start":
                             stack.append(element)
-                            if tag == "row":
+                            if tag == "filterColumn":
+                                sheet["activeFilters"] = True
+                            elif tag == "row":
                                 try:
                                     row_number = int(element.get("r", row_number + 1))
                                 except (ValueError, TypeError):
@@ -589,6 +613,8 @@ def _read_source(path, store):
                                 column_number = 0
                                 previous_address = None
                                 row_hidden = element.get("hidden", "0") in {"1", "true"}
+                                if row_hidden:
+                                    sheet["hiddenRows"].append(row_number)
                             elif tag == "col" and element.get("hidden", "0") in {
                                 "1",
                                 "true",
@@ -775,9 +801,33 @@ def _read_source(path, store):
                                                 rect.c2,
                                             ),
                                         )
-                                    problems.append(
-                                        "Array/data-table formula is not supported."
-                                    )
+                                        if (
+                                            form_type == "array"
+                                            and formula_element.text
+                                            and (rect.r1, rect.c1)
+                                            == (row, column_number)
+                                        ):
+                                            db.execute(
+                                                "INSERT INTO array_definitions "
+                                                "VALUES (?,?,?,?,?,?,?)",
+                                                (
+                                                    sheet["name"],
+                                                    address,
+                                                    rect.r1,
+                                                    rect.c1,
+                                                    rect.r2,
+                                                    rect.c2,
+                                                    "array",
+                                                ),
+                                            )
+                                        else:
+                                            problems.append(
+                                                "Unsupported array/data-table metadata."
+                                            )
+                                    else:
+                                        problems.append(
+                                            "Array/data-table rectangle is unavailable."
+                                        )
                                     if not formula_element.text:
                                         formula = "=<array/data-table>"
                                         canonical_origin = "unresolved"
@@ -956,6 +1006,55 @@ def _read_source(path, store):
                                     db.commit()
                             stack[-2].remove(element)
                             element.clear()
+                        elif tag == "tablePart":
+                            from linexcel.structured_refs import read_table
+
+                            part = None
+                            try:
+                                relation = sheet_relationships.get(_rid(element))
+                                if (
+                                    not relation
+                                    or not relation[0].endswith("/table")
+                                    or relation[2] == "External"
+                                ):
+                                    raise ValueError(
+                                        "Table relationship is missing or external."
+                                    )
+                                part = _part(sheet["part"], relation[1])
+                                table = read_table(
+                                    archive, part, sheet["name"], source_digest
+                                )
+                                db.execute(
+                                    "INSERT INTO table_definitions "
+                                    "VALUES (?,?,?,?,?,?,?,?)",
+                                    (
+                                        table["name"].casefold(),
+                                        sheet["name"],
+                                        *table["bounds"],
+                                        part,
+                                        _dump(table),
+                                    ),
+                                )
+                            except (
+                                ValueError,
+                                KeyError,
+                                ET.ParseError,
+                                OSError,
+                                zipfile.BadZipFile,
+                            ) as exc:
+                                diagnostics.append(
+                                    {
+                                        "sheet": sheet["name"],
+                                        "part": part,
+                                        "feature": "structured_tables",
+                                        "code": getattr(
+                                            exc, "code", "table_metadata_invalid"
+                                        ),
+                                        "message": f"Table metadata unavailable: {exc}",
+                                    }
+                                )
+                            stack[-2].remove(element)
+                            element.clear()
                         elif tag == "row":
                             stack[-2].remove(element)
                             element.clear()
@@ -978,6 +1077,7 @@ def _read_source(path, store):
             "sheets": [s["name"] for s in sheets],
             "sheetDetails": sheets,
             "dateSystem": "1904" if epoch1904 else "1900",
+            "calculationSettings": calculation_settings,
             "diagnostics": diagnostics,
         },
         names,
@@ -986,119 +1086,54 @@ def _read_source(path, store):
 
 
 def _index_dependencies(store, metadata, names, links, refs_dir):
-    from linexcel.external import _EXTERNAL_REF_RE
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
     db = store.db
     sheets = metadata["sheets"]
     lookup = {sheet.casefold(): sheet for sheet in sheets}
     partial = {s["name"] for s in metadata["sheetDetails"] if s["status"] != "complete"}
-    external_books = {}
+    from linexcel.external_index import ExternalSources
+
     with tempfile.TemporaryDirectory(
         prefix="linexcel-refs-", dir=store.path.parent
     ) as temporary:
+        external_sources = ExternalSources(
+            store, refs_dir, temporary, links, metadata["dateSystem"]
+        )
 
-        def external_input(text):
-            match = _EXTERNAL_REF_RE.fullmatch(text)
-            if not match or refs_dir is None:
-                return None
-            key = match.group("book")
-            filename = links.get(key, key)
-            if PureWindowsPath(filename).name != filename:
-                return None
-            uploaded = refs_dir / filename
-            if (
-                not uploaded.is_file()
-                or uploaded.is_symlink()
-                or uploaded.resolve().parent != refs_dir.resolve()
-            ):
-                return None
-            sheet = match.group("sheet").replace("''", "'")
-            rect = parse_ref(match.group("cell"), default_sheet=sheet)
-            if rect is None or rect.ncells != 1:
-                return None
-            coordinate = a1(rect.r1, rect.c1)
-            nid = f"external:{filename}:{_id(sheet, coordinate)}"
-            if nid in store:
-                return store[nid]
-            node = {
-                "id": nid,
-                "kind": "input",
-                "external": True,
-                "sheet": f"[{filename}]{sheet}",
-                "sourceSheet": sheet,
-                "sourceFile": filename,
-                "cell": coordinate,
-                "row": rect.r1,
-                "column": rect.c1,
-                "reference": text,
-                "formula": None,
-                "value": None,
-                "cached_value": None,
-                "cache_status": "unknown",
-                "provenance": "reference_input",
-                "dependencies": [],
-                "diagnostics": [],
-            }
-            try:
-                if filename not in external_books:
-                    external_path = Path(temporary) / f"{len(external_books)}.sqlite"
-                    other = WorkbookIndex(external_path, writable=True)
-                    _schema(other.db)
-                    external_books[filename] = (other, {}, "")
-                    detail, _, _ = _read_source(uploaded, other)
-                    external_books[filename] = (other, detail, file_sha256(uploaded))
-                other, detail, digest = external_books[filename]
-                if sheet not in detail.get("sheets", []):
-                    raise ValueError("External source sheet is unavailable.")
-                if any(
-                    s["name"] == sheet and s["status"] != "complete"
-                    for s in detail["sheetDetails"]
-                ):
-                    raise ValueError("External source sheet import is incomplete.")
-                member = other.get(_id(sheet, coordinate))
-                if member and (member.get("formula") or member.get("diagnostics")):
-                    raise ValueError(
-                        "External formula or unreadable inputs are not supported."
-                    )
-                region = other.db.execute(
-                    (
-                        "SELECT 1 FROM arrays WHERE sheet=? "
-                        "AND ? BETWEEN r1 AND r2 AND ? "
-                        "BETWEEN c1 AND c2 LIMIT 1"
-                    ),
-                    (sheet, rect.r1, rect.c1),
-                ).fetchone()
-                if region:
-                    raise ValueError("External array result is not a literal input.")
-                if (
-                    member
-                    and member.get("numberFormat")
-                    and is_date_format(member["numberFormat"])
-                ):
-                    raise ValueError("External date inputs are not yet supported.")
-                literal = member.get("value") if member else None
-                node.update(
-                    value=literal,
-                    cached_value=literal,
-                    sourceDataType=member.get("sourceDataType", "n") if member else "n",
-                    cachedValueKind=member.get("cachedValueKind", "scalar")
-                    if member
-                    else "scalar",
-                    cache_status="saved",
-                    sourceSha256=digest,
+        def dependency(text, sheet, source_node):
+            if text.endswith("#"):
+                anchor = parse_ref(text[:-1], default_sheet=sheet)
+                declared = (
+                    db.execute(
+                        "SELECT sheet,r1,c1,r2,c2 FROM array_definitions "
+                        "WHERE sheet=? AND anchor=?",
+                        (
+                            lookup.get((anchor.sheet or "").casefold()),
+                            a1(anchor.r1, anchor.c1),
+                        ),
+                    ).fetchone()
+                    if anchor is not None and anchor.ncells == 1
+                    else None
                 )
-                if member and member.get("sourceValueProvenance"):
-                    node["sourceValueProvenance"] = member["sourceValueProvenance"]
-            except Exception as exc:
-                node["diagnostics"].append(f"External reference unavailable: {exc}")
-            store.put(node)
-            return node
+                if not declared:
+                    raise ValueError(
+                        "Spill reference requires a declared array anchor: " + text
+                    )
+                dep = dependency(text[:-1], sheet, source_node)
+                from linexcel.refs import Rect
 
-        def dependency(text, sheet):
-            external = external_input(text)
+                # The source extent is verified against the native spill before
+                # returning any result; this also works on engines without #.
+                source_node.setdefault("resolvedReferences", {})[text] = Rect(
+                    *declared
+                ).to_a1()
+                return dep
+            external = external_sources.explicit(text, source_node)
             if external is not None:
-                return external["id"]
+                return external
+            if source_node.get("external"):
+                return external_sources.local(text, source_node)
             prefix, body = split_sheet_prefix(text)
             scope = lookup.get(prefix.casefold()) if prefix is not None else sheet
             name_id = None
@@ -1108,10 +1143,63 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                 )
             if name_id:
                 return name_id
-            rect = parse_ref(text, default_sheet=sheet)
+            from linexcel.static_refs import sheet_span
+
+            span = sheet_span(text, sheets)
+            if span is not None:
+                if text not in source_node.get("threeDimensionalArguments", []):
+                    raise ValueError(
+                        "3D references require a direct argument of a supported "
+                        "aggregate function: " + text
+                    )
+                nid = f"sheet-span:{text}"
+                members = [
+                    dependency(rect.to_a1(), sheet, source_node) for rect in span
+                ]
+                source_node.setdefault("resolvedReferences", {})[text] = ",".join(
+                    rect.to_a1() for rect in span
+                )
+                store.put(
+                    {
+                        "id": nid,
+                        "kind": "sheet_span",
+                        "sheet": None,
+                        "reference": text,
+                        "sheets": [rect.sheet for rect in span],
+                        "cell_count": sum(rect.ncells for rect in span),
+                        "dependencies": members,
+                        "diagnostics": [],
+                    },
+                    only_if_absent=True,
+                )
+                for member in members:
+                    db.execute(
+                        "INSERT OR IGNORE INTO edges VALUES (?,?)", (member, nid)
+                    )
+                return nid
+            from linexcel.structured_refs import resolve_table_reference
+
+            table_selection = resolve_table_reference(
+                store, text, sheet, source_node.get("row"), source_node.get("column")
+            )
+            if table_selection is not None:
+                table = table_selection.table
+                source_node.setdefault("resolvedReferences", {})[text] = (
+                    table_selection.rectangle.to_a1()
+                )
+                required = source_node.setdefault("nativeTables", [])
+                if table["sourcePart"] not in required:
+                    required.append(table["sourcePart"])
+                rect = table_selection.rectangle
+            else:
+                rect = parse_ref(text, default_sheet=sheet)
             if rect and rect.sheet:
                 rect = replace(rect, sheet=lookup.get(rect.sheet.casefold()))
-            if rect and rect.sheet in sheets and "[" not in text:
+            if (
+                rect
+                and rect.sheet in sheets
+                and (table_selection is not None or "[" not in text)
+            ):
                 nid = rect.to_a1()
                 if nid in store:
                     return nid
@@ -1132,6 +1220,15 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "diagnostics": [],
                     }
                 else:
+                    assert rect.sheet is not None
+                    array_anchors = [
+                        _id(rect.sheet, row[0])
+                        for row in db.execute(
+                            "SELECT anchor FROM array_definitions WHERE sheet=? "
+                            "AND r1<=? AND r2>=? AND c1<=? AND c2>=?",
+                            (rect.sheet, rect.r2, rect.r1, rect.c2, rect.c1),
+                        )
+                    ]
                     node = {
                         "id": nid,
                         "kind": "range",
@@ -1139,7 +1236,7 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "reference": text,
                         "bounds": [rect.r1, rect.c1, rect.r2, rect.c2],
                         "cell_count": rect.ncells,
-                        "dependencies": [],
+                        "dependencies": array_anchors,
                         "diagnostics": [],
                     }
                 if rect.sheet in partial:
@@ -1149,6 +1246,10 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "blank."
                     )
                 store.put(node, only_if_absent=True)
+                for member in node["dependencies"]:
+                    db.execute(
+                        "INSERT OR IGNORE INTO edges VALUES (?,?)", (member, nid)
+                    )
                 return nid
             nid = f"unresolved:{sheet or '*'}:{text}"
             store.put(
@@ -1183,20 +1284,102 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                     last = seq
                     node = _unpack(data)
                     if node["kind"] == "cell":
-                        if db.execute(
+                        region = db.execute(
                             (
                                 "SELECT 1 FROM arrays WHERE sheet=? "
                                 "AND ? BETWEEN r1 AND r2 AND ? "
                                 "BETWEEN c1 AND c2 LIMIT 1"
                             ),
                             (node["sheet"], node["row"], node["column"]),
-                        ).fetchone():
+                        ).fetchone()
+                        declared = db.execute(
+                            "SELECT r1,c1,r2,c2 FROM array_definitions "
+                            "WHERE sheet=? AND anchor=?",
+                            (node["sheet"], node["cell"]),
+                        ).fetchone()
+                        if declared:
+                            node["arrayBounds"] = list(declared)
+                        elif region:
                             node["diagnostics"].append(
                                 "Cell belongs to an unsupported array/data-table "
                                 "result region."
                             )
                     try:
-                        tokens = Tokenizer(node["formula"]).items
+                        tokens = formula_tokens(node["formula"])
+                        if any(
+                            t.type == "FUNC"
+                            and t.subtype == "OPEN"
+                            and t.value[:-1].upper().removeprefix("_XLFN.")
+                            in {"INDIRECT", "OFFSET"}
+                            for t in tokens
+                        ):
+                            from linexcel.dynamic_refs import rewrite_dynamic_formula
+                            from linexcel.lazy import _binding_expression
+
+                            def resolve_dynamic(reference, current_sheet):
+                                member = dependency(reference, current_sheet, node)
+                                resolved = store[member]
+                                expression = _binding_expression(resolved)
+                                if expression is None or resolved.get("diagnostics"):
+                                    raise ValueError(
+                                        "Unresolved dynamic source reference: "
+                                        + reference
+                                    )
+                                if member not in node["dependencies"]:
+                                    node["dependencies"].append(member)
+                                db.execute(
+                                    "INSERT OR IGNORE INTO edges VALUES (?,?)",
+                                    (member, node["id"]),
+                                )
+                                return resolved, expression
+
+                            try:
+                                if node.get("external") or node["kind"] == "name":
+                                    raise ValueError(
+                                        "Dynamic references in external sources or "
+                                        "defined names require additional "
+                                        "binding context."
+                                    )
+                                plan = rewrite_dynamic_formula(
+                                    node["formula"],
+                                    node["sheet"],
+                                    node["row"],
+                                    node["column"],
+                                    resolve_dynamic,
+                                )
+                                node["evaluationFormula"] = plan.formula
+                                node["dynamicReferences"] = plan.evidence
+                                node["volatile"] = True
+                                tokens += formula_tokens(plan.formula)
+                            except ValueError as exc:
+                                node["diagnostics"].append(str(exc))
+                                node.setdefault("capabilityDiagnostics", []).append(
+                                    {
+                                        "feature": "dynamic_references",
+                                        "code": "dynamic_reference_unresolved",
+                                        "message": str(exc),
+                                    }
+                                )
+                        from linexcel.static_refs import aggregate_arguments
+
+                        eligible = aggregate_arguments(tokens)
+                        spans = {}
+                        for position, token in enumerate(tokens):
+                            if token.type == "OPERAND" and token.subtype == "RANGE":
+                                qualifier, _ = split_sheet_prefix(token.value)
+                                if (
+                                    qualifier
+                                    and ":" in qualifier
+                                    and "[" not in qualifier
+                                ):
+                                    spans[token.value] = (
+                                        spans.get(token.value, True)
+                                        and position in eligible
+                                    )
+                        if spans:
+                            node["threeDimensionalArguments"] = [
+                                value for value, valid in spans.items() if valid
+                            ]
                         for token in tokens:
                             if token.type == "FUNC" and token.subtype == "OPEN":
                                 function = (
@@ -1210,7 +1393,27 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                                         f"{function}"
                                     )
                             if token.type == "OPERAND" and token.subtype == "RANGE":
-                                dep = dependency(token.value, node.get("sheet"))
+                                try:
+                                    dep = dependency(
+                                        token.value, node.get("sheet"), node
+                                    )
+                                except ValueError as exc:
+                                    from linexcel.structured_refs import (
+                                        TableReferenceError,
+                                    )
+
+                                    if not isinstance(exc, TableReferenceError):
+                                        raise
+                                    node.setdefault("capabilityDiagnostics", []).append(
+                                        {
+                                            "code": exc.code,
+                                            "feature": "structured_tables",
+                                            "reference": token.value,
+                                            "message": str(exc),
+                                        }
+                                    )
+                                    node["diagnostics"].append(str(exc))
+                                    continue
                                 node.setdefault("reference_bindings", {})[
                                     token.value
                                 ] = dep
@@ -1265,14 +1468,31 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                     (sheet, r1, r2, c1, c2),
                 ):
                     node = store._decode(row)
-                    node["diagnostics"].append(
-                        "Cell belongs to an unsupported array/data-table result region."
-                    )
+                    definition = db.execute(
+                        "SELECT anchor FROM array_definitions WHERE sheet=? "
+                        "AND r1=? AND c1=? AND r2=? AND c2=?",
+                        (sheet, r1, c1, r2, c2),
+                    ).fetchone()
+                    if definition:
+                        anchor_id = _id(sheet, definition[0])
+                        node.update(
+                            kind="array_result",
+                            arrayAnchor=anchor_id,
+                            dependencies=[anchor_id],
+                        )
+                        db.execute(
+                            "INSERT OR IGNORE INTO edges VALUES (?,?)",
+                            (anchor_id, node["id"]),
+                        )
+                    else:
+                        node["diagnostics"].append(
+                            "Cell belongs to an unsupported array/data-table "
+                            "result region."
+                        )
                     store.put(node)
             db.commit()
         finally:
-            for other, _, _ in external_books.values():
-                other.close()
+            external_sources.close()
 
 
 def build_index(
@@ -1381,10 +1601,11 @@ def build_index(
                     "VBA relations are static source heuristics; "
                     "macros are never executed.",
                     (
-                        "External single-cell literal inputs are supported "
-                        "from uploads; external formulas/ranges, structured "
-                        "and dynamic references remain "
-                        "unsupported."
+                        "Local declared table references resolve to exact source "
+                        "regions. Supplied external files support bounded source "
+                        "formula/range/name closures. Dynamic references require "
+                        "established source address expressions; unresolved "
+                        "contexts are refused. See the versioned capability registry."
                     ),
                     (
                         "Range members are expanded sparsely only for "
@@ -1398,6 +1619,12 @@ def build_index(
                     ),
                 ],
             )
+            from linexcel.capabilities import capability_registry
+
+            metadata["capabilities"] = capability_registry()
+            metadata["tableCount"] = store.db.execute(
+                "SELECT count(*) FROM table_definitions"
+            ).fetchone()[0]
             store.db.execute(
                 "INSERT INTO metadata VALUES ('meta',?)", (_dump(metadata),)
             )

@@ -11,11 +11,14 @@ import asyncio
 import hashlib
 import json
 import os
+import queue
 import sqlite3
 import tempfile
 import threading
+import uuid
 import zipfile
 from collections import OrderedDict
+from concurrent.futures import Future
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -281,7 +284,113 @@ class MountedUrls(Urls):
         return super().path(path, format=format)
 
 
+class InternalDatabase(Database):
+    """Own Datasette's internal memory connections and its write worker.
+
+    Datasette 0.65 closes file connections, but its internal writer otherwise
+    waits forever and retains the database after a project leaves our cache.
+    Keep its writes serialized while making their admission and shutdown atomic.
+    """
+
+    _STOP = object()
+
+    def __init__(self, ds, *, memory_name):
+        super().__init__(ds, memory_name=memory_name)
+        self._jobs = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._connections = []
+        self._closing = False
+        self._closed = False
+
+    def connect(self, write=False):
+        # Named memory databases use check_same_thread=False in Datasette.
+        # Readers are joined before close(), and the writer is joined below.
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("The internal database is closed")
+            connection = super().connect(write=write)
+            self._connections.append(connection)
+            return connection
+
+    async def execute_write_fn(self, fn, block=True):
+        pending = Future()
+        with self._state_lock:
+            if self._closing:
+                raise RuntimeError("The internal database is closing")
+            if self._write_thread is None:
+                self._write_thread = threading.Thread(
+                    target=self._execute_writes,
+                    name="linexcel-datasette-writer",
+                    daemon=True,
+                )
+                self._write_thread.start()
+            pending.set_running_or_notify_cancel()
+            self._jobs.put((fn, pending))
+        # Every accepted job completes before shutdown. Cancelling its HTTP
+        # caller must not cancel the concurrent Future or discard queued writes.
+        return await asyncio.wrap_future(pending) if block else uuid.uuid4()
+
+    def _execute_writes(self):
+        connection = None
+        connection_error = None
+        try:
+            try:
+                connection = self.connect(write=True)
+                self.ds._prepare_connection(connection, self.name)
+            except Exception as error:
+                connection_error = error
+            while True:
+                job = self._jobs.get()
+                if job is self._STOP:
+                    return
+                fn, pending = job
+                try:
+                    if connection_error is not None:
+                        raise connection_error
+                    result = fn(connection)
+                except Exception as error:
+                    pending.set_exception(error)
+                else:
+                    pending.set_result(result)
+        finally:
+            if connection is not None:
+                connection.close()
+
+    def close(self):
+        with self._close_lock:
+            with self._state_lock:
+                if self._closed:
+                    return
+                if not self._closing:
+                    self._closing = True
+                    self._jobs.put(self._STOP)
+                writer = self._write_thread
+            if writer is not None:
+                writer.join(timeout=10)
+                if writer.is_alive():
+                    raise RuntimeError("The internal database writer did not stop")
+            with self._state_lock:
+                errors = []
+                remaining = []
+                for connection in self._connections:
+                    try:
+                        connection.close()
+                    except Exception as error:
+                        errors.append(error)
+                        remaining.append(connection)
+                self._connections = remaining
+                self._closed = not remaining
+            if errors:
+                raise ExceptionGroup("Could not close internal connections", errors)
+
+
 class EmbeddedDatasette(Datasette):
+    def add_database(self, db, name=None, route=None):
+        if name == "_internal":
+            db = InternalDatabase(self, memory_name=db.memory_name)
+        return super().add_database(db, name=name, route=route)
+
     @property
     def urls(self):
         return MountedUrls(self)
@@ -294,30 +403,55 @@ class DataBrowser:
         self.store = store
         self._lock = threading.RLock()
         self._instances: OrderedDict[tuple, Any] = OrderedDict()
+        self._closed = False
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
 
     def close(self):
+        errors = []
         with self._lock:
-            for instance in self._instances.values():
-                self._close_instance(instance)
-            self._instances.clear()
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._closed = True
+            remaining = OrderedDict()
+            for key, instance in self._instances.items():
+                try:
+                    self._close_instance(instance)
+                except Exception as error:
+                    errors.append(error)
+                    remaining[key] = instance
+            # Retain failed shutdowns so a repeated close can finish cleanup.
+            self._instances = remaining
+            if not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=10)
-            self._loop.close()
+            if self._thread.is_alive():
+                errors.append(RuntimeError("The data browser event loop did not stop"))
+            elif not self._loop.is_closed():
+                self._loop.close()
+        if errors:
+            raise ExceptionGroup("Could not completely close the data browser", errors)
 
     def invalidate(self, owner: str, project_id: str):
         with self._lock:
             for key in list(self._instances):
                 if key[:2] == (owner, project_id):
-                    self._close_instance(self._instances.pop(key))
+                    self._close_instance(self._instances[key])
+                    del self._instances[key]
 
     @staticmethod
     def _close_instance(instance):
-        instance.executor.shutdown(wait=True)
+        errors = []
+        try:
+            instance.executor.shutdown(wait=True)
+        except Exception as error:
+            errors.append(error)
         for database in instance.databases.values():
-            database.close()
+            try:
+                database.close()
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Could not completely close Datasette", errors)
 
     def _snapshot(self, owner: str, project_id: str) -> tuple[Path | None, dict]:
         from linexcel.web import APIError, _read
@@ -347,7 +481,8 @@ class DataBrowser:
             # Instances release handles before Windows replaces a rebuilt file.
             for key in list(self._instances):
                 if key[:2] == (owner, project_id):
-                    self._close_instance(self._instances.pop(key))
+                    self._close_instance(self._instances[key])
+                    del self._instances[key]
             remaining = (
                 self.store.config.max_storage_mb * 1048576
                 - self.store._storage_bytes()
@@ -490,15 +625,25 @@ class DataBrowser:
         if len(query) > 8192:
             raise APIError(400, "Recherche Datasette trop longue")
         with self._lock, self.store.lock:
+            if self._closed:
+                raise APIError(503, "La vue des données est fermée")
             database, metadata = self._snapshot(owner, project_id)
             if database is None:
                 raise APIError(
                     409, "Cet add-in contient des sources VBA, sans vue de données"
                 )
             key = (owner, project_id, metadata["signature"])
+            existing = self._instances.get(key)
+            if existing is not None and existing.databases["_internal"]._closing:
+                # A previous shutdown may have timed out. Retry it before
+                # replacing the instance; never reuse its stopped executor.
+                self._close_instance(existing)
+                del self._instances[key]
             if key not in self._instances:
                 if len(self._instances) >= MAX_INSTANCES:
-                    self._close_instance(self._instances.popitem(last=False)[1])
+                    oldest = next(iter(self._instances))
+                    self._close_instance(self._instances[oldest])
+                    del self._instances[oldest]
                 tables = {
                     sheet["table"]: {
                         "description": f"Feuille {sheet['sheet']} — lignes Excel "

@@ -538,13 +538,9 @@ def capture(args) -> int:
                 }"""
             )
             shot("app_graph_documented.png", ".graph-investigation", 70)
-            with page.expect_response(
-                lambda response: (
-                    response.request.method == "POST"
-                    and response.url.endswith("/tasks")
-                )
-            ):
-                page.locator("#graph-full-detail").click()
+            # Opening the same cell's full reader can reuse the active result.
+            # Verify the visible state instead of requiring an extra operation.
+            page.locator("#graph-full-detail").click()
             # Lazy neighborhood/result requests can remount the cell details.
             # Wait before framing; otherwise scroll anchoring moves the shot.
             page.wait_for_function(

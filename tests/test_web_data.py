@@ -1,12 +1,16 @@
 """Datasette serves complete source cells behind the existing owner boundary."""
 
 import asyncio
+import gc
 import hashlib
 import html
 import io
 import json
 import re
+import shutil
+import sqlite3
 import threading
+import weakref
 import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -17,7 +21,7 @@ from openpyxl import Workbook
 
 from linexcel.lazy_store import build_index
 from linexcel.web import _write, create_app
-from linexcel.web_data import DataLimitError, build_source_database
+from linexcel.web_data import MAX_INSTANCES, DataLimitError, build_source_database
 
 
 def request(app, path, *, user="alice", query="", method="GET"):
@@ -341,3 +345,202 @@ def test_timed_out_read_cancels_coroutine_and_next_request_remains_usable(
 
     assert request(app, route)[0] == 200
     assert request(app, f"/tools/api/projects/{project}/data")[0] == 200
+
+
+def test_real_datasette_eviction_bounds_writers_and_releases_connections(data_app):
+    app, project, source_path = data_app
+    writers, connections, references, memory_names = [], [], [], set()
+    for number in range(12):
+        current = project if number == 0 else f"{number:032x}"
+        if number:
+            path = source_path.with_name(current)
+            (path / "references").mkdir(parents=True)
+            for filename in ("workbook.xlsx", "index.sqlite"):
+                shutil.copyfile(source_path / filename, path / filename)
+            _write(
+                path / "project.json",
+                {
+                    "id": current,
+                    "filename": "sources.xlsx",
+                    "revision": app.store._revision(path),
+                },
+            )
+        status, _, body = request(
+            app, f"/tools/api/projects/{current}/datasette/source/sheet_001.json"
+        )
+        assert status == 200 and json.loads(body)["rows"][0][2] == 6
+        instance = next(reversed(app.data_browser._instances.values()))
+        internal = instance.databases["_internal"]
+        memory_names.add(internal.memory_name)
+        writers.append(internal._write_thread)
+        connections.extend(internal._connections)
+        connections.extend(instance.databases["source"]._all_file_connections)
+        references.append(weakref.ref(instance))
+        assert len(app.data_browser._instances) == min(number + 1, MAX_INSTANCES)
+        assert sum(writer.is_alive() for writer in writers) == min(
+            number + 1, MAX_INSTANCES
+        )
+    assert len(memory_names) == 12
+    del instance, internal
+    app.close()
+    app.close()
+    assert not any(writer.is_alive() for writer in writers)
+    assert not app.data_browser._thread.is_alive()
+    assert app.data_browser._loop.is_closed()
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("select 1")
+    gc.collect()
+    assert not any(reference() is not None for reference in references)
+
+
+def test_internal_writer_drains_fifo_despite_cancelled_caller_and_failed_job(
+    data_app, monkeypatch
+):
+    app, project, _ = data_app
+    route = f"/tools/api/projects/{project}/datasette/source/sheet_001.json"
+    assert request(app, route)[0] == 200
+    instance = next(iter(app.data_browser._instances.values()))
+    internal = instance.databases["_internal"]
+    loop = app.data_browser._loop
+    started, release, closing = threading.Event(), threading.Event(), threading.Event()
+    completed, errors = [], []
+
+    def first(connection):
+        started.set()
+        assert release.wait(5)
+        connection.execute("create table lifecycle (value)")
+        connection.execute("insert into lifecycle values (1)")
+        completed.append("first")
+
+    def failed(connection):
+        assert connection.execute("select value from lifecycle").fetchone()[0] == 1
+        completed.append("failed")
+        raise ValueError("queued failure")
+
+    def last(connection):
+        assert connection.execute("select value from lifecycle").fetchone()[0] == 1
+        completed.append("last")
+
+    pending = asyncio.run_coroutine_threadsafe(internal.execute_write_fn(first), loop)
+    assert started.wait(2)
+    pending.cancel()
+    failing = asyncio.run_coroutine_threadsafe(internal.execute_write_fn(failed), loop)
+    # block=False returns only after admission, so all three jobs precede STOP.
+    asyncio.run_coroutine_threadsafe(
+        internal.execute_write_fn(last, block=False), loop
+    ).result(2)
+
+    original_join = internal._write_thread.join
+
+    def joining(timeout=None):
+        closing.set()
+        original_join(timeout)
+
+    monkeypatch.setattr(internal._write_thread, "join", joining)
+
+    def close():
+        try:
+            internal.close()
+        except Exception as error:
+            errors.append(error)
+
+    closer = threading.Thread(target=close)
+    closer.start()
+    assert closing.wait(2)
+    try:
+        # The state lock makes this observation deterministic without a sleep.
+        with internal._state_lock:
+            assert internal._closing
+        rejected = asyncio.run_coroutine_threadsafe(
+            internal.execute_write_fn(last), loop
+        )
+        with pytest.raises(RuntimeError, match="closing"):
+            rejected.result(2)
+        assert closer.is_alive()
+    finally:
+        release.set()
+        closer.join(5)
+    assert not closer.is_alive() and not errors
+    with pytest.raises(ValueError, match="queued failure"):
+        failing.result(2)
+    assert completed == ["first", "failed", "last"]
+    assert pending.cancelled()
+    assert not internal._write_thread.is_alive()
+    internal.close()
+
+
+def test_slow_writer_shutdown_is_retryable_and_other_resources_are_closed(
+    data_app, monkeypatch
+):
+    app, project, _ = data_app
+    route = f"/tools/api/projects/{project}/datasette/source/sheet_001.json"
+    assert request(app, route)[0] == 200
+    instance = next(iter(app.data_browser._instances.values()))
+    internal = instance.databases["_internal"]
+    source_connections = list(instance.databases["source"]._all_file_connections)
+    started, release = threading.Event(), threading.Event()
+
+    def slow(connection):
+        started.set()
+        assert release.wait(5)
+        assert connection.execute("select 1").fetchone()[0] == 1
+
+    # No awaiting coroutine remains when the browser's event loop is shut down.
+    asyncio.run_coroutine_threadsafe(
+        internal.execute_write_fn(slow, block=False), app.data_browser._loop
+    ).result(2)
+    assert started.wait(2)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(internal._write_thread, "join", lambda timeout=None: None)
+            with pytest.raises(ExceptionGroup, match="data browser"):
+                app.close()
+        assert app.store._lock_file.closed
+        assert app.data_browser._loop.is_closed()
+        assert len(app.data_browser._instances) == 1
+        assert internal._write_thread.is_alive()
+        for connection in source_connections:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("select 1")
+    finally:
+        release.set()
+        internal._write_thread.join(5)
+        app.close()
+    assert not app.data_browser._instances
+    assert not internal._connections
+
+
+def test_failed_invalidation_is_retained_then_reopened_before_next_request(
+    data_app, monkeypatch
+):
+    app, project, _ = data_app
+    route = f"/tools/api/projects/{project}/datasette/source/sheet_001.json"
+    assert request(app, route)[0] == 200
+    instance = next(iter(app.data_browser._instances.values()))
+    internal = instance.databases["_internal"]
+    started, release = threading.Event(), threading.Event()
+
+    def slow(connection):
+        started.set()
+        assert release.wait(5)
+        assert connection.execute("select 1").fetchone()[0] == 1
+
+    asyncio.run_coroutine_threadsafe(
+        internal.execute_write_fn(slow, block=False), app.data_browser._loop
+    ).result(2)
+    assert started.wait(2)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(internal._write_thread, "join", lambda timeout=None: None)
+            with pytest.raises(ExceptionGroup, match="Datasette"):
+                app.data_browser.invalidate(
+                    hashlib.sha256(b"alice").hexdigest(), project
+                )
+        assert list(app.data_browser._instances.values()) == [instance]
+    finally:
+        release.set()
+        internal._write_thread.join(5)
+    assert request(app, route)[0] == 200
+    assert next(iter(app.data_browser._instances.values())) is not instance
+    assert not internal._connections

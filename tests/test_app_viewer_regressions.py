@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from graph_test_helpers import open_graph_options
+from graph_test_helpers import open_graph_depth, open_graph_options, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -192,6 +192,7 @@ def app(browser, request):
 
     page.route("**/*", handle)
     page.goto("http://localhost/")
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     # A click does not await openProject's fetch or its localStorage update.
     # Reload tests must start from the rendered, persisted initial project.
@@ -207,6 +208,7 @@ def app(browser, request):
 
 def test_expanded_sidebar_fields_stay_inside_sidebar(app):
     page, _, errors, _, _ = app
+    open_workspace_menu(page)
     for label in ["Limites par opération", "Documentation IA à la demande"]:
         page.get_by_text(label, exact=True).click()
     assert page.evaluate("""() => {
@@ -371,6 +373,7 @@ def test_sheet_change_cancels_pending_neighborhood_after_optimistic_selection(
     playwright.expect(heading).to_contain_text("Second")
     # First/depth1 was loaded on the initial Graph access. This race uses an
     # uncached depth2 neighborhood, through the real depth control.
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("2")
     page.locator("#graph-depth").press("Tab")
     page.wait_for_function(
@@ -538,6 +541,7 @@ def test_depth_change_restarts_pending_target_and_ignores_old_depth(app):
     page.locator("#graph-sheet").select_option("Second")
     page.wait_for_timeout(100)
     assert len(pending) == 1
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("2")
     page.locator("#graph-depth").press("Tab")
     page.wait_for_timeout(100)
@@ -608,6 +612,7 @@ def test_project_intent_cancels_old_selection_before_project_response(app):
     page.route("**/api/projects/next", lambda route: project_pending.append(route))
     page.locator("#node-list [data-node='Second!A2']").click()
     page.wait_for_timeout(100)
+    open_workspace_menu(page)
     page.locator("[data-project='next']").click()
     page.wait_for_timeout(100)
     assert old_pending and project_pending
@@ -666,6 +671,7 @@ def test_failed_back_access_keeps_optimistic_target_and_local_retry(app):
     page.locator("#graph-sheet").select_option("Second")
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
+    open_graph_depth(page)
     page.locator("#graph-depth").fill("2")
     page.locator("#graph-depth").press("Tab")
     page.wait_for_function(
@@ -713,6 +719,7 @@ def test_explicit_group_navigation_cancels_staged_node_selection(app, stage):
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
     if stage == "neighborhood":
+        open_graph_depth(page)
         page.locator("#graph-depth").fill("2")
         page.locator("#graph-depth").press("Tab")
         page.wait_for_function(

@@ -24,7 +24,7 @@ dependencies = [
     "formualizer>=0.10.1",
     "oletools>=0.60.2",
     "python-calamine>=0.8.2",
-    "datasette>=0.65,<1",
+    "datasette>=0.65.5,<1",
 ]
 
 [project.optional-dependencies]
@@ -80,7 +80,7 @@ packages = ["src/linexcel"]
 "THIRD_PARTY_NOTICES.md" = "linexcel/THIRD_PARTY_NOTICES.md"
 
 [tool.hatch.build.targets.sdist]
-artifacts = ["src/linexcel/assets/*.js", "src/linexcel/assets/*.html"]
+artifacts = ["src/linexcel/assets/*.js", "src/linexcel/assets/*.html", "src/linexcel/assets/*.css"]
 exclude = [".claude/", ".agents/", ".codex/"]
 
 [tool.ruff]

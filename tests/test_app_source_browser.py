@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from graph_test_helpers import open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -74,6 +75,7 @@ def open_graph(browser, viewport, node, *, macro_only=False):
 
     page.route("**/*", route)
     page.goto("http://localhost/")
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#node-list [data-node]").click()
     page.locator("#node-detail h2").wait_for()

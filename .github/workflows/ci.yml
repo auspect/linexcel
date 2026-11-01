@@ -49,9 +49,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         include:
           - os: windows-latest
+            python-version: "3.13"
+          - os: macos-latest
             python-version: "3.13"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,9 +109,9 @@ jobs:
       - run: uv build
       
       - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl python -c "import linexcel; print(linexcel.__version__)"
+        run: uv run --isolated --no-project --with dist/*.whl python scripts/smoke_distribution.py
       - name: Smoke test (sdist)
-        run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import linexcel; print(linexcel.__version__)"
+        run: uv run --isolated --no-project --with dist/*.tar.gz python scripts/smoke_distribution.py
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

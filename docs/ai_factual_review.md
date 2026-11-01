@@ -1,5 +1,14 @@
 # Specialized factual review
 
+The current rubric is `linexcel-factual-review-v6`. Its dossier includes exact
+A1 reference anchors: row and column dollar signs are classified separately
+for each endpoint. A resolved coordinate or displayed value does not establish
+an absolute reference. Review instructions also distinguish an input literal
+from an engine reading and prohibit describing a source cache as written by
+linexcel. Claim pointers must identify the exact supplied evidence field.
+These additions strengthen the review contract; they are not proof that every
+generated sentence follows it. Historical v5 runs remain evidence of v5 only.
+
 ## Draft and actual specialized review
 
 Text documentation now makes two model requests by default: a draft, then one

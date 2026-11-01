@@ -476,7 +476,7 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
                 "enable_thinking": config["chatTemplateThinking"] == "enabled"
             }
         configured = None
-        if extra or config.get("stream"):
+        if extra or config.get("stream") or config.get("reasoningEffort") is not None:
             from linexcel.aidoc import OpenAICompatProvider
 
             configured = OpenAICompatProvider(
@@ -484,7 +484,17 @@ def generate(snapshot: dict, config: dict, options: dict, token_budget: int) -> 
                 model=model,
                 api_key=config.get("apiKey") or "not-needed",
                 streaming=config.get("stream", False),
-                request_kwargs={"extra_body": extra} if extra else None,
+                request_kwargs=(
+                    {
+                        **({"extra_body": extra} if extra else {}),
+                        **(
+                            {"reasoning_effort": config["reasoningEffort"]}
+                            if config.get("reasoningEffort") is not None
+                            else {}
+                        ),
+                    }
+                    or None
+                ),
             )
         provider = _resolve_provider(
             provider=configured,

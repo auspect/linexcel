@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import test_app_viewer_regressions as navigation_tests
+from graph_test_helpers import open_workspace_menu
 from vision_helpers import image_bytes
 
 from linexcel.viewer import render_html
@@ -98,6 +99,8 @@ def install_serve_document(page, markdown):
         ),
     )
     page.reload()
+    page.locator("#node-list [data-node='First!A1']").wait_for()
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#node-list [data-node='First!A1']").click()
     page.locator("#node-ai .ai-result").wait_for()

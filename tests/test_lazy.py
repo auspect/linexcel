@@ -104,11 +104,13 @@ def test_unresolved_transitive_dependency_refuses_calculation(tmp_path):
     assert any("Unresolved" in d for d in result["diagnostics"])
 
 
-def test_dynamic_reference_refuses_calculation(tmp_path):
-    path = save(tmp_path, lambda b: setattr(b.active["A1"], "value", '=INDIRECT("B1")'))
+def test_runtime_dynamic_reference_refuses_unestablished_address(tmp_path):
+    path = save(
+        tmp_path, lambda b: setattr(b.active["A1"], "value", '=INDIRECT("B"&RAND())')
+    )
     result = evaluate_node(path, "Sheet!A1")
     assert result["status"] == "unsupported"
-    assert any("INDIRECT" in d for d in result["diagnostics"])
+    assert any("dynamic address" in d for d in result["diagnostics"])
 
 
 def test_quoted_sheet_and_blank_inputs(tmp_path):
@@ -165,17 +167,18 @@ def test_sparse_far_range_does_not_clip_actual_inputs(tmp_path):
     assert result["value"] == 10
 
 
-def test_array_result_cannot_be_used_as_fresh_input(tmp_path):
+def test_array_result_recalculates_anchor_instead_of_using_cached_input(tmp_path):
     from openpyxl.worksheet.formula import ArrayFormula
 
     def setup(book):
         book.active["A1"] = ArrayFormula(ref="A1:A2", text="=SEQUENCE(2)")
-        book.active["A2"] = 2
+        book.active["A2"] = 999
         book.active["B1"] = "=A2*3"
 
     result = evaluate_node(save(tmp_path, setup), "Sheet!B1")
-    assert result["status"] == "unsupported"
-    assert any("result region" in d for d in result["diagnostics"])
+    assert result["status"] == "completed", result["diagnostics"]
+    assert result["value"] == 6
+    assert result["arrayEvidence"][0]["sourceBounds"] == [1, 1, 2, 1]
 
 
 def test_excel_error_inputs_are_not_silently_treated_as_text(tmp_path):
@@ -222,11 +225,14 @@ def test_external_formula_never_substitutes_saved_value(tmp_path):
         tmp_path, lambda b: setattr(b.active["A1"], "value", "='[source.xlsx]Sheet'!A1")
     )
     result = evaluate_node(path, "Sheet!A1", refs)
-    assert result["status"] == "unsupported"
-    assert any("External formula" in d for d in result["diagnostics"])
+    assert result["status"] == "completed"
+    assert result["value"] == 6
+    external = next(s for s in result["steps"] if s["nodeId"].startswith("external:"))
+    assert external["calculatedProvenance"] == "targeted_recalculation"
+    assert external["cachedValue"] is None
 
 
-def test_metadata_sensitive_functions_fail_closed(tmp_path):
+def test_metadata_sensitive_functions_honor_hidden_rows(tmp_path):
     def setup(book):
         book.active["A1"] = 1
         book.active["A2"] = 100
@@ -234,8 +240,8 @@ def test_metadata_sensitive_functions_fail_closed(tmp_path):
         book.active["B1"] = "=SUBTOTAL(109,A1:A2)"
 
     result = evaluate_node(save(tmp_path, setup), "Sheet!B1")
-    assert result["status"] == "unsupported"
-    assert any("SUBTOTAL" in d for d in result["diagnostics"])
+    assert result["status"] == "completed", result["diagnostics"]
+    assert result["value"] == 1
 
 
 def test_cycle_via_range_refuses_iteration_semantics(tmp_path):
@@ -320,7 +326,7 @@ def test_formula_pattern_identity_is_exact_stable_and_propagated(tmp_path):
         book.active["A1"] = "=1+2"
         book.active["A2"] = "=1+2"
         book.active["A3"] = "=1+3"
-        book.active["A4"] = '=INDIRECT("Z1")'
+        book.active["A4"] = '=INDIRECT("Z"&RAND())'
 
     path = save(tmp_path, setup)
     first = {n["id"]: n.get("patternId") for n in build_structure(path)["nodes"]}
@@ -581,7 +587,7 @@ def test_volatile_dependencies_share_exactly_one_evaluation_request(
         (RuntimeError("Cannot read cell"), "unavailable"),
     ],
 )
-def test_partial_engine_snapshot_keeps_target_and_never_substitutes_cache(
+def test_partial_engine_snapshot_distinguishes_unreadable_and_unsupported_values(
     tmp_path, monkeypatch, missing_value, status
 ):
     import formualizer as fz
@@ -610,7 +616,10 @@ def test_partial_engine_snapshot_keeps_target_and_never_substitutes_cache(
     _replace_formula_caches(path, "999")
     result = evaluate_node(path, "Sheet!B1")
     steps = {s["nodeId"]: s for s in result["steps"]}
-    assert result["status"] == "completed" and result["value"] == 6
+    if status == "unsupported":
+        assert result["status"] == "unsupported" and result["value"] is None
+    else:
+        assert result["status"] == "completed" and result["value"] == 6
     assert steps["Sheet!A1"]["evaluationStatus"] == status
     assert "calculatedValue" not in steps["Sheet!A1"]
     assert steps["Sheet!A1"]["cachedValue"] == 999
@@ -622,7 +631,7 @@ def test_partial_engine_snapshot_keeps_target_and_never_substitutes_cache(
 
 def test_refused_closure_keeps_structure_without_partially_calculating(tmp_path):
     def setup(book):
-        book.active["A1"] = '=INDIRECT("C1")'
+        book.active["A1"] = '=INDIRECT("C"&RAND())'
         book.active["B1"] = "=A1+1"
         book.active["C1"] = 2
 

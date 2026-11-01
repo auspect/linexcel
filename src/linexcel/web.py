@@ -38,6 +38,7 @@ OPERATIONS = {
     "capture",
     "document",
     "describe_capture",
+    "export_html",
 }
 AI_OPERATIONS = {"document", "describe_capture"}
 MAX_RESULT_BYTES = 16 * 1024 * 1024
@@ -62,7 +63,7 @@ class WebConfig:
     total_memory_mb: int = 2048
     max_upload_mb: int = 256
     max_storage_mb: int = 2048
-    retention_days: int = 7
+    retention_days: int | None = 7
     max_pending_tasks: int = 32
     ai_enabled: bool = False
     ai_base_url: str = field(default="http://localhost:11434/v1", repr=False)
@@ -75,7 +76,9 @@ class WebConfig:
     ai_reasoning_split: bool = False
     ai_thinking: str | None = None
     ai_chat_template_thinking: str | None = None
+    ai_reasoning_effort: str | None = None
     allow_local_import: bool = False
+    local_profile: bool = False
 
     def __post_init__(self):
         for key in (
@@ -83,7 +86,6 @@ class WebConfig:
             "total_memory_mb",
             "max_upload_mb",
             "max_storage_mb",
-            "retention_days",
             "max_pending_tasks",
             "ai_token_budget",
             "ai_max_tokens",
@@ -98,15 +100,31 @@ class WebConfig:
                 self.allow_local_import,
                 self.ai_stream,
                 self.ai_reasoning_split,
+                self.local_profile,
             )
         ):
             raise ValueError("AI flags and allow_local_import must be boolean")
+        if self.retention_days is not None and (
+            isinstance(self.retention_days, bool)
+            or not isinstance(self.retention_days, int)
+            or self.retention_days <= 0
+        ):
+            raise ValueError("retention_days must be a positive integer or None")
         if self.ai_thinking not in (None, "disabled", "adaptive"):
             raise ValueError("ai_thinking must be disabled, adaptive or None")
         if self.ai_chat_template_thinking not in (None, "enabled", "disabled"):
             raise ValueError(
                 "ai_chat_template_thinking must be enabled, disabled or None"
             )
+        if self.ai_reasoning_effort not in (
+            None,
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+        ):
+            raise ValueError("Invalid ai_reasoning_effort")
         if self.ai_enabled:
             endpoint = urlsplit(self.ai_base_url)
             if (
@@ -184,33 +202,17 @@ class TaskStore:
         self.tasks: dict[str, dict] = {}
         self._project_exports: dict[tuple[str, str], int] = {}
         self._revisions: dict[str, tuple[tuple, str]] = {}
+        self.recovery_issues: list[dict] = []
+        self.unreadable_projects: set[tuple[str, str]] = set()
         from importlib.metadata import version
 
         cache = hashlib.sha256(version("formualizer").encode())
-        for name in (
-            "lazy.py",
-            "lazy_store.py",
-            "graph_store.py",
-            "engine.py",
-            "excel_compat.py",
-            "values.py",
-            "loader.py",
-            "external.py",
-            "refs.py",
-            "insights.py",
-            "web_worker.py",
-            "web.py",
-            "web_ai.py",
-            "web_data.py",
-            "aidoc.py",
-            "ai_validation.py",
-            "doc_evidence.py",
-            "documentation_proof.py",
-            "formula_source.py",
-            "macros.py",
-            "vision_evidence.py",
-        ):
-            cache.update(Path(__file__).with_name(name).read_bytes())
+        # New resolvers/adapters must invalidate old results too. An explicit
+        # hand-maintained list silently missed newly added calculation modules.
+        for source in sorted(Path(__file__).parent.glob("*.py")):
+            cache.update(source.name.encode())
+            cache.update(source.read_bytes())
+        cache.update((Path(__file__).parent / "assets" / "report.css").read_bytes())
         for prompt in sorted(
             (Path(__file__).parent / "assets" / "prompts").glob("*/*.md")
         ):
@@ -223,29 +225,97 @@ class TaskStore:
         self.uploads = UploadStore(self)
 
     def _recover(self):
-        cutoff = time.time() - self.config.retention_days * 86400
+        from linexcel.web_backup import clean_interrupted_archives
+
+        clean_interrupted_archives(self.root)
+        cutoff = (
+            time.time() - self.config.retention_days * 86400
+            if self.config.retention_days is not None
+            else None
+        )
         for path in self.root.glob("*/projects/*/project.json"):
-            project = _read(path)
-            if project["createdAt"] < cutoff:
+            owner, project_id = path.parent.parent.parent.name, path.parent.name
+            try:
+                project = _read(path)
+                if (
+                    not isinstance(project, dict)
+                    or project.get("id") != project_id
+                    or not isinstance(project.get("createdAt"), (int, float))
+                    or isinstance(project.get("createdAt"), bool)
+                    or not math.isfinite(project["createdAt"])
+                    or not isinstance(project.get("name"), str)
+                    or not isinstance(project.get("filename"), str)
+                    or not isinstance(project.get("revision"), str)
+                    or not isinstance(project.get("references", []), list)
+                ):
+                    raise ValueError("Invalid project manifest")
+            except (OSError, ValueError, KeyError, TypeError):
+                self.unreadable_projects.add((owner, project_id))
+                self.recovery_issues.append(
+                    {
+                        "owner": owner,
+                        "projectId": project_id,
+                        "kind": "project_manifest_unreadable",
+                    }
+                )
+                continue
+            if cutoff is not None and project["createdAt"] < cutoff:
                 shutil.rmtree(path.parent)
                 continue
             for task_path in path.parent.glob("tasks/*/task.json"):
-                task = _read(task_path)
-                if task["status"] not in TERMINAL:
-                    for scratch in task_path.parent.glob("hierarchy.sqlite*"):
-                        scratch.unlink(missing_ok=True)
-                    task.update(
-                        status="failed",
-                        error={
-                            "kind": "interrupted",
-                            "message": "Serveur redémarré : opération interrompue, "
-                            "à relancer.",
-                        },
+                try:
+                    task = _read(task_path)
+                    if (
+                        not isinstance(task, dict)
+                        or task.get("id") != task_path.parent.name
+                        or task.get("owner") != owner
+                        or task.get("projectId") != project_id
+                        or task.get("operation") not in OPERATIONS
+                        or task.get("status") not in TERMINAL | {"queued", "running"}
+                        or not isinstance(task.get("createdAt"), (int, float))
+                        or isinstance(task.get("createdAt"), bool)
+                        or not math.isfinite(task["createdAt"])
+                        or not isinstance(task.get("revision"), str)
+                        or "nodeId" not in task
+                        or not isinstance(task.get("options", {}), dict)
+                    ):
+                        raise ValueError("Invalid task manifest")
+                except (OSError, ValueError, KeyError, TypeError):
+                    self.recovery_issues.append(
+                        {
+                            "owner": owner,
+                            "projectId": project_id,
+                            "taskId": task_path.parent.name,
+                            "kind": "task_manifest_unreadable",
+                        }
                     )
-                    _write(task_path, task)
-                if task.get("result") is not None:
-                    self._save_result(task_path.parent, task, task["result"])
-                    _write(task_path, task)
+                    continue
+                try:
+                    if task["status"] not in TERMINAL:
+                        for scratch in task_path.parent.glob("hierarchy.sqlite*"):
+                            scratch.unlink(missing_ok=True)
+                        task.update(
+                            status="failed",
+                            error={
+                                "kind": "interrupted",
+                                "message": "Serveur redémarré : opération interrompue, "
+                                "à relancer.",
+                            },
+                        )
+                        _write(task_path, task)
+                    if task.get("result") is not None:
+                        self._save_result(task_path.parent, task, task["result"])
+                        _write(task_path, task)
+                except (OSError, ValueError, TypeError):
+                    self.recovery_issues.append(
+                        {
+                            "owner": owner,
+                            "projectId": project_id,
+                            "taskId": task["id"],
+                            "kind": "task_recovery_failed",
+                        }
+                    )
+                    continue
                 self.tasks[task["id"]] = task
 
     def close(self):
@@ -261,6 +331,10 @@ class TaskStore:
         if not re.fullmatch(r"[a-f0-9]{32}", project_id):
             raise APIError(404, "Classeur introuvable")
         path = self.root / owner / "projects" / project_id
+        if (owner, project_id) in self.unreadable_projects:
+            raise APIError(
+                409, "Métadonnées illisibles ; fichiers conservés pour récupération"
+            )
         if not (path / "project.json").is_file():
             raise APIError(404, "Classeur introuvable")
         return path
@@ -407,8 +481,16 @@ class TaskStore:
 
     def list_projects(self, owner: str) -> list:
         with self.lock:
+            projects = []
+            for path in (self.root / owner).glob("projects/*/project.json"):
+                if (owner, path.parent.name) in self.unreadable_projects:
+                    continue
+                try:
+                    projects.append(_read(path))
+                except (OSError, ValueError):
+                    continue
             return sorted(
-                [_read(p) for p in (self.root / owner).glob("projects/*/project.json")],
+                projects,
                 key=lambda p: p["createdAt"],
                 reverse=True,
             )
@@ -591,6 +673,22 @@ class TaskStore:
             raise APIError(404, "Résultat indisponible")
         return result
 
+    def task_artifact(self, owner: str, task_id: str) -> Path:
+        """Serve a fixed completed report, never a result-supplied pathname."""
+        with self.lock:
+            task = self.get_task(owner, task_id, include_result=False)
+            if (
+                task["operation"] != "export_html"
+                or task["status"] != "succeeded"
+                or task.get("historical")
+            ):
+                raise APIError(404, "Rapport indisponible")
+            path = self.project_path(owner, task["projectId"])
+            artifact = path / "tasks" / task_id / "investigation.html"
+            if not artifact.is_file():
+                raise APIError(404, "Rapport indisponible")
+            return artifact
+
     def get_task(
         self, owner: str, task_id: str, *, include_result: bool = True
     ) -> dict:
@@ -613,20 +711,26 @@ class TaskStore:
         force: bool = False,
         options: dict | None = None,
     ) -> dict:
-        if operation in AI_OPERATIONS | {"import", "build_graph"} and isinstance(
-            budget, dict
-        ):
+        if operation in AI_OPERATIONS | {
+            "import",
+            "build_graph",
+            "export_html",
+        } and isinstance(budget, dict):
             budget = {"seconds": 600, **budget}
         budget = self.budget(budget)
         options = {} if options is None else options
         if not isinstance(options, dict):
             raise APIError(400, "Options invalides")
+        if operation == "export_html":
+            from linexcel.web_report import normalize_options
+
+            options = normalize_options(options)
         allowed = (
             {"language", "captureTaskId", "captureIndex"}
             if operation == "describe_capture"
             else ({"language"} if operation == "document" else set())
         )
-        if set(options) - allowed:
+        if operation != "export_html" and set(options) - allowed:
             raise APIError(
                 400,
                 "Option non autorisée ; fournisseur et modèle "
@@ -687,6 +791,25 @@ class TaskStore:
                 pattern_id = node.get("patternId")
             ai_snapshot = None
             ai_cache_key = None
+            report_snapshot = None
+            if operation == "export_html":
+                from linexcel.web_report import prepare_report
+
+                if any(
+                    t["owner"] == owner
+                    and t["projectId"] == project_id
+                    and t["operation"] == "import"
+                    and t["status"] not in TERMINAL
+                    for t in self.tasks.values()
+                ):
+                    raise APIError(409, "Attendez la fin de l’import avant l’export")
+                report_snapshot = prepare_report(self, owner, project_id, options)
+                raw = json.dumps(
+                    report_snapshot, ensure_ascii=False, allow_nan=False
+                ).encode()
+                if len(raw) > MAX_RESULT_BYTES:
+                    raise APIError(413, "Dossier sélectionné supérieur à 16 Mio")
+                ai_cache_key = hashlib.sha256(raw).hexdigest()
             if operation in AI_OPERATIONS:
                 from linexcel.web_ai import capture_evidence, digest, evidence
 
@@ -791,6 +914,7 @@ class TaskStore:
                             "maxTokens": self.config.ai_max_tokens,
                             "stream": self.config.ai_stream,
                             "reasoningSplit": self.config.ai_reasoning_split,
+                            "reasoningEffort": self.config.ai_reasoning_effort,
                             "thinking": self.config.ai_thinking,
                             "chatTemplateThinking": (
                                 self.config.ai_chat_template_thinking
@@ -874,6 +998,8 @@ class TaskStore:
             _write(task_dir / "task.json", task)
             if ai_snapshot is not None:
                 _write(task_dir / "ai_input.json", ai_snapshot)
+            if report_snapshot is not None:
+                _write(task_dir / "report-input.json", report_snapshot)
             self.executor.submit(self._run, task, task_dir)
             return self.public(task)
 
@@ -1046,6 +1172,7 @@ class TaskStore:
                         "result.json",
                         "request.json",
                         "ai_input.json",
+                        "report-input.json",
                         "index.sqlite",
                         "index.sqlite-journal",
                         "index.sqlite-wal",
@@ -1111,6 +1238,7 @@ class TaskStore:
                     "maxTokens": self.config.ai_max_tokens,
                     "stream": self.config.ai_stream,
                     "reasoningSplit": self.config.ai_reasoning_split,
+                    "reasoningEffort": self.config.ai_reasoning_effort,
                     "thinking": self.config.ai_thinking,
                     "chatTemplateThinking": self.config.ai_chat_template_thinking,
                 }
@@ -1217,16 +1345,40 @@ class TaskStore:
 
 class WebApp:
     def __init__(self, config: WebConfig, resolve_user: Callable | None = None):
+        if config.local_profile and resolve_user is not None:
+            raise ValueError("Local profiles cannot replace host authentication")
         self.config = config
         self.store = TaskStore(config)
         self.resolve_user = resolve_user
+        self.local_profile = None
+        if config.local_profile:
+            from linexcel.web_local import LocalProfile
+
+            try:
+                self.local_profile = LocalProfile(self.store.root)
+            except Exception:
+                self.store.close()
+                raise
         from linexcel.web_data import DataBrowser
 
         self.data_browser = DataBrowser(self.store)
 
     def close(self):
-        self.data_browser.close()
-        self.store.close()
+        closers = [self.data_browser.close]
+        if self.local_profile is not None:
+            # Withdraw our announcement while the workspace lock is still held.
+            closers.append(self.local_profile.close)
+        closers.append(self.store.close)
+        errors = []
+        for close in closers:
+            try:
+                close()
+            except Exception as error:
+                errors.append(error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("Could not completely close the application", errors)
 
     def __call__(self, environ: dict, start_response: Callable):
         headers = [
@@ -1248,6 +1400,11 @@ class WebApp:
                 else:
                     raise APIError(404, "Page introuvable")
             method = environ.get("REQUEST_METHOD", "GET")
+            if self.local_profile is not None:
+                from linexcel.web_local import loopback_request
+
+                if not loopback_request(environ):
+                    raise APIError(403, "Profil local réservé au serveur loopback")
             if self.resolve_user is not None:
                 identity = self.resolve_user(environ)
                 if not isinstance(identity, str) or not identity:
@@ -1257,8 +1414,29 @@ class WebApp:
                 cookies.load(environ.get("HTTP_COOKIE", ""))
                 cookie = cookies.get("linexcel_session")
                 identity = cookie.value if cookie else ""
-                if not re.fullmatch(r"[a-f0-9]{64}", identity):
+                if self.local_profile is not None:
+                    if not re.fullmatch(
+                        r"[a-f0-9]{64}", identity
+                    ) or not secrets.compare_digest(
+                        identity, self.local_profile.identity
+                    ):
+                        identity = ""
+                        if path not in {
+                            "/",
+                            "/api/config",
+                            "/api/session",
+                            "/assets/cytoscape.min.js",
+                        }:
+                            raise APIError(
+                                401,
+                                "Ouvrez un lien d’accès local avec "
+                                "linexcel session-link",
+                            )
+                elif not re.fullmatch(r"[a-f0-9]{64}", identity):
                     identity = secrets.token_hex(32)
+                if identity:
+                    from linexcel.web_local import COOKIE_SECONDS
+
                     secure = (
                         "; Secure" if environ.get("wsgi.url_scheme") == "https" else ""
                     )
@@ -1267,7 +1445,7 @@ class WebApp:
                             "Set-Cookie",
                             f"linexcel_session={identity}; "
                             f"Path={mount or '/'}; HttpOnly; SameSite=Strict; "
-                            f"Max-Age=604800{secure}",
+                            f"Max-Age={COOKIE_SECONDS}{secure}",
                         )
                     )
             owner = hashlib.sha256(identity.encode()).hexdigest()
@@ -1275,6 +1453,7 @@ class WebApp:
                 r"/api/uploads/([a-f0-9]{32})/files/([0-9]+)", path
             )
             raw_upload = method == "PUT" and upload_match is not None
+            raw_restore = method == "POST" and path == "/api/projects/restore"
             if method not in {"GET", "HEAD"}:
                 origin = environ.get("HTTP_ORIGIN")
                 if origin and (
@@ -1283,7 +1462,9 @@ class WebApp:
                 ):
                     raise APIError(403, "Origine refusée")
                 expected_type = (
-                    "application/octet-stream" if raw_upload else "application/json"
+                    "application/octet-stream"
+                    if raw_upload or raw_restore
+                    else "application/json"
                 )
                 if environ.get("CONTENT_TYPE", "").split(";")[0] != expected_type:
                     raise APIError(415, f"Content-Type {expected_type} requis")
@@ -1375,6 +1556,67 @@ class WebApp:
                     Path(__file__).parent / "assets" / "cytoscape.min.js"
                 ).read_bytes()
             elif (
+                backup_match := re.fullmatch(
+                    r"/api/projects/([a-f0-9]{32})/backup", path
+                )
+            ) and method in {"GET", "HEAD"}:
+                from linexcel.web_backup import PrivateDownload, backup
+
+                archive = backup(self.store, owner, backup_match[1])
+                download = PrivateDownload(archive)
+                try:
+                    headers.extend(
+                        [
+                            ("Content-Type", "application/zip"),
+                            ("Content-Length", str(archive.stat().st_size)),
+                            (
+                                "Content-Disposition",
+                                'attachment; filename="workspace.linexcel.zip"',
+                            ),
+                        ]
+                    )
+                    start_response("200 OK", headers)
+                except BaseException:
+                    download.close()
+                    raise
+                if method == "HEAD":
+                    download.close()
+                    return []
+                return download
+            elif (
+                artifact_match := re.fullmatch(
+                    r"/api/tasks/([a-f0-9]{32})/artifact", path
+                )
+            ) and method in {"GET", "HEAD"}:
+                from wsgiref.util import FileWrapper
+
+                artifact = self.store.task_artifact(owner, artifact_match[1])
+                stream = artifact.open("rb")
+                try:
+                    headers.extend(
+                        [
+                            ("Content-Type", "text/html; charset=utf-8"),
+                            ("Content-Length", str(os.fstat(stream.fileno()).st_size)),
+                            (
+                                "Content-Disposition",
+                                'attachment; filename="investigation.html"',
+                            ),
+                            (
+                                "Content-Security-Policy",
+                                "default-src 'none'; img-src data:; "
+                                "style-src 'unsafe-inline'; sandbox",
+                            ),
+                        ]
+                    )
+                    start_response("200 OK", headers)
+                except BaseException:
+                    stream.close()
+                    raise
+                if method == "HEAD":
+                    stream.close()
+                    return []
+                return FileWrapper(stream, 65536)
+            elif (
                 project_export := re.fullmatch(
                     r"/api/projects/([a-f0-9]{32})/export", path
                 )
@@ -1458,6 +1700,17 @@ class WebApp:
                     image_stream.close()
                     return []
                 return FileWrapper(image_stream, 65536)
+            elif raw_restore:
+                from linexcel.web_backup import receive_restore
+
+                try:
+                    length = int(environ.get("CONTENT_LENGTH") or "")
+                except ValueError:
+                    raise APIError(400, "Taille de sauvegarde requise") from None
+                payload = json.dumps(
+                    receive_restore(self.store, owner, environ["wsgi.input"], length),
+                    ensure_ascii=False,
+                ).encode("utf-8")
             elif raw_upload:
                 try:
                     length = int(environ.get("CONTENT_LENGTH") or "")
@@ -1503,14 +1756,34 @@ class WebApp:
                     query = parse_qs(environ.get("QUERY_STRING", ""), max_num_fields=12)
                 except ValueError:
                     raise APIError(400, "Trop de paramètres de recherche") from None
-                payload = json.dumps(
-                    self._route(
+                if path == "/api/session" and method == "POST":
+                    if self.local_profile is None or not self.local_profile.consume(
+                        body.get("token")
+                    ):
+                        raise APIError(
+                            401, "Lien d’accès invalide, expiré ou déjà utilisé"
+                        )
+                    from linexcel.web_local import COOKIE_SECONDS
+
+                    headers.append(
+                        (
+                            "Set-Cookie",
+                            f"linexcel_session={self.local_profile.identity}; "
+                            f"Path={mount or '/'}; HttpOnly; SameSite=Strict; "
+                            f"Max-Age={COOKIE_SECONDS}",
+                        )
+                    )
+                    value = {"authenticated": True}
+                else:
+                    value = self._route(
                         owner,
                         method,
                         path,
                         body,
                         query,
-                    ),
+                    )
+                payload = json.dumps(
+                    value,
                     ensure_ascii=False,
                     allow_nan=False,
                 ).encode("utf-8")
@@ -1563,6 +1836,16 @@ class WebApp:
             from linexcel.web_upload import CHUNK_BYTES
 
             return {
+                "session": {
+                    "localProfile": self.local_profile is not None,
+                    "required": self.local_profile is not None
+                    and owner != self.local_profile.owner,
+                },
+                "recoveryIssues": [
+                    {key: value for key, value in issue.items() if key != "owner"}
+                    for issue in self.store.recovery_issues
+                    if issue["owner"] == owner
+                ],
                 "ai": self.ai_config(),
                 "uploads": {
                     "chunkBytes": CHUNK_BYTES,
@@ -1575,6 +1858,19 @@ class WebApp:
                     "retentionDays": self.config.retention_days,
                 },
             }
+        if parts == ["api", "health"] and method == "GET":
+            from linexcel.web_health import health
+
+            return health(self.store)
+        if parts[:2] == ["api", "recovery"]:
+            if self.local_profile is None or owner != self.local_profile.owner:
+                raise APIError(403, "Récupération réservée au profil local")
+            from linexcel.web_backup import legacy_projects, recover_legacy
+
+            if len(parts) == 2 and method == "GET":
+                return {"projects": legacy_projects(self.store, owner)}
+            if len(parts) == 3 and method == "POST":
+                return recover_legacy(self.store, owner, parts[2])
         if parts == ["api", "uploads"] and method == "POST":
             return self.store.uploads.begin(owner, body)
         if len(parts) >= 3 and parts[:2] == ["api", "uploads"]:
@@ -1711,6 +2007,7 @@ def serve(args) -> int:
         max_upload_mb=args.max_upload_mb,
         max_storage_mb=args.max_storage_mb,
         allow_local_import=not args.no_local_import,
+        local_profile=True,
         ai_enabled=args.ai,
         ai_base_url=args.ai_base_url,
         ai_model=args.ai_model,
@@ -1722,6 +2019,7 @@ def serve(args) -> int:
         ai_reasoning_split=args.ai_reasoning_split,
         ai_thinking=args.ai_thinking,
         ai_chat_template_thinking=getattr(args, "ai_chat_template_thinking", None),
+        ai_reasoning_effort=getattr(args, "ai_reasoning_effort", None),
     )
     try:
         try:
@@ -1737,10 +2035,17 @@ def serve(args) -> int:
             raise
         with server:
             url = f"http://127.0.0.1:{server.server_port}{args.mount_path}/"
-            print(f"Linexcel : {url}", flush=True)
+            from linexcel.web_local import LocalProfile
+
+            access_url = (
+                app.local_profile.publish(url)
+                if isinstance(app.local_profile, LocalProfile)
+                else url
+            )
+            print(f"Linexcel : {access_url}", flush=True)
             if getattr(args, "open_browser", False):
                 threading.Thread(
-                    target=_open_serve_browser, args=(url,), daemon=True
+                    target=_open_serve_browser, args=(access_url,), daemon=True
                 ).start()
             server.serve_forever()
     finally:

@@ -210,13 +210,14 @@ shared formula pattern never implies shared input values or an identical result.
 Unsupported reference syntax is kept separate conservatively. Older saved
 projects can refresh their structure without uploading their sources again.
 
-Supported external references in this first version are single cells holding
-literal inputs, including typed Excel errors, in uploaded reference workbooks.
-Constant defined names and absolute named references respect sheet-local scope.
-Dynamic references, structured
-references, external formulas/ranges, relative or formula-defined names,
-array/data-table results, cycles and formulas needing omitted workbook metadata
-are reported as unsupported. Decomposition includes dependency formula values
+The indexed application resolves source-declared tables, scoped static names,
+supported 3D aggregates and supplied external formula/range dependencies. It
+also handles bounded visibility aggregates, declared array regions, checked
+dynamic references and convergent source-enabled iterative cycles. Each feature
+has explicit limits in the versioned capability registry and the
+[coverage guide](docs/guide/coverage.md#indexed-application-and-batch-analysis).
+Missing source metadata, unresolved prerequisites and nonconvergence remain
+explicitly unsupported. Decomposition includes dependency formula values
 available from the calculation, not evaluated subexpression steps. The native
 engine can still differ from Excel;
 comparison with a saved value is evidence, not proof of Excel compatibility.
@@ -247,6 +248,9 @@ the **Recalculate** button forces a fresh calculation, including volatile formul
 Each displayed result retains its timestamp. Browser reconnection and server
 restart recover the task history; work interrupted by a server restart is
 explicitly marked failed and can be retried.
+Targeted volatile calculations also retain a UTC clock and random seed; the
+Python evaluation API can replay that context. This does not establish Excel
+random-sequence parity.
 
 ### Embed the application
 
@@ -268,9 +272,11 @@ application = create_app(
 Mount this WSGI application in the host server. The host must populate the
 authenticated identity itself; do not trust a caller-supplied identity header.
 A missing identity returns 401. Storage paths and task access are scoped to
-that identity. The standalone server binds only to loopback and scopes files
-to a private browser cookie; it is a local launcher, not an internet-facing
-authentication service. `--mount-path`, `--data-dir`, `--workers`,
+that identity. The standalone server binds only to loopback and uses a durable
+local profile. Its one-use session link connects a browser to that profile;
+`linexcel session-link --data-dir ~/.linexcel` creates another link while the
+server is running. Projects survive browser changes and server restarts.
+`--mount-path`, `--data-dir`, `--workers`,
 `--memory-mb` and `--retention-days` configure the launcher. The default data
 directory is `~/.linexcel`; uploaded files and diagnostic formula text are private.
 
@@ -286,11 +292,24 @@ This first implementation is not a distributed worker pool.
 Tasks have their own duration and memory limits, indeterminate running progress,
 error and cancellation state. Output/storage limits are checked during work
 and before publishing, with temporary output removed afterwards; host filesystem
-quotas remain necessary for a hard disk ceiling. Expired projects are purged on
-server startup, based on their import date. **Delete** removes a project,
-sources and results; running tasks must finish cancellation first. Host storage
-backup, periodic retention enforcement, distributed scheduling and full
-subexpression decomposition remain follow-up work.
+quotas remain necessary for a hard disk ceiling. Standalone projects are retained
+until explicit deletion by default. When `--retention-days` is selected, expired
+projects are purged at startup based on their import date. Embedded applications
+retain their explicit host policy. **Delete** removes a project, sources and
+results; running tasks must finish cancellation first.
+
+Download a workspace archive before migrating or deleting a project. Restoration
+verifies its inventory and hashes, creates a new project and rebuilds the index;
+retained results are historical evidence rather than reusable calculations.
+The archive excludes browser credentials. `linexcel doctor` checks local tools,
+storage and model discovery without generating AI. Distributed scheduling,
+periodic retention enforcement and full subexpression decomposition remain
+outside this local workflow.
+
+Selected findings can be shared as a static offline HTML investigation, with
+source formulas, saved and calculated values, dated documentation, bounded
+relationships and chosen captures. It works with JavaScript disabled. See
+[the report limits](docs/guide/html.md#selected-investigation-from-the-local-application).
 
 ### Command line
 

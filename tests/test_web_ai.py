@@ -441,6 +441,7 @@ def test_web_provider_options_are_explicit_and_two_phase_usage_is_retained(
         "reasoningSplit": True,
         "thinking": "disabled",
         "chatTemplateThinking": chat_template_thinking,
+        "reasoningEffort": "none",
     }
     result = generate(evidence(graph(), "S!B1", []), config, {"language": "en"}, 100000)
     assert len(provider.calls) == 2
@@ -450,10 +451,33 @@ def test_web_provider_options_are_explicit_and_two_phase_usage_is_retained(
         extra["chat_template_kwargs"] = {
             "enable_thinking": chat_template_thinking == "enabled"
         }
-    assert configured[0]["request_kwargs"] == {"extra_body": extra}
+    assert configured[0]["request_kwargs"] == {
+        "extra_body": extra,
+        "reasoning_effort": "none",
+    }
     assert all(call[-1]["max_tokens"] == 32768 for call in provider.calls)
     assert result["usage"]["totalTokens"] == 300
     assert CONFIG["apiKey"] not in json.dumps(result)
+
+
+def test_reasoning_effort_alone_configures_the_actual_provider(monkeypatch):
+    provider = FakeProvider()
+    configured = []
+
+    def factory(**kwargs):
+        configured.append(kwargs)
+        return provider
+
+    monkeypatch.setattr(aidoc, "OpenAICompatProvider", factory)
+    monkeypatch.setattr(aidoc, "_resolve_provider", lambda **kwargs: kwargs["provider"])
+    generate(
+        evidence(graph(), "S!B1", []),
+        {**CONFIG, "reasoningEffort": "none"},
+        {"language": "en"},
+        100000,
+    )
+    assert len(provider.calls) == 2
+    assert configured[0]["request_kwargs"] == {"reasoning_effort": "none"}
 
 
 def test_server_response_policy_changes_invalidate_completed_ai_cache(

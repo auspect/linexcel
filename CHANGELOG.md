@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Retain standalone local projects until explicit deletion by default, with a
+  durable local identity, expiring single-use browser links and explicit legacy
+  workspace recovery. Add `session-link` and `doctor` commands.
+- Download and restore versioned workspace archives with verified inventories,
+  source hashes, fresh project identities and index reconstruction. Retained
+  task results remain historical after restoration.
+- Export selected investigations as static offline HTML, including source
+  formulas, saved/calculated values, dated documentation, bounded relationships
+  and selected captures. Essential content works without JavaScript.
+- Version the JSON export envelope and include implementation fingerprints in
+  repeatable capacity measurements using actually populated workbooks.
+- Exercise installed wheel and sdist distributions through import, targeted
+  calculation and both export formats; extend CI to Python 3.14 and macOS.
+- Add a reproducible synthetic native Excel comparison bundle with Windows
+  execution, typed result receipts and bounded comparisons. Native execution
+  remains a separate validation requirement.
+- Extend indexed calculation with bounded source table/name/3D resolution,
+  supplied external formula closures, visibility aggregates, declared array
+  regions, checked dynamic references and convergent source-enabled iteration.
+  Record replayable UTC/random context and a versioned capability registry
+  distinguishing tested subsets from native Excel certification.
+
+### Fixed
+
+- Require Datasette 0.65.5 or newer; the previously declared 0.65 minimum
+  imports `pkg_resources`, which current setuptools no longer supplies.
+- Drain and stop Datasette's internal writer and close its memory connections
+  when projects leave the cache or the application closes. Keep failed shutdowns
+  retryable and withdraw the local server announcement before releasing the
+  workspace lock, without removing a replacement server's announcement.
+- Isolate unreadable project/task manifests and retain recovery evidence instead
+  of preventing the entire local workspace from starting.
+- Include all calculation helper modules and report styling in result-cache
+  identity, preventing reuse after those implementations change.
+- Add explicit A1 row/column anchor evidence to documentation dossiers and
+  strengthen the v6 review rubric for reference anchors and cache provenance.
+- Fold mobile workspace controls, preserve Data-to-cell return state, keep
+  focal graph labels readable and expose report selection and upload resume.
+  Avoid a Chromium renderer crash during graph bounding-box updates.
+- Refresh visible capture results when import and capture finish between UI
+  polls, preserving successful images without a tab change.
+- Share visibility-function registrations within one calculation and prevent
+  unsupported engine readings from becoming apparent results through aggregate
+  error handling or inline fallbacks.
+- Forward an explicitly selected reasoning effort even when it is the only AI
+  response option, and include it in the server's documentation cache identity.
+
+### Documentation
+
+- Separate pipeline generation from factual and visual acceptance in validation
+  manifests. Document local recovery, archive and investigation-report limits.
+- Mark historical calculation experiments as evidence of their recorded engine
+  versions rather than the current application support contract.
+
 ## [1.16.0] — 2026-10-23
 
 ### Added
