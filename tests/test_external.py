@@ -7,6 +7,7 @@ named, cached, resolved — and that the report says which one it is giving.
 """
 
 import io
+import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from openpyxl.workbook.external_link.external import (
 
 from linexcel import analyze
 from linexcel.analyzer import analyze_workbook
+from linexcel.execution import ExecutionPolicy
 from linexcel.external import (
     find_workbooks,
     macro_files,
@@ -264,6 +266,179 @@ class TestTheCacheLeftInTheFile:
         graph = analyze_workbook(declared, "s.xlsx")["graph"]
         assert node_of(graph, "c:S!B2")["value"] is None
 
+    @pytest.mark.parametrize("targets", [None, ["S!C1"]])
+    @pytest.mark.parametrize("cached", [None, {"B2": 21}])
+    def test_declared_link_uses_the_supplied_file_before_its_cache(
+        self, tmp_path, targets, cached
+    ):
+        (tmp_path / "Ref.xlsx").write_bytes(workbook({"B2": 55}, sheet="Data"))
+        result = analyze(
+            linked_workbook(
+                {
+                    "A1": "='[1]Data'!B2",
+                    "B1": "=A1+1",
+                    "C1": "=IFERROR(B1,99)",
+                },
+                [_link("Ref.xlsx", "Data", cached)],
+            ),
+            refs_dir=tmp_path,
+            targets=targets,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        assert nodes["A1"]["value"] == 55
+        assert nodes["A1"]["valueSource"] == "external"
+        assert nodes["C1"]["value"] == 56
+        assert nodes["A1"]["formula"] == "='[1]Data'!B2"
+
+    @pytest.mark.parametrize("targets", [None, ["S!C1"]])
+    @pytest.mark.parametrize(
+        "guard", ["=IFERROR(B1,99)", '=IFERROR(INDIRECT("B1"),99)']
+    )
+    def test_missing_declared_reading_is_unknown_through_error_guards(
+        self, targets, guard
+    ):
+        result = analyze(
+            linked_workbook(
+                {
+                    "A1": "='[1]Data'!B2",
+                    "B1": "=IFERROR(A1,42)",
+                    "C1": guard,
+                    "D1": "=1+2",
+                },
+                [_link("Ref.xlsx", "Data")],
+            ),
+            targets=targets,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        for cell in ("A1", "B1", "C1"):
+            if cell in nodes:
+                assert nodes[cell]["value"] is None
+                assert nodes[cell].get("valueSource") != "engine"
+                assert nodes[cell]["steps"] is None
+        if targets is None:
+            assert nodes["D1"]["value"] == 3
+
+    def test_declared_cache_has_external_provenance(self):
+        result = analyze(
+            linked_workbook(
+                {"A1": "='[1]Data'!B2"},
+                [_link("Ref.xlsx", "Data", {"B2": 21})],
+            )
+        )
+        node = next(node for node in result.nodes if node.get("addr") == "A1")
+        assert node["value"] == 21
+        assert node["valueSource"] == "external"
+
+    def test_shared_external_formulas_keep_relative_references_and_source(self):
+        data = linked_workbook(
+            {"A1": "='[1]Data'!B2", "A2": "='[1]Data'!B3"},
+            [_link("Ref.xlsx", "Data", {"B2": 21, "B3": 22})],
+        )
+        output = io.BytesIO()
+        with (
+            zipfile.ZipFile(io.BytesIO(data)) as source,
+            zipfile.ZipFile(output, "w") as target,
+        ):
+            for item in source.infolist():
+                payload = source.read(item.filename)
+                if item.filename == "xl/worksheets/sheet1.xml":
+                    payload = payload.replace(
+                        b"<f>'[1]Data'!B2</f>",
+                        b'<f t="shared" si="0" ref="A1:A2">\'[1]Data\'!B2</f>',
+                    ).replace(b"<f>'[1]Data'!B3</f>", b'<f t="shared" si="0"/>')
+                target.writestr(item, payload)
+        result = analyze(output.getvalue())
+        group = next(node for node in result.nodes if node["kind"] == "group")
+        samples = {sample["addr"]: sample for sample in group["samples"]}
+        assert samples["A1"]["value"] == 21
+        assert samples["A2"]["value"] == 22
+        assert group["sourceFormula"] == "='[1]Data'!B2"
+        assert samples["A2"]["formulaProvenance"]["shared"]["translatedFormula"] == (
+            "='[1]Data'!B3"
+        )
+
+    def test_external_preparation_survives_engine_rebuild(self, tmp_path, monkeypatch):
+        import linexcel.engine as engine_module
+
+        original = engine_module._open_workbook
+        opens = []
+
+        class FailedEvaluation:
+            def __init__(self, engine):
+                self.engine = engine
+
+            def __getattr__(self, name):
+                return getattr(self.engine, name)
+
+            def evaluate_all(self):
+                raise ValueError("lost native formulas")
+
+        def open_workbook(data, parallel):
+            engine = original(data, parallel)
+            if "S" not in engine.sheet_names:
+                return engine  # Capability probes use a separate workbook.
+            opens.append(engine)
+            return FailedEvaluation(engine) if len(opens) == 1 else engine
+
+        monkeypatch.setattr(engine_module, "_open_workbook", open_workbook)
+        monkeypatch.setattr(engine_module, "_find_unresolvable", lambda *args: {})
+        monkeypatch.setattr(engine_module, "_formulas_gone", lambda *args: True)
+        (tmp_path / "Ref.xlsx").write_bytes(workbook({"B2": 55}, sheet="Data"))
+        result = analyze(
+            linked_workbook(
+                {"A1": "='[1]Data'!B2"},
+                [_link("Ref.xlsx", "Data", {"B2": 21})],
+            ),
+            refs_dir=tmp_path,
+            execution=ExecutionPolicy(isolated=False),
+        )
+        assert len(opens) == 2
+        assert opens[-1].external_readings
+        node = next(node for node in result.nodes if node.get("addr") == "A1")
+        assert node["value"] == 55
+        assert node["valueSource"] == "external"
+
+    def test_external_trace_failure_cannot_invent_provenance(self, monkeypatch):
+        import linexcel.engine as engine_module
+
+        def incomplete(*args):
+            raise ValueError("trace budget exhausted")
+
+        monkeypatch.setattr(engine_module, "_trace_dependent_cells", incomplete)
+        result = analyze(
+            linked_workbook(
+                {"A1": "='[1]Data'!B2", "B1": "=A1+1"},
+                [_link("Ref.xlsx", "Data", {"B2": 21})],
+            ),
+            execution=ExecutionPolicy(isolated=False),
+        )
+        for node in result.nodes:
+            if node.get("addr") in {"A1", "B1"}:
+                assert node["value"] is None
+                assert node.get("valueSource") not in {"engine", "external"}
+        assert any("provenance could not be fully traced" in w for w in result.warnings)
+
+    def test_dynamic_provenance_is_not_guessed_when_external_inputs_exist(self):
+        result = analyze(
+            linked_workbook(
+                {
+                    "A1": "='[1]Data'!B2",
+                    "B1": '=INDIRECT("D1")',
+                    "C1": '=INDIRECT("A1")',
+                    "D1": "=1+2",
+                },
+                [_link("Ref.xlsx", "Data", {"B2": 21})],
+            )
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        assert nodes["A1"]["value"] == 21
+        assert nodes["A1"]["valueSource"] == "external"
+        for cell in ("B1", "C1"):
+            assert nodes[cell]["value"] is None
+            assert nodes[cell].get("valueSource") != "engine"
+        assert nodes["D1"]["value"] == 3
+        assert nodes["D1"]["valueSource"] == "engine"
+
     def test_a_cache_is_not_counted_as_a_workbook_read(self, declared):
         """It is what Excel saw last time, which may be neither current nor ours."""
         stats = analyze_workbook(declared, "s.xlsx")["graph"]["meta"]["stats"]
@@ -358,12 +533,6 @@ class TestResolvingFromAFolder:
         )
         nodes = {node.get("addr"): node for node in result.nodes}
         for cell, value in {"A1": 22, "A2": 31, "B1": 53, "B2": 106}.items():
-            if targets is None and cell in {"B1", "B2"}:
-                # The global engine conservatively quarantines uncached
-                # dependents. Refusal is preferable to a partial fresh result.
-                assert nodes[cell]["value"] is None
-                assert nodes[cell].get("valueSource") != "engine"
-                continue
             assert nodes[cell]["value"] == value
             # Batch reads the external file's stored values. That is not the
             # indexed engine's fresh evaluation of the external formula closure.
@@ -417,7 +586,11 @@ class TestResolvingFromAFolder:
         }.items():
             assert nodes[cell]["value"] == expected
 
-    def test_external_error_and_same_spelling_text_remain_distinct(self, tmp_path):
+    @pytest.mark.parametrize("declared", [False, True])
+    @pytest.mark.parametrize("targets", [None, ["S!A1", "S!A2", "S!A3", "S!A4"]])
+    def test_external_error_and_same_spelling_text_remain_distinct(
+        self, tmp_path, declared, targets
+    ):
         book = Workbook()
         book.active.title = "Data"
         book.active["A1"] = "#N/A"
@@ -425,22 +598,51 @@ class TestResolvingFromAFolder:
         book.active["A2"] = "#N/A"
         book.active["A3"] = 10
         book.save(tmp_path / "Ref.xlsx")
+        name = "1" if declared else "Ref.xlsx"
+        cells = {
+            "A1": f"=ISTEXT('[{name}]Data'!A1)",
+            "A2": f"=ISERROR('[{name}]Data'!A1)",
+            "A3": f"=ISERROR('[{name}]Data'!$A$2)",
+            "A4": f"=SUM('[{name}]Data'!A2:A3)",
+        }
+        data = (
+            linked_workbook(cells, [_link("Ref.xlsx", "Data")])
+            if declared
+            else workbook(cells)
+        )
         result = analyze(
-            workbook(
-                {
-                    "A1": "=ISTEXT('[Ref.xlsx]Data'!A1)",
-                    "A2": "=ISERROR('[Ref.xlsx]Data'!A1)",
-                    "A3": "=ISERROR('[Ref.xlsx]Data'!$A$2)",
-                    "A4": "=SUM('[Ref.xlsx]Data'!A2:A3)",
-                }
-            ),
+            data,
             refs_dir=tmp_path,
+            targets=targets,
         )
         nodes = {node.get("addr"): node for node in result.nodes}
         assert nodes["A1"]["value"] is True
         assert nodes["A2"]["value"] is False
         assert nodes["A3"]["value"] is True
         assert nodes["A4"]["value"] == "#N/A"
+
+    def test_target_does_not_read_an_unrelated_named_file(self, tmp_path, monkeypatch):
+        import linexcel.resolver as resolver_module
+
+        (tmp_path / "Ref.xlsx").write_bytes(workbook({"B2": 55}, sheet="Data"))
+        reads = []
+        original = resolver_module.read_workbook_values
+
+        def read(path, **kwargs):
+            reads.append(path)
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(resolver_module, "read_workbook_values", read)
+        result = analyze(
+            workbook({"A1": "='[Ref.xlsx]Data'!B2", "D1": "=1+2"}),
+            refs_dir=tmp_path,
+            targets=["S!D1"],
+            execution=ExecutionPolicy(isolated=False),
+        )
+        assert reads == []
+        assert next(node for node in result.nodes if node.get("addr") == "D1")[
+            "value"
+        ] == 3
 
     @pytest.mark.parametrize("range_", ["A1:A2", "A1:A4097"])
     @pytest.mark.parametrize("targets", [None, ["S!C1"]])

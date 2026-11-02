@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refresh the locked Python toolchain and optional dependencies, including
   Pillow 13, Playwright 1.64.1 and MkDocs Material 9.8.0.
+- Update the locked Formualizer engine to 0.13.0 while retaining linexcel's
+  bounded external readings and their provenance. Supplied reference files
+  take precedence over link caches; unavailable inputs and their dependents
+  retain file caches rather than claiming error-guard fallback results.
+  Dynamic reference provenance remains unverified when external inputs are
+  present; targeted runs do not read additional named reference files to
+  compensate for an incomplete dynamic closure.
+- Keep chartsheet omission diagnostics accurate for both older readers that
+  reject chartsheets and newer readers that accept them.
 
 ## [1.17.0] — 2026-11-02
 

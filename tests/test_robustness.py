@@ -12,10 +12,12 @@ subprocess, and reports timings; this is the part that belongs in CI.
 
 import io
 import zipfile
+from importlib.metadata import version
 
 import formualizer as fz
 import pytest
 from openpyxl import Workbook
+from packaging.version import Version
 
 from linexcel import analyze
 from linexcel.engine import MAX_AST_DEPTH, ast_depth, is_too_deep
@@ -502,17 +504,21 @@ def workbook_with_chartsheet(cells: dict[str, object]) -> bytes:
 class TestAWorkbookWithAChartsheet:
     """One chartsheet used to cost the whole workbook its analysis.
 
-    formualizer's reader refuses the package outright — ``Expecting a
-    worksheet, got chartsheet`` — however many real worksheets sit beside it.
-    The chartsheet holds no cells, so it is cut from ``workbook.xml`` before
-    the engine sees the file, and named in a warning.
+    Older formualizer readers refused the package outright. Newer readers
+    accept it, but the chartsheet still holds no worksheet cells, so linexcel
+    omits it from the engine copy and names it in a warning.
     """
 
-    def test_the_engine_would_refuse_the_file(self):
+    def test_native_reader_chartsheet_contract(self):
         import formualizer as fz
 
-        with pytest.raises(OSError, match="chartsheet"):
-            fz.Workbook.from_bytes(workbook_with_chartsheet({"A1": 1}))
+        data = workbook_with_chartsheet({"A1": 1})
+        if Version(version("formualizer")) < Version("0.12.0"):
+            with pytest.raises(OSError, match="chartsheet"):
+                fz.Workbook.from_bytes(data)
+        else:
+            engine = fz.Workbook.from_bytes(data)
+            assert engine.get_value("S", 1, 1) == 1
 
     def test_the_analysis_skips_the_chartsheet_and_carries_on(self):
         result = analyze(

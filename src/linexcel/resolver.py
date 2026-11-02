@@ -22,7 +22,7 @@ from linexcel.decompose import (
     _scratch_eval,
     _scratch_marker,
 )
-from linexcel.engine import is_too_deep
+from linexcel.engine import _iter_formulas_xml, is_too_deep
 from linexcel.external import (
     MAX_EXTERNAL_CELLS,
     ExternalBook,
@@ -212,6 +212,12 @@ class _ValueResolver:
         self._external_sheet_names = {sheet.casefold() for sheet in engine_sheets}
         self._external_exprs: set[tuple[str, str]] = set()
         self._external_cell_count = 0
+        prepared = getattr(engine, "external_readings", None)
+        if prepared is not None:
+            self._named_books = prepared["books"]
+            self._external_ranges = prepared["ranges"]
+            self._external_sheet_names = prepared["sheets"]
+            self._external_cell_count = prepared["cells"]
 
     # -- public API --------------------------------------------------------
     def value(
@@ -592,7 +598,12 @@ class _ValueResolver:
         except Exception:
             raw = None
         if raw is not None and not _is_uncomputed(raw):
-            return raw, "engine"
+            source = (
+                "external"
+                if (sheet, row, col) in getattr(self.engine, "external_cells", set())
+                else "engine"
+            )
+            return raw, source
         if formula is None:
             formula = self._formula_at(sheet, row, col)
         if not formula:
@@ -920,6 +931,80 @@ def _bound_names(ast_dict: dict) -> set[str]:
 
     walk(ast_dict)
     return bound
+
+
+def prepare_external_formulas(
+    engine,
+    data,
+    cached,
+    warnings,
+    externals,
+    refs_files,
+    reachable=None,
+    *,
+    max_dense_cells=None,
+):
+    """Resolve external inputs before native cached links can supply results.
+
+    Preserve source formulas for lineage; only the private native formulas use
+    typed scratch references. Missing readings are source limitations, so an
+    IFERROR result cannot certify a calculation with an unavailable input.
+    """
+    resolver = _ValueResolver(
+        engine,
+        set(engine.sheet_names),
+        cached,
+        warnings,
+        _Budget(0),
+        False,
+        externals=externals,
+        refs_files=refs_files,
+        max_dense_cells=max_dense_cells,
+    )
+    engine.external_cells = set()
+    # Native traces cannot prove dynamic addresses independent of omitted
+    # inputs. Do not read files outside the targeted closure to fill that gap.
+    dynamic_target = reachable is not None and any(
+        (sheet, row, col) in reachable
+        and re.search(
+            r"\b(?:INDIRECT|OFFSET)\s*\(",
+            re.sub(r'"(?:[^"]|"")*"', '""', formula),
+            re.IGNORECASE,
+        )
+        for sheet, row, col, formula in _iter_formulas_xml(data)
+    )
+    for sheet, row, col, source in _iter_formulas_xml(data):
+        cell = sheet, row, col
+        if not parse_external_refs(source):
+            continue
+        if reachable is not None and cell not in reachable:
+            if dynamic_target:
+                engine.source_limitations.setdefault(
+                    cell, "External reading outside the target trace is unverified."
+                )
+            continue
+        # The importer translates shared-formula slaves. The XML iterator's
+        # master text is only a candidate filter, never a slave's formula.
+        formula = engine.get_formula(sheet, row, col)
+        if not formula:
+            continue  # Complexity quarantine already removed this formula.
+        try:
+            rewritten = resolver.substitute_externals(
+                engine.qualify_formula(formula, sheet)
+            )
+        except ValueError as exc:
+            engine.source_limitations.setdefault(cell, str(exc))
+            rewritten = "=#N/A"
+        else:
+            engine.external_cells.add(cell)
+        engine.set_formula(sheet, row, col, rewritten)
+        engine.originals[cell] = formula
+    engine.external_readings = {
+        "books": resolver._named_books,
+        "ranges": resolver._external_ranges,
+        "sheets": resolver._external_sheet_names,
+        "cells": resolver._external_cell_count,
+    }
 
 
 def _external_warning(
