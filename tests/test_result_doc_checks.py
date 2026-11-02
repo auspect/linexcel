@@ -6,6 +6,8 @@ import pytest
 
 from linexcel.result import LineageResult
 
+pytestmark = pytest.mark.ai
+
 
 @pytest.mark.parametrize("overview", [False, True])
 def test_result_exports_qualified_prose_and_preserves_source(overview):

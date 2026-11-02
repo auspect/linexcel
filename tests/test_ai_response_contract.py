@@ -17,6 +17,8 @@ from linexcel.aidoc import (
     document_workbook,
 )
 
+pytestmark = pytest.mark.ai
+
 
 @pytest.mark.parametrize("vision", [False, True])
 @pytest.mark.parametrize(

@@ -46,6 +46,7 @@ def test_reference_anchor_facts_do_not_classify_names_or_string_literals():
     assert facts["reference_anchors"] == []
 
 
+@pytest.mark.ai
 def test_editorial_rubric_versions_anchor_and_cache_evidence_in_every_language():
     from pathlib import Path
 
@@ -53,7 +54,7 @@ def test_editorial_rubric_versions_anchor_and_cache_evidence_in_every_language()
 
     root = Path(__file__).parents[1] / "src/linexcel/assets/prompts"
     for prompt in root.glob("*/review.md"):
-        content = prompt.read_text()
+        content = prompt.read_text(encoding="utf-8")
         assert REVIEW_VERSION in content
         assert "formula_facts.reference_anchors" in content
         assert "linexcel never writes" in content

@@ -604,6 +604,7 @@ class TestPackageApi:
         assert "workbookDoc" in html
         assert "A test overview." in html
 
+    @pytest.mark.ai
     def test_build_workbook_dossier(self, lineage_excel):
         from linexcel.aidoc import build_workbook_dossier
 
@@ -689,6 +690,7 @@ class TestPackageApi:
         assert embedded
         assert json.loads(embedded.group(1))["meta"]["stats"]["totalFormulas"] == 103
 
+    @pytest.mark.ai
     def test_document_without_provider_raises_aidocerror(
         self, lineage_excel, monkeypatch
     ):
@@ -715,10 +717,15 @@ class TestLanguages:
     """
 
     def test_registries_cover_every_language(self):
-        from linexcel.aidoc import _SYSTEM, _VISION_SYSTEM, _WORKBOOK_SYSTEM
         from linexcel.i18n import LANGUAGES, UI_STRINGS
 
         assert set(UI_STRINGS) == set(LANGUAGES)
+
+    @pytest.mark.ai
+    def test_prompt_registries_cover_every_language(self):
+        from linexcel.aidoc import _SYSTEM, _VISION_SYSTEM, _WORKBOOK_SYSTEM
+        from linexcel.i18n import LANGUAGES
+
         assert set(_SYSTEM) == set(LANGUAGES)
         assert set(_WORKBOOK_SYSTEM) == set(LANGUAGES)
         assert set(_VISION_SYSTEM) == set(LANGUAGES)
@@ -774,16 +781,21 @@ class TestLanguages:
         assert UI_STRINGS["en"]["sheets_tab"] in html
         assert UI_STRINGS["zh"]["placeholder_title"] not in html
 
-    def test_unsupported_language_is_rejected_by_both_entry_points(self, lineage_excel):
+    def test_unsupported_language_is_rejected_by_viewer(self, lineage_excel):
         result = analyze(lineage_excel)
         with pytest.raises(ValueError, match="Unsupported language"):
             result.to_html(language="klingon")
+
+    @pytest.mark.ai
+    def test_unsupported_language_is_rejected_by_documentation(self, lineage_excel):
+        result = analyze(lineage_excel)
         with pytest.raises(ValueError, match="Unsupported language"):
             result.document_workbook(
                 provider=lambda s, u, *, temperature=0.2: "x", language="klingon"
             )
 
 
+@pytest.mark.ai
 class TestAiProviders:
     """Provider resolution and failure handling — no network call involved."""
 
@@ -987,6 +999,7 @@ class TestAiProviders:
             result.document(ids, provider=broken, max_workers=1)
 
 
+@pytest.mark.ai
 class TestTokenUsage:
     """Token accounting: real counts when the provider reports them, else
     an estimate that is flagged as such."""
@@ -1387,6 +1400,7 @@ class TestHostileCellText:
         assert "<b>bold</b>" not in hostile_html
 
 
+@pytest.mark.ai
 class TestTokenBudget:
     """A ceiling on total spend, so a workbook cannot quietly run up a bill."""
 
@@ -1487,6 +1501,7 @@ class TestTokenBudget:
 class TestWorkbookPresentationContext:
     """The overview dossier carries what the sheet screenshots show."""
 
+    @pytest.mark.ai
     def test_context_reaches_the_dossier(self, lineage_excel):
         from linexcel.aidoc import build_workbook_dossier
 
@@ -1496,6 +1511,7 @@ class TestWorkbookPresentationContext:
         assert sales["preview"], "the first rows a reader sees must be included"
         assert sales["formula_cells"] == 100, "lineage facts must survive the merge"
 
+    @pytest.mark.ai
     def test_comments_and_layout_reach_the_dossier(self, lineage_excel):
         import json
 
@@ -1508,6 +1524,7 @@ class TestWorkbookPresentationContext:
         assert comments, "cell comments are context no formula can express"
         assert "freeze_panes" in blob or "merged_ranges" in blob
 
+    @pytest.mark.ai
     def test_empty_padding_is_not_sent(self, lineage_excel):
         """A preview is a fixed rectangle; its blank cells cost tokens for nothing."""
         from linexcel.aidoc import build_workbook_dossier
@@ -1518,21 +1535,21 @@ class TestWorkbookPresentationContext:
             for row in sheet.get("preview", []):
                 assert row["values"][-1] not in (None, "")
 
+    @pytest.mark.ai
     def test_without_context_the_dossier_is_unchanged(self, lineage_excel):
         from linexcel.aidoc import build_workbook_dossier
 
         dossier = build_workbook_dossier(analyze(lineage_excel).graph)
         assert all("preview" not in sheet for sheet in dossier["sheets"])
 
-    def test_a_date_cell_previews_as_the_day_it_holds(self):
+    @pytest.fixture
+    def dated_result(self):
         """openpyxl reads a date back as a midnight datetime, and
         "2026-01-03T00:00:00" is a timestamp nobody typed into the sheet."""
         import datetime
         import io as _io
 
         from openpyxl import Workbook
-
-        from linexcel.aidoc import build_workbook_dossier
 
         workbook = Workbook()
         workbook.active["A1"] = datetime.date(2026, 1, 3)
@@ -1544,20 +1561,30 @@ class TestWorkbookPresentationContext:
         buffer = _io.BytesIO()
         workbook.save(buffer)
 
-        result = analyze(buffer.getvalue(), filename="d.xlsx")
-        sheet = result.workbook_context["sheets"][0]
+        return analyze(buffer.getvalue(), filename="d.xlsx")
+
+    def test_a_date_cell_previews_as_the_day_it_holds(self, dated_result):
+        sheet = dated_result.workbook_context["sheets"][0]
         assert [row["values"][0] for row in sheet["preview"]] == [
             "2026-01-03",
             "2026-01-03 14:30:00",
             "2026-01-03 00:00:00",
         ]
-        dossier = build_workbook_dossier(result.graph, context=result.workbook_context)
+
+    @pytest.mark.ai
+    def test_date_previews_reach_the_dossier(self, dated_result):
+        from linexcel.aidoc import build_workbook_dossier
+
+        dossier = build_workbook_dossier(
+            dated_result.graph, context=dated_result.workbook_context
+        )
         assert [row["values"][0] for row in dossier["sheets"][0]["preview"]] == [
             "2026-01-03",
             "2026-01-03 14:30:00",
             "2026-01-03 00:00:00",
         ]
 
+    @pytest.mark.ai
     def test_document_workbook_sends_the_context_by_default(self, lineage_excel):
         seen: list[str] = []
 
@@ -1568,6 +1595,7 @@ class TestWorkbookPresentationContext:
         analyze(lineage_excel).document_workbook(provider=provider)
         assert "preview" in seen[0]
 
+    @pytest.mark.ai
     def test_include_context_false_keeps_cell_contents_local(self, lineage_excel):
         seen: list[str] = []
 
@@ -1580,6 +1608,7 @@ class TestWorkbookPresentationContext:
         )
         assert "preview" not in seen[0]
 
+    @pytest.mark.ai
     def test_a_result_without_workbook_bytes_still_documents(self, lineage_excel):
         """Context needs the file; a result rebuilt from a graph has none.
 
@@ -1595,6 +1624,7 @@ class TestWorkbookPresentationContext:
         assert overview.endswith("\n\noverview")
         assert overview.startswith("> AI evidence review")
 
+    @pytest.mark.ai
     def test_an_oversized_dossier_sheds_the_preview_last(self):
         """Shrinking must cost the least useful part first, not the newest one."""
         from linexcel import aidoc
@@ -2143,6 +2173,7 @@ class _VisionStub:
         )
 
 
+@pytest.mark.ai
 class TestScreenshotDescriptions:
     """The one thing linexcel documents from a picture rather than the graph.
 
@@ -2851,6 +2882,7 @@ class TestScanCeiling:
         assert _chunk_rows(SCAN_CHUNK_CELLS * 2) == 1
 
 
+@pytest.mark.ai
 class TestPromptsShipAsFiles:
     """The prompts are files now, and a build that loses them must say so."""
 

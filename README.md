@@ -505,6 +505,20 @@ comments, frozen panes, merged ranges and hidden columns.
 
 ## Contributing
 
+`uv run pytest` runs the required tests without AI dependencies. AI documentation,
+provider and vision tests carry the `ai` marker and are excluded by default,
+including from required CI and commit hooks. To run them explicitly:
+
+```Shell
+uv run --extra ai --extra screenshots pytest -m ai
+```
+
+The separate **optional AI tests** GitHub Actions workflow is manual only and
+does not block CI or publishing. It uses synthetic responses to check the code;
+it does not evaluate a model's accuracy. Real model experiments remain optional
+local runs. Deterministic source, calculation, rendering and no-AI safety tests
+remain required.
+
 Run the [local acceptance workflow](docs/manual_validation.md) before delivering
 changes: both fixtures, all report languages and sheet captures, followed
 by inspection of dashboard tabs and sampled nodes. AI documentation and image

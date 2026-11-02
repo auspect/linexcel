@@ -1,0 +1,30 @@
+name: optional AI tests
+
+# Opt-in only; neither required CI nor publishing depends on this workflow.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          prune-cache: true
+          python-version: "3.13"
+      - run: uv sync --locked --extra ai --extra screenshots
+      - run: uv run --no-sync playwright install --with-deps chromium
+      # Synthetic responses check the code; no model or credentials are used.
+      - run: uv run --no-sync pytest -v -m ai --junitxml=ai-junit.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: optional-ai-test-results
+          path: ai-junit.xml
+          if-no-files-found: warn

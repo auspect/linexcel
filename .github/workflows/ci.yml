@@ -62,10 +62,11 @@ jobs:
           enable-cache: true
           prune-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --locked --extra ai
+      # Required checks exercise the deterministic application without the AI SDK.
+      - run: uv sync --locked
       # No path argument: testpaths (tests/ + src/ doctests) applies.
       - run: >
-          uv run --extra ai pytest -v
+          uv run pytest -v -m "not ai"
           --cov=src/linexcel
           --cov-report=term-missing
           --cov-report=xml
@@ -90,8 +91,7 @@ jobs:
       - run: uv run playwright install --with-deps chromium
       - run: >
           uv run pytest tests/test_viewer*.py tests/test_app*.py
-          tests/test_ui_navigation_polish.py tests/test_formula_proof_browser.py
-          tests/test_vision_disclosure.py -v
+          tests/test_ui_navigation_polish.py -v -m "not ai"
 
   build:
     runs-on: ubuntu-latest

@@ -4,6 +4,13 @@ Run the real pipeline on the current working tree before delivering changes to
 analysis, evaluation, documentation, screenshots or the viewer. Automated tests
 complement this run; they do not replace it.
 
+Required CI and `uv run pytest` exclude tests marked `ai` and do not install the
+AI SDK. Optional provider, documentation and vision regressions can be run with
+`uv run --extra ai --extra screenshots pytest -m ai`, or through the manual
+**optional AI tests** workflow. These tests use synthetic responses and do not
+certify any model's output. Real-model validation below is exploratory and
+requires an explicit local selection; it never blocks required CI or releases.
+
 ```powershell
 uv run --extra screenshots validate_manual.py --workbook both --no-ai
 ```

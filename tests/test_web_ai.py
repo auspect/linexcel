@@ -14,6 +14,8 @@ from linexcel import aidoc
 from linexcel.web import APIError, TaskStore, WebConfig
 from linexcel.web_ai import WebAIError, capture_evidence, evidence, generate
 
+pytestmark = pytest.mark.ai
+
 PNG = image_bytes()
 CONFIG = {
     "baseUrl": "http://private.test/v1",

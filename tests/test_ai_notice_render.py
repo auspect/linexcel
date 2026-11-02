@@ -10,6 +10,8 @@ import pytest
 
 from linexcel.aidoc import _qualify_documentation
 
+pytestmark = pytest.mark.ai
+
 
 class _Rendered(HTMLParser):
     def __init__(self):

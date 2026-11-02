@@ -7,6 +7,8 @@ import pytest
 
 from linexcel import aidoc
 
+pytestmark = pytest.mark.ai
+
 
 def group(**overrides):
     return {

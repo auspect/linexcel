@@ -13,6 +13,8 @@ from vision_helpers import image_bytes
 from linexcel.viewer import render_html
 from linexcel.vision_evidence import prepare_image, render_observations
 
+pytestmark = pytest.mark.ai
+
 LITERAL = "O'Brien & B (x) *literal* `code` <script> | &#x27; &amp; 90+"
 app = navigation_tests.app
 browser = navigation_tests.browser

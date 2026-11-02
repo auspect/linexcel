@@ -77,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   versions rather than the current application support contract.
 ### Changed
 
+- Exclude optional AI documentation, provider and vision tests from default
+  pytest, required CI and commit hooks. Keep them available through `-m ai` and
+  a separate manual workflow, without model credentials or release dependencies.
+  Required tests run without the AI SDK and retain deterministic workbook,
+  rendering, provenance and no-AI safety coverage.
 - Replace the synthetic showcase workbook in `validation_workbooks.py` with a
   realistic four-sheet B2B commercial and margin review
   (`fy26_commercial_review.xlsx`: `Summary`, `Sales`, `Catalog`, `Assumptions`),

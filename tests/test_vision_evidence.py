@@ -18,6 +18,8 @@ from linexcel.vision_evidence import (
     prepare_image,
 )
 
+pytestmark = pytest.mark.ai
+
 
 class NativeProvider:
     def __init__(self):

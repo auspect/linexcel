@@ -427,6 +427,7 @@ def test_legacy_recovery_is_an_explicit_copy_into_local_identity(tmp_path):
         app.close()
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize(
     "listing,expected",
     [

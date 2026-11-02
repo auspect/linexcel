@@ -26,6 +26,8 @@ from linexcel.doc_evidence import formula_evidence
 from linexcel.i18n import LANGUAGES
 from linexcel.web_ai import evidence
 
+pytestmark = pytest.mark.ai
+
 
 def response(statement, pointer, value, classification="fact"):
     return (

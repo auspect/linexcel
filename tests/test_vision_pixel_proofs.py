@@ -16,6 +16,8 @@ from linexcel.vision_evidence import (
     prepare_image,
 )
 
+pytestmark = pytest.mark.ai
+
 
 def png(source):
     buffer = io.BytesIO()

@@ -10,6 +10,8 @@ from linexcel.aidoc import AiDocError, TokenUsage, document_nodes, document_work
 from linexcel.doc_evidence import formula_evidence
 from linexcel.documentation_proof import render_formula_tokens
 
+pytestmark = pytest.mark.ai
+
 GRAPH = {
     "nodes": [
         {
