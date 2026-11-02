@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-11-02
+
 ### Added
 
 - Retain standalone local projects until explicit deletion by default, with a
@@ -83,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifests. Document local recovery, archive and investigation-report limits.
 - Mark historical calculation experiments as evidence of their recorded engine
   versions rather than the current application support contract.
+
 ### Changed
 
 - Exclude optional AI documentation, provider and vision tests from default
