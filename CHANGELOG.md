@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process-group resident memory from the parent, terminate over-budget workers
   and their descendants, and report the sampled limit and observed peak honestly.
   Keep Linux address-space caps and Windows Job limits in place.
+- Compare stable report content separately from memory telemetry in platform
+  tests, isolate mocked oracle commands from system diagnostics, and wait for
+  completed graph-sheet selection before checking browser fallback requests.
 - Preserve native Excel error types independently of localized display text in
   the Windows oracle; repair generated table/external-link inputs and declare
   modern formula assignments explicitly.

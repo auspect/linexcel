@@ -8,6 +8,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openpyxl import load_workbook
@@ -265,15 +266,31 @@ def test_untyped_native_errors_are_incomplete_not_calculation_differences(
     monkeypatch.setattr(oracle, "validate_receipt", lambda *_: receipt)
 
     def calculate(argv, **kwargs):
-        request = json.loads(Path(argv[-1]).read_text())
+        request = json.loads(Path(argv[-1]).read_text(encoding="utf-8"))
         oracle.write_json(
             Path(request["result"]),
             {"calculated": True, "value": oracle.typed("#DIV/0!", "error")},
         )
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr(oracle.subprocess, "run", calculate)
-    report = json.loads(oracle.compare(tmp_path, path, 5).read_text())
+    # platform.platform() also uses subprocess on macOS. Replace only the
+    # oracle's command dependency, leaving the standard library's module intact.
+    monkeypatch.setattr(
+        oracle,
+        "subprocess",
+        SimpleNamespace(run=calculate, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    # Exercise the macOS-style platform probe on every OS: it must still reach
+    # the real subprocess module instead of the oracle's calculation stub.
+    monkeypatch.setattr(
+        oracle.platform,
+        "platform",
+        lambda: subprocess.check_output(
+            [sys.executable, "-c", "print('native-platform-probe')"], text=True
+        ).strip(),
+    )
+    report = json.loads(oracle.compare(tmp_path, path, 5).read_text(encoding="utf-8"))
+    assert report["platform"] == "native-platform-probe"
     assert report["counts"] == {"oracle_uncomparable": 2}
     assert report["status"] == "differences_or_incomplete"
 

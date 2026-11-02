@@ -349,6 +349,11 @@ def test_data_only_sheet_prefers_input_before_local_name(app, has_input):
     page.route("**/api/projects/p/neighborhood?*", named_neighborhood)
     page.locator("#tab-graph").click()
     page.locator("#graph-sheet").select_option("First")
+    # The heading can already show A1 from the initial graph. Wait for the
+    # selection operation to finish before checking its fallback requests.
+    playwright.expect(page.locator("#graph-sheet-status")).to_contain_text(
+        "First · " + ("A1" if has_input else name["id"])
+    )
     playwright.expect(
         page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("First · " + ("A1" if has_input else "_xlnm._FilterDatabase"))

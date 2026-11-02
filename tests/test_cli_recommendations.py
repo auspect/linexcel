@@ -178,4 +178,7 @@ class TestRichSummary:
         b["meta"]["execution"].pop("elapsedSeconds")
         a["meta"]["execution"].pop("phaseMetrics")
         b["meta"]["execution"].pop("phaseMetrics")
+        # Resident-memory samples vary between executions, like their timings.
+        a["meta"]["execution"].pop("memoryPeakMiB", None)
+        b["meta"]["execution"].pop("memoryPeakMiB", None)
         assert a == b
