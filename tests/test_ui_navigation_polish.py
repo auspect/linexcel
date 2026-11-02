@@ -4,6 +4,7 @@ import pytest
 import test_app_captures_browser as capture_tests
 import test_app_viewer_regressions as serve_tests
 import test_viewer_browser as export_tests
+from graph_test_helpers import open_workspace_menu
 
 from linexcel import viewer
 
@@ -36,7 +37,10 @@ def test_serve_compact_primary_commands_and_one_row_depth(app):
     )
     assert not bounds["overflow"]
     assert page.locator("#graph-sheet").is_visible()
-    assert page.locator("#graph-reader-toggle").is_visible()
+    if page.viewport_size["width"] <= 650:
+        assert page.locator("#graph-read-cell").is_visible()
+    else:
+        assert page.locator("#graph-reader-toggle").is_visible()
     assert page.locator("#graph-reset").is_hidden()
     page.locator("#graph-options > summary").focus()
     page.keyboard.press("Enter")
@@ -75,6 +79,7 @@ def test_serve_workbook_and_macro_guidance_are_distinct(app):
             },
         ),
     )
+    open_workspace_menu(page)
     page.locator('[data-project="p"]').click()
     page.locator("#project-title").get_by_text("Static VBA", exact=True).wait_for()
     assert "procédure" in page.locator("#node-detail").inner_text()
@@ -188,6 +193,7 @@ def test_macro_options_keep_static_scope_in_both_languages(app, suffix, language
             },
         ),
     )
+    open_workspace_menu(page)
     page.locator('[data-project="p"]').click()
     page.locator("#project-title").get_by_text(
         f"Static.{suffix}", exact=True
@@ -254,6 +260,7 @@ def test_macro_graph_dynamic_guidance_covers_literal_empty_and_hierarchy(app, la
         "**/api/projects/p/neighborhood?*",
         lambda route: fulfill(route, {"nodes": [literal], "edges": []}),
     )
+    open_workspace_menu(page)
     page.locator('[data-project="p"]').click()
     page.locator("#project-title").get_by_text("Literal VBA", exact=True).wait_for()
     page.locator("#ui-language").select_option(language)
@@ -280,6 +287,7 @@ def test_macro_graph_dynamic_guidance_covers_literal_empty_and_hierarchy(app, la
     assert "plage" not in text and "range" not in text
     assert "cell" not in page.locator("#graph-build-status").inner_text().lower()
     graph["nodes"] = []
+    open_workspace_menu(page)
     page.locator('[data-project="p"]').click()
     page.wait_for_function(
         "text => document.querySelector('#graph-notice').textContent === text",

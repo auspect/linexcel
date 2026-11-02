@@ -1,5 +1,14 @@
 # Specialized factual review
 
+The current rubric is `linexcel-factual-review-v6`. Its dossier includes exact
+A1 reference anchors: row and column dollar signs are classified separately
+for each endpoint. A resolved coordinate or displayed value does not establish
+an absolute reference. Review instructions also distinguish an input literal
+from an engine reading and prohibit describing a source cache as written by
+linexcel. Claim pointers must identify the exact supplied evidence field.
+These additions strengthen the review contract; they are not proof that every
+generated sentence follows it. Historical v5 runs remain evidence of v5 only.
+
 ## Draft and actual specialized review
 
 Text documentation now makes two model requests by default: a draft, then one
@@ -241,8 +250,9 @@ Generation coverage passed separately. Preserve that report unchanged as the
 before result; review new responses independently, without carrying old verdicts
 over to changed text.
 
-1. Run the required full acceptance from [manual validation](manual_validation.md).
-   Compare Sales in French and English (all four formula/group cards in each
+1. When AI validation is selected, follow
+   [manual validation](manual_validation.md) with documentation and vision enabled.
+   Compare Sales in French and English (every formula/group card in each
    language), Stress in English, all three overviews and all screenshot
    descriptions. Reuse Stress sampling seed `20260912` and the 27 target IDs from
    the baseline ignored `factual-review.json`. Changing fixtures requires a source

@@ -369,7 +369,7 @@ def test_refused_formula_and_excel_error_do_not_block_other_nodes(app):
     book = Workbook()
     book.active["A1"] = "=1/0"
     book.active["B1"] = "=IFERROR(A1,42)"
-    book.active["C1"] = '=INDIRECT("D1")'
+    book.active["C1"] = '=INDIRECT("D"&RAND())'
     book.active["D1"] = 9
     book.active["E1"] = "=2+3"
     stream = io.BytesIO()

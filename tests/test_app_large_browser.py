@@ -2,11 +2,12 @@
 
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from graph_test_helpers import open_graph_options
+from graph_test_helpers import open_graph_depth, open_graph_options, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -98,6 +99,7 @@ def test_upload_chunks_resume_after_lost_acknowledgement(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("#workbook").set_input_files(
             {
                 "name": "large.xlsx",
@@ -216,6 +218,7 @@ def test_lazy_pages_search_neighborhood_and_scoped_notices(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("[data-project='large']").click()
         page.locator("[data-node='Data!A1']").wait_for()
         assert page.locator("[data-node]").count() == 200
@@ -249,6 +252,7 @@ def test_lazy_pages_search_neighborhood_and_scoped_notices(browser, viewport):
         page.locator("#graph-search").fill("A401")
         page.locator("#graph-results [data-related='Data!A401']").click()
         page.locator("#graph-preview h3").get_by_text("Data · A401").wait_for()
+        open_graph_depth(page)
         page.locator("#graph-depth").fill("2")
         page.locator("#graph-depth").press("Tab")
         page.wait_for_function(
@@ -295,6 +299,7 @@ def test_local_path_import_does_not_read_or_upload_file(browser):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("#import-source").select_option("local")
         page.locator("#local-path").fill(r"C:\corpus\large.xlsx")
         page.locator("#local-references").fill(
@@ -391,6 +396,7 @@ def test_results_and_capture_images_load_on_demand(browser, viewport, sampled):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("[data-project='p']").click()
         page.locator("[data-node='Data!A1']").wait_for()
         assert not any(path.startswith("tasks/") for path in requests)
@@ -491,11 +497,13 @@ def test_pending_result_cannot_evaluate_same_address_in_another_project(browser)
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("[data-project='first']").click()
         with page.expect_request("**/tasks/saved"):
             page.locator("[data-node='Data!A1']").click()
         # The new calculation starts while the saved GET is still pending.
         assert [path for path, _ in operations] == ["projects/first/tasks"]
+        open_workspace_menu(page)
         page.locator("[data-project='second']").click()
         page.get_by_text("second", exact=True).filter(
             has_not=page.locator("small")
@@ -612,6 +620,7 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
         page.locator("[data-project='p']").click()
         # A no-result node search can leave the current page empty before the
         # hierarchy is built. The workbook graph must still be explorable.
@@ -629,6 +638,7 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
         assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
         assert not any(op["operation"] == "evaluate" for op in operations)
         page.reload()
+        open_workspace_menu(page)
         page.locator("[data-project='p']").click()
         page.locator("#tab-graph").click()
         page.locator("#graph-search").fill("Data!A4")
@@ -713,6 +723,7 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
         open_graph_options(page)
         assert page.locator("#graph-lazy-notice").is_visible()
         page.reload()
+        open_workspace_menu(page)
         page.locator("[data-project='p']").click()
         assert page.locator("#manual-recalculation").count() == 0
         page.locator("#tab-graph").click()
@@ -734,4 +745,113 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
         assert page.locator("#graph-neighborhood").is_hidden()
         assert not errors
     finally:
+        page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_reload_resume_verifies_content_before_sending_remaining_chunks(
+    browser, viewport
+):
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    content = b"0123456789abcdef"
+    upload = {
+        "id": "resume",
+        "chunkBytes": 8,
+        "files": [{"name": "same.xlsx", "size": 16, "received": 0}],
+    }
+    manifests, sent, held = [], [], []
+    hold = True
+    project = {"id": "p", "name": "Resumed"}
+
+    def handle(route):
+        if serve_asset(route):
+            return
+        path = urlsplit(route.request.url).path.removeprefix("/mounted/api/")
+        if path == "config":
+            body = {"uploads": {"chunkBytes": 8}}
+        elif path == "projects":
+            body = {"projects": []}
+        elif path == "uploads" and route.request.method == "POST":
+            manifests.append(route.request.post_data_json)
+            body = {"upload": upload}
+        elif path == "uploads/resume":
+            body = {"upload": upload}
+        elif path.startswith("uploads/resume/files/"):
+            offset = int(route.request.headers["x-upload-offset"])
+            if hold and offset == 8:
+                held.append(route)
+                return
+            sent.append((offset, route.request.post_data_buffer))
+            upload["files"][0]["received"] = offset + len(
+                route.request.post_data_buffer
+            )
+            body = {"upload": upload}
+        elif path == "uploads/resume/complete":
+            body = {
+                "project": project,
+                "task": {"id": "import", "operation": "import", "status": "succeeded"},
+            }
+        elif path == "projects/p":
+            body = {
+                "project": project,
+                "graph": {"nodes": [], "edges": [], "meta": {}},
+                "tasks": [],
+            }
+        else:
+            body = {}
+        route.fulfill(json=body)
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/")
+        open_workspace_menu(page)
+        page.locator("#workbook").set_input_files(
+            {
+                "name": "same.xlsx",
+                "mimeType": "application/octet-stream",
+                "buffer": content,
+            }
+        )
+        page.locator("#import-button").click()
+        deadline = time.monotonic() + 5
+        while not held and time.monotonic() < deadline:
+            page.wait_for_timeout(10)
+        assert held
+        page.reload()
+        hold = False
+        open_workspace_menu(page)
+        if not page.locator("#import-panel").evaluate("e=>e.open"):
+            page.locator("#import-panel > summary").click()
+        assert page.locator("#upload-resume").is_visible()
+        # Identical name and size cannot substitute different file contents.
+        page.locator("#workbook").set_input_files(
+            {
+                "name": "same.xlsx",
+                "mimeType": "application/octet-stream",
+                "buffer": b"x" * 16,
+            }
+        )
+        page.locator("#import-button").click()
+        page.locator("#message").filter(has_text="diffèrent").wait_for()
+        assert len(manifests) == 1 and len(sent) == 1
+        page.locator("#workbook").set_input_files(
+            {
+                "name": "same.xlsx",
+                "mimeType": "application/octet-stream",
+                "buffer": content,
+            }
+        )
+        page.locator("#import-button").click()
+        page.locator("#project-title").get_by_text("Resumed", exact=True).wait_for()
+        assert sent == [(0, content[:8]), (8, content[8:])]
+        assert len(manifests) == 1
+        assert (
+            page.evaluate("localStorage.getItem('linexcel-upload:/mounted/')") is None
+        )
+    finally:
+        for route in held:
+            try:
+                route.abort()
+            except playwright.Error:
+                pass
         page.close()

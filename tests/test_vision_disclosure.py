@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pytest
 import test_app_viewer_regressions as navigation_tests
+from graph_test_helpers import open_workspace_menu
 from vision_helpers import image_bytes
 
 from linexcel.viewer import render_html
 from linexcel.vision_evidence import prepare_image, render_observations
+
+pytestmark = pytest.mark.ai
 
 LITERAL = "O'Brien & B (x) *literal* `code` <script> | &#x27; &amp; 90+"
 app = navigation_tests.app
@@ -98,6 +101,8 @@ def install_serve_document(page, markdown):
         ),
     )
     page.reload()
+    page.locator("#node-list [data-node='First!A1']").wait_for()
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#node-list [data-node='First!A1']").click()
     page.locator("#node-ai .ai-result").wait_for()

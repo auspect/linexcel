@@ -1,5 +1,27 @@
 # HTML export
 
+## Selected investigation from the local application
+
+In `linexcel serve`, select the cells needed to explain a finding and request
+an HTML report. Each report contains 1–20 selected nodes and optionally up to
+20 saved captures (64 MiB before embedding). It includes the source formula,
+saved value, latest available calculation and its date, existing documentation
+in the selected language, direct relationships and declared omissions. Export
+does not start new calculations or AI requests.
+
+Each target has at most 200 nodes of immediate context and at most 200 indexed
+range members across its included ranges. Counts distinguish represented
+members from the number of positions in a range. The report identifies the
+workbook hash, revision and report format version. Documentation associated
+with another calculation is labelled accordingly.
+
+The essential report is static HTML: it works offline with JavaScript disabled,
+including its embedded captures. No live workspace is required to read it.
+Captures are LibreOffice renderings and can differ from Excel's saved cache.
+The downloaded file contains workbook evidence; choose recipients accordingly.
+
+This bounded report is separate from the full analyzed-workbook viewer below.
+
 ## Standalone HTML (offline)
 
 ```python

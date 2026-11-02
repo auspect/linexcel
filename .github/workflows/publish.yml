@@ -59,9 +59,9 @@ jobs:
           fi
 
       - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl python -c "import linexcel; print(linexcel.__version__)"
+        run: uv run --isolated --no-project --with dist/*.whl python scripts/smoke_distribution.py
       - name: Smoke test (sdist)
-        run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import linexcel; print(linexcel.__version__)"
+        run: uv run --isolated --no-project --with dist/*.tar.gz python scripts/smoke_distribution.py
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

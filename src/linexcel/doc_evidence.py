@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import zipfile
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -242,6 +243,33 @@ _AGGREGATES = (
 )
 
 
+def reference_anchor_evidence(reference: str) -> dict[str, Any] | None:
+    """Literal A1 anchor flags, never inferred from a reference's computed value."""
+    _, body = split_sheet_prefix(reference)
+    endpoints = body.split(":")
+    if len(endpoints) not in (1, 2):
+        return None
+    anchors = []
+    for endpoint in endpoints:
+        match = re.fullmatch(r"(\$?)([A-Za-z]{1,3})(\$?)([1-9][0-9]*)", endpoint)
+        if match is None:
+            return None
+        column_absolute, row_absolute = bool(match[1]), bool(match[3])
+        anchors.append(
+            {
+                "address": endpoint,
+                "column_absolute": column_absolute,
+                "row_absolute": row_absolute,
+                "mode": "absolute"
+                if column_absolute and row_absolute
+                else "mixed"
+                if column_absolute or row_absolute
+                else "relative",
+            }
+        )
+    return {"reference": reference, "endpoints": anchors}
+
+
 def formula_evidence(
     formula: str | None, *, sheet: str | None = None, address: str | None = None
 ) -> dict[str, Any]:
@@ -360,9 +388,20 @@ def formula_evidence(
         for reference in sorted(references)
         if (fact := three_dimensional_reference_evidence(reference)) is not None
     ]
+    anchors = [
+        fact
+        for reference in sorted(references)
+        if (fact := reference_anchor_evidence(reference)) is not None
+    ]
     return {
         "status": "parsed",
         "references": sorted(references),
+        "reference_anchors": anchors[:40],
+        "reference_anchors_omitted": max(0, len(anchors) - 40),
+        "reference_anchor_scope": (
+            "literal A1 dollar markers; named and structured references "
+            "are not classified as absolute or relative cell references"
+        ),
         "local_scope_references_omitted": local_references_omitted,
         "function_selectors": selectors[:20],
         "function_selectors_omitted": max(0, len(selectors) - 20),

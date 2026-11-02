@@ -24,6 +24,7 @@ from linexcel.decompose import (
 )
 from linexcel.engine import is_too_deep
 from linexcel.external import (
+    MAX_EXTERNAL_CELLS,
     ExternalBook,
     ExternalRef,
     parse_external_refs,
@@ -37,7 +38,6 @@ from linexcel.values import (
     EXCEL_EPOCH_1900,
     _date_text_of,
     _error_kind,
-    _excel_error_text,
     _fmt_value,
     _is_uncomputed,
     _jsonable,
@@ -208,6 +208,10 @@ class _ValueResolver:
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
         self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
+        self._external_ranges: dict[tuple[str, str, str], str] = {}
+        self._external_sheet_names = {sheet.casefold() for sheet in engine_sheets}
+        self._external_exprs: set[tuple[str, str]] = set()
+        self._external_cell_count = 0
 
     # -- public API --------------------------------------------------------
     def value(
@@ -341,38 +345,84 @@ class _ValueResolver:
     def external_value(self, ref: ExternalRef) -> tuple[Any, str | None]:
         """``(value, source)`` for one external reference, or ``(None, None)``."""
         book = self._book_for(ref)
-        position = _a1_position(ref.cell)
-        if book is None or position is None:
+        rect = parse_ref(ref.cell)
+        if book is None or rect is None or rect.ncells > MAX_CHAIN_RANGE_CELLS:
             return None, None
-        return book.value(ref.sheet, *position)
+        if rect.ncells == 1:
+            return book.value(ref.sheet, rect.r1, rect.c1)
+        rows = []
+        sources = set()
+        for row in range(rect.r1, rect.r2 + 1):
+            values = []
+            for col in range(rect.c1, rect.c2 + 1):
+                value, source = book.value(ref.sheet, row, col)
+                if source is None:
+                    return None, None
+                values.append(value)
+                sources.add(source)
+            rows.append(values)
+        return rows, "external-cache" if "external-cache" in sources else "external"
 
     def external_workbooks(self) -> list[ExternalBook]:
         """Every workbook seen, whether the file declared the link or not."""
         return list(self.externals.values()) + list(self._named_books.values())
 
     def substitute_externals(self, expr: str) -> str:
-        """Replace external references by the values they resolve to.
+        """Replace external references by bounded, typed scratch references.
 
         The engine cannot follow a link to another workbook — nothing in the
         file it loaded points there — so the reference is turned into the
-        literal it stands for before the expression is evaluated. A reference
-        that resolves to nothing is left alone: the evaluation then fails the
-        way it did before, which is the honest outcome.
+        scratch reference it stands for before the expression is evaluated.
+        Preserve range shape and reference coercion (SUM ignores text/booleans
+        in cells, unlike scalar arguments). Incomplete readings are refused;
+        neither a range's top-left value nor an error-guard fallback suffices.
         """
         refs = parse_external_refs(expr)
         if not refs:
             return expr
-        for ref in refs:
+        # Source spans are replaced from right to left: neither shared prefixes
+        # (A1/A1:A2) nor identical text inside string literals are rewritten.
+        for ref in reversed(refs):
             book = self._book_for(ref)
             if book is None:
-                continue
-            position = _a1_position(ref.cell)
-            if position is None:
-                continue
-            value, source = book.value(ref.sheet, *position)
-            if source is None:
-                continue
-            expr = expr.replace(ref.text, _as_literal(value))
+                raise ValueError("External workbook reading is unavailable")
+            key = (book.key, ref.sheet, ref.cell)
+            replacement = self._external_ranges.get(key)
+            if replacement is None:
+                rect = parse_ref(ref.cell)
+                if rect is None or rect.ncells > MAX_CHAIN_RANGE_CELLS:
+                    raise ValueError("External reference exceeds recovery bounds")
+                if self._external_cell_count + rect.ncells > MAX_EXTERNAL_CELLS:
+                    raise ValueError("External recovery exceeds its total cell budget")
+                values = []
+                for row in range(rect.r1, rect.r2 + 1):
+                    for col in range(rect.c1, rect.c2 + 1):
+                        value, source = book.value(ref.sheet, row, col)
+                        if source is None:
+                            raise ValueError("External reference reading is incomplete")
+                        values.append((row - rect.r1 + 1, col - rect.c1 + 1, value))
+                index = len(self._external_ranges) + 1
+                scratch = f"__linexcel_external_{index}"
+                while scratch.casefold() in self._external_sheet_names:
+                    index += 1
+                    scratch = f"__linexcel_external_{index}"
+                self.engine.add_sheet(scratch)
+                self._external_sheet_names.add(scratch.casefold())
+                for row, col, value in values:
+                    error = _error_kind(value)
+                    if error is not None:
+                        value = {"type": "Error", "kind": error}
+                    elif isinstance(value, datetime.datetime):
+                        value = _serial_of(value)
+                    self.engine.set_value(scratch, row, col, value)
+                replacement = f"'{scratch}'!A1"
+                if rect.ncells > 1:
+                    replacement += ":" + a1(
+                        rect.r2 - rect.r1 + 1, rect.c2 - rect.c1 + 1
+                    )
+                self._external_ranges[key] = replacement
+                self._external_cell_count += rect.ncells
+            expr = expr[: ref.start] + replacement + expr[ref.end :]
         return expr
 
     def _book_for(self, ref: ExternalRef) -> ExternalBook | None:
@@ -458,7 +508,11 @@ class _ValueResolver:
             return cached
         # Keyed on the expression as written, evaluated on the one the engine
         # can take: a link to another workbook becomes the value it stands for.
-        return _scratch_eval(self.engine, self.substitute_externals(expr), sheet)
+        try:
+            substituted = self.substitute_externals(expr)
+        except ValueError:
+            return None, False
+        return _scratch_eval(self.engine, substituted, sheet)
 
     def preload_steps(self, exprs: list[str], sheet: str) -> None:
         """Batch-evaluate step expressions in one ``evaluate_cells`` call.
@@ -585,6 +639,12 @@ class _ValueResolver:
         # watches. It keeps the value stored in the file instead.
         if is_too_deep(expr):
             return None, None
+        if parse_external_refs(expr):
+            try:
+                self.substitute_externals(expr)
+            except ValueError:
+                self._incomplete_recovery.add((sheet, expr))
+                return None, None
         if not self._engine_alive:
             try:
                 complete = self._resolve_precedents(sheet, expr, depth)
@@ -603,7 +663,11 @@ class _ValueResolver:
                 return None, None
         # A value that came out of another workbook is not the engine's own
         # reading of this file, and the card has to be able to say so.
-        computed = "external" if parse_external_refs(expr) else "engine"
+        computed = (
+            "external"
+            if parse_external_refs(expr) or (sheet, expr) in self._external_exprs
+            else "engine"
+        )
         raw, ok = self._eval_raw(expr, sheet)
         uncomputed = raw if ok and raw is not None and _is_uncomputed(raw) else None
         if ok and raw is not None and not _is_uncomputed(raw):
@@ -644,6 +708,9 @@ class _ValueResolver:
                 for c in range(rect.c1, rect.c2 + 1):
                     if not self._resolve_chain(rect.sheet, r, c, depth + 1):
                         return False
+                    source = self._resolved.get((rect.sheet, r, c), (None, None))[1]
+                    if source in {"external", "external-cache"}:
+                        self._external_exprs.add((sheet, expr))
         return True
 
     def _resolve_chain(self, sheet: str, row: int, col: int, depth: int) -> bool:
@@ -893,29 +960,6 @@ def _external_warning(
 def _external_name(ref: ExternalRef) -> str:
     """The file name an external reference names, index or path alike."""
     return ref.book if not ref.book.isdigit() else f"[{ref.book}]"
-
-
-def _a1_position(cell: str) -> tuple[int, int] | None:
-    """``B4`` → ``(4, 2)``; a range takes its top-left cell."""
-    rect = parse_ref(cell.split(":")[0])
-    return (rect.r1, rect.c1) if rect is not None else None
-
-
-def _as_literal(value: Any) -> str:
-    """A value as the engine would read it back in a formula."""
-    if value is None:
-        return "0"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, float)):
-        return repr(value)
-    if isinstance(value, datetime.datetime):
-        return repr(_serial_of(value))
-    error = _excel_error_text(value)
-    if error is not None:
-        return error
-    text = str(value)
-    return '"' + text.replace('"', '""') + '"'
 
 
 def _serial_of(moment: datetime.datetime) -> float:

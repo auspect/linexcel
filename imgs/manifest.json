@@ -1,14 +1,36 @@
 {
-  "captured": "2026-10-23",
+  "captured": "2026-11-01",
   "sources": {
+    "scripts/capture_viewer.py": "07f9dd839b10c4f507ffd6c212f027c7be58dd1272c983bb4b194fda5e97bd95",
+    "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "src/linexcel/viewer.py": "822eed057876fc7d8cc2bf353a87f94c0ff11e1ede563eaed7bc49f6326edd37",
     "src/linexcel/assets/viewer.html": "8dce88afa51b3de088afc972942bc110531db24dadf044017b53a511347c3353",
     "src/linexcel/i18n.py": "971b250b4c2cf94472897fd6932e80fa7d279bc1fcca5c73e2c26a28689e5236"
   },
   "images": {
     "viewer_graph.png": "Dependency graph, workbook-wide",
-    "viewer_node_documented.png": "A node selected: formula, step-by-step evaluation, AI card",
-    "viewer_workbook_overview.png": "AI overview, grounded in the deterministic dossier",
-    "viewer_sheets_context.png": "Sheet context: the sheet rendered, its first cells, its comments"
+    "viewer_node_documented.png": "Selected KPI: source formula, values, provenance and calculation steps",
+    "viewer_workbook_overview.png": "Workbook summary: rendered Summary sheet",
+    "viewer_sheets_context.png": "Sales sheet context: source rendering, metadata and comments"
+  },
+  "image_sha256": {
+    "viewer_graph.png": "25568791d514864d809e6f8b805f8f2f0af290f158b4095207a471ce22aa76ce",
+    "viewer_node_documented.png": "ed1af64e3acbdc59b7e955387e91303f0f14c9289defb47c18272734f5e6e67d",
+    "viewer_workbook_overview.png": "a4a8cf757e95a71c4ed250f471822c826a7a55f68cb8b602800a914e18720463",
+    "viewer_sheets_context.png": "79a4ca124da643cd650abb135c8d91da7c15cc4b3d588e9323596975ed72cea4"
+  },
+  "report": {
+    "path": "validation_screenshots/showcase-merge-20261101/validate_out_en.html",
+    "sha256": "2cd20b18c24e4bdf3c8d10df0c6fc28762999f7235254ba9e6d22b3e957e9fee"
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "content": {
+    "aiNodeDocumentation": false,
+    "aiWorkbookOverview": false,
+    "aiImageDescriptions": false
   }
 }

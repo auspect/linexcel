@@ -7,6 +7,8 @@ from test_vision_disclosure import capture, install_serve_document
 from linexcel.documentation_proof import render_formula_tokens
 from linexcel.viewer import render_html
 
+pytestmark = pytest.mark.ai
+
 app = navigation_tests.app
 browser = navigation_tests.browser
 XML = "(" * 40 + "1+2" + ")" * 40

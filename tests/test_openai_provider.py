@@ -7,6 +7,8 @@ import pytest
 
 from linexcel.aidoc import AiDocError, OpenAICompatProvider, _resolve_provider
 
+pytestmark = pytest.mark.ai
+
 httpx = pytest.importorskip("httpx")
 openai = pytest.importorskip("openai")
 

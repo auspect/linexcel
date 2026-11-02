@@ -38,6 +38,11 @@ def main():
                 project / "references",
                 index_path=project / "index.sqlite",
             )
+        elif request["operation"] == "export_html":
+            from linexcel.web_report import write_report
+
+            snapshot = json.loads((root / "report-input.json").read_text("utf-8"))
+            result = write_report(snapshot, root)
         elif request["operation"] == "capture":
             from linexcel.insights import render_workbook_screenshots
 

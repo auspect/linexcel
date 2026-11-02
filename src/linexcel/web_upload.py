@@ -58,7 +58,12 @@ class UploadStore:
             except (OSError, ValueError, KeyError, TypeError):
                 self._remove_path(directory)
         for path in self.store.root.glob("*/projects/*/project.json"):
-            project = _read(path)
+            try:
+                project = _read(path)
+            except (OSError, ValueError, TypeError):
+                continue
+            if not isinstance(project, dict):
+                continue
             if not project.get("uploadId"):
                 continue
             task = next(

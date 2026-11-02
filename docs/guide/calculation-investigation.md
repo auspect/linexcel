@@ -1,5 +1,11 @@
 # Calculation investigation: scoped constant names
 
+This page preserves historical experiments and their recorded engine versions.
+It does not describe the current indexed application support contract; see
+[coverage](coverage.md) and the versioned capability registry returned by the
+current index. Re-running an experiment is required before extending its
+conclusions to another engine or application version.
+
 Status on 19 September 2026: **tested private prototype, not installed or
 published upstream**. Linexcel still uses the published formualizer 0.9.3.
 Its existing runtime capability observations and warnings remain unchanged.

@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Retain standalone local projects until explicit deletion by default, with a
+  durable local identity, expiring single-use browser links and explicit legacy
+  workspace recovery. Add `session-link` and `doctor` commands.
+- Download and restore versioned workspace archives with verified inventories,
+  source hashes, fresh project identities and index reconstruction. Retained
+  task results remain historical after restoration.
+- Export selected investigations as static offline HTML, including source
+  formulas, saved/calculated values, dated documentation, bounded relationships
+  and selected captures. Essential content works without JavaScript.
+- Version the JSON export envelope and include implementation fingerprints in
+  repeatable capacity measurements using actually populated workbooks.
+- Exercise installed wheel and sdist distributions through import, targeted
+  calculation and both export formats; extend CI to Python 3.14 and macOS.
+- Add a reproducible synthetic native Excel comparison bundle with Windows
+  execution, typed result receipts and bounded comparisons. Native execution
+  remains a separate validation requirement.
+- Extend indexed calculation with bounded source table/name/3D resolution,
+  supplied external formula closures, visibility aggregates, declared array
+  regions, checked dynamic references and convergent source-enabled iteration.
+  Record replayable UTC/random context and a versioned capability registry
+  distinguishing tested subsets from native Excel certification.
+
+### Fixed
+
+- Start isolated analysis and application workers on macOS without applying a
+  virtual-address limit below the interpreter's existing reservations. Supervise
+  process-group resident memory from the parent, terminate over-budget workers
+  and their descendants, and report the sampled limit and observed peak honestly.
+  Keep Linux address-space caps and Windows Job limits in place.
+- Compare stable report content separately from memory telemetry in platform
+  tests, isolate mocked oracle commands from system diagnostics, and wait for
+  completed graph-sheet selection before checking browser fallback requests.
+- Preserve native Excel error types independently of localized display text in
+  the Windows oracle; repair generated table/external-link inputs and declare
+  modern formula assignments explicitly.
+- Recalculate Excel-saved spill dependents without treating saved array results
+  as user inputs. Apply source visibility masks and bounded 3D aggregate
+  expansion in batch calculations, including their displayed intermediate steps.
+- Resolve declared table references during batch calculation, and refuse
+  `FORMULATEXT` readings that would expose normalized engine syntax as source text.
+- Preserve external ranges and their element types instead of reading only the
+  first cell; carry external-value provenance through dependent calculations.
+- Allow local acceptance without optional AI documentation or vision. Record
+  skipped stages explicitly while retaining workbook, screenshot, language and
+  independent visual-review requirements.
+- Require Datasette 0.65.5 or newer; the previously declared 0.65 minimum
+  imports `pkg_resources`, which current setuptools no longer supplies.
+- Drain and stop Datasette's internal writer and close its memory connections
+  when projects leave the cache or the application closes. Keep failed shutdowns
+  retryable and withdraw the local server announcement before releasing the
+  workspace lock, without removing a replacement server's announcement.
+- Isolate unreadable project/task manifests and retain recovery evidence instead
+  of preventing the entire local workspace from starting.
+- Include all calculation helper modules and report styling in result-cache
+  identity, preventing reuse after those implementations change.
+- Add explicit A1 row/column anchor evidence to documentation dossiers and
+  strengthen the v6 review rubric for reference anchors and cache provenance.
+- Fold mobile workspace controls, preserve Data-to-cell return state, keep
+  focal graph labels readable and expose report selection and upload resume.
+  Avoid a Chromium renderer crash during graph bounding-box updates.
+- Refresh visible capture results when import and capture finish between UI
+  polls, preserving successful images without a tab change.
+- Share visibility-function registrations within one calculation and prevent
+  unsupported engine readings from becoming apparent results through aggregate
+  error handling or inline fallbacks.
+- Forward an explicitly selected reasoning effort even when it is the only AI
+  response option, and include it in the server's documentation cache identity.
+
+### Documentation
+
+- Separate pipeline generation from factual and visual acceptance in validation
+  manifests. Document local recovery, archive and investigation-report limits.
+- Mark historical calculation experiments as evidence of their recorded engine
+  versions rather than the current application support contract.
+### Changed
+
+- Exclude optional AI documentation, provider and vision tests from default
+  pytest, required CI and commit hooks. Keep them available through `-m ai` and
+  a separate manual workflow, without model credentials or release dependencies.
+  Required tests run without the AI SDK and retain deterministic workbook,
+  rendering, provenance and no-AI safety coverage.
+- Replace the synthetic showcase workbook in `validation_workbooks.py` with a
+  realistic four-sheet B2B commercial and margin review
+  (`fy26_commercial_review.xlsx`: `Summary`, `Sales`, `Catalog`, `Assumptions`),
+  combining an executive KPI scorecard, regional plan vs. actuals, a 40-order
+  enterprise ledger, an 8-SKU pricing catalog, defined policy rates, charts,
+  comments, frozen panes, merged banners and hidden baseline/cost columns.
+- Update manual validation, screenshot capture harnesses (`Summary!C10`) and
+  showcase/browser regression tests for the new commercial review workbook.
+- Refresh the application and viewer README captures from the new showcase
+  without requiring AI documentation. Record the selected capture mode and
+  check fixture and capture-script freshness alongside viewer sources. Preserve
+  readable Windows file permissions when publishing screenshots.
+
 ## [1.16.0] — 2026-10-23
 
 ### Added

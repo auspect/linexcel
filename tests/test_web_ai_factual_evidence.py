@@ -8,6 +8,8 @@ from test_web_ai import CONFIG, FakeProvider, graph
 from linexcel import aidoc
 from linexcel.web_ai import evidence, generate
 
+pytestmark = pytest.mark.ai
+
 
 @pytest.mark.parametrize("formula,self_reference", [("=B1+1", True), ("=A1*7", False)])
 def test_lazy_focal_and_overview_preserve_known_formula_target(formula, self_reference):

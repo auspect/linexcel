@@ -1,7 +1,8 @@
 # Bounded local audits
 
 The default API and CLI run analysis in an isolated process with a **120-second
-budget** and a **2,048 MiB memory limit**. This is a limit, not a prediction.
+budget** and a **2,048 MiB platform-specific memory budget**. These are limits,
+not predictions; macOS memory supervision is sampled as described below.
 Reading the source into memory, AI requests, screenshot rendering and HTML
 export are outside that analysis budget. Workbook inputs are never rewritten.
 Process startup adds overhead, particularly for small workbooks; isolation is
@@ -56,9 +57,22 @@ crashes. Linexcel never switches to it automatically after an isolated failure.
 
 Windows starts the worker suspended, attaches a Job Object before initialization,
 then resumes it. The Job caps aggregate committed memory and kills descendants
-on closure. POSIX installs `RLIMIT_AS` before importing linexcel and cleans up the
+on closure. Linux and other supported POSIX systems except macOS install
+`RLIMIT_AS` before importing linexcel and clean up the
 worker process group: this is a per-process virtual-address limit, **not an
 aggregate RSS limit**. The `memoryLimitKind` field records this distinction.
+
+macOS instead samples the combined resident memory of the worker's process
+group through native `libproc` calls while supervising the deadline. It stops
+the group when an observed sample exceeds the budget, including descendants
+such as worksheet renderers. This is a **sampled limit**, not a hard allocation
+cap: memory can grow between polls (normally about 50 ms plus sampling overhead),
+short-lived allocations can be missed, and shared pages can be counted more
+than once. Diagnostics record `memoryLimitKind="process_group_sampled_rss"`
+and the observed `memoryPeakMiB`. A monitoring error stops the operation rather
+than continuing without supervision. macOS may reject an address-space limit
+smaller than the process's existing VM reservations; see
+[Apple's resource-limit implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c).
 
 Linux analysis and `serve` worker subprocesses default to `MALLOC_ARENA_MAX=2`.
 This bounds glibc's allocation arenas and reduces virtual-address pressure when

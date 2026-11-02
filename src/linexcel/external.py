@@ -62,6 +62,7 @@ _EXTERNAL_REF_RE = re.compile(
         !(?P<cell>\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)""",
     re.VERBOSE,
 )
+_QUOTED_FORMULA_TEXT_RE = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
 
 
 @dataclass
@@ -114,12 +115,21 @@ class ExternalRef:
     cell: str
     #: The directory the formula spells out, when it does.
     directory: str = ""
+    #: Exact source span, so substitution never rewrites an identical string.
+    start: int = 0
+    end: int = 0
 
 
 def parse_external_refs(formula: str) -> list[ExternalRef]:
     """Every external reference a formula makes, in order of appearance."""
+    # Preserve single-quoted sheet/path identifiers, including double quotes
+    # within their names. Only double-quoted Excel strings are masked.
+    masked = _QUOTED_FORMULA_TEXT_RE.sub(
+        lambda match: " " * len(match[0]) if match[0].startswith('"') else match[0],
+        formula,
+    )
     refs = []
-    for match in _EXTERNAL_REF_RE.finditer(formula):
+    for match in _EXTERNAL_REF_RE.finditer(masked):
         refs.append(
             ExternalRef(
                 text=match.group(0),
@@ -127,6 +137,8 @@ def parse_external_refs(formula: str) -> list[ExternalRef]:
                 sheet=match.group("sheet").replace("''", "'"),
                 cell=match.group("cell").replace("$", ""),
                 directory=match.group("dir") or "",
+                start=match.start(),
+                end=match.end(),
             )
         )
     return refs

@@ -47,6 +47,7 @@ def test_sample_includes_sheetless_vba_alongside_formula_nodes(manual):
     assert selected == manual.selected_nodes(list(reversed(nodes)), None, 123)
 
 
+@pytest.mark.ai
 def test_failure_trace_never_copies_provider_messages(manual):
     cause = ConnectionError("synthetic-secret in provider body")
     error = manual.AiDocError("sanitized connection failure")
@@ -63,6 +64,7 @@ def test_failure_trace_never_copies_provider_messages(manual):
     assert evidence["response_usage_estimated"] is None
 
 
+@pytest.mark.ai
 def test_partial_stream_usage_is_distinguished_from_reported_counts(manual):
     error = manual.AiDocError("partial stream")
     error.usage = SimpleNamespace(estimated=True)
@@ -72,6 +74,7 @@ def test_partial_stream_usage_is_distinguished_from_reported_counts(manual):
     assert not evidence["response_usage_reported"]
 
 
+@pytest.mark.ai
 def test_vision_transport_failure_keeps_a_sanitized_stage_trace(manual, monkeypatch):
     def describe_failure(*args, **kwargs):
         raise manual.AiDocError("vision transport failed") from ConnectionError(
@@ -96,6 +99,7 @@ def test_vision_transport_failure_keeps_a_sanitized_stage_trace(manual, monkeypa
     assert "synthetic-secret" not in json.dumps(checks)
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize("reason,accepted", [("stop", True), ("length", False)])
 def test_completion_receipts_preserve_finish_and_reported_usage(
     manual, tmp_path, reason, accepted
@@ -150,6 +154,7 @@ def test_completion_receipts_preserve_finish_and_reported_usage(
     assert "synthetic-secret" not in journal.read_text("utf-8")
 
 
+@pytest.mark.ai
 def test_rejected_response_is_preserved_before_completion_gate(manual, monkeypatch):
     receipts = []
     provider = manual.AcceptanceProvider(
@@ -246,7 +251,17 @@ def test_corpus_refuses_addin_artifact_collisions(manual, tmp_path):
 @pytest.mark.parametrize(
     "missing", ["nodes", "overview", "vision", "images", "sheet", "regions", None]
 )
-def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, missing):
+@pytest.mark.parametrize(
+    "ai_mode",
+    [
+        pytest.param("full", marks=pytest.mark.ai),
+        pytest.param("text", marks=pytest.mark.ai),
+        "none",
+    ],
+)
+def test_each_requested_stage_must_complete(
+    manual, monkeypatch, tmp_path, missing, ai_mode
+):
     image = tmp_path / "sheet.png"
     image_module = pytest.importorskip("PIL.Image")
     image_module.new("RGB", (40, 30), "white").save(image)
@@ -273,6 +288,7 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     )
 
     def document(result, args, language, *, validation_results=None):
+        assert ai_mode != "none", "Skipped AI documentation must not run"
         from test_documentation_receipts import reviewed
 
         receipts = []
@@ -290,6 +306,7 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
     monkeypatch.setattr(manual, "document", document)
 
     def describe(result, shots, args, language, **kwargs):
+        assert ai_mode == "full", "Skipped AI vision must not run"
         from linexcel.vision_evidence import persist_image, prepare_image
 
         native = prepare_image(image.read_bytes())
@@ -347,20 +364,79 @@ def test_each_language_and_stage_must_complete(manual, monkeypatch, tmp_path, mi
         generated=False,
         root=tmp_path,
     )
-    args = Namespace(no_recalc=True, max_nodes=None, seed=1, check_max_tokens=False)
-    outcome = manual.run_case(case, args, True, True)
-    assert outcome["passed"] is (missing is None)
+    args = Namespace(
+        no_recalc=True,
+        max_nodes=None,
+        seed=1,
+        check_max_tokens=False,
+        no_ai=ai_mode == "none",
+        vision=ai_mode == "full",
+    )
+    outcome = manual.run_case(case, args, ai_mode != "none", ai_mode == "full")
+    required = {"images", "sheet"}
+    if ai_mode != "none":
+        required.update({"nodes", "overview"})
+    if ai_mode == "full":
+        required.update({"vision", "regions"})
+    assert outcome["passed"] is (missing not in required)
     assert (tmp_path / "sample-en-ai.json").exists()
     evidence = json.loads((tmp_path / "sample-en-ai.json").read_text())
-    assert evidence["documentation_checks"]["S!A1"]["status"] == "qualified"
-    assert evidence["documentation_checks"]["S!A1"]["raw_response"].startswith(
-        "S!A1: review response"
-    )
+    if ai_mode != "none":
+        assert evidence["documentation_checks"]["S!A1"]["status"] == "qualified"
+        assert evidence["documentation_checks"]["S!A1"]["raw_response"].startswith(
+            "S!A1: review response"
+        )
+    else:
+        assert evidence["docs"] is None and evidence["workbook_doc"] is None
+        assert evidence["documentation_checks"] == {}
+        assert evidence["coverage"]["ai_stages"]["documentation"] == "skipped"
+    if ai_mode != "full":
+        assert evidence["screenshot_docs"] is None
+        assert evidence["vision_request_receipts"] == []
+        assert evidence["coverage"]["ai_stages"]["vision"] == "skipped"
     assert json.loads((tmp_path / "sample-validation.json").read_text())["passed"] is (
-        missing is None
+        missing not in required
     )
 
 
+@pytest.mark.parametrize(
+    "flags", [["--no-ai"], pytest.param(["--no-vision"], marks=pytest.mark.ai)]
+)
+def test_optional_ai_does_not_make_complete_run_partial(
+    manual, monkeypatch, tmp_path, flags
+):
+    output = tmp_path / "run"
+    monkeypatch.setattr(
+        sys, "argv", ["validate_manual.py", *flags, "--output-dir", str(output)]
+    )
+    probes = []
+    monkeypatch.setattr(
+        manual, "check_local_provider", lambda *a: probes.append(a) or True
+    )
+    seen = []
+
+    def run(case, args, ai, vision):
+        seen.append((ai, vision))
+        return {"case": case.name, "passed": True}
+
+    monkeypatch.setattr(manual, "run_case", run)
+    assert manual.main() == 0
+    evidence = json.loads((output / "validation.json").read_text())
+    assert evidence["status"] == "passed"
+    assert evidence["acceptance"]["delivery"] == "not_ready"
+    assert evidence["acceptance"]["visual_review"] == "pending"
+    assert not evidence["acceptance"]["ai_vision_requested"]
+    if flags == ["--no-ai"]:
+        assert not probes
+        assert seen == [(False, False), (False, False)]
+        assert evidence["acceptance"]["scope"] == "deterministic"
+    else:
+        assert len(probes) == 1
+        assert seen == [(True, False), (True, False)]
+        assert evidence["acceptance"]["scope"] == "documentation"
+
+
+@pytest.mark.ai
 def test_missing_provider_is_nonzero_and_recorded(manual, monkeypatch, tmp_path):
     output = tmp_path / "run"
     monkeypatch.setattr(
@@ -440,6 +516,7 @@ def test_no_screenshots_and_no_ai_never_start_optional_stages(
     assert evidence["cases"][0]["screenshots"] == []
 
 
+@pytest.mark.ai
 def test_placeholder_and_unexpected_keys_are_not_coverage(manual):
     assert not manual.coverage(["a"], {"a": "(AI returned empty response)"})["passed"]
     assert not manual.coverage(["a"], {"a": "ok", "b": "extra"})["passed"]
@@ -458,6 +535,7 @@ def test_header_only_png_does_not_pass_image_validation(manual, tmp_path):
     assert not manual.screenshot_evidence({"sheet": image})[0]["passed"]
 
 
+@pytest.mark.ai
 def test_gateway_discovery_authenticates_without_forwarding_key_to_loopback(
     manual, monkeypatch
 ):
@@ -484,6 +562,7 @@ def test_gateway_discovery_authenticates_without_forwarding_key_to_loopback(
     assert requests[-1].get_header("Authorization") == "Bearer not-needed"
 
 
+@pytest.mark.ai
 def test_authenticated_discovery_refuses_cross_origin_redirect(manual):
     import io
     from urllib.response import addinfourl
@@ -521,6 +600,7 @@ def test_authenticated_discovery_refuses_cross_origin_redirect(manual):
     assert requests[0].get_header("Authorization") == "Bearer synthetic-secret"
 
 
+@pytest.mark.ai
 def test_provider_request_options_apply_to_documentation_and_vision(
     manual, monkeypatch
 ):
@@ -565,11 +645,18 @@ def test_provider_request_options_apply_to_documentation_and_vision(
     ]
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize("thinking", [None, "disabled", "adaptive"])
 @pytest.mark.parametrize("reasoning_split", [False, True])
 @pytest.mark.parametrize("chat_template_thinking", [None, "enabled", "disabled"])
+@pytest.mark.parametrize("reasoning_effort", [None, "none"])
 def test_explicit_thinking_merges_with_reasoning_split(
-    manual, monkeypatch, thinking, reasoning_split, chat_template_thinking
+    manual,
+    monkeypatch,
+    thinking,
+    reasoning_split,
+    chat_template_thinking,
+    reasoning_effort,
 ):
     captured = []
     monkeypatch.setattr(
@@ -583,6 +670,7 @@ def test_explicit_thinking_merges_with_reasoning_split(
         reasoning_split=reasoning_split,
         api_thinking=thinking,
         chat_template_thinking=chat_template_thinking,
+        reasoning_effort=reasoning_effort,
     )
     expected = {}
     if reasoning_split:
@@ -595,13 +683,17 @@ def test_explicit_thinking_merges_with_reasoning_split(
         }
     manual.acceptance_provider(args)
     manual.acceptance_provider(args, vision=True)
+    request_kwargs = {"extra_body": expected} if expected else {}
+    if reasoning_effort is not None:
+        request_kwargs["reasoning_effort"] = reasoning_effort
     assert [entry["request_kwargs"] for entry in captured] == [
-        {"extra_body": expected} if expected else None
+        request_kwargs or None
     ] * 2
     assert all(entry["client_kwargs"] == {"max_retries": 0} for entry in captured)
     assert all(entry["streaming"] is False for entry in captured)
 
 
+@pytest.mark.ai
 def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
     manual, monkeypatch, tmp_path
 ):
@@ -673,6 +765,7 @@ def test_env_file_is_explicit_and_credentials_are_not_in_manifest(
     assert local_manifest["configuration"]["chat_template_thinking"] is None
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize(
     "damage",
     [
@@ -752,6 +845,7 @@ def test_native_coverage_requires_every_exact_page_region_and_receipt(
     assert not coverage["factual_certification"]
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize(
     "damage",
     [
@@ -899,6 +993,7 @@ def test_retry_coverage_checks_every_attempt_and_final_selection(
         ]
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize(
     "damage", [None, "reused_index", "ambiguous_receipt", "prompt", "content", "id"]
 )
@@ -948,6 +1043,7 @@ def test_vision_receipts_require_unique_local_evidence(manual, damage):
         ]
 
 
+@pytest.mark.ai
 def test_real_acceptance_provider_retry_receipts_pass_native_gate(manual, tmp_path):
     from vision_helpers import image_bytes, region_response
 
@@ -998,6 +1094,7 @@ def test_real_acceptance_provider_retry_receipts_pass_native_gate(manual, tmp_pa
     assert batch["attempts"][0]["provider_receipt"]["raw_response"] == "invalid JSON"
 
 
+@pytest.mark.ai
 @pytest.mark.parametrize(
     "damage",
     [
@@ -1079,6 +1176,7 @@ def test_native_uniform_shortcut_requires_exact_pixels_and_no_invented_receipt(
     assert result["factual_certification"] is False
 
 
+@pytest.mark.ai
 def test_nonuniform_crop_cannot_gain_coverage_by_claiming_a_local_pixel_check(
     manual, tmp_path
 ):

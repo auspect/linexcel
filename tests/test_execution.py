@@ -412,6 +412,7 @@ def test_range_samples_and_constants_are_not_missing_or_recalculated():
     assert categories["divergent"]["nodeIds"] == ["group"]
 
 
+@pytest.mark.ai
 def test_timeout_overview_preserves_unknown_counts(lineage_excel):
     from linexcel.aidoc import build_workbook_dossier
 

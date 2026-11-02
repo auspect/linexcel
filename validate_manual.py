@@ -4,9 +4,9 @@
 Two workbooks, analysed then documented, rendered to PNG and written out as
 standalone HTML reports to open by hand:
 
-``sales``   a small readable sales report — a table that does not start at A1,
-            a hidden column, merged cells, a chart, a comment, a defined name,
-            cross-sheet aggregation. This is what the README screenshots show.
+``sales``   a realistic 4-sheet B2B commercial and margin review — executive
+            KPIs, regional plan vs. actuals, 40 enterprise orders, product
+            catalog, hidden columns, charts, comments and defined names.
 ``stress``  a much larger English workbook built to break things: every Excel
             error value, unresolvable and external references, sheet names
             needing quotes, a circular pair, formulas past the truncation
@@ -31,8 +31,8 @@ under several ceilings and reports which of them cut the response.
     uv run validate_manual.py --workbook both
     uv run validate_manual.py --file macros.xlsm     # your own workbook (VBA)
     uv run validate_manual.py --model <tag>          # another local model
-    uv run validate_manual.py --no-vision            # partial diagnostic, exit 1
-    uv run validate_manual.py --no-ai                # partial diagnostic, exit 1
+    uv run validate_manual.py --no-vision            # documentation, no image AI
+    uv run validate_manual.py --no-ai                # deterministic acceptance
     uv run validate_manual.py --token-budget 50000 --max-nodes 8
     uv run validate_manual.py --check-max-tokens     # does the endpoint obey?
 """
@@ -93,7 +93,7 @@ def code_fingerprints() -> dict[str, str]:
     paths.extend(
         path
         for path in (root / "src").rglob("*")
-        if path.is_file() and path.suffix in {".py", ".html", ".md", ".json"}
+        if path.is_file() and path.suffix in {".py", ".html", ".md", ".json", ".css"}
     )
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -130,14 +130,14 @@ class Case:
 CASES = {
     "sales": Case(
         name="sales",
-        headline="readable sales report",
+        headline="B2B commercial and margin review",
         build=validation_workbooks.build_sales_workbook,
-        workbook=Path("validation_demo.xlsx"),
+        workbook=Path("fy26_commercial_review.xlsx"),
         languages=("fr", "en"),
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
-            "  It should name the title in B2, the hidden Price column and the",
-            "  comment on B3, none of which any formula reveals.",
+            "  It should name the title in B2, the hidden baseline/cost columns",
+            "  and the FP&A comment on C5, none of which any formula reveals.",
             "'Sheets' — every sheet shows its own rendered image and its first",
             "  cells, alongside comments, frozen panes and merged ranges.",
             "'Graph' — select a node, read its card against the decomposition.",
@@ -388,6 +388,9 @@ def acceptance_provider(
         extra_body["chat_template_kwargs"] = {
             "enable_thinking": args.chat_template_thinking == "enabled"
         }
+    request_kwargs = {"extra_body": extra_body} if extra_body else {}
+    if getattr(args, "reasoning_effort", None) is not None:
+        request_kwargs["reasoning_effort"] = args.reasoning_effort
     return AcceptanceProvider(
         response_receipts=response_receipts,
         response_journal=getattr(args, "_receipt_journal", None),
@@ -396,7 +399,7 @@ def acceptance_provider(
         api_key=provider_api_key(base),
         client_kwargs={"max_retries": getattr(args, "api_retries", 0)},
         streaming=getattr(args, "api_stream", False),
-        request_kwargs={"extra_body": extra_body} if extra_body else None,
+        request_kwargs=request_kwargs or None,
     )
 
 
@@ -1391,6 +1394,8 @@ def run_case(
             screenshot_docs=seen,
             language=language,
         )
+        ai_requested = not getattr(args, "no_ai", False)
+        vision_requested = ai_requested and getattr(args, "vision", True)
         status = {
             "nodes": coverage(expected_nodes, docs),
             "overview": useful_text(workbook_doc),
@@ -1399,15 +1404,37 @@ def run_case(
             "vision_regions": vision_region_coverage(expected_images, vision_checks),
             "report": str(path.resolve()),
         }
-        status["passed"] = bool(
+        documentation_complete = bool(
             use_ai
-            and use_vision
-            and expected_images
             and status["nodes"]["passed"]
             and status["overview"]
             and status["documentation_phases"]["passed"]
+        )
+        vision_complete = bool(
+            use_vision
             and status["vision"]["passed"]
             and status["vision_regions"]["passed"]
+        )
+        status["ai_stages"] = {
+            "documentation": (
+                "skipped"
+                if not ai_requested
+                else "completed"
+                if documentation_complete
+                else "failed"
+            ),
+            "vision": (
+                "skipped"
+                if not vision_requested
+                else "completed"
+                if vision_complete
+                else "failed"
+            ),
+        }
+        status["passed"] = bool(
+            expected_images
+            and (not ai_requested or documentation_complete)
+            and (not vision_requested or vision_complete)
         )
         outcome["languages"][language] = status
         evidence = {
@@ -1649,6 +1676,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--reasoning-effort",
+        choices=("none", "minimal", "low", "medium", "high"),
+        default=None,
+        help=(
+            "explicit OpenAI-compatible reasoning_effort for documentation and "
+            "vision (default: omit; requires provider support)"
+        ),
+    )
+    parser.add_argument(
         "--check-max-tokens",
         action="store_true",
         help=(
@@ -1657,7 +1693,9 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--no-ai", action="store_true", help="skip AI documentation entirely"
+        "--no-ai",
+        action="store_true",
+        help="validate without optional AI documentation or image analysis",
     )
     parser.add_argument(
         "--no-screenshots",
@@ -1726,6 +1764,18 @@ def main() -> int:
         "cases": [],
         "addins": [],
         "status": "running",
+        "acceptance": {
+            "generation": "running",
+            "scope": "deterministic"
+            if args.no_ai
+            else ("documentation_and_vision" if args.vision else "documentation"),
+            "ai_documentation_requested": not args.no_ai,
+            "ai_vision_requested": not args.no_ai and args.vision,
+            "factual_review": "pending",
+            "visual_review": "pending",
+            "delivery": "not_ready",
+            "review_evidence": [],
+        },
         "manual_review": "pending: inspect tabs, sampled nodes, and image claims",
         "provider_receipt_journal": "provider_receipts.jsonl",
     }
@@ -1782,19 +1832,14 @@ def main() -> int:
                 }
             )
         save_manifest()
-    partial = (
-        args.no_ai
-        or not args.vision
-        or args.max_nodes is not None
-        or args.no_recalc
-        or args.no_screenshots
-    )
+    partial = args.max_nodes is not None or args.no_recalc or args.no_screenshots
     passed = (
         all(item["passed"] for item in manifest["cases"])
         and all(item["passed"] for item in manifest["addins"])
         and not partial
     )
     manifest["status"] = "passed" if passed else "incomplete" if partial else "failed"
+    manifest["acceptance"]["generation"] = manifest["status"]
     manifest["finished_utc"] = datetime.now(UTC).isoformat()
     save_manifest()
     print(f"\nValidation {manifest['status']}: {root / 'validation.json'}")

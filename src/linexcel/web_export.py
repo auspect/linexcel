@@ -161,7 +161,8 @@ class ProjectExport:
     def _generate(self):
         yield b'{"project":'
         yield from _json(self.project)
-        yield b',"export":{"scope":"complete","patternMembers":"sampled; '
+        yield b',"export":{"schemaVersion":1,"scope":"complete",'
+        yield b'"patternMembers":"sampled; '
         yield b'complete membership is retained on nodes via patternId"},"graph":'
         yield from self._graph()
         yield b',"tasks":['

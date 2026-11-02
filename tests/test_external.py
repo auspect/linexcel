@@ -150,6 +150,43 @@ class TestParsing:
         """``SalesTable[Revenue]`` brackets a column, not a file."""
         assert parse_external_refs("=SUM(SalesTable[Revenue])") == []
 
+    def test_strings_are_not_references_but_quoted_sheet_names_remain_visible(self):
+        assert parse_external_refs('="[1]Data!A1"') == []
+        formula = '= "[1]Data!A1" & [1]Data!A1'
+        (ref,) = parse_external_refs(formula)
+        assert formula[ref.start : ref.end] == "[1]Data!A1"
+        assert ref.start == formula.rindex("[1]")
+        (quoted,) = parse_external_refs("='[1]Data\"Name'!A1")
+        assert quoted.sheet == 'Data"Name'
+
+    def test_substitution_preserves_literal_and_case_insensitive_sheet_collision(self):
+        import formualizer as fz
+
+        from linexcel.external import ExternalBook as Reading
+        from linexcel.loader import CachedValues
+        from linexcel.resolver import _Budget, _ValueResolver
+
+        engine = fz.Workbook()
+        engine.add_sheet("S")
+        engine.add_sheet("__LINEXCEL_EXTERNAL_1")
+        engine.set_value("__LINEXCEL_EXTERNAL_1", 1, 1, 999)
+        book = Reading("1", "Ref.xlsx", "Ref.xlsx", cached={("Data", 1, 1): 21})
+        resolver = _ValueResolver(
+            engine,
+            {"S", "__LINEXCEL_EXTERNAL_1"},
+            CachedValues({}, set(), False),
+            [],
+            _Budget(100),
+            True,
+            externals={"1": book},
+        )
+        formula = '="[1]Data!A1"&[1]Data!A1'
+        rewritten = resolver.substitute_externals(formula)
+        assert rewritten.startswith('="[1]Data!A1"&')
+        engine.set_formula("S", 1, 1, rewritten)
+        assert engine.evaluate_cell("S", 1, 1) == "[1]Data!A121"
+        assert engine.get_value("__LINEXCEL_EXTERNAL_1", 1, 1) == 999
+
 
 class TestDeclaredLinks:
     def test_the_declared_path_is_read_from_the_package(self, declared):
@@ -299,6 +336,133 @@ class TestResolvingFromAFolder:
             refs_dir=referenced,
         )
         assert result.stats["externalWorkbooksRead"] == 1
+
+    @pytest.mark.parametrize("targets", [None, ["S!B2"]])
+    def test_external_range_and_dependents_keep_all_members_and_provenance(
+        self, tmp_path, targets
+    ):
+        (tmp_path / "Ref.xlsx").write_bytes(
+            workbook({"B1": 21, "B2": 10}, sheet="Data")
+        )
+        result = analyze(
+            workbook(
+                {
+                    "A1": "='[Ref.xlsx]Data'!B1+1",
+                    "A2": "=SUM('[Ref.xlsx]Data'!B1:B2)",
+                    "B1": "=A1+A2",
+                    "B2": "=B1*2",
+                }
+            ),
+            refs_dir=tmp_path,
+            targets=targets,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        for cell, value in {"A1": 22, "A2": 31, "B1": 53, "B2": 106}.items():
+            if targets is None and cell in {"B1", "B2"}:
+                # The global engine conservatively quarantines uncached
+                # dependents. Refusal is preferable to a partial fresh result.
+                assert nodes[cell]["value"] is None
+                assert nodes[cell].get("valueSource") != "engine"
+                continue
+            assert nodes[cell]["value"] == value
+            # Batch reads the external file's stored values. That is not the
+            # indexed engine's fresh evaluation of the external formula closure.
+            assert nodes[cell]["valueSource"] == "external"
+        assert not any(
+            sheet.startswith("__linexcel_external_") for sheet in result.sheets
+        )
+
+    def test_external_matrix_preserves_reference_types_and_dimensions(self, tmp_path):
+        (tmp_path / "Ref.xlsx").write_bytes(
+            workbook(
+                {
+                    "A1": 10,
+                    "B1": "20",
+                    "C1": True,
+                    "A2": 3,
+                    "B2": 4,
+                    "C2": 5,
+                },
+                sheet="Data",
+            )
+        )
+        ref = "'[Ref.xlsx]Data'!A1:C2"
+        result = analyze(
+            workbook(
+                {
+                    "A1": f"=SUM({ref})",
+                    "A2": f"=COUNT({ref})",
+                    "A3": f"=COUNTA({ref})",
+                    "A4": f"=ROWS({ref})",
+                    "A5": f"=COLUMNS({ref})",
+                    "A6": f"=INDEX({ref},1,2)",
+                    "A7": f"=INDEX({ref},1,3)",
+                    "A8": "=SUM('[Ref.xlsx]Data'!B1)",
+                    "A9": "='[Ref.xlsx]Data'!A1+SUM('[Ref.xlsx]Data'!A1:A2)",
+                }
+            ),
+            refs_dir=tmp_path,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        for cell, expected in {
+            "A1": 22,
+            "A2": 4,
+            "A3": 6,
+            "A4": 2,
+            "A5": 3,
+            "A6": "20",
+            "A7": True,
+            "A8": 0,
+            "A9": 23,
+        }.items():
+            assert nodes[cell]["value"] == expected
+
+    def test_external_error_and_same_spelling_text_remain_distinct(self, tmp_path):
+        book = Workbook()
+        book.active.title = "Data"
+        book.active["A1"] = "#N/A"
+        book.active["A1"].data_type = "s"
+        book.active["A2"] = "#N/A"
+        book.active["A3"] = 10
+        book.save(tmp_path / "Ref.xlsx")
+        result = analyze(
+            workbook(
+                {
+                    "A1": "=ISTEXT('[Ref.xlsx]Data'!A1)",
+                    "A2": "=ISERROR('[Ref.xlsx]Data'!A1)",
+                    "A3": "=ISERROR('[Ref.xlsx]Data'!$A$2)",
+                    "A4": "=SUM('[Ref.xlsx]Data'!A2:A3)",
+                }
+            ),
+            refs_dir=tmp_path,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        assert nodes["A1"]["value"] is True
+        assert nodes["A2"]["value"] is False
+        assert nodes["A3"]["value"] is True
+        assert nodes["A4"]["value"] == "#N/A"
+
+    @pytest.mark.parametrize("range_", ["A1:A2", "A1:A4097"])
+    @pytest.mark.parametrize("targets", [None, ["S!C1"]])
+    def test_incomplete_external_range_cannot_make_partial_or_guard_result(
+        self, tmp_path, range_, targets
+    ):
+        (tmp_path / "Ref.xlsx").write_bytes(workbook({"A1": 21}, sheet="Data"))
+        result = analyze(
+            workbook(
+                {
+                    "A1": f"=IFERROR(SUM('[Ref.xlsx]Data'!{range_}),42)",
+                    "B1": "=A1+1",
+                    "C1": "=IFERROR(B1,99)",
+                }
+            ),
+            refs_dir=tmp_path,
+            targets=targets,
+        )
+        nodes = {node.get("addr"): node for node in result.nodes}
+        for cell in ("A1", "B1", "C1"):
+            assert nodes[cell]["value"] is None
+            assert nodes[cell].get("valueSource") != "engine"
 
 
 class TestFolderScanning:

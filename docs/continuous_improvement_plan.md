@@ -9,6 +9,37 @@ Historical test counts and merge verdicts apply only to their recorded snapshots
 Private workbooks, prompts, model responses and captures stay under the ignored
 `validation_screenshots/` directory or in a private parent directory.
 
+## Operational delivery, 30 October 2026
+
+The approved target is a local application with durable workspaces, recoverable
+browser access and explicit deletion. Sharing means a selected offline HTML
+investigation. VBA and Power Query remain static analysis. Excel compatibility
+advances through declared, tested subsets rather than a claim of complete
+engine equivalence.
+
+Implementation now includes local profile links, archive restoration, resumable
+uploads, responsive investigation journeys, the bounded HTML report and a
+versioned calculation capability registry. Source evidence, saved values,
+engine readings and AI prose remain distinct. The current changes still require
+their complete acceptance run and independent review before delivery.
+
+| Gate | Required evidence |
+| --- | --- |
+| Durable local work | Two independent browsers, retained access across restart, new link after cookie loss, explicit legacy recovery, archive integrity and restored capture paths |
+| Desktop/mobile usability | Every dashboard tab at 1440×900 and 390×844, readable focal graph, bounded geometry, scoped notices and preserved Data/Graph return state |
+| Sharing | Selected source revision, declared context omissions, dated calculation/documentation, selected embedded captures, offline reading with JavaScript disabled |
+| AI reliability | Complete Sales FR/EN and Stress EN generation, all required captures/vision, exact receipts, source and image review; no factual pass inferred from generation success |
+| Capacity | Three runs on actually occupied 100,000-cell and 1,000,000-cell workbooks, respectively 10,000 and 100,000 formulas; import ≤600 s, targeted calculation ≤120 s, export ≤600 s, worker memory ≤2 GiB and browser interaction p95 ≤2 s |
+| Calculation | Typed regressions on the declared minimum and installed engine, refusal of unresolved prerequisites, replay context and observed array/cycle coverage |
+| Native Excel comparison | Run the synthetic `scripts/excel_oracle.py` bundle on Windows Excel, retain its build/settings/source hashes and compare exact typed results with declared numeric tolerances |
+| Distribution | CLI/HTTP/import/calculation/export smoke tests against installed wheel and sdist; Linux/Windows/macOS and Python-version CI results remain separate platform evidence |
+
+`scripts/benchmark_operations.py` binds measurements to implementation and source
+hashes; browser timings require a separate live HTTP journey. The Excel oracle
+supports preparation/comparison on Linux but native execution requires Windows.
+Preparing a bundle does not satisfy the native comparison gate. Local Qwen
+generation and review records remain in ignored validation directories.
+
 ## Priorities and bounded work
 
 | Order | Work | Decision and evidence needed |
@@ -139,8 +170,9 @@ group sample bounds, unresolved references and coverage limits. Keep workbook
 content as evidence rather than executable instructions.
 
 The current implementation supplies the versioned localized
-`linexcel-factual-review-v5` rubric, a typed claim ledger, source/canonical/cache
-payloads, literal lookup offsets and observed directed topology. A second
+`linexcel-factual-review-v6` rubric, a typed claim ledger, source/canonical/cache
+payloads, explicit A1 reference anchors, literal lookup offsets and observed
+directed topology. A second
 specialized review request receives the same bounded dossier, the draft and
 deterministic findings before returning a revised document. Both stages and
 their aggregate usage are retained; this same-provider review is not independent

@@ -6,6 +6,8 @@ from linexcel.ai_validation import MAX_QUOTES, validate_documentation
 from linexcel.aidoc import _qualify_documentation, document_nodes, document_workbook
 from linexcel.i18n import AI_VALIDATION_NOTICES, LANGUAGES
 
+pytestmark = pytest.mark.ai
+
 DOSSIER = {
     "node_id": "c:Summary!C5",
     "formula": "=SUM(Sales!E4:E103)",

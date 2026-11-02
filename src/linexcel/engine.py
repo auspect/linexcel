@@ -129,6 +129,7 @@ class EngineSession:
 
 def _open_workbook(data: bytes, parallel: bool):
     """Instantiate the engine with the configured evaluation options."""
+    data, array_regions = _without_array_result_caches(data)
     eval_config = fz.EvaluationConfig()
     eval_config.enable_parallel = parallel
     # The importer uses this option while converting formatted numeric cells
@@ -144,17 +145,208 @@ def _open_workbook(data: bytes, parallel: bool):
     register_excel_functions(workbook, eval_config.date_system)
     _register_legacy_normal_functions(workbook, eval_config.date_system)
     compatible = CompatibleWorkbook(workbook, read_name_bindings(data))
+    compatible.array_regions = array_regions
+    compatible.source_limitations = {}
+    compatible.visibility_nonresults = set()
+    compatible.visibility_cells = {}
+    from linexcel.structured_refs import batch_table_resolver
+
+    resolve_table, table_names = batch_table_resolver(data)
+    registered_visibility = set()
+    visibility_resolver = None
     for sheet, row, col, _source_formula in _iter_formulas_xml(data):
         # Shared slaves must use the importer's translated formula, not their
         # master's unshifted package text.
         formula = workbook.get_formula(sheet, row, col)
         if formula:
             rewritten = rewrite_formula(formula, sheet, compatible.names)
-            if rewritten != formula:
+            if not rewritten.startswith("="):
+                rewritten = "=" + rewritten
+            try:
+                rewritten = _rewrite_source_references(
+                    rewritten, sheet, row, col, resolve_table, table_names
+                )
+                rewritten = _expand_3d_aggregates(rewritten, workbook.sheet_names)
+                if re.search(r"\b(?:SUBTOTAL|AGGREGATE)\s*\(", rewritten, re.I):
+                    from linexcel.visibility import (
+                        batch_visibility_resolver,
+                        register_visibility_functions,
+                        rewrite_visibility_formula,
+                    )
+
+                    if visibility_resolver is None:
+                        visibility_resolver = batch_visibility_resolver(
+                            data, compatible
+                        )
+                    plan = rewrite_visibility_formula(
+                        rewritten, sheet, visibility_resolver
+                    )
+                    register_visibility_functions(
+                        workbook,
+                        plan,
+                        registered_visibility,
+                        compatible.visibility_nonresults,
+                    )
+                    compatible.visibility_cells[(sheet, row, col)] = {
+                        name for name, _function, _arity in plan.functions
+                    }
+                    rewritten = plan.formula
+            except ValueError as exc:
+                compatible.source_limitations[(sheet, row, col)] = str(exc)
+                rewritten = "=#N/A"
+            if rewritten.removeprefix("=") != formula.removeprefix("="):
                 workbook.set_formula(sheet, row, col, rewritten)
                 compatible.originals[(sheet, row, col)] = formula
     _restore_empty_text_inputs(compatible, data)
+
+    def adapt_scratch(formula, sheet):
+        rewritten = _rewrite_source_references(
+            formula, sheet, None, None, resolve_table, table_names
+        )
+        rewritten = _expand_3d_aggregates(rewritten, workbook.sheet_names)
+        if re.search(r"\b(?:SUBTOTAL|AGGREGATE)\s*\(", rewritten, re.I):
+            from linexcel.visibility import (
+                batch_visibility_resolver,
+                register_visibility_functions,
+                rewrite_visibility_formula,
+            )
+
+            nonlocal visibility_resolver
+            if visibility_resolver is None:
+                visibility_resolver = batch_visibility_resolver(data, compatible)
+            plan = rewrite_visibility_formula(
+                rewritten if rewritten.startswith("=") else "=" + rewritten,
+                sheet,
+                visibility_resolver,
+            )
+            register_visibility_functions(
+                workbook, plan, registered_visibility, compatible.visibility_nonresults
+            )
+            rewritten = plan.formula
+        return rewritten
+
+    compatible.source_formula_adapter = adapt_scratch
     return compatible
+
+
+def _rewrite_source_references(formula, sheet, row, col, resolve_table, table_names):
+    """Resolve source table geometry and refuse unverified formula text reads."""
+    folded = formula.casefold()
+    if (
+        "[" not in formula
+        and "formulatext" not in folded
+        and not any(name in folded for name in table_names)
+    ):
+        return formula
+    from linexcel.structured_refs import formula_tokens
+
+    tokens = formula_tokens(formula if formula.startswith("=") else "=" + formula)
+    changed = False
+    for token in tokens:
+        if (
+            token.type == "FUNC"
+            and token.subtype == "OPEN"
+            and token.value[:-1].upper().lstrip("@").removeprefix("_XLFN.")
+            == "FORMULATEXT"
+        ):
+            raise ValueError(
+                "FORMULATEXT cannot reproduce verified Excel formula text."
+            )
+        if token.type == "OPERAND" and token.subtype == "RANGE":
+            selection = resolve_table(token.value, sheet, row, col)
+            if selection is not None:
+                token.value = selection.rectangle.to_a1()
+                changed = True
+    return "=" + "".join(token.value for token in tokens) if changed else formula
+
+
+def _expand_3d_aggregates(formula: str, sheets) -> str:
+    """Expand only whole reference arguments of supported source 3D aggregates."""
+    if not _SPAN_RE.search(formula):
+        return formula
+    from linexcel.static_refs import aggregate_arguments, sheet_span
+    from linexcel.structured_refs import formula_tokens
+
+    tokens = formula_tokens(formula if formula.startswith("=") else "=" + formula)
+    eligible = aggregate_arguments(tokens)
+    changed = False
+    for index, token in enumerate(tokens):
+        if token.type != "OPERAND" or token.subtype != "RANGE":
+            continue
+        rectangles = sheet_span(token.value, sheets)
+        if rectangles is None:
+            continue
+        if index not in eligible:
+            raise ValueError("3D reference is not a supported aggregate argument.")
+        if len(rectangles) > 253:
+            raise ValueError("3D aggregate expansion exceeds 253 references.")
+        token.value = ",".join(rectangle.to_a1() for rectangle in rectangles)
+        changed = True
+    expanded = "=" + "".join(token.value for token in tokens)
+    if changed and is_too_deep(expanded):
+        raise ValueError("3D aggregate expansion exceeds formula complexity limits.")
+    return expanded if changed else formula
+
+
+def _without_array_result_caches(data: bytes):
+    """Remove saved array children from the engine's private package copy.
+
+    Excel serializes spill results as ordinary value cells. Importing those
+    values as inputs blocks fresh spilling; setting them to blank afterwards
+    still leaves native cells which shadow the spill. Original package bytes
+    remain available to source/cache readers outside this engine.
+    """
+    from linexcel.loader import _parse_sheet_targets
+
+    regions = {}
+    replacements = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        paths = _parse_sheet_targets(
+            archive.read("xl/workbook.xml").decode("utf-8"),
+            archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
+        )
+        for sheet, path in paths.items():
+            payload = archive.read(path)
+            if b't="array"' not in payload:
+                continue
+            declared = []
+            for cell in _CELL_RE.finditer(payload):
+                formula = _F_RE.search(cell.group(3))
+                if formula is None or b't="array"' not in formula.group(1):
+                    continue
+                reference = re.search(rb'\bref="([^"]+)"', formula.group(1))
+                rectangle = (
+                    parse_ref(reference.group(1).decode()) if reference else None
+                )
+                anchor = (int(cell.group(2)), col_to_num(cell.group(1).decode()))
+                if rectangle is not None and anchor == (rectangle.r1, rectangle.c1):
+                    declared.append(rectangle)
+                    regions[(sheet, *anchor)] = rectangle
+            if not declared:
+                continue
+
+            def drop_result(cell):
+                row, col = int(cell.group(2)), col_to_num(cell.group(1).decode())
+                if _F_RE.search(cell.group(3)) is None and any(
+                    rect.r1 <= row <= rect.r2
+                    and rect.c1 <= col <= rect.c2
+                    and (row, col) != (rect.r1, rect.c1)
+                    for rect in declared
+                ):
+                    return b""
+                return cell.group(0)
+
+            replacements[path] = _CELL_RE.sub(drop_result, payload)
+        if not replacements:
+            return data, regions
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:
+            for entry in archive.infolist():
+                target.writestr(
+                    entry,
+                    replacements.get(entry.filename, archive.read(entry.filename)),
+                )
+    return output.getvalue(), regions
 
 
 def _restore_empty_text_inputs(workbook, data: bytes) -> None:
@@ -415,6 +607,9 @@ def boot_engine(
                 reachable,
                 evaluation_failed=not target_alive,
             )
+            unavailable |= _source_unavailable(
+                engine, data, warnings, reachable, evaluation_failed=not target_alive
+            )
             reporter.operation("engine evaluation", "creating scratch sheet")
             scratch_ready = _ensure_scratch(engine)
             return EngineSession(
@@ -483,6 +678,9 @@ def boot_engine(
         reporter.operation("engine evaluation", "checking cycle provenance")
         unavailable |= _cycle_unavailable(
             engine, data, engine_sheets, warnings, evaluation_failed=not engine_alive
+        )
+        unavailable |= _source_unavailable(
+            engine, data, warnings, evaluation_failed=not engine_alive
         )
         reporter.operation("engine evaluation", "creating scratch sheet")
         scratch_ready = _ensure_scratch(engine)
@@ -672,14 +870,86 @@ def _static_cycle_dependents(data, cells):
     return affected
 
 
-def _uncached_dependents(engine, data: bytes, too_deep: dict, warnings: list[str]):
+def _source_unavailable(
+    engine, data, warnings, reachable=None, *, evaluation_failed=False
+):
+    """Keep adapter refusals and stale array extents out of calculated readings."""
+    limitations = dict(getattr(engine, "source_limitations", {}))
+    array_dependents = {}
+    array_budget_exceeded = False
+    nonresults = getattr(engine, "visibility_nonresults", set())
+    for cell, functions in getattr(engine, "visibility_cells", {}).items():
+        if functions & nonresults or evaluation_failed:
+            limitations[cell] = (
+                "Visibility aggregate returned an unsupported result."
+                if functions & nonresults
+                else "Visibility aggregate was not verified after evaluation failed."
+            )
+    for cell, expected in getattr(engine, "array_regions", {}).items():
+        if reachable is not None and cell not in reachable:
+            continue
+        address = f"{quote_sheet(cell[0])}!{a1(cell[1], cell[2])}"
+        try:
+            trace = engine.trace([address]).to_dict()
+            spill = trace["nodes"][address]["cell"].get("spill") or {}
+            observed = parse_ref(spill.get("extent") or "")
+            if observed is None and expected.ncells == 1:
+                continue
+            if observed is not None and (
+                observed.r1,
+                observed.c1,
+                observed.r2,
+                observed.c2,
+            ) == (expected.r1, expected.c1, expected.r2, expected.c2):
+                continue
+        except (KeyError, AttributeError, RuntimeError, ValueError):
+            pass
+        limitations[cell] = (
+            "Array result extent differs from its declared source region."
+        )
+        # A vanished child no longer appears in the native spill graph. Trace
+        # dependents from the declared source cells as well, so references to
+        # only those children cannot turn the changed extent into a false zero.
+        if expected.ncells + len(array_dependents) > TRACE_RANGE_MEMBERS:
+            array_budget_exceeded = True
+        elif not array_budget_exceeded:
+            array_dependents.update(
+                ((cell[0], row, col), "array extent mismatch")
+                for row in range(expected.r1, expected.r2 + 1)
+                for col in range(expected.c1, expected.c2 + 1)
+            )
+    if not limitations:
+        return set()
+    for (sheet, row, col), reason in limitations.items():
+        warnings.append(
+            f"{sheet}!{a1(row, col)} was not verified as a recalculation: {reason} "
+            "It and its dependents retain file caches where available."
+        )
+    if array_budget_exceeded:
+        warnings.append(
+            "Changed array extents exceed the dependent trace budget; all formula "
+            "readings conservatively retain file caches."
+        )
+        return {(s, r, c) for s, r, c, _ in _iter_formulas_xml(data)}
+    return _uncached_dependents(
+        engine, data, limitations | array_dependents, warnings, only_uncached=False
+    )
+
+
+def _uncached_dependents(
+    engine, data: bytes, too_deep: dict, warnings: list[str], *, only_uncached=True
+):
     """Keep engine limitations distinct from spreadsheet errors caught by guards.
 
     IFERROR can catch our NImpl marker, but its fallback is not evidence of
     what Excel would compute from the missing input. Suppress readings and
     decompositions throughout the dependent closure, retaining file caches.
     """
-    roots = [cell for cell in too_deep if engine.get_value(*cell) is None]
+    roots = [
+        cell
+        for cell in too_deep
+        if not only_uncached or engine.get_value(*cell) is None
+    ]
     if not roots:
         return set()
     # Dynamic addresses do not expose all precedents to a static trace. Their
@@ -711,7 +981,7 @@ def _uncached_dependents(engine, data: bytes, too_deep: dict, warnings: list[str
         return unavailable
     except Exception:
         warnings.append(
-            "The dependents of an uncached over-deep formula could not be fully "
+            "The dependents of an unavailable formula could not be fully "
             "traced; formula readings use file caches conservatively because "
             "their independence from the missing input could not be established"
         )
@@ -762,15 +1032,45 @@ def _evaluate_targets(
         )
     progress.step(f"tracing upstream of {len(targets)} target(s)")
     roots = [f"{quote_sheet(sheet)}!{a1(row, col)}" for sheet, row, col in targets]
-    trace = engine.trace(
-        roots,
-        direction=fz.TraceDirection.Precedents,
-        max_depth=TRACE_MAX_DEPTH,
-        max_nodes=TRACE_MAX_NODES,
-        max_links=TRACE_MAX_LINKS,
-        max_work=TRACE_MAX_WORK,
-        range_member_budget=TRACE_RANGE_MEMBERS,
-    )
+
+    def trace_roots():
+        return engine.trace(
+            roots,
+            direction=fz.TraceDirection.Precedents,
+            max_depth=TRACE_MAX_DEPTH,
+            max_nodes=TRACE_MAX_NODES,
+            max_links=TRACE_MAX_LINKS,
+            max_work=TRACE_MAX_WORK,
+            range_member_budget=TRACE_RANGE_MEMBERS,
+        )
+
+    trace = trace_roots()
+    # Before the first recalculation, native traces do not connect a saved
+    # array child to its anchor. Recover those edges from declared source
+    # regions, including anchors reached through another array's inputs.
+    pending_arrays = dict(getattr(engine, "array_regions", {}))
+    while pending_arrays:
+        rectangles = [parse_ref(address) for address in trace.nodes.keys()]
+        added = []
+        for cell, bounds in pending_arrays.items():
+            if any(
+                rect is not None
+                and rect.sheet == cell[0]
+                and rect.r1 <= bounds.r2
+                and rect.r2 >= bounds.r1
+                and rect.c1 <= bounds.c2
+                and rect.c2 >= bounds.c1
+                for rect in rectangles
+            ):
+                added.append(cell)
+        if not added:
+            break
+        for sheet, row, col in added:
+            pending_arrays.pop((sheet, row, col))
+            address = f"{quote_sheet(sheet)}!{a1(row, col)}"
+            if address not in roots:
+                roots.append(address)
+        trace = trace_roots()
     reachable: set[tuple[str, int, int]] = set(targets)
     for key in trace.nodes.keys():
         rect = parse_ref(key)
@@ -959,8 +1259,24 @@ def _find_unresolvable(
     XML scan streams the parts the file already carries and stays linear.
     """
     suspects: dict[tuple[str, int, int], str] = {}
+    from linexcel.structured_refs import batch_table_resolver
+
+    resolve_table, table_names = batch_table_resolver(data)
+    ordered_sheets = list(read_name_bindings(data).sheet_names.values())
     for sheet, row, col, formula in _iter_formulas_xml(data):
-        if sheet in engine_sheets and _is_unresolvable(formula, engine_sheets):
+        evaluation_formula = formula
+        try:
+            evaluation_formula = _rewrite_source_references(
+                formula, sheet, row, col, resolve_table, table_names
+            )
+            evaluation_formula = _expand_3d_aggregates(
+                evaluation_formula, ordered_sheets
+            )
+        except ValueError:
+            pass
+        if sheet in engine_sheets and _is_unresolvable(
+            evaluation_formula, engine_sheets
+        ):
             suspects[(sheet, row, col)] = formula
     return suspects
 

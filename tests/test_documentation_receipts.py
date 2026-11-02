@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+pytestmark = pytest.mark.ai
+
 pytest_plugins = ["test_manual_validation"]
 
 

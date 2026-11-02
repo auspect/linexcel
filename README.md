@@ -117,9 +117,9 @@ These are engine snapshots, not a trace of executed branches or subexpressions.
 The separate **AI documentation** tab shares the graph's wide, adjustable reader.
 Long documents scroll inside the panel; on narrow screens it sits below the graph.
 
-![Graph with a separate AI documentation reader](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
+![Graph reader with optional AI documentation](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
 
-![Selected node with AI documentation and separate token counts](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
+![Selected node with source and calculation evidence](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
 
 The interface provides sheets, a selected-node graph neighbourhood, dependency
 decomposition, cache comparison, task cancellation, deterministic screenshots
@@ -210,13 +210,14 @@ shared formula pattern never implies shared input values or an identical result.
 Unsupported reference syntax is kept separate conservatively. Older saved
 projects can refresh their structure without uploading their sources again.
 
-Supported external references in this first version are single cells holding
-literal inputs, including typed Excel errors, in uploaded reference workbooks.
-Constant defined names and absolute named references respect sheet-local scope.
-Dynamic references, structured
-references, external formulas/ranges, relative or formula-defined names,
-array/data-table results, cycles and formulas needing omitted workbook metadata
-are reported as unsupported. Decomposition includes dependency formula values
+The indexed application resolves source-declared tables, scoped static names,
+supported 3D aggregates and supplied external formula/range dependencies. It
+also handles bounded visibility aggregates, declared array regions, checked
+dynamic references and convergent source-enabled iterative cycles. Each feature
+has explicit limits in the versioned capability registry and the
+[coverage guide](docs/guide/coverage.md#indexed-application-and-batch-analysis).
+Missing source metadata, unresolved prerequisites and nonconvergence remain
+explicitly unsupported. Decomposition includes dependency formula values
 available from the calculation, not evaluated subexpression steps. The native
 engine can still differ from Excel;
 comparison with a saved value is evidence, not proof of Excel compatibility.
@@ -247,6 +248,9 @@ the **Recalculate** button forces a fresh calculation, including volatile formul
 Each displayed result retains its timestamp. Browser reconnection and server
 restart recover the task history; work interrupted by a server restart is
 explicitly marked failed and can be retried.
+Targeted volatile calculations also retain a UTC clock and random seed; the
+Python evaluation API can replay that context. This does not establish Excel
+random-sequence parity.
 
 ### Embed the application
 
@@ -268,17 +272,23 @@ application = create_app(
 Mount this WSGI application in the host server. The host must populate the
 authenticated identity itself; do not trust a caller-supplied identity header.
 A missing identity returns 401. Storage paths and task access are scoped to
-that identity. The standalone server binds only to loopback and scopes files
-to a private browser cookie; it is a local launcher, not an internet-facing
-authentication service. `--mount-path`, `--data-dir`, `--workers`,
+that identity. The standalone server binds only to loopback and uses a durable
+local profile. Its one-use session link connects a browser to that profile;
+`linexcel session-link --data-dir ~/.linexcel` creates another link while the
+server is running. Projects survive browser changes and server restarts.
+`--mount-path`, `--data-dir`, `--workers`,
 `--memory-mb` and `--retention-days` configure the launcher. The default data
 directory is `~/.linexcel`; uploaded files and diagnostic formula text are private.
 
 Use **one application coordinator per data directory** (an exclusive lock
 enforces this). Its shared queue limits worker concurrency and admission by
 the sum of requested memory budgets. Windows Job Objects enforce each worker
-tree's memory cap. On POSIX, the current limit is per-process address space;
-aggregate renderer memory requires host container/cgroup limits. Upload reads,
+tree's memory cap. Linux and other supported Unix systems except macOS use
+per-process address-space limits; aggregate renderer memory requires host
+container/cgroup limits. macOS instead samples process-group resident memory
+and stops the group on an observed breach. Its sampled budget can be exceeded
+between polls and is not a hard allocation cap. See the
+[platform memory semantics](docs/guide/execution.md). Upload reads,
 graph pages and task-result previews are bounded. LibreOffice temporary disk use
 and overall service resources also require host resource limits.
 This first implementation is not a distributed worker pool.
@@ -286,11 +296,24 @@ This first implementation is not a distributed worker pool.
 Tasks have their own duration and memory limits, indeterminate running progress,
 error and cancellation state. Output/storage limits are checked during work
 and before publishing, with temporary output removed afterwards; host filesystem
-quotas remain necessary for a hard disk ceiling. Expired projects are purged on
-server startup, based on their import date. **Delete** removes a project,
-sources and results; running tasks must finish cancellation first. Host storage
-backup, periodic retention enforcement, distributed scheduling and full
-subexpression decomposition remain follow-up work.
+quotas remain necessary for a hard disk ceiling. Standalone projects are retained
+until explicit deletion by default. When `--retention-days` is selected, expired
+projects are purged at startup based on their import date. Embedded applications
+retain their explicit host policy. **Delete** removes a project, sources and
+results; running tasks must finish cancellation first.
+
+Download a workspace archive before migrating or deleting a project. Restoration
+verifies its inventory and hashes, creates a new project and rebuilds the index;
+retained results are historical evidence rather than reusable calculations.
+The archive excludes browser credentials. `linexcel doctor` checks local tools,
+storage and model discovery without generating AI. Distributed scheduling,
+periodic retention enforcement and full subexpression decomposition remain
+outside this local workflow.
+
+Selected findings can be shared as a static offline HTML investigation, with
+source formulas, saved and calculated values, dated documentation, bounded
+relationships and chosen captures. It works with JavaScript disabled. See
+[the report limits](docs/guide/html.md#selected-investigation-from-the-local-application).
 
 ### Command line
 
@@ -460,21 +483,22 @@ Every image below is captured from a real report by
 `scripts/capture_viewer.py`, so they cannot drift from the viewer without the
 `readme-shots` commit hook noticing.
 The application images above come from `scripts/capture_app.py`, using the
-generated Sales fixture, real English documentation and real sheet captures.
-Its manifest records the fixture and image hashes and separate token counts;
+generated B2B commercial review fixture and real sheet captures. The current
+images use deterministic analysis without AI documentation.
+Its manifest records the fixture, image hashes and selected documentation mode;
 `--check` verifies those assets without a browser or model. Both screenshot
 checks also run in CI. Workbook sources and full validation reports stay local.
 
-### A node, documented
+### A node, explained
 
-Formula, step-by-step evaluation, precedents and dependents, and the AI card
-written from that same deterministic dossier.
+Source formula, step-by-step evaluation, precedents and dependents. AI cards
+can be generated separately from that same deterministic dossier.
 
 ![A node selected in the viewer](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_node_documented.png)
 
-### Workbook overview
+### Workbook summary
 
-![AI-written workbook overview](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_workbook_overview.png)
+![Rendered executive summary](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/viewer_workbook_overview.png)
 
 ### Sheet context
 
@@ -485,9 +509,24 @@ comments, frozen panes, merged ranges and hidden columns.
 
 ## Contributing
 
+`uv run pytest` runs the required tests without AI dependencies. AI documentation,
+provider and vision tests carry the `ai` marker and are excluded by default,
+including from required CI and commit hooks. To run them explicitly:
+
+```Shell
+uv run --extra ai --extra screenshots pytest -m ai
+```
+
+The separate **optional AI tests** GitHub Actions workflow is manual only and
+does not block CI or publishing. It uses synthetic responses to check the code;
+it does not evaluate a model's accuracy. Real model experiments remain optional
+local runs. Deterministic source, calculation, rendering and no-AI safety tests
+remain required.
+
 Run the [local acceptance workflow](docs/manual_validation.md) before delivering
-changes: both fixtures, local Ollama documentation and image analysis, followed
-by inspection of dashboard tabs and sampled nodes. The script preserves each
+changes: both fixtures, all report languages and sheet captures, followed
+by inspection of dashboard tabs and sampled nodes. AI documentation and image
+analysis are optional; use `--no-ai` for deterministic validation. The script preserves each
 run and reports incomplete coverage as a failure. See [AGENTS.md](AGENTS.md) for
 the repository's validation requirements.
 

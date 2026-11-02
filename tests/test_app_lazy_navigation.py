@@ -1,11 +1,13 @@
 """Lazy browser navigation keeps the reader and canvas usable during I/O."""
 
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from graph_test_helpers import open_workspace_menu, tap_graph_node
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -203,32 +205,21 @@ class Navigation:
         route.fulfill(status=503, json={"error": {"message": message}})
 
     def tap(self, node_id):
-        canvas = self.page.locator("#graph-canvas")
-        canvas.scroll_into_view_if_needed()
-        self.page.wait_for_function(
-            "!document.querySelector('#graph-canvas')._cy.animated()"
-        )
-        # ResizeObserver and Cytoscape paint run after tab/scroll layout. A
-        # physical click targets the painted card, not pre-paint coordinates.
-        self.page.evaluate(
-            "() => new Promise(resolve => requestAnimationFrame(() => "
-            "requestAnimationFrame(resolve)))"
-        )
-        point = canvas.evaluate(
-            """(element, id) => {
-                const p=element._cy.getElementById(id).renderedPosition();
-                const b=element.getBoundingClientRect();
-                return {x:b.left+element.clientLeft+p.x,
-                    y:b.top+element.clientTop+p.y};
-            }""",
+        visible = self.page.locator("#graph-canvas").evaluate(
+            """(e,id)=>{const p=e._cy.getElementById(id).renderedPosition();
+            return p.x>=0&&p.y>=0&&p.x<=e.clientWidth&&p.y<=e.clientHeight}""",
             node_id,
         )
-        assert self.page.evaluate(
-            """p=>document.elementFromPoint(p.x,p.y)?.closest('#graph-canvas')
-                ===document.querySelector('#graph-canvas')""",
-            point,
-        ), "The painted card must be inside the visible canvas before clicking"
-        self.page.mouse.click(point["x"], point["y"])
+        alternative = self.page.locator(f'#graph [data-graph-node="{node_id}"]')
+        if not visible and alternative.count():
+            # The accessible relationship list selects an offscreen neighbour
+            # without changing the camera before a potentially failed request.
+            details = self.page.locator("#graph-list")
+            if not details.evaluate("e=>e.open"):
+                details.locator(":scope > summary").click()
+            alternative.first.click()
+        else:
+            tap_graph_node(self.page, node_id)
 
     def remember_canvas(self):
         self.page.locator("#graph-zoom-in").click()
@@ -296,6 +287,7 @@ def navigation(browser, request):
     page.on("pageerror", lambda error: app.errors.append(str(error)))
     page.route("**/*", app.route)
     page.goto("http://localhost/mounted/")
+    open_workspace_menu(page)
     page.locator("[data-project='p']").click()
     page.locator("#node-list [data-node='Source!A1']").click()
     playwright.expect(page.locator("#node-detail h2")).to_contain_text("A1")
@@ -319,11 +311,13 @@ def test_old_manual_preference_cannot_block_calculation_behind_saved_reply(navig
     playwright.expect(
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B1")
-    # Pump browser events until the existing reply request is actually held.
-    app.page.wait_for_function(
-        "document.querySelector('#graph-preview .graph-reader-heading h3')"
-        ".textContent.includes('B1')"
-    )
+    # The reader commits before the asynchronous saved-result request starts.
+    deadline = time.monotonic() + 5
+    while (
+        not any(k == "saved_result" for _, _, k, _ in app.held)
+        and time.monotonic() < deadline
+    ):
+        app.page.wait_for_timeout(10)
     assert any(k == "saved_result" for _, _, k, _ in app.held)
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1"]
@@ -336,6 +330,7 @@ def test_first_graph_visit_calculates_its_initial_formula_with_old_preference(
 ):
     app = navigation
     app.page.locator("#tab-nodes").click()
+    open_workspace_menu(app.page)
     app.page.locator("[data-project='p']").click()
     assert app.evaluations == []
     app.hold_saved_result = True
@@ -488,6 +483,7 @@ def test_slow_calculation_submission_does_not_reuse_old_result_or_block_navigati
     # Reopen through the UI so the saved completed task is a genuine project
     # payload, not an injected browser variable or a synthetic render call.
     app.page.locator("#tab-nodes").click()
+    open_workspace_menu(app.page)
     app.page.locator("[data-project='p']").click()
     app.page.locator("#node-list [data-node='Source!A1']").click()
     app.page.locator("#tab-graph").click()

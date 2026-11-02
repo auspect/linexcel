@@ -320,7 +320,7 @@ def test_sales_sheet_filters_keep_every_card_separate(
 ):
     graph = sales_source_graph
     page, errors = report(graph, width=width, height=height, language=language)
-    for sheet in ["__all__", "Params", "Sales", "Summary"]:
+    for sheet in ["__all__", "Summary", "Sales", "Catalog", "Assumptions"]:
         expected = {node["id"] for node in graph["nodes"]}
         if sheet != "__all__":
             local = {node["id"] for node in graph["nodes"] if node["sheet"] == sheet}
@@ -360,7 +360,7 @@ def cached_filter_source_graph(request):
         group["groupCachedAgreement"] = "differ"
         return graph
     patched = io.BytesIO()
-    cache_pattern = rb'(<c\b[^>]*\br="C5"[^>]*>.*?</f>)<v(?:\s*/>|></v>)'
+    cache_pattern = rb'(<c\b[^>]*\br="C10"[^>]*>.*?</f>)<v(?:\s*/>|></v>)'
     # A real wrong saved result enables Sales' discrepancy filter.
     with (
         zipfile.ZipFile(io.BytesIO(data)) as source,
@@ -368,7 +368,7 @@ def cached_filter_source_graph(request):
     ):
         for part in source.infolist():
             payload = source.read(part.filename)
-            if part.filename == "xl/worksheets/sheet2.xml":
+            if part.filename == "xl/worksheets/sheet1.xml":
                 payload, count = re.subn(
                     cache_pattern,
                     rb"\1<v>987654321</v>",
@@ -431,11 +431,11 @@ def test_readme_capture_selects_result_before_photographing(report):
     )
 
     graph = filtered_graph()
-    graph["nodes"][1]["label"] = "Summary!C5"
+    graph["nodes"][1]["label"] = "Summary!C10"
     page, errors = report(graph)
     assert capture["apply_shot"](page, capture["SHOTS"][1])
     assert page.locator("#lin-search-results").is_hidden()
-    assert page.locator("#lin-panel h2").inner_text() == "Summary!C5"
+    assert page.locator("#lin-panel h2").inner_text() == "Summary!C10"
     assert not errors
 
 

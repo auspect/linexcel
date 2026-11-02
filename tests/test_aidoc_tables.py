@@ -13,6 +13,8 @@ import pytest
 
 from linexcel.aidoc import _insert_tables, render_markdown_table
 
+pytestmark = pytest.mark.ai
+
 
 class TestRenderMarkdownTable:
     def test_basic_table_is_well_formed(self):

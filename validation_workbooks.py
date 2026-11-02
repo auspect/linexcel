@@ -2,11 +2,14 @@
 
 Two fixtures, with different jobs:
 
-``build_sales_workbook`` is a small, plausible sales report. It is what
-the README screenshots are captured from, so it stays readable: a table that
-does not start at A1, a hidden column, a merged range, a chart, a comment, a
-defined name and cross-sheet aggregation. Enough to show every tab of the report
-doing something, and little enough to take in at a glance.
+``build_sales_workbook`` is a realistic B2B commercial and margin review
+workbook (``Summary``, ``Sales``, ``Catalog``, ``Assumptions``). It is what the
+README screenshots are captured from, so it combines corporate spreadsheet
+conventions — an executive KPI scorecard, regional plan vs. actuals, a 40-order
+B2B ledger, a product pricing catalog, defined policy parameters, charts,
+comments, frozen panes, merged banners and hidden cost/baseline columns — while
+keeping its lineage graph readable at a glance through stretched-formula
+grouping.
 
 ``build_stress_workbook`` is the opposite. It is an English workbook built to
 break things: every Excel error value, references the analyser cannot resolve,
@@ -31,205 +34,1001 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 # ──────────────────────────────────────────────
-# 1. Sales report — the readable one
+# 1. B2B commercial & margin review — showcase fixture
 # ──────────────────────────────────────────────
+
+CATALOG_ITEMS: tuple[tuple[str, str, str, int, int, str], ...] = (
+    (
+        "NS-CORE-100",
+        "Northstar Core Platform",
+        "Cloud Core",
+        15_000,
+        3_300,
+        "Annual SaaS",
+    ),
+    (
+        "NS-CORE-500",
+        "Northstar Enterprise Suite",
+        "Cloud Core",
+        32_000,
+        6_400,
+        "Annual SaaS",
+    ),
+    (
+        "NS-GOV-200",
+        "Lineage & Governance Pro",
+        "Data Governance",
+        20_000,
+        4_400,
+        "Annual SaaS",
+    ),
+    ("NS-SEC-300", "Zero-Trust Audit Shield", "Security", 18_000, 4_320, "Annual SaaS"),
+    (
+        "NS-AI-600",
+        "Automated Anomaly Copilot",
+        "AI Analytics",
+        24_000,
+        6_240,
+        "Annual SaaS",
+    ),
+    (
+        "NS-EDGE-410",
+        "Edge Telemetry Appliance",
+        "Hybrid Edge",
+        12_000,
+        6_240,
+        "3-Yr Appliance",
+    ),
+    (
+        "NS-EDGE-820",
+        "High-Throughput Relay Node",
+        "Hybrid Edge",
+        26_000,
+        14_300,
+        "3-Yr Appliance",
+    ),
+    (
+        "NS-SVC-900",
+        "Enterprise Onboarding Pack",
+        "Advisory",
+        10_000,
+        5_800,
+        "Fixed Scope",
+    ),
+)
+
+SALES_ORDERS: tuple[tuple[str, datetime.date, str, str, str, int, float], ...] = (
+    (
+        "SO-26301",
+        datetime.date(2026, 7, 2),
+        "Meridian Health Systems",
+        "North America",
+        "NS-CORE-500",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26302",
+        datetime.date(2026, 7, 6),
+        "Helvetia Private Bank",
+        "EMEA",
+        "NS-GOV-200",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26303",
+        datetime.date(2026, 7, 8),
+        "Sapporo Precision Robotics",
+        "APAC",
+        "NS-EDGE-820",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26304",
+        datetime.date(2026, 7, 10),
+        "Vanguard Freight Logistics",
+        "North America",
+        "NS-CORE-100",
+        3,
+        0.08,
+    ),
+    (
+        "SO-26305",
+        datetime.date(2026, 7, 13),
+        "Andes Digital Payments",
+        "LATAM",
+        "NS-CORE-100",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26306",
+        datetime.date(2026, 7, 15),
+        "Nordic Grid Transmission",
+        "EMEA",
+        "NS-SEC-300",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26307",
+        datetime.date(2026, 7, 17),
+        "Kestrel Aerospace Group",
+        "North America",
+        "NS-AI-600",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26308",
+        datetime.date(2026, 7, 21),
+        "Pacific Harbour Ports",
+        "APAC",
+        "NS-CORE-100",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26309",
+        datetime.date(2026, 7, 23),
+        "Rheinland Specialty Chem",
+        "EMEA",
+        "NS-CORE-500",
+        1,
+        0.00,
+    ),
+    (
+        "SO-26310",
+        datetime.date(2026, 7, 27),
+        "Clearwater BioLabs",
+        "North America",
+        "NS-GOV-200",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26311",
+        datetime.date(2026, 7, 29),
+        "Cordillera Mining Corp",
+        "LATAM",
+        "NS-EDGE-410",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26312",
+        datetime.date(2026, 7, 31),
+        "Caledonia Offshore Energy",
+        "EMEA",
+        "NS-EDGE-820",
+        1,
+        0.05,
+    ),
+    (
+        "SO-26313",
+        datetime.date(2026, 8, 3),
+        "Redwood Cloud Retail",
+        "North America",
+        "NS-CORE-500",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26314",
+        datetime.date(2026, 8, 5),
+        "Tasman Telecom Holdings",
+        "APAC",
+        "NS-SEC-300",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26315",
+        datetime.date(2026, 8, 7),
+        "Aquitaine Rail Freight",
+        "EMEA",
+        "NS-CORE-100",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26316",
+        datetime.date(2026, 8, 11),
+        "Summit National Bancorp",
+        "North America",
+        "NS-SEC-300",
+        3,
+        0.10,
+    ),
+    (
+        "SO-26317",
+        datetime.date(2026, 8, 13),
+        "Paulista Agritech S.A.",
+        "LATAM",
+        "NS-GOV-200",
+        1,
+        0.05,
+    ),
+    (
+        "SO-26318",
+        datetime.date(2026, 8, 14),
+        "Hanover Industrial IoT",
+        "EMEA",
+        "NS-EDGE-410",
+        3,
+        0.10,
+    ),
+    (
+        "SO-26319",
+        datetime.date(2026, 8, 18),
+        "Singapura Clearing House",
+        "APAC",
+        "NS-CORE-500",
+        1,
+        0.00,
+    ),
+    (
+        "SO-26320",
+        datetime.date(2026, 8, 20),
+        "Ironbridge Semiconductor",
+        "North America",
+        "NS-AI-600",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26321",
+        datetime.date(2026, 8, 24),
+        "Lombardia MedTech SpA",
+        "EMEA",
+        "NS-AI-600",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26322",
+        datetime.date(2026, 8, 26),
+        "Boreal Timber & Pulp",
+        "North America",
+        "NS-EDGE-410",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26323",
+        datetime.date(2026, 8, 28),
+        "Monterrey Auto Components",
+        "LATAM",
+        "NS-SEC-300",
+        1,
+        0.05,
+    ),
+    (
+        "SO-26324",
+        datetime.date(2026, 8, 31),
+        "Kansai Smart Mobility",
+        "APAC",
+        "NS-AI-600",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26325",
+        datetime.date(2026, 9, 2),
+        "Chesapeake Utilities",
+        "North America",
+        "NS-GOV-200",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26326",
+        datetime.date(2026, 9, 4),
+        "Benelux Maritime Group",
+        "EMEA",
+        "NS-CORE-500",
+        2,
+        0.12,
+    ),
+    (
+        "SO-26327",
+        datetime.date(2026, 9, 8),
+        "Heartland Mutual Insurance",
+        "North America",
+        "NS-SVC-900",
+        2,
+        0.00,
+    ),
+    (
+        "SO-26328",
+        datetime.date(2026, 9, 9),
+        "Seoul FinCloud Partners",
+        "APAC",
+        "NS-GOV-200",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26329",
+        datetime.date(2026, 9, 11),
+        "Iberia Renewables S.L.",
+        "EMEA",
+        "NS-GOV-200",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26330",
+        datetime.date(2026, 9, 14),
+        "Cascadia Autonomous Lab",
+        "North America",
+        "NS-EDGE-820",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26331",
+        datetime.date(2026, 9, 16),
+        "Rio Plata Logistics",
+        "LATAM",
+        "NS-CORE-100",
+        1,
+        0.00,
+    ),
+    (
+        "SO-26332",
+        datetime.date(2026, 9, 17),
+        "Danube Pharma Distribution",
+        "EMEA",
+        "NS-SEC-300",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26333",
+        datetime.date(2026, 9, 21),
+        "Granite State Defense",
+        "North America",
+        "NS-CORE-500",
+        1,
+        0.00,
+    ),
+    (
+        "SO-26334",
+        datetime.date(2026, 9, 22),
+        "Auckland Grid Analytics",
+        "APAC",
+        "NS-SVC-900",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26335",
+        datetime.date(2026, 9, 23),
+        "Solvay Precision Optics",
+        "EMEA",
+        "NS-SVC-900",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26336",
+        datetime.date(2026, 9, 24),
+        "Prairie Grain Exchange",
+        "North America",
+        "NS-CORE-100",
+        2,
+        0.05,
+    ),
+    (
+        "SO-26337",
+        datetime.date(2026, 9, 25),
+        "Bogota Cloud Bancaria",
+        "LATAM",
+        "NS-SVC-900",
+        1,
+        0.00,
+    ),
+    (
+        "SO-26338",
+        datetime.date(2026, 9, 28),
+        "Osaka Industrial Systems",
+        "APAC",
+        "NS-CORE-100",
+        2,
+        0.10,
+    ),
+    (
+        "SO-26339",
+        datetime.date(2026, 9, 29),
+        "Skagerak Marine Services",
+        "EMEA",
+        "NS-CORE-100",
+        2,
+        0.08,
+    ),
+    (
+        "SO-26340",
+        datetime.date(2026, 9, 29),
+        "Apex Midstream Partners",
+        "North America",
+        "NS-SEC-300",
+        2,
+        0.05,
+    ),
+)
+
+REGIONAL_PLANS: tuple[tuple[str, str, int, str, int], ...] = (
+    ("North America", "M. Alvarez", 520_000, "Enterprise Cloud & Security", 475_000),
+    ("EMEA", "C. Lindqvist", 385_000, "Core Platform & Data Governance", 352_000),
+    ("APAC", "K. Takahashi", 250_000, "Hybrid Edge & AI Telemetry", 218_000),
+    ("LATAM", "R. Mendes", 115_000, "Mid-Market Platform Expansion", 98_000),
+)
 
 
 def build_sales_workbook() -> bytes:
-    """Generate a rich Excel workbook with styles, charts, and shifted cells."""
+    """Generate a realistic 4-sheet B2B commercial and margin review workbook."""
     wb = Workbook()
 
-    # --- STYLES DEFINITION ---
-    font_title = Font(name="Segoe UI", size=14, bold=True, color="1F4E79")
-    font_header = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-    font_data = Font(name="Segoe UI", size=11)
-    font_bold = Font(name="Segoe UI", size=11, bold=True)
+    # Corporate typography & palette
+    font_title = Font(name="Segoe UI", size=14, bold=True, color="0F2942")
+    font_subtitle = Font(name="Segoe UI", size=9.5, italic=True, color="52657A")
+    font_section = Font(name="Segoe UI", size=10.5, bold=True, color="0F2942")
+    font_header = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    font_data = Font(name="Segoe UI", size=10, color="1E293B")
+    font_muted = Font(name="Segoe UI", size=9.5, color="475569")
+    font_bold = Font(name="Segoe UI", size=10, bold=True, color="0F2942")
+    font_input = Font(name="Segoe UI", size=10, bold=True, color="1B4F8C")
 
     fill_header = PatternFill(
-        start_color="1F4E79", end_color="1F4E79", fill_type="solid"
+        start_color="163A5F", end_color="163A5F", fill_type="solid"
     )
     fill_zebra = PatternFill(
-        start_color="F2F5F8", end_color="F2F5F8", fill_type="solid"
+        start_color="F7F9FB", end_color="F7F9FB", fill_type="solid"
+    )
+    fill_total = PatternFill(
+        start_color="EEF3F8", end_color="EEF3F8", fill_type="solid"
+    )
+    fill_highlight = PatternFill(
+        start_color="EBF2F9", end_color="EBF2F9", fill_type="solid"
+    )
+    fill_input = PatternFill(
+        start_color="F2F7FD", end_color="F2F7FD", fill_type="solid"
     )
 
     border_thin = Border(
-        left=Side(style="thin", color="D9D9D9"),
-        right=Side(style="thin", color="D9D9D9"),
-        top=Side(style="thin", color="D9D9D9"),
-        bottom=Side(style="thin", color="D9D9D9"),
+        left=Side(style="thin", color="D8E1EB"),
+        right=Side(style="thin", color="D8E1EB"),
+        top=Side(style="thin", color="D8E1EB"),
+        bottom=Side(style="thin", color="D8E1EB"),
     )
     border_header = Border(
-        left=Side(style="thin", color="FFFFFF"),
-        right=Side(style="thin", color="FFFFFF"),
-        top=Side(style="medium", color="1F4E79"),
-        bottom=Side(style="medium", color="1F4E79"),
+        left=Side(style="thin", color="2B547E"),
+        right=Side(style="thin", color="2B547E"),
+        top=Side(style="medium", color="0F2942"),
+        bottom=Side(style="medium", color="0F2942"),
     )
+    border_total = Border(
+        left=Side(style="thin", color="D8E1EB"),
+        right=Side(style="thin", color="D8E1EB"),
+        top=Side(style="thin", color="163A5F"),
+        bottom=Side(style="double", color="163A5F"),
+    )
+    border_banner = Border(bottom=Side(style="medium", color="163A5F"))
 
     align_center = Alignment(horizontal="center", vertical="center")
     align_left = Alignment(horizontal="left", vertical="center")
+    align_note = Alignment(horizontal="left", vertical="center", indent=1)
     align_right = Alignment(horizontal="right", vertical="center")
 
-    # --- 1. SHEET: Sales ---
-    ws = wb.active
-    ws.title = "Sales"
+    fmt_currency = "$#,##0.00;-$#,##0.00"
+    fmt_percent = "0.0%"
+    fmt_signed_pct = "+0.0%;-0.0%;0.0%"
+    fmt_int = "#,##0"
+    fmt_date = "yyyy-mm-dd"
 
-    # Leaving empty Row 1 & 2, and empty Column A. Table starts at B3.
-    ws["B2"] = "Weekly Sales Report"
-    ws["B2"].font = font_title
+    def style_banner(ws, end_col: int, title: str, subtitle: str) -> None:
+        end_letter = get_column_letter(end_col)
+        ws.row_dimensions[1].height = 10
+        ws.row_dimensions[2].height = 25
+        ws.row_dimensions[3].height = 18
+        ws.row_dimensions[4].height = 10
+        ws.column_dimensions["A"].width = 3
+        ws.merge_cells(f"B2:{end_letter}2")
+        ws.merge_cells(f"B3:{end_letter}3")
+        ws["B2"] = title
+        ws["B2"].font = font_title
+        ws["B2"].alignment = align_left
+        ws["B3"] = subtitle
+        ws["B3"].font = font_subtitle
+        ws["B3"].alignment = align_left
+        for col in range(2, end_col + 1):
+            ws.cell(row=3, column=col).border = border_banner
 
-    headers = ["Product", "Qty", "Price", "Revenue"]
-    for col_idx, text in enumerate(headers, start=2):
-        cell = ws.cell(row=3, column=col_idx, value=text)
-        cell.font = font_header
-        cell.fill = fill_header
-        cell.alignment = align_center
-        cell.border = border_header
+    def style_headers(ws, row: int, specs: list[tuple[str, Alignment]]) -> None:
+        ws.row_dimensions[row].height = 23
+        for idx, (label, alignment) in enumerate(specs, start=2):
+            cell = ws.cell(row=row, column=idx, value=label)
+            cell.font = font_header
+            cell.fill = fill_header
+            cell.border = border_header
+            cell.alignment = alignment
 
-    for r in range(4, 104):
-        p_cell = ws.cell(row=r, column=2, value=f"P{r - 3}")
-        q_cell = ws.cell(row=r, column=3, value=r % 7 + 1)
-        pr_cell = ws.cell(row=r, column=4, value=10.5 + (r % 13))
-        ca_cell = ws.cell(
-            row=r, column=5, value=f"=C{r}*D{r}"
-        )  # Formula relative to C and D
+    # ── 1. SHEET: Summary (Executive commercial & margin overview) ──
+    summary = wb.active
+    summary.title = "Summary"
+    summary.sheet_properties.tabColor = "163A5F"
+    style_banner(
+        summary,
+        6,
+        "Northstar Cloud — Q3 FY26 Commercial & Margin Review",
+        "Executive Summary · Closed-Won Actuals vs. Q3 Plan · Currency: USD",
+    )
 
-        row_fill = fill_zebra if r % 2 == 0 else None
-        for col_idx, cell in enumerate([p_cell, q_cell, pr_cell, ca_cell], start=2):
-            cell.font = font_data
+    style_headers(
+        summary,
+        5,
+        [
+            ("Executive KPI", align_left),
+            ("Q3 Actual", align_right),
+            ("Governance / Context", align_note),
+        ],
+    )
+    summary["C5"].comment = Comment(
+        "Net revenue reflects Q3 closed-won contracts net of discounts; "
+        "partner rebates and sales commissions are accrued in C10.",
+        "FP&A — Corporate Finance",
+    )
+
+    kpis = [
+        (
+            "Booked Net Revenue",
+            "=SUM(Sales!$J$6:$J$45)",
+            fmt_currency,
+            "40 closed-won B2B contracts",
+            False,
+        ),
+        (
+            "Variance vs. Revenue Plan",
+            "=ROUND((C6-Assumptions!$D$16)/Assumptions!$D$16, 4)",
+            fmt_signed_pct,
+            "vs. $1,270,000 approved Q3 plan",
+            False,
+        ),
+        (
+            "Gross Profit",
+            "=SUM(Sales!$J$6:$J$45)-SUM(Sales!$H$6:$H$45)",
+            fmt_currency,
+            "Net of direct cloud & OEM COGS",
+            False,
+        ),
+        (
+            "Blended Gross Margin %",
+            "=ROUND(C8/C6, 4)",
+            fmt_percent,
+            "Above 62.0% Floor (POL-GM-62)",
+            False,
+        ),
+        (
+            "Net Commercial Contribution",
+            "=ROUND(C8-C6*RebateRate-C8*Assumptions!$D$8, 2)",
+            fmt_currency,
+            "After 3.5% rebate & 6.5% commission",
+            True,
+        ),
+    ]
+    for offset, (metric, formula, num_fmt, note, emphasized) in enumerate(kpis):
+        r = 6 + offset
+        summary.row_dimensions[r].height = 21
+        row_fill = (
+            fill_highlight if emphasized else (fill_zebra if r % 2 == 1 else None)
+        )
+        row_border = border_total if emphasized else border_thin
+
+        c_lbl = summary.cell(row=r, column=2, value=metric)
+        c_lbl.font = font_bold
+        c_lbl.alignment = align_left
+        c_lbl.border = row_border
+
+        c_val = summary.cell(row=r, column=3, value=formula)
+        c_val.font = font_bold if emphasized else font_data
+        c_val.alignment = align_right
+        c_val.number_format = num_fmt
+        c_val.border = row_border
+
+        c_note = summary.cell(row=r, column=4, value=note)
+        c_note.font = font_bold if str(note).startswith("=") else font_muted
+        c_note.alignment = align_note
+        c_note.border = row_border
+
+        if row_fill:
+            c_lbl.fill = row_fill
+            c_val.fill = row_fill
+            c_note.fill = row_fill
+
+    summary.row_dimensions[11].height = 10
+    summary.row_dimensions[12].height = 10
+    summary.row_dimensions[13].height = 20
+    summary["B13"] = "Regional Commercial Revenue & Plan Breakdown"
+    summary["B13"].font = font_section
+    summary["B13"].alignment = align_left
+
+    style_headers(
+        summary,
+        14,
+        [
+            ("Region", align_left),
+            ("Actual Net Revenue", align_right),
+            ("Q3 Revenue Plan", align_right),
+            ("Regional VP", align_note),
+            ("Primary Growth Segment", align_left),
+            ("FY25 Q3 Baseline", align_right),
+        ],
+    )
+
+    for idx, (region, vp_name, plan_amt, segment, fy25_baseline) in enumerate(
+        REGIONAL_PLANS
+    ):
+        r = 15 + idx
+        summary.row_dimensions[r].height = 20
+        row_fill = fill_zebra if idx % 2 == 1 else None
+
+        values_and_formats = [
+            (region, align_left, None, font_bold),
+            (
+                f"=SUMIFS(Sales!$J$6:$J$45, Sales!$E$6:$E$45, B{r})",
+                align_right,
+                fmt_currency,
+                font_data,
+            ),
+            (plan_amt, align_right, fmt_currency, font_data),
+            (vp_name, align_note, None, font_data),
+            (segment, align_left, None, font_muted),
+            (fy25_baseline, align_right, fmt_currency, font_muted),
+        ]
+        for col_offset, (val, align, nfmt, fnt) in enumerate(
+            values_and_formats, start=2
+        ):
+            cell = summary.cell(row=r, column=col_offset, value=val)
+            cell.font = fnt
+            cell.alignment = align
             cell.border = border_thin
+            if nfmt:
+                cell.number_format = nfmt
             if row_fill:
                 cell.fill = row_fill
 
-        p_cell.alignment = align_left
-        q_cell.alignment = align_right
-        pr_cell.alignment = align_right
-        ca_cell.alignment = align_right
+    for letter, width in (
+        ("B", 30),
+        ("C", 20),
+        ("D", 36),
+        ("E", 19),
+        ("F", 34),
+        ("G", 18),
+    ):
+        summary.column_dimensions[letter].width = width
+    summary.column_dimensions["G"].hidden = True
+    summary.freeze_panes = "B6"
 
-        pr_cell.number_format = "$#,##0.00"
-        ca_cell.number_format = "$#,##0.00"
+    rev_chart = BarChart()
+    rev_chart.type = "col"
+    rev_chart.grouping = "clustered"
+    rev_chart.overlap = -15
+    rev_chart.style = 10
+    rev_chart.title = "Regional Net Revenue: Q3 Actual vs. Plan"
+    rev_chart.y_axis.title = "USD ($)"  # ty: ignore[invalid-assignment]
+    rev_chart.x_axis.title = "Region"  # ty: ignore[invalid-assignment]
+    rev_data = Reference(summary, min_col=3, max_col=4, min_row=14, max_row=18)
+    rev_cats = Reference(summary, min_col=2, min_row=15, max_row=18)
+    rev_chart.add_data(rev_data, titles_from_data=True)
+    rev_chart.set_categories(rev_cats)
+    rev_chart.width = 13.6
+    rev_chart.height = 5.7
+    summary.add_chart(rev_chart, "E5")
+    _print_wide(summary)
 
-    # Freeze row 3 & column A (so we specify B4)
-    ws.freeze_panes = "B4"
-    ws.column_dimensions["D"].hidden = True  # Hide column D (Price)
+    # ── 2. SHEET: Sales (40 closed-won B2B enterprise orders) ──
+    sales = wb.create_sheet("Sales")
+    sales.sheet_properties.tabColor = "1F6B5C"
+    style_banner(
+        sales,
+        10,
+        "Q3 FY26 Closed-Won Commercial Order Ledger",
+        "40 Verified Enterprise & Mid-Market Contracts · Jul–Sep 2026 · Currency: USD",
+    )
 
-    # Configure print settings: Landscape, paper size A3 (large), fit to width
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
-    ws.page_setup.paperSize = ws.PAPERSIZE_A3
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    style_headers(
+        sales,
+        5,
+        [
+            ("Order ID", align_center),
+            ("Close Date", align_center),
+            ("Customer Account", align_left),
+            ("Region", align_left),
+            ("SKU", align_center),
+            ("Qty", align_right),
+            ("Direct Cost", align_right),
+            ("Discount %", align_right),
+            ("Net Revenue", align_right),
+        ],
+    )
+    sales["I5"].comment = Comment(
+        "Negotiated volume and multi-year prepay discounts reconciled against signed order forms.",
+        "Sales Operations",
+    )
 
-    ws.merge_cells("G3:H3")
-    ws["G3"] = "Presentation Context"
-    ws["G3"].font = font_bold
-    ws["G3"].alignment = align_center
-    ws["G3"].border = border_thin
-    ws.column_dimensions["G"].width = 18
-    ws.column_dimensions["H"].width = 18
+    unit_costs = {sku: cost for sku, _n, _f, _p, cost, _bm in CATALOG_ITEMS}
+    for idx, (order_id, close_dt, account, region, sku, qty, disc) in enumerate(
+        SALES_ORDERS
+    ):
+        r = 6 + idx
+        sales.row_dimensions[r].height = 19
+        row_fill = fill_zebra if idx % 2 == 1 else None
+        row_specs = [
+            (order_id, align_center, None),
+            (close_dt, align_center, fmt_date),
+            (account, align_left, None),
+            (region, align_left, None),
+            (sku, align_center, None),
+            (qty, align_right, fmt_int),
+            (qty * unit_costs[sku], align_right, fmt_currency),
+            (disc, align_right, fmt_percent),
+            (
+                f"=ROUND(G{r}*INDEX(Catalog!$E$6:$E$13, MATCH(F{r}, Catalog!$B$6:$B$13, 0))*(1-I{r}), 2)",
+                align_right,
+                fmt_currency,
+            ),
+        ]
+        for col_offset, (val, align, nfmt) in enumerate(row_specs, start=2):
+            cell = sales.cell(row=r, column=col_offset, value=val)
+            cell.font = font_data
+            cell.alignment = align
+            cell.border = border_thin
+            if nfmt:
+                cell.number_format = nfmt
+            if row_fill:
+                cell.fill = row_fill
 
-    # A1 comment was shifted to B3 (new table start)
-    ws["B3"].comment = Comment("Exported product category", "Data team")
+    for letter, width in (
+        ("B", 13),
+        ("C", 13),
+        ("D", 29),
+        ("E", 17),
+        ("F", 15),
+        ("G", 8),
+        ("H", 16),
+        ("I", 13),
+        ("J", 18),
+    ):
+        sales.column_dimensions[letter].width = width
+    sales.column_dimensions["H"].hidden = True
+    sales.freeze_panes = "B6"
+    _print_wide(sales)
 
-    # B width adjustment for better visibility
-    ws.column_dimensions["B"].width = 30
+    # ── 3. SHEET: Catalog (Enterprise product pricing & unit costs) ──
+    cat = wb.create_sheet("Catalog")
+    cat.sheet_properties.tabColor = "3B6998"
+    style_banner(
+        cat,
+        7,
+        "Enterprise Product Catalog & Unit Cost Schedule",
+        "Annual Subscription & Appliance SKUs · Standard List Pricing & Direct COGS (USD)",
+    )
 
-    # Add Chart to "Sales"
-    chart = BarChart()
-    chart.type = "col"
-    chart.style = 10
-    chart.title = "Revenue by Product (Top 10)"
-    # openpyxl's axis descriptor coerces a str into a Title; ty only sees the
-    # declared Title type.
-    chart.y_axis.title = "Revenue ($)"  # ty: ignore[invalid-assignment]
-    chart.x_axis.title = "Product"  # ty: ignore[invalid-assignment]
+    style_headers(
+        cat,
+        5,
+        [
+            ("SKU", align_center),
+            ("Product Name", align_left),
+            ("Product Family", align_left),
+            ("Annual List Price", align_right),
+            ("Direct Unit Cost", align_right),
+            ("Billing Model", align_note),
+        ],
+    )
+    cat["F5"].comment = Comment(
+        "Direct unit cost includes cloud compute, third-party OEM royalties, and L3 support allocation.",
+        "Cost Accounting",
+    )
 
-    # References for chart (Revenue is col 5, Product is col 2)
-    data = Reference(ws, min_col=5, min_row=3, max_row=13)
-    cats = Reference(ws, min_col=2, min_row=4, max_row=13)
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(cats)
-    chart.width = 16
-    chart.height = 10
-    ws.add_chart(chart, "G5")
+    for idx, (sku, name, family, list_price, unit_cost, billing_model) in enumerate(
+        CATALOG_ITEMS
+    ):
+        r = 6 + idx
+        cat.row_dimensions[r].height = 20
+        row_fill = fill_zebra if idx % 2 == 1 else None
+        row_specs = [
+            (sku, align_center, None, font_bold),
+            (name, align_left, None, font_data),
+            (family, align_left, None, font_muted),
+            (list_price, align_right, fmt_currency, font_data),
+            (unit_cost, align_right, fmt_currency, font_data),
+            (billing_model, align_note, None, font_muted),
+        ]
+        for col_offset, (val, align, nfmt, fnt) in enumerate(row_specs, start=2):
+            cell = cat.cell(row=r, column=col_offset, value=val)
+            cell.font = fnt
+            cell.alignment = align
+            cell.border = border_thin
+            if nfmt:
+                cell.number_format = nfmt
+            if row_fill:
+                cell.fill = row_fill
 
-    # --- 2. SHEET: Summary ---
-    syn = wb.create_sheet("Summary")
-    syn["B2"] = "Performance Summary"
-    syn["B2"].font = font_title
-    syn.merge_cells("B2:C2")
-    syn.column_dimensions["B"].width = 38
-    syn.column_dimensions["C"].width = 20
+    for letter, width in (
+        ("B", 16),
+        ("C", 29),
+        ("D", 19),
+        ("E", 19),
+        ("F", 18),
+        ("G", 20),
+        ("H", 3),
+    ):
+        cat.column_dimensions[letter].width = width
+    cat.freeze_panes = "B6"
 
-    # Headers
-    syn.cell(row=4, column=2, value="Metric").font = font_header
-    syn.cell(row=4, column=2).fill = fill_header
-    syn.cell(row=4, column=2).border = border_header
-    syn.cell(row=4, column=2).alignment = align_left
+    cat_chart = BarChart()
+    cat_chart.type = "bar"
+    cat_chart.grouping = "clustered"
+    cat_chart.overlap = -10
+    cat_chart.style = 10
+    cat_chart.title = "Annual List Price vs. Direct Cost by SKU"
+    cat_chart.y_axis.title = "USD ($)"  # ty: ignore[invalid-assignment]
+    cat_chart.x_axis.title = "SKU"  # ty: ignore[invalid-assignment]
+    cat_data = Reference(cat, min_col=5, max_col=6, min_row=5, max_row=13)
+    cat_cats = Reference(cat, min_col=2, min_row=6, max_row=13)
+    cat_chart.add_data(cat_data, titles_from_data=True)
+    cat_chart.set_categories(cat_cats)
+    cat_chart.width = 13.5
+    cat_chart.height = 7.0
+    cat.add_chart(cat_chart, "I5")
+    _print_wide(cat)
 
-    syn.cell(row=4, column=3, value="Value").font = font_header
-    syn.cell(row=4, column=3).fill = fill_header
-    syn.cell(row=4, column=3).border = border_header
-    syn.cell(row=4, column=3).alignment = align_right
+    # ── 4. SHEET: Assumptions (Commercial policy & Q3 regional plan) ──
+    params = wb.create_sheet("Assumptions")
+    params.sheet_properties.tabColor = "6C7A89"
+    style_banner(
+        params,
+        5,
+        "Northstar Cloud — Q3 FY26 Commercial Plan & Margin Policy",
+        "Approved FP&A Baseline · Effective Jul 1 – Sep 30, 2026 · Currency: USD",
+    )
 
-    # Formulas reference Sales!E4:E103 (the Revenue column E)
-    m_cells = [
-        ("Total Revenue", "=SUM(Sales!E4:E103)", "$#,##0.00"),
+    style_headers(
+        params,
+        5,
+        [
+            ("Policy Parameter", align_left),
+            ("Policy Code", align_center),
+            ("Approved Rate", align_right),
+            ("Governance Scope", align_note),
+        ],
+    )
+
+    policies = [
         (
-            "Average Revenue per Product",
-            "=ROUND(AVERAGE(Sales!E4:E103), 2)",
-            "$#,##0.00",
+            "Blended Gross Margin Floor",
+            "POL-GM-62",
+            0.62,
+            "Board minimum quarterly blended gross margin",
         ),
         (
-            "Target Status",
-            "=IF(SUM(Sales!E4:E103)>TargetRate, "
-            'CONCATENATE("OK: ", ROUND(C5/1000,1), "k"), "KO")',
-            None,
+            "Partner Channel Rebate Rate",
+            "POL-REB-35",
+            0.035,
+            "Accrued on booked net revenue across regions",
+        ),
+        (
+            "Sales Commission Rate",
+            "POL-COM-65",
+            0.065,
+            "Variable compensation accrued on gross profit",
+        ),
+        (
+            "Standard Discount Cap",
+            "POL-DSC-15",
+            0.15,
+            "Discounts above 15.0% require deal-desk escalation",
         ),
     ]
+    for idx, (label, code, rate, scope_note) in enumerate(policies):
+        r = 6 + idx
+        params.row_dimensions[r].height = 20
+        c_lbl = params.cell(row=r, column=2, value=label)
+        c_lbl.font = font_bold
+        c_lbl.alignment = align_left
+        c_lbl.border = border_thin
 
-    for idx, (label, formula, num_fmt) in enumerate(m_cells, start=5):
-        lbl_cell = syn.cell(row=idx, column=2, value=label)
-        lbl_cell.font = font_bold
-        lbl_cell.border = border_thin
+        c_code = params.cell(row=r, column=3, value=code)
+        c_code.font = font_muted
+        c_code.alignment = align_center
+        c_code.border = border_thin
 
-        val_cell = syn.cell(row=idx, column=3, value=formula)
-        val_cell.font = font_data
-        val_cell.border = border_thin
-        val_cell.alignment = align_right
-        if num_fmt:
-            val_cell.number_format = num_fmt
+        c_val = params.cell(row=r, column=4, value=rate)
+        c_val.font = font_input
+        c_val.fill = fill_input
+        c_val.alignment = align_right
+        c_val.number_format = fmt_percent
+        c_val.border = border_thin
 
-    # Configure print settings: Landscape, paper size A3 (large), fit to width
-    syn.page_setup.orientation = syn.ORIENTATION_LANDSCAPE
-    syn.page_setup.paperSize = syn.PAPERSIZE_A3
-    syn.page_setup.fitToWidth = 1
-    syn.page_setup.fitToHeight = 0
-    syn.sheet_properties.pageSetUpPr.fitToPage = True
+        c_note = params.cell(row=r, column=5, value=scope_note)
+        c_note.font = font_muted
+        c_note.alignment = align_note
+        c_note.border = border_thin
 
-    # --- 3. SHEET: Params ---
-    params = wb.create_sheet("Params")
-    params["B2"] = "Simulation Parameters"
-    params["B2"].font = font_title
-    params.merge_cells("B2:C2")
-    params.column_dimensions["B"].width = 38
-    params.column_dimensions["C"].width = 20
+    params["D6"].comment = Comment(
+        "Approved at Q3 Operating Committee (ref. FIN-2026-Q3). Changes require VP Finance sign-off.",
+        "Corporate FP&A",
+    )
 
-    lbl_cell = params.cell(row=4, column=2, value="Target Revenue Threshold")
-    lbl_cell.font = font_bold
-    lbl_cell.border = border_thin
+    params.row_dimensions[10].height = 12
+    style_headers(
+        params,
+        11,
+        [
+            ("Region", align_left),
+            ("Regional VP", align_left),
+            ("Q3 Revenue Plan", align_right),
+            ("Primary Growth Segment", align_note),
+        ],
+    )
 
-    val_cell = params.cell(row=4, column=3, value=5000)
-    val_cell.font = font_data
-    val_cell.border = border_thin
-    val_cell.number_format = "$#,##0.00"
-    val_cell.alignment = align_right
+    for idx, (region, vp_name, plan_amt, segment, _fy25) in enumerate(REGIONAL_PLANS):
+        r = 12 + idx
+        params.row_dimensions[r].height = 20
+        c_reg = params.cell(row=r, column=2, value=region)
+        c_reg.font = font_bold
+        c_reg.alignment = align_left
+        c_reg.border = border_thin
 
-    wb.defined_names.add(DefinedName("TargetRate", attr_text="Params!$C$4"))
+        c_vp = params.cell(row=r, column=3, value=vp_name)
+        c_vp.font = font_data
+        c_vp.alignment = align_left
+        c_vp.border = border_thin
+
+        c_plan = params.cell(row=r, column=4, value=plan_amt)
+        c_plan.font = font_input
+        c_plan.fill = fill_input
+        c_plan.alignment = align_right
+        c_plan.number_format = fmt_currency
+        c_plan.border = border_thin
+
+        c_seg = params.cell(row=r, column=5, value=segment)
+        c_seg.font = font_muted
+        c_seg.alignment = align_note
+        c_seg.border = border_thin
+
+    params.row_dimensions[16].height = 22
+    total_cells = [
+        ("Total Q3 Revenue Plan", align_left, None, font_bold),
+        ("Global Commercial", align_left, None, font_muted),
+        ("=SUM(D12:D15)", align_right, fmt_currency, font_bold),
+        ("Approved Jun 25, 2026", align_note, None, font_muted),
+    ]
+    for col_offset, (val, align, nfmt, fnt) in enumerate(total_cells, start=2):
+        cell = params.cell(row=16, column=col_offset, value=val)
+        cell.font = fnt
+        cell.fill = fill_total
+        cell.alignment = align
+        cell.border = border_total
+        if nfmt:
+            cell.number_format = nfmt
+
+    for letter, width in (("B", 31), ("C", 20), ("D", 20), ("E", 46)):
+        params.column_dimensions[letter].width = width
+    params.freeze_panes = "B6"
+    _print_wide(params)
+
+    wb.defined_names.add(DefinedName("RebateRate", attr_text="Assumptions!$D$7"))
 
     return _to_bytes(wb)
 

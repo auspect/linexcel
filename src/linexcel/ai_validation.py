@@ -21,7 +21,7 @@ MAX_FORMULA_CHARS = 8192
 MAX_QUOTES = 256
 MAX_CLAIMS = 96
 MAX_CLAIM_BLOCK_CHARS = 32_000
-REVIEW_VERSION = "linexcel-factual-review-v5"
+REVIEW_VERSION = "linexcel-factual-review-v6"
 _CLAIMS = re.compile(
     r"^ {0,3}```json_claims[ \t]*\r?\n(.*?)^ {0,3}```[ \t]*\r?$",
     re.DOTALL | re.IGNORECASE | re.MULTILINE,

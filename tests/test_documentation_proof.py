@@ -8,6 +8,8 @@ import pytest
 from linexcel.aidoc import document_nodes, document_workbook
 from linexcel.documentation_proof import render_formula_tokens
 
+pytestmark = pytest.mark.ai
+
 
 @pytest.mark.parametrize("web", [False, True])
 def test_native_40_parenthesis_pairs_and_presentation_prefix_remain_exact(web):

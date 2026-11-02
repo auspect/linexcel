@@ -1,6 +1,29 @@
 """Physical access to secondary graph controls keeps the primary UI closed."""
 
 
+def open_workspace_menu(page):
+    menu = page.locator("#workspace-menu")
+    if menu.is_visible() and menu.get_attribute("aria-expanded") != "true":
+        menu.click()
+
+
+def close_workspace_menu(page):
+    close = page.locator("#workspace-close")
+    if close.is_visible():
+        close.click()
+
+
+def open_graph_depth(page):
+    if page.locator("#graph-depth").is_hidden():
+        open_graph_options(page)
+
+
+def open_data_options(page):
+    options = page.locator("#data-options")
+    if options.is_visible() and not options.evaluate("element => element.open"):
+        options.locator(":scope > summary").click()
+
+
 def open_graph_options(page):
     options = page.locator("#graph-options")
     if not options.evaluate("element => element.open"):
@@ -16,6 +39,22 @@ def tap_graph_node(page, node_id):
         "() => new Promise(resolve => requestAnimationFrame(() => "
         "requestAnimationFrame(resolve)))"
     )
+    # A readable focal view may intentionally leave distant neighbours offscreen.
+    # Use the same explicit overview control as a person before tapping one.
+    if not canvas.evaluate(
+        """(element, id) => {
+            const p=element._cy.getElementById(id).renderedPosition();
+            return p.x>=0 && p.x<=element.clientWidth &&
+                p.y>=0 && p.y<=element.clientHeight;
+        }""",
+        node_id,
+    ):
+        page.locator("#graph-fit").click()
+        canvas.scroll_into_view_if_needed()
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
     point = canvas.evaluate(
         """(element, id) => {
             const p=element._cy.getElementById(id).renderedPosition();
