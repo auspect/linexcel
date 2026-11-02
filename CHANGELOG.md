@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh the locked Python toolchain and optional dependencies, including
+  Pillow 13, Playwright 1.64.1 and MkDocs Material 9.8.0.
+
 ## [1.17.0] — 2026-11-02
 
 ### Added
