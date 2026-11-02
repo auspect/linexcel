@@ -33,6 +33,7 @@ from linexcel.resolver import (
     _Budget,
     _external_warning,
     _ValueResolver,
+    prepare_external_formulas,
 )
 from linexcel.structure import (
     MAX_NODES_PER_SHEET,
@@ -292,6 +293,16 @@ def analyze_workbook(
         reporter,
         targets=target_cells,
         max_cells_per_sheet=max_cells_per_sheet,
+        prepare_external=lambda engine, reachable: prepare_external_formulas(
+            engine,
+            data,
+            cached,
+            warnings,
+            externals,
+            refs_files,
+            reachable,
+            max_dense_cells=max_dense_cells,
+        ),
     )
     engine = session.engine
     engine_sheets = session.engine_sheets

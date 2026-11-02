@@ -1176,13 +1176,15 @@ class TestUnresolvableCellsAreIsolated:
         blocked = next(n for n in graph["nodes"] if n["id"].endswith("Data!D2"))
         assert blocked["formula"] == "='[Missing Book.xlsx]Sheet1'!$A$1"
 
-    def test_the_warning_says_the_pass_completed(self):
+    def test_the_warning_identifies_the_unavailable_external_input(self):
         graph = analyze_workbook(self._workbook(), "blocked.xlsx")["graph"]
         joined = " ".join(graph["meta"]["warnings"])
-        assert "Global evaluation completed after isolating 1 cell" in joined
+        assert "Data!D2 was not verified as a recalculation" in joined
+        assert "External reference reading is incomplete" in joined
+        assert "Global evaluation incomplete" not in joined
 
     def test_a_healthy_workbook_is_untouched(self, lineage_excel):
-        """The isolation path only runs once evaluation has already failed."""
+        """Healthy local formulas need no external-input limitation."""
         graph = analyze_workbook(lineage_excel, "test.xlsx")["graph"]
         assert not [w for w in graph["meta"]["warnings"] if "isolating" in w]
 

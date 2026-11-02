@@ -16,6 +16,7 @@ import threading
 import zipfile
 from bisect import bisect_left, bisect_right
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from xml.etree import ElementTree
@@ -521,6 +522,8 @@ def boot_engine(
     parallel: bool = PARALLEL_EVALUATION,
     targets: list[tuple[str, int, int]] | None = None,
     max_cells_per_sheet: int | None = None,
+    prepare_external: Callable[[Any, set[tuple[str, int, int]] | None], None]
+    | None = None,
 ) -> EngineSession:
     """Instantiate the engine and run its evaluation.
 
@@ -553,8 +556,7 @@ def boot_engine(
         if chartsheets:
             warnings.append(
                 f"Chartsheet(s) skipped: {', '.join(chartsheets)}. A chartsheet "
-                f"holds a chart and no cells, and the engine refuses a whole "
-                f"workbook that contains one"
+                f"holds a chart and no cells; only worksheets are analysed"
             )
         # Import also parses formulas. Inspect the package before the first
         # native call, not after loading the dangerous expression once.
@@ -597,6 +599,7 @@ def boot_engine(
                 progress,
                 max_cells_per_sheet=max_cells_per_sheet,
                 trace_evidence=trace_evidence,
+                prepare_external=prepare_external,
             )
             reporter.operation("engine evaluation", "checking cycle provenance")
             unavailable |= _cycle_unavailable(
@@ -623,6 +626,8 @@ def boot_engine(
                 trace_incomplete=trace_evidence.get("incomplete", False),
             )
         try:
+            if prepare_external is not None:
+                prepare_external(engine, None)
             progress.step("evaluating formulas")
             reporter.operation("engine evaluation", "evaluating all formulas")
             engine.evaluate_all()
@@ -641,6 +646,8 @@ def boot_engine(
                         _blank_formulas_in_package(data, quarantined), parallel
                     )
                     _mark_uncached_quarantine(engine, quarantined)
+                    if prepare_external is not None:
+                        prepare_external(engine, None)
                     reporter.operation(
                         "engine evaluation", "evaluating quarantined workbook"
                     )
@@ -674,6 +681,8 @@ def boot_engine(
                     engine = _open_workbook(rebuilt_data, parallel)
                     quarantined = too_deep.copy()
                     _mark_uncached_quarantine(engine, quarantined)
+                    if prepare_external is not None:
+                        prepare_external(engine, None)
 
         reporter.operation("engine evaluation", "checking cycle provenance")
         unavailable |= _cycle_unavailable(
@@ -874,7 +883,30 @@ def _source_unavailable(
     engine, data, warnings, reachable=None, *, evaluation_failed=False
 ):
     """Keep adapter refusals and stale array extents out of calculated readings."""
+    external_cells = getattr(engine, "external_cells", set())
+    if external_cells:
+        # A fresh native calculation can still depend on a reading supplied
+        # by another file or its cache. Keep that provenance on descendants.
+        try:
+            engine.external_cells = _trace_dependent_cells(engine, external_cells)
+        except Exception:
+            engine.external_cells = set()
+            warnings.append(
+                "External reading provenance could not be fully traced; formula "
+                "readings conservatively retain file caches."
+            )
+            return {(s, r, c) for s, r, c, _ in _iter_formulas_xml(data)}
     limitations = dict(getattr(engine, "source_limitations", {}))
+    if external_cells:
+        for sheet, row, col, formula in _iter_formulas_xml(data):
+            if reachable is not None and (sheet, row, col) not in reachable:
+                continue
+            code = re.sub(r'"(?:[^"]|"")*"', '""', formula)
+            if re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", code, re.IGNORECASE):
+                limitations.setdefault(
+                    (sheet, row, col),
+                    "Dynamic reference provenance with external inputs is unverified.",
+                )
     array_dependents = {}
     array_budget_exceeded = False
     nonresults = getattr(engine, "visibility_nonresults", set())
@@ -959,26 +991,7 @@ def _uncached_dependents(
         if re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", code, re.IGNORECASE):
             roots.append((sheet, row, col))
     try:
-        # XLSX loading defers construction of the dependency graph. A plan
-        # materializes it without evaluating formulas; trace alone refuses it.
-        engine.get_eval_plan([])
-        trace = engine.trace(
-            [f"{quote_sheet(s)}!{a1(r, c)}" for s, r, c in roots],
-            direction=fz.TraceDirection.Dependents,
-            max_depth=TRACE_MAX_DEPTH,
-            max_nodes=TRACE_MAX_NODES,
-            max_links=TRACE_MAX_LINKS,
-            max_work=TRACE_MAX_WORK,
-            range_member_budget=TRACE_RANGE_MEMBERS,
-        )
-        if trace.truncation.incomplete:
-            raise ValueError("dependent trace budget exhausted")
-        unavailable = set(roots)
-        for key in trace.nodes.keys():
-            rect = parse_ref(key)
-            if rect is not None and rect.ncells == 1 and rect.sheet is not None:
-                unavailable.add((rect.sheet, rect.r1, rect.c1))
-        return unavailable
+        return _trace_dependent_cells(engine, roots)
     except Exception:
         warnings.append(
             "The dependents of an unavailable formula could not be fully "
@@ -986,6 +999,30 @@ def _uncached_dependents(
             "their independence from the missing input could not be established"
         )
         return {(s, r, c) for s, r, c, _ in _iter_formulas_xml(data)}
+
+
+def _trace_dependent_cells(engine, roots):
+    """Return a complete bounded static dependent closure, or refuse it."""
+    # XLSX loading defers construction of the dependency graph. A plan
+    # materializes it without evaluating formulas; trace alone refuses it.
+    engine.get_eval_plan([])
+    trace = engine.trace(
+        [f"{quote_sheet(s)}!{a1(r, c)}" for s, r, c in roots],
+        direction=fz.TraceDirection.Dependents,
+        max_depth=TRACE_MAX_DEPTH,
+        max_nodes=TRACE_MAX_NODES,
+        max_links=TRACE_MAX_LINKS,
+        max_work=TRACE_MAX_WORK,
+        range_member_budget=TRACE_RANGE_MEMBERS,
+    )
+    if trace.truncation.incomplete:
+        raise ValueError("dependent trace budget exhausted")
+    cells = set(roots)
+    for key in trace.nodes.keys():
+        rect = parse_ref(key)
+        if rect is not None and rect.ncells == 1 and rect.sheet is not None:
+            cells.add((rect.sheet, rect.r1, rect.c1))
+    return cells
 
 
 def _mark_uncached_quarantine(engine, quarantined: dict) -> None:
@@ -1009,6 +1046,7 @@ def _evaluate_targets(
     *,
     max_cells_per_sheet: int | None = None,
     trace_evidence: dict[str, bool] | None = None,
+    prepare_external=None,
 ) -> tuple[set[tuple[str, int, int]], bool]:
     """Evaluate only the upstream subgraph of ``targets``; return its cells.
 
@@ -1111,6 +1149,8 @@ def _evaluate_targets(
             f"--time-budget) and where an analysis runs long — a risk "
             f"indicator, not a duration estimate"
         )
+    if prepare_external is not None:
+        prepare_external(engine, reachable)
     progress.step(f"evaluating {len(reachable):,} cell(s)")
     succeeded = True
     try:
