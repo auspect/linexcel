@@ -640,9 +640,10 @@ class TestResolvingFromAFolder:
             execution=ExecutionPolicy(isolated=False),
         )
         assert reads == []
-        assert next(node for node in result.nodes if node.get("addr") == "D1")[
-            "value"
-        ] == 3
+        assert (
+            next(node for node in result.nodes if node.get("addr") == "D1")["value"]
+            == 3
+        )
 
     @pytest.mark.parametrize("range_", ["A1:A2", "A1:A4097"])
     @pytest.mark.parametrize("targets", [None, ["S!C1"]])
