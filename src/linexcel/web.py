@@ -1244,22 +1244,10 @@ class TaskStore:
                 }
             )
             child_env["LINEXCEL_AI_TIMEOUT_SECONDS"] = str(task["budget"]["seconds"])
-        command = [
-            sys.executable,
-            "-X",
-            "faulthandler",
-            "-m",
-            "linexcel.web_worker",
-            str(root),
-        ]
-        if os.name != "nt":
-            bootstrap = (
-                "import resource,runpy,sys;resource.setrlimit(resource.RLIMIT_AS,"
-                f"({request['memoryMb'] * 1048576},)*2);"
-                "sys.argv=['linexcel.web_worker',sys.argv[1]];"
-                "runpy.run_module('linexcel.web_worker',run_name='__main__')"
-            )
-            command = [sys.executable, "-X", "faulthandler", "-c", bootstrap, str(root)]
+        from linexcel._process_budget import MemoryMonitor, worker_command
+
+        memory = MemoryMonitor(request["memoryMb"])
+        command = worker_command("linexcel.web_worker", root, request["memoryMb"])
         started = time.monotonic()
         job = None
         reason = None
@@ -1282,6 +1270,9 @@ class TaskStore:
                     job = WorkerJob(process, request["memoryMb"])
                     job.resume(process)
                 while process.poll() is None:
+                    if memory.exceeded(process.pid):
+                        reason = "memory_limit"
+                        break
                     if event.wait(0.05):
                         reason = "cancelled"
                         break
@@ -1329,6 +1320,7 @@ class TaskStore:
                     if task["operation"] in AI_OPERATIONS
                     else diagnostic,
                     "exitCode": process.returncode,
+                    **memory.evidence(),
                 }
             }
         if (root / "result.json").stat().st_size > MAX_RESULT_BYTES:

@@ -283,8 +283,12 @@ directory is `~/.linexcel`; uploaded files and diagnostic formula text are priva
 Use **one application coordinator per data directory** (an exclusive lock
 enforces this). Its shared queue limits worker concurrency and admission by
 the sum of requested memory budgets. Windows Job Objects enforce each worker
-tree's memory cap. On POSIX, the current limit is per-process address space;
-aggregate renderer memory requires host container/cgroup limits. Upload reads,
+tree's memory cap. Linux and other supported Unix systems except macOS use
+per-process address-space limits; aggregate renderer memory requires host
+container/cgroup limits. macOS instead samples process-group resident memory
+and stops the group on an observed breach. Its sampled budget can be exceeded
+between polls and is not a hard allocation cap. See the
+[platform memory semantics](docs/guide/execution.md). Upload reads,
 graph pages and task-result previews are bounded. LibreOffice temporary disk use
 and overall service resources also require host resource limits.
 This first implementation is not a distributed worker pool.

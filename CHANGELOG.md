@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Start isolated analysis and application workers on macOS without applying a
+  virtual-address limit below the interpreter's existing reservations. Supervise
+  process-group resident memory from the parent, terminate over-budget workers
+  and their descendants, and report the sampled limit and observed peak honestly.
+  Keep Linux address-space caps and Windows Job limits in place.
 - Preserve native Excel error types independently of localized display text in
   the Windows oracle; repair generated table/external-link inputs and declare
   modern formula assignments explicitly.

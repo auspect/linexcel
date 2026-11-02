@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -25,11 +24,6 @@ def main() -> None:
         if time.monotonic() >= deadline:
             return
         time.sleep(0.01)
-    if os.name != "nt":
-        import resource
-
-        limit = request["memory_mb"] * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     from linexcel import progress
     from linexcel.analyzer import analyze_workbook
     from linexcel.execution import ExecutionPolicy

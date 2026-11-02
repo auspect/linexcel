@@ -19,6 +19,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
 
+from linexcel._process_budget import MemoryMonitor, worker_command
+
 DIAGNOSTIC_BYTES = 16_384
 
 
@@ -91,6 +93,8 @@ class ExecutionPolicy:
 
     ``isolated=False`` explicitly opts into the legacy live-engine API, without
     a hard time or memory guarantee. The default never retries in that mode.
+    Isolated workers enforce a deadline; memory enforcement is platform-specific
+    (a parent-side sampled resident-memory limit on macOS).
     """
 
     seconds: float = 120.0
@@ -288,6 +292,7 @@ def _run_isolated_once(
     exit_code = None
     diagnostic = ""
     diagnostic_truncated = False
+    memory = MemoryMonitor(policy.memory_mb)
     with _worker_directory() as directory:
         root = Path(directory)
         (root / "input.xlsx").write_bytes(data)
@@ -304,31 +309,7 @@ def _run_isolated_once(
         )
         if policy.seconds > time.monotonic() - started:
             with (root / "stderr.txt").open("w", encoding="utf-8") as log:
-                command = [
-                    sys.executable,
-                    "-X",
-                    "faulthandler",
-                    "-m",
-                    "linexcel._worker",
-                    str(root),
-                ]
-                if os.name != "nt":
-                    # Apply the virtual-address limit before importing linexcel.
-                    bootstrap = (
-                        "import resource,runpy,sys; "
-                        "resource.setrlimit(resource.RLIMIT_AS,"
-                        f"({policy.memory_mb * 1048576},)*2); "
-                        "sys.argv=['linexcel._worker',sys.argv[1]]; "
-                        "runpy.run_module('linexcel._worker',run_name='__main__')"
-                    )
-                    command = [
-                        sys.executable,
-                        "-X",
-                        "faulthandler",
-                        "-c",
-                        bootstrap,
-                        str(root),
-                    ]
+                command = worker_command("linexcel._worker", root, policy.memory_mb)
                 environment = os.environ.copy()
                 if sys.platform == "linux":
                     # Reduce CPU-scaled glibc arena reservations under RLIMIT_AS.
@@ -356,6 +337,9 @@ def _run_isolated_once(
                     (root / "ready").touch()
                     last_phase = None
                     while process.poll() is None:
+                        if memory.exceeded(process.pid):
+                            status = "memory_limit"
+                            break
                         checkpoint = _checkpoint(root)
                         phase = checkpoint.get("phase", "starting worker")
                         if kwargs.get("verbose") and phase != last_phase:
@@ -424,6 +408,14 @@ def _run_isolated_once(
                             raw = errors.read()
                         diagnostic = raw.decode("utf-8", errors="replace")
         failure = _failure_details(status, exit_code, diagnostic)
+        if (
+            status == "memory_limit"
+            and memory.peak is not None
+            and memory.peak > memory.limit
+        ):
+            failure["summary"] = (
+                "Worker process-group resident memory exceeded the sampled limit."
+            )
         if status == "crashed" and failure["kind"] == "memory_limit":
             status = "memory_limit"
         if status == "error" and recovery_cells is None:
@@ -482,9 +474,7 @@ def _run_isolated_once(
             "budgetSeconds": policy.seconds,
             "elapsedSeconds": round(time.monotonic() - started, 3),
             "memoryLimitMiB": policy.memory_mb,
-            "memoryLimitKind": "job_commit"
-            if os.name == "nt"
-            else "per_process_virtual_address",
+            **memory.evidence(),
             "phase": checkpoint.get("phase", "startup"),
             "completedPhases": checkpoint.get("completedPhases", []),
             "phaseMetrics": checkpoint.get("phaseMetrics", {}),
