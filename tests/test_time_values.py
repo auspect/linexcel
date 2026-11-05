@@ -105,3 +105,57 @@ def test_real_in_memory_time_cache_detects_a_wrong_minute():
     node = next(node for node in graph["nodes"] if node["id"] == "c:Clock!B1")
     assert node["cachedAgreement"] == "differ"
     assert any("differs from file" in w for w in graph["meta"]["warnings"])
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    ("computed_fraction", "cached_fraction", "agreement"),
+    [
+        (0.75, 0.5, "differ"),
+        (0.5, 0, "differ"),
+        (0.5, 0.5, "same"),
+        (0.5 + 0.123 / 86400, 0.5 + 0.123 / 86400, "same"),
+        (0.5 + 0.0004 / 86400, 0.5, "same"),
+        (0.5 + 0.001 / 86400, 0.5, "differ"),
+    ],
+)
+def test_date_time_caches_compare_the_hour_as_well_as_the_day(
+    epoch_1904, slow_reader, computed_fraction, cached_fraction, agreement, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    # The existing fixture's clock format also produces a datetime cache when
+    # the serial contains whole days. Compare both reader implementations.
+    day = 44592 if epoch_1904 else 46054
+    data = _time_workbook(day + computed_fraction, day + cached_fraction, epoch_1904)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Clock!B1")
+    # OOXML's decimal serialization can shift the last binary float digit.
+    assert node["value"] == pytest.approx(day + computed_fraction, rel=0, abs=1e-10)
+    assert node["valueSource"] == "engine"
+    assert node["valueDate"] == "2026-02-01"
+    assert node["cachedAgreement"] == agreement
+    assert any("differs from file" in w for w in graph["meta"]["warnings"]) == (
+        agreement == "differ"
+    )
+    if agreement == "differ" and cached_fraction == 0.5:
+        assert any(
+            "differs from file value 2026-02-01 12:00:00" in warning
+            for warning in graph["meta"]["warnings"]
+        )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        datetime.datetime(2026, 2, 1, 12, tzinfo=datetime.UTC),
+        "2026-02-01 12:00:00+00:00",
+    ],
+)
+def test_date_time_caches_do_not_assume_a_timezone(stored):
+    assert readings_agree(46054.5, stored, "2026-02-01") == "differ"
+
+
+def test_date_shaped_text_needs_temporal_metadata():
+    assert readings_agree(46054.5, "2026-02-01 12:00:00", None) == "differ"

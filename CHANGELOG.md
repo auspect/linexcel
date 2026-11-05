@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Compare the time as well as the day when checking recalculated Excel serials
+  against date-time caches. Same-day hour differences now produce divergence
+  badges and warnings, including caches at midnight, for both Excel date systems.
+  Warning messages retain the stored time; cache millisecond rounding remains
+  tolerated.
+
 ### Changed
 
 - Refresh the locked Python toolchain and optional dependencies, including

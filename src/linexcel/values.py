@@ -155,6 +155,37 @@ def _time_agreement(raw: Any, cached: Any, time_text: str | None) -> str | None:
     return "differ"
 
 
+def _serial_datetime_agreement(
+    raw: Any, cached: Any, date_text: str | None
+) -> str | None:
+    """Compare the day and time, using the resolver's epoch-aware date label.
+
+    The label alone loses the fraction of a day. Cache readers round to
+    milliseconds, so compare the time with that precision, not a relative
+    tolerance proportional to the entire Excel serial.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if date_text is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+        return None
+    if isinstance(cached, str):
+        try:
+            cached = datetime.datetime.fromisoformat(cached)
+        except ValueError:
+            return None
+    if isinstance(cached, datetime.datetime):
+        if cached.tzinfo is not None:
+            return "differ"
+        stored_date, stored_time = cached.date(), cached.time()
+    elif isinstance(cached, datetime.date):
+        stored_date, stored_time = cached, datetime.time.min
+    else:
+        return None
+    if not math.isfinite(raw) or date_text != stored_date.isoformat():
+        return "differ"
+    return _time_agreement(raw % 1, stored_time, None)
+
+
 def _error_kind(value: Any) -> str | None:
     """Kind of an engine error value, or ``None`` when it is not one.
 
@@ -218,6 +249,8 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
 
 
 def _fmt_value(value: Any) -> str:
+    if isinstance(value, datetime.datetime) and value.time() != datetime.time.min:
+        return value.isoformat(sep=" ")
     return _date_text_of(value) or _excel_error_text(value) or str(value)
 
 
@@ -342,6 +375,9 @@ def readings_agree(
     time_agreement = _time_agreement(recalculated, stored, date_text)
     if time_agreement is not None:
         return time_agreement
+    datetime_agreement = _serial_datetime_agreement(recalculated, stored, date_text)
+    if datetime_agreement is not None:
+        return datetime_agreement
     if _values_differ(recalculated, stored, date_text):
         return "differ"
     if date_text is not None:
