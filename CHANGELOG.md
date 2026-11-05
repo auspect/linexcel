@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop treating elapsed formats such as `[h]:mm:ss`, `[mm]:ss` and `[ss].000`
+  as calendar dates. Duration inputs and formulas, including formulas without
+  saved results, retain their numeric day values without invented 1900/1904
+  date labels. Duration cache comparison and elapsed-time display remain limited.
 - Show dates and times in graph node annotations and source-range samples using
   the detail panel's temporal formatter. Named values and source ranges no
   longer show Excel serials where a dated reading is available; ordinary numbers

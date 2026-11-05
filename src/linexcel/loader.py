@@ -26,7 +26,7 @@ from xml.etree import ElementTree
 from xml.sax.saxutils import unescape
 
 from openpyxl import load_workbook
-from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format
+from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
 
 from linexcel.limits import limit_or_default
 from linexcel.progress import Reporter
@@ -579,6 +579,11 @@ def _is_date_format(number_format: Any) -> bool:
     if not number_format:
         return False
     try:
-        return bool(is_date_format(number_format))
+        # openpyxl's date predicate also includes elapsed formats such as
+        # [h]:mm:ss. Those are durations: their whole days must never become
+        # calendar dates, including on formula cells without a saved cache.
+        # The elapsed predicate itself does not ignore quoted/escaped literals.
+        tokens = re.sub(r'"[^"]*"|\\.', "", number_format)
+        return bool(is_date_format(number_format) and not is_timedelta_format(tokens))
     except Exception:
         return False

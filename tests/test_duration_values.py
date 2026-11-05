@@ -1,0 +1,86 @@
+"""Elapsed Excel durations must not acquire calendar dates in reports."""
+
+import datetime
+import io
+import re
+import zipfile
+
+import pytest
+from openpyxl import Workbook
+
+from linexcel import ExecutionPolicy
+from linexcel.analyzer import analyze_workbook
+from linexcel.loader import _is_date_format, load_cached_values
+
+
+def duration_workbook(number_format, serial, epoch_1904):
+    workbook = Workbook()
+    if epoch_1904:
+        workbook.epoch = datetime.datetime(1904, 1, 1)
+    sheet = workbook.active
+    sheet.title = "Durations"
+    sheet["A1"] = serial
+    sheet["B1"] = "=A1"
+    sheet["C1"] = "=A1+1"
+    for address in ("A1", "B1", "C1"):
+        sheet[address].number_format = number_format
+    # A genuine date in the same workbook must retain its date metadata.
+    sheet["D1"] = "=DATE(2026,2,1)"
+    sheet["D1"].number_format = "yyyy-mm-dd"
+    original, output = io.BytesIO(), io.BytesIO()
+    workbook.save(original)
+    with zipfile.ZipFile(original) as source, zipfile.ZipFile(output, "w") as dest:
+        for part in source.infolist():
+            payload = source.read(part.filename)
+            if part.filename == "xl/worksheets/sheet1.xml":
+                payload, count = re.subn(
+                    rb"<f>A1</f><v(?:\s*/>|></v>)",
+                    f"<f>A1</f><v>{serial}</v>".encode(),
+                    payload,
+                )
+                assert count == 1
+            dest.writestr(part, payload)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize(
+    "number_format", ["[h]:mm:ss", "[hh]:mm", "[mm]:ss", "[ss].000"]
+)
+def test_elapsed_formats_are_not_calendar_formats(number_format):
+    assert not _is_date_format(number_format)
+
+
+@pytest.mark.parametrize(
+    "number_format",
+    ["yyyy-mm-dd", "hh:mm:ss", 'yyyy-mm-dd "[h]"', r"yyyy-mm-dd \[h\]", '0 "hours"'],
+)
+def test_calendar_and_clock_classification_is_preserved(number_format):
+    assert _is_date_format(number_format) == (number_format != '0 "hours"')
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("number_format", ["[h]:mm:ss", "[mm]:ss", "[ss].000"])
+@pytest.mark.parametrize("serial", [0.5, 1.5, 60.5])
+def test_duration_inputs_and_formulas_never_get_calendar_labels(
+    number_format, serial, epoch_1904, slow_reader, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = duration_workbook(number_format, serial, epoch_1904)
+    cached = load_cached_values(data)
+    for column in (1, 2, 3):
+        assert not cached.is_date("Durations", 1, column)
+    assert cached.get("Durations", 1, 1) == datetime.timedelta(days=serial)
+    assert cached.get("Durations", 1, 2) == datetime.timedelta(days=serial)
+    assert cached.get("Durations", 1, 3) is None
+
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    nodes = {node["addr"]: node for node in graph["nodes"]}
+    for address, expected in (("A1", serial), ("B1", serial), ("C1", serial + 1)):
+        node = nodes[address]
+        assert node["value"] == expected
+        assert node["valueSource"] == "engine"
+        assert "valueDate" not in node
+        assert all(sample.get("date") is None for sample in node.get("values", []))
+    assert nodes["D1"]["valueDate"] == "2026-02-01"
