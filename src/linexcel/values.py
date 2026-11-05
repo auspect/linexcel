@@ -385,6 +385,24 @@ def readings_agree(
         and recalculated_is_error != stored_is_error
     ):
         return "differ"
+    if isinstance(stored, datetime.timedelta) and isinstance(
+        recalculated, (int, float)
+    ):
+        # Elapsed formats store a duration, not a date or a time of day.
+        # Retain whole and negative days, and tolerate only cache rounding
+        # to milliseconds, independent of the duration's magnitude or epoch.
+        return (
+            "same"
+            if not isinstance(recalculated, bool)
+            and math.isfinite(recalculated)
+            and math.isclose(
+                recalculated * 86400,
+                stored.total_seconds(),
+                rel_tol=0,
+                abs_tol=0.0005,
+            )
+            else "differ"
+        )
     time_agreement = _time_agreement(recalculated, stored, date_text)
     if time_agreement is not None:
         return time_agreement

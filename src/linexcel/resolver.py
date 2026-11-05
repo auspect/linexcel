@@ -289,15 +289,24 @@ class _ValueResolver:
         if source is not None:
             fields["valueSource"] = source
         cached = self.cached_value(sheet, row, col)
-        if cached is not None:
+        if cached is not None and sheet is not None:
             fields["cachedValue"] = cached
             # Decided here rather than in the viewer's JavaScript: the same
             # question was being answered twice, with two different answers.
             result_error = self._result_is_error.get((sheet, row, col))
             cached_error = self.cached.is_error(sheet, row, col)
+            comparison_cache = cached
+            raw_cache = self.cached.get(sheet, row, col)
+            if isinstance(raw_cache, datetime.timedelta) and source not in (
+                "file",
+                "volatile",
+            ):
+                # Keep proof of the duration type for comparison. Its display
+                # text alone could equally be a formula's literal string result.
+                comparison_cache = raw_cache
             fields["cachedAgreement"] = readings_agree(
                 value,
-                cached,
+                comparison_cache,
                 date_text,
                 recalculated_is_error=result_error,
                 stored_is_error=cached_error,
