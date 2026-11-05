@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tolerate date-time cache rounding across midnight within half a millisecond,
+  while retaining detection of real time and day differences in both Excel
+  date systems. Date labels use whole serial days to avoid premature rollover
+  from microsecond rounding.
 - Compare the time as well as the day when checking recalculated Excel serials
   against date-time caches. Same-day hour differences now produce divergence
   badges and warnings, including caches at midnight, for both Excel date systems.

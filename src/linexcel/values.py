@@ -74,7 +74,9 @@ def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
             return None
         base = EPOCH_EARLY_1900 if days < 60 else EXCEL_EPOCH_1900
     try:
-        return (base + datetime.timedelta(days=days)).date().isoformat()
+        # Only whole days determine the date. timedelta rounds fractions to
+        # microseconds, which could otherwise move a value across midnight.
+        return (base + datetime.timedelta(days=math.floor(days))).date().isoformat()
     except (OverflowError, ValueError):
         return None
 
@@ -161,8 +163,8 @@ def _serial_datetime_agreement(
     """Compare the day and time, using the resolver's epoch-aware date label.
 
     The label alone loses the fraction of a day. Cache readers round to
-    milliseconds, so compare the time with that precision, not a relative
-    tolerance proportional to the entire Excel serial.
+    milliseconds, so compare the full difference with that precision, including
+    across midnight, not a relative tolerance proportional to the Excel serial.
     """
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
@@ -181,9 +183,20 @@ def _serial_datetime_agreement(
         stored_date, stored_time = cached, datetime.time.min
     else:
         return None
-    if not math.isfinite(raw) or date_text != stored_date.isoformat():
+    if not math.isfinite(raw):
         return "differ"
-    return _time_agreement(raw % 1, stored_time, None)
+    try:
+        start_of_day = datetime.datetime.fromisoformat(date_text)
+    except ValueError:
+        return "differ"
+    stored_seconds = (
+        datetime.datetime.combine(stored_date, stored_time) - start_of_day
+    ).total_seconds()
+    return (
+        "same"
+        if math.isclose(raw % 1 * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005)
+        else "differ"
+    )
 
 
 def _error_kind(value: Any) -> str | None:

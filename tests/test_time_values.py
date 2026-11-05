@@ -2,6 +2,7 @@
 
 import datetime
 import io
+import math
 import re
 import zipfile
 from functools import partial
@@ -12,7 +13,7 @@ from openpyxl import Workbook
 from linexcel import ExecutionPolicy
 from linexcel.analyzer import analyze_workbook
 from linexcel.loader import load_cached_values
-from linexcel.values import readings_agree, serial_to_time_text
+from linexcel.values import readings_agree, serial_to_date_text, serial_to_time_text
 
 
 @pytest.mark.parametrize(
@@ -159,3 +160,58 @@ def test_date_time_caches_do_not_assume_a_timezone(stored):
 
 def test_date_shaped_text_needs_temporal_metadata():
     assert readings_agree(46054.5, "2026-02-01 12:00:00", None) == "differ"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("stored_type", ["datetime", "date", "text"])
+@pytest.mark.parametrize(
+    ("offset_seconds", "expected"),
+    [
+        (-86400, "differ"),
+        (-0.001, "differ"),
+        (-0.0004, "same"),
+        (0.0004, "same"),
+        (0.001, "differ"),
+        (86400, "differ"),
+    ],
+)
+def test_datetime_tolerance_spans_midnight(
+    epoch_1904, stored_type, offset_seconds, expected
+):
+    midnight = 44593 if epoch_1904 else 46055
+    raw = midnight + offset_seconds / 86400
+    stored = datetime.datetime(2026, 2, 2)
+    if stored_type == "date":
+        stored = stored.date()
+    elif stored_type == "text":
+        stored = stored.isoformat(sep=" ")
+    assert readings_agree(raw, stored, serial_to_date_text(raw, epoch_1904)) == expected
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    ("offset_seconds", "expected"),
+    [(-0.001, "differ"), (-0.0004, "same"), (0.0004, "same"), (0.001, "differ")],
+)
+def test_formula_cache_rounding_across_midnight(
+    epoch_1904, slow_reader, offset_seconds, expected, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    midnight = 44593 if epoch_1904 else 46055
+    data = _time_workbook(midnight + offset_seconds / 86400, midnight, epoch_1904)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Clock!B1")
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == expected
+    assert any("differs from file" in w for w in graph["meta"]["warnings"]) == (
+        expected == "differ"
+    )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+def test_date_label_does_not_round_a_fraction_up_to_the_next_day(epoch_1904):
+    raw = math.nextafter(2.0, 0.0)
+    expected = "1904-01-02" if epoch_1904 else "1900-01-01"
+    assert serial_to_date_text(raw, epoch_1904) == expected
