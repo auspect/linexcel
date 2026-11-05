@@ -461,6 +461,7 @@
   }
   .lin-mdt td { font-variant-numeric: tabular-nums; }
   .lin-hint { color: var(--muted); font-size: .76rem; margin: .2rem 0; }
+  .lin-vcard .lin-comparison-scope { padding: 0 .55rem; }
   .lin-close {
     margin-left: auto; border: none; background: none; cursor: pointer;
     font-size: 1rem; color: var(--ink2); line-height: 1; padding: .2rem .3rem;
@@ -3103,10 +3104,18 @@
       var verdictKey = !agree ? 'value_mismatch' : formatted ? 'value_match_format' : 'value_match';
       if (!formatted && comparable.every(function (r) { return r.engineRead; }))
         verdictKey = agree ? 'value_read_match' : 'value_read_mismatch';
+      if (rows.length && !formatted)
+        verdictKey = agree ? 'value_sample_match' : 'value_sample_mismatch';
       verdict.appendChild(document.createTextNode(_t(verdictKey)));
       card.appendChild(verdict);
     } else if (main.source === 'fallback') {
       card.className = 'lin-vcard is-guarded';
+    }
+    if (rows.length) {
+      card.appendChild(el('p', 'lin-hint lin-comparison-scope', _t('value_sample_scope', {
+        compared: comparable.length,
+        shown: rows.length
+      })));
     }
     card.appendChild(rows.length ? sampleTable(rows) : pairGrid(main));
     sv.appendChild(card);
@@ -3124,7 +3133,7 @@
       sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
     // Only one column carries a figure: name the reason rather than let the
     // reader take the empty half for a bug or for a disagreement.
-    if (!comparable.length && main.source === 'engine')
+    if (!rows.length && !comparable.length && main.source === 'engine')
       sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?
         'value_read_no_cache_desc' : 'value_no_cache_desc')));
     return sv;
@@ -3160,7 +3169,7 @@
   }
   // The sampled cells of a stretched group, one row each. A row whose two
   // readings disagree is marked on the row itself: the card-level verdict
-  // covers the whole sample, and would not say *which* cell drifted.
+  // covers the compared sample rows, and would not say *which* cell drifted.
   function sampleTable(rows) {
     var tbl = el('table', 'lin-vtable');
     var head = el('tr');

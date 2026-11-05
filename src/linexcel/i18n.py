@@ -252,6 +252,11 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "The recalculated value matches the file",
         "value_match_format": "Different strings; possible number separator difference",
         "value_mismatch": "The recalculated value differs from the file",
+        "value_sample_match": "Compared sample values match the file",
+        "value_sample_mismatch": (
+            "At least one compared sample value differs from the file"
+        ),
+        "value_sample_scope": "Compared sample cells: {compared} / {shown}",
         "target": "Target",
         "step_decomp": "Step-by-step decomposition",
         "step_hint": "Each function/operator is evaluated individually.",
@@ -481,6 +486,15 @@ UI_STRINGS: dict[str, dict[str, str]] = {
             "Chaînes différentes ; possible différence de séparateurs"
         ),
         "value_mismatch": "La valeur recalculée diffère du fichier",
+        "value_sample_match": (
+            "Les valeurs comparées de l’échantillon concordent avec le fichier"
+        ),
+        "value_sample_mismatch": (
+            "Au moins une valeur comparée de l’échantillon diffère du fichier"
+        ),
+        "value_sample_scope": (
+            "Cellules comparées de l’échantillon : {compared} / {shown}"
+        ),
         "target": "Cible",
         "step_decomp": "Décomposition pas-à-pas",
         "step_hint": "Chaque fonction et opérateur est évalué individuellement.",
@@ -709,6 +723,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "El valor recalculado coincide con el archivo",
         "value_match_format": "Textos distintos; posible diferencia de separadores",
         "value_mismatch": "El valor recalculado difiere del archivo",
+        "value_sample_match": (
+            "Los valores comparados de la muestra coinciden con el archivo"
+        ),
+        "value_sample_mismatch": (
+            "Al menos un valor comparado de la muestra difiere del archivo"
+        ),
+        "value_sample_scope": "Celdas comparadas de la muestra: {compared} / {shown}",
         "target": "Destino",
         "step_decomp": "Descomposición paso a paso",
         "step_hint": "Cada función y operador se evalúa individualmente.",
@@ -942,6 +963,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "Der neu berechnete Wert stimmt mit der Datei überein",
         "value_match_format": "Andere Zeichenfolgen; mögliche Zahlentrennzeichen",
         "value_mismatch": "Der neu berechnete Wert weicht von der Datei ab",
+        "value_sample_match": (
+            "Die verglichenen Stichprobenwerte stimmen mit der Datei überein"
+        ),
+        "value_sample_mismatch": (
+            "Mindestens ein verglichener Stichprobenwert weicht von der Datei ab"
+        ),
+        "value_sample_scope": "Verglichene Stichprobenzellen: {compared} / {shown}",
         "target": "Ziel",
         "step_decomp": "Schrittweise Zerlegung",
         "step_hint": "Jede Funktion und jeder Operator wird einzeln ausgewertet.",
@@ -1172,6 +1200,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "Il valore ricalcolato coincide con il file",
         "value_match_format": "Stringhe diverse; possibile differenza nei separatori",
         "value_mismatch": "Il valore ricalcolato differisce dal file",
+        "value_sample_match": (
+            "I valori confrontati del campione coincidono con il file"
+        ),
+        "value_sample_mismatch": (
+            "Almeno un valore confrontato del campione differisce dal file"
+        ),
+        "value_sample_scope": "Celle confrontate del campione: {compared} / {shown}",
         "target": "Destinazione",
         "step_decomp": "Scomposizione passo passo",
         "step_hint": "Ogni funzione e operatore viene valutato singolarmente.",
@@ -1395,6 +1430,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "O valor recalculado coincide com o ficheiro",
         "value_match_format": "Textos diferentes; possível diferença nos separadores",
         "value_mismatch": "O valor recalculado difere do ficheiro",
+        "value_sample_match": (
+            "Os valores comparados da amostra correspondem ao ficheiro"
+        ),
+        "value_sample_mismatch": (
+            "Pelo menos um valor comparado da amostra difere do ficheiro"
+        ),
+        "value_sample_scope": "Células comparadas da amostra: {compared} / {shown}",
         "target": "Destino",
         "step_decomp": "Decomposição passo a passo",
         "step_hint": "Cada função e operador é avaliado individualmente.",
@@ -1626,6 +1668,13 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "De herberekende waarde komt overeen met het bestand",
         "value_match_format": "Teksten verschillen; mogelijk andere scheidingstekens",
         "value_mismatch": "De herberekende waarde wijkt af van het bestand",
+        "value_sample_match": (
+            "De vergeleken steekproefwaarden komen overeen met het bestand"
+        ),
+        "value_sample_mismatch": (
+            "Minstens één vergeleken steekproefwaarde wijkt af van het bestand"
+        ),
+        "value_sample_scope": "Vergeleken steekproefcellen: {compared} / {shown}",
         "target": "Doel",
         "step_decomp": "Stapsgewijze ontleding",
         "step_hint": "Elke functie en operator wordt afzonderlijk geëvalueerd.",
@@ -1837,6 +1886,11 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "再計算値はファイルの値と一致します",
         "value_match_format": "文字列が異なります（数値区切りの違いの可能性）",
         "value_mismatch": "再計算値はファイルの値と異なります",
+        "value_sample_match": "比較したサンプル値はファイルと一致します",
+        "value_sample_mismatch": (
+            "比較したサンプル値の少なくとも1つがファイルと異なります"
+        ),
+        "value_sample_scope": "比較したサンプルセル：{compared} / {shown}",
         "target": "対象範囲",
         "step_decomp": "ステップごとの分解",
         "step_hint": "各関数・演算子を個別に評価しています。",
@@ -2035,6 +2089,9 @@ UI_STRINGS: dict[str, dict[str, str]] = {
         "value_match": "重算值与文件中的值一致",
         "value_match_format": "字符串不同；可能存在数字分隔符差异",
         "value_mismatch": "重算值与文件中的值不一致",
+        "value_sample_match": "已比较的样本值与文件一致",
+        "value_sample_mismatch": "至少一个已比较的样本值与文件不同",
+        "value_sample_scope": "已比较的样本单元格：{compared} / {shown}",
         "target": "目标区域",
         "step_decomp": "逐步分解",
         "step_hint": "每个函数和运算符均单独求值。",

@@ -168,7 +168,7 @@ class TestReadVersusRecalculated:
         assert EN["value_not_in_file"] in html
         assert "_t('value_not_in_file')));" in html
         assert (
-            "if (!comparable.length && main.source === 'engine')\n"
+            "if (!rows.length && !comparable.length && main.source === 'engine')\n"
             "      sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?\n"
             "        'value_read_no_cache_desc' : 'value_no_cache_desc')));" in html
         )

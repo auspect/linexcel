@@ -1619,3 +1619,63 @@ def test_graph_options_immediate_reopen_keeps_content_and_focus(report):
     )
     assert page.evaluate("document.activeElement.id") == "lin-options-toggle"
     assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("state", ["same", "differ", "format", "none"])
+def test_group_verdict_only_claims_compared_sample_cells(report, width, height, state):
+    samples = [
+        {"addr": "A2", "value": 2, "cachedValue": 2, "valueSource": "file"},
+        {"addr": "A3", "value": 3, "valueSource": "engine"},
+    ]
+    if state != "none":
+        samples.insert(
+            0,
+            {
+                "addr": "A1",
+                "value": 1,
+                "cachedValue": 2 if state == "differ" else 1,
+                "valueSource": "engine",
+                "cachedAgreement": state,
+            },
+        )
+    graph = {
+        "nodes": [
+            {
+                "id": "g",
+                "kind": "group",
+                "label": "S!A1:A100",
+                "sheet": "S",
+                "formula": "=B1",
+                "count": 100,
+                "value": 1,
+                "cachedValue": 1,
+                "cachedAgreement": "same",
+                "valueSource": "engine",
+                "samples": samples,
+            }
+        ],
+        "edges": [],
+    }
+    page, errors = report(graph, width=width, height=height)
+    page.evaluate("() => { cy.getElementById('g').emit('tap'); }")
+    panel = page.locator("#lin-panel")
+    compared = 0 if state == "none" else 1
+    assert panel.locator(".lin-comparison-scope").inner_text() == (
+        f"Compared sample cells: {compared} / {len(samples)}"
+    )
+    verdict = panel.locator(".lin-verdict")
+    if state == "none":
+        assert verdict.count() == 0
+        assert "The file stores no value to compare with" not in panel.inner_text()
+    else:
+        expected = {
+            "same": "Compared sample values match the file",
+            "differ": "At least one compared sample value differs from the file",
+            "format": "Different strings; possible number separator difference",
+        }
+        assert verdict.inner_text() == expected[state]
+    assert panel.locator(".lin-vtable tr.is-diff").count() == (state == "differ")
+    assert "Not recalculated" in panel.inner_text()
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors

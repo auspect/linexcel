@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Scope grouped value verdicts to compared sample cells and show the compared
+  count, including zero. File-only and uncached rows no longer imply that an
+  entire group was verified; all nine report languages retain this distinction.
 - Tolerate date-time cache rounding across midnight within half a millisecond,
   while retaining detection of real time and day differences in both Excel
   date systems. Date labels use whole serial days to avoid premature rollover
