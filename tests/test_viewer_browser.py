@@ -29,7 +29,7 @@ def browser():
 def report(browser, tmp_path):
     pages = []
 
-    def open_report(graph, *, width=1440, height=900, language="en"):
+    def open_report(graph, *, width=1440, height=900, language="en", timezone_id="UTC"):
         graph = {
             **graph,
             "meta": {
@@ -41,7 +41,9 @@ def report(browser, tmp_path):
                 **graph.get("meta", {}),
             },
         }
-        page = browser.new_page(viewport={"width": width, "height": height})
+        page = browser.new_page(
+            viewport={"width": width, "height": height}, timezone_id=timezone_id
+        )
         pages.append(page)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -1678,4 +1680,149 @@ def test_group_verdict_only_claims_compared_sample_cells(report, width, height, 
     assert panel.locator(".lin-vtable tr.is-diff").count() == (state == "differ")
     assert "Not recalculated" in panel.inner_text()
     assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("day", [46054, 44592], ids=["1900", "1904"])
+@pytest.mark.parametrize("timezone_id", ["America/New_York", "Asia/Tokyo"])
+def test_temporal_readings_retain_times_in_cards_and_samples(
+    report, width, height, day, timezone_id
+):
+    cases = [
+        (day + 0.75, "2026-02-01", "2026-02-01 18:00:00", "engine", "differ"),
+        (
+            day + 0.5 + 0.123 / 86400,
+            "2026-02-01",
+            "2026-02-01 12:00:00.123",
+            "engine",
+            "differ",
+        ),
+        (day, "2026-02-01", "2026-02-01", "engine", "differ"),
+        (
+            "2026-02-01 12:00:00.123000",
+            "2026-02-01",
+            "2026-02-01 12:00:00.123000",
+            "file",
+            "same",
+        ),
+        (
+            day + 1 - 0.0004 / 86400,
+            "2026-02-01",
+            "2026-02-02",
+            "engine",
+            "same",
+        ),
+        (
+            day + 1 - 0.001 / 86400,
+            "2026-02-01",
+            "2026-02-01 23:59:59.999",
+            "engine",
+            "differ",
+        ),
+        (0.5, "12:00:00", "12:00:00", "engine", "same"),
+        (
+            60 - 0.0004 / 86400,
+            "1900-02-28",
+            "1900-02-29",
+            "engine",
+            "same",
+        ),
+    ]
+    nodes = []
+    for index, (value, date_text, expected, source, agreement) in enumerate(cases):
+        cached = (
+            expected
+            if source == "file" or agreement == "same"
+            else "2026-02-01 12:00:00"
+        )
+        nodes.append(
+            {
+                "id": f"c{index}",
+                "kind": "cell",
+                "sheet": "Clock",
+                "label": f"Clock!B{index + 1}",
+                "formula": f"=A{index + 1}",
+                "value": value,
+                "valueDate": date_text,
+                "valueSource": source,
+                "cachedValue": cached,
+                "cachedAgreement": agreement,
+            }
+        )
+    # Samples use the alternate source/date field names.
+    nodes.append(
+        {
+            "id": "group",
+            "kind": "group",
+            "sheet": "Clock",
+            "label": f"Clock!B1:B{len(cases)}",
+            "formula": "=A1",
+            "count": len(cases),
+            "samples": [
+                {
+                    "addr": f"B{i + 1}",
+                    "value": node["value"],
+                    "date": node["valueDate"],
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                }
+                for i, node in enumerate(nodes)
+            ],
+        }
+    )
+    page, errors = report(
+        {"nodes": nodes, "edges": []},
+        width=width,
+        height=height,
+        timezone_id=timezone_id,
+    )
+    panel = page.locator("#lin-panel")
+    # Exercise the two card provenances; the table below covers every boundary.
+    for index in (0, 3):
+        _, _, expected, source, agreement = cases[index]
+        page.evaluate("id => cy.getElementById(id).emit('tap')", f"c{index}")
+        values = panel.locator(".lin-reading-val").all_text_contents()
+        assert values == [
+            nodes[index]["cachedValue"],
+            "Not recalculated" if source == "file" else expected,
+        ]
+        assert panel.locator(".lin-vcard.is-diff").count() == (
+            source == "engine" and agreement == "differ"
+        )
+        assert panel.locator(".lin-verdict").count() == (source == "engine")
+        assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    page.evaluate("cy.getElementById('group').emit('tap')")
+    rows = panel.locator(".lin-vtable tbody tr")
+    for index, (_, _, expected, source, _) in enumerate(cases):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            nodes[index]["cachedValue"],
+            "Not recalculated" if source == "file" else expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize(
+    "value,cached,agreement",
+    [
+        (46054.75, "2026-02-01", False),
+        (46054.75, "2026-02-01 12:00:00", False),
+        (46054.75, "2026-02-01T18:00:00", True),
+        (46054, "2026-02-01 00:00:00.000000", True),
+        (46054.5 + 0.123 / 86400, "2026-02-01 12:00:00.123000", True),
+    ],
+)
+def test_legacy_datetime_verdict_compares_the_displayed_time(
+    report, value, cached, agreement
+):
+    graph = filtered_graph()
+    node = graph["nodes"][1]
+    del node["cachedAgreement"]
+    node.update(value=value, cachedValue=cached, valueDate="2026-02-01")
+    page, errors = report(graph)
+    page.evaluate("cy.getElementById('c').emit('tap')")
+    assert page.locator("#lin-panel .lin-vcard.is-diff").count() == (not agreement)
+    assert page.locator("#lin-panel .lin-verdict").count() == 1
     assert not errors

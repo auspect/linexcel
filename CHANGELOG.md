@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve times in viewer date readings, including file-only values and sampled
+  rows. Recalculated serials display milliseconds and round across midnight
+  without depending on the browser timezone, respecting Excel's phantom leap day.
+  Legacy reports without a stored comparison verdict now compare the time too.
 - Scope grouped value verdicts to compared sample cells and show the compared
   count, including zero. File-only and uncached rows no longer imply that an
   entire group was verified; all nine report languages retain this distinction.

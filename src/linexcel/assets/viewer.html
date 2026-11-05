@@ -3035,6 +3035,29 @@
   // the two is on screen is the question this tool exists to answer. A column
   // with nothing to show says so — "not stored", "not recalculated" — because
   // an empty cell reads as a rendering bug rather than as a fact.
+  function temporalReading(value, dateText) {
+    if (!dateText || !/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return dateText || fmt(value);
+    // File-only datetime values already carry their time. The date metadata
+    // identifies their type; it must not replace the full stored reading.
+    if (typeof value === 'string') return fmt(value);
+    if (typeof value !== 'number' || !Number.isFinite(value)) return dateText;
+    // Python supplies the day in the workbook's date system. Add only the
+    // fractional day, rounded like the millisecond cache readers. UTC methods
+    // avoid applying the browser's timezone or daylight-saving transitions.
+    var start = Date.parse(dateText + 'T00:00:00Z');
+    var millis = Math.round((value - Math.floor(value)) * 86400000);
+    if (!Number.isFinite(start)) return dateText;
+    // Excel's next day is the phantom leap day, not Gregorian March 1.
+    if (dateText === '1900-02-28' && millis === 86400000) return '1900-02-29';
+    var text = new Date(start + millis).toISOString().replace('T', ' ').replace(/Z$/, '');
+    return text.replace(/\.000$/, '').replace(/ 00:00:00$/, '');
+  }
+
+  function normalizedTemporalText(text) {
+    return text.replace('T', ' ').replace(/(\.\d*?)0+$/, '$1')
+      .replace(/\.$/, '').replace(/ 00:00:00$/, '');
+  }
+
   function readings(o, parent) {
     // The graph names these valueSource/valueDate, as it does on a node; the
     // range samples say source/date, so both spellings are read.
@@ -3047,14 +3070,14 @@
     var engineRead = src === 'engine' && (kind === 'input' || kind === 'name') &&
       !(typeof formula === 'string' && formula.trim());
     var dateText = o.valueDate || o.date;
-    var shown = dateText || fmt(o.value);
+    var shown = temporalReading(o.value, dateText);
     var hasValue = o.value !== undefined && o.value !== null;
     var hasCached = o.cachedValue !== undefined && o.cachedValue !== null;
     var cached = hasCached ? fmt(o.cachedValue) : null;
-    // A date cell compares on the date part only: a file-cached datetime string
-    // ("2026-08-07 00:00:00") is the same day as valueDate.
+    // Legacy reports lack the Python verdict. Ignore ISO spelling/zero padding,
+    // but never discard the time when comparing their displayed readings.
     var sameDate = dateText && typeof o.cachedValue === 'string' &&
-      o.cachedValue.slice(0, 10) === dateText;
+      normalizedTemporalText(o.cachedValue) === normalizedTemporalText(shown);
     // Two readings only when they are genuinely two: under 'file' or 'volatile'
     // the displayed value *is* the stored one, and a second identical column
     // would claim a corroboration that never happened.
