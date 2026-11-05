@@ -2246,9 +2246,12 @@
     if (n.kind === 'group') return '×' + (n.count || 0).toLocaleString(LANG);
     if (n.kind === 'vba') return n.procKind || '';
     if (n.kind === 'misc') return (n.count || 0).toLocaleString(LANG) + ' ' + _t('cells');
-    if (n.value !== undefined && n.value !== null) return fmt(n.value);
-    if (n.kind === 'input' && n.values && n.values.length)
-      return fmt(n.values[0].value);
+    if (n.value !== undefined && n.value !== null)
+      return temporalReading(n.value, n.valueDate || n.date);
+    if (n.kind === 'input' && n.values && n.values.length) {
+      var first = n.values[0];
+      return temporalReading(first.value, first.valueDate || first.date);
+    }
     return '';
   }
   function cardLabel(n) {
@@ -2907,7 +2910,8 @@
     if (n.kind === 'input' && n.values && n.values.length) {
       var si = section(_t('value_samples'));
       n.values.forEach(function (s) {
-        si.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
+        si.appendChild(el('div', 'lin-hint', s.addr + ' = ' +
+          temporalReading(s.value, s.valueDate || s.date)));
       });
       if (n.count > n.values.length)
         si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString(LANG) + ' ' + _t('cells')));

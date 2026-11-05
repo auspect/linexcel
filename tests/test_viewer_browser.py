@@ -1779,6 +1779,13 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
         timezone_id=timezone_id,
     )
     panel = page.locator("#lin-panel")
+    # Graph annotations and detail readings must describe the same instant.
+    for index, (_, _, expected, _, _) in enumerate(cases):
+        annotation = expected if len(expected) <= 24 else expected[:23] + "…"
+        assert (
+            page.evaluate("id => cy.getElementById(id).data('label')", f"c{index}")
+            == f"Clock!B{index + 1}\n{annotation}"
+        )
     # Exercise the two card provenances; the table below covers every boundary.
     for index in (0, 3):
         _, _, expected, source, agreement = cases[index]
@@ -1800,6 +1807,67 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
             nodes[index]["cachedValue"],
             "Not recalculated" if source == "file" else expected,
         ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_graph_dates_for_names_and_input_samples_keep_plain_values(
+    report, width, height
+):
+    samples = [
+        {"addr": "A1", "value": 46054.75, "date": "2026-02-01"},
+        {"addr": "A2", "value": 0.5, "date": "12:00:00"},
+        {"addr": "A3", "value": 0},
+        {"addr": "A4", "value": False},
+        {"addr": "A5", "value": "plain text"},
+    ]
+    nodes = [
+        {
+            "id": "input",
+            "kind": "input",
+            "label": "Clock!A1:A5",
+            "sheet": "Clock",
+            "count": len(samples),
+            "values": samples,
+        },
+        {
+            "id": "named",
+            "kind": "name",
+            "label": "Appointment",
+            "sheet": "Clock",
+            "targets": ["Clock!A1"],
+            "value": 46054.75,
+            "valueDate": "2026-02-01",
+            "valueSource": "engine",
+        },
+        {"id": "zero", "kind": "cell", "label": "Zero", "value": 0},
+        {"id": "missing", "kind": "cell", "label": "Missing", "value": None},
+        {
+            "id": "number",
+            "kind": "cell",
+            "label": "Number",
+            "value": 46054.75,
+        },
+    ]
+    page, errors = report({"nodes": nodes, "edges": []}, width=width, height=height)
+    assert page.evaluate("cy.nodes().map(n => n.data('label'))") == [
+        "Clock!A1:A5\n2026-02-01 18:00:00",
+        "📛 Appointment\n2026-02-01 18:00:00",
+        "Zero\n0",
+        "Missing",
+        "Number\n46,054.75",
+    ]
+    page.evaluate("cy.getElementById('input').emit('tap')")
+    panel = page.locator("#lin-panel")
+    for expected in (
+        "A1 = 2026-02-01 18:00:00",
+        "A2 = 12:00:00",
+        "A3 = 0",
+        "A4 = FALSE",
+        "A5 = plain text",
+    ):
+        assert expected in panel.inner_text()
     assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
     assert not errors
 

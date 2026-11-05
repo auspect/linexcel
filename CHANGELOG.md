@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Show dates and times in graph node annotations and source-range samples using
+  the detail panel's temporal formatter. Named values and source ranges no
+  longer show Excel serials where a dated reading is available; ordinary numbers
+  retain their numeric display.
 - Preserve times in viewer date readings, including file-only values and sampled
   rows. Recalculated serials display milliseconds and round across midnight
   without depending on the browser timezone, respecting Excel's phantom leap day.
