@@ -348,11 +348,11 @@ def _is_word_character(char: str) -> bool:
     )
 
 
-def _word_across_hyphens(text: str, index: int, direction: int) -> bool:
-    # A hyphen can join an identifier (A-01, 01-beta), but a minus sign
+def _word_across_signs(text: str, index: int, direction: int) -> bool:
+    # Plus/minus signs can join an identifier (A+01, 01-beta), but a sign
     # before a standalone quantity must keep regional-format tolerance.
     # Whitespace ends the search, so "A -6.7" still contains a quantity.
-    while 0 <= index < len(text) and text[index] == "-":
+    while 0 <= index < len(text) and text[index] in "+-":
         index += direction
     return 0 <= index < len(text) and _is_word_character(text[index])
 
@@ -382,18 +382,18 @@ def _separators_only(left: str, right: str) -> bool:
     # every digit: float conversion and numeric tolerances can hide changed
     # identifiers, tiny decimals and even overflow two different strings to inf.
     for a, b in zip(left_numbers, right_numbers):
-        # Word adjacency (v1.0, 01beta), including across hyphens, or a decimal mark
+        # Word adjacency (v1.0, 01beta), including across signs, or a decimal mark
         # (A.1, A,01) makes the number ambiguous. Preserve it literally:
         # zeroes and separators may be part of an identifier.
         if any(
             (
                 match.start()
                 and (
-                    _word_across_hyphens(text, match.start() - 1, -1)
+                    _word_across_signs(text, match.start() - 1, -1)
                     or text[match.start() - 1] in ".,"
                 )
             )
-            or _word_across_hyphens(text, match.end(), 1)
+            or _word_across_signs(text, match.end(), 1)
             for text, match in ((left, a), (right, b))
         ):
             if a.group() != b.group():
