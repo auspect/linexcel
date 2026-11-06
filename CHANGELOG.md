@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in hyphenated text identifiers such as `A-1` versus
+  `A-01` and `1-beta` versus `01-beta`. Changed padding or decimal separators
+  now produces a divergence verdict and warning. Standalone negative quantities
+  such as `-6.7 €` versus `-6,7 €` retain regional-format tolerance.
 - Preserve literal digits adjacent to all Unicode format controls in text
   comparisons, including word joiners and directional marks. Invisible
   characters no longer hide changed identifier padding or decimal separators;
