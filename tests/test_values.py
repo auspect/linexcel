@@ -1177,6 +1177,34 @@ class TestReadingsAgree:
             == verdict
         )
 
+    @pytest.mark.parametrize("joiner", ["\u200c", "\u200d"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A{joiner}1", "A{joiner}01", "differ"),
+            ("A{joiner}01", "A{joiner}1", "differ"),
+            ("1{joiner}x", "01{joiner}x", "differ"),
+            ("A{joiner}1.0", "A{joiner}1,0", "differ"),
+            ("A{joiner}.1", "A{joiner}.01", "differ"),
+            ("A{joiner}1 total 6.7", "A{joiner}1 total 6,7", "format"),
+            ("A{joiner} 6.7", "A{joiner} 6,7", "format"),
+            ("A{joiner} .50", "A{joiner} 0,5", "format"),
+            ("6.7 A{joiner}", "6,7 A{joiner}", "format"),
+            ("A{joiner}01", "A{joiner}01", "same"),
+        ],
+    )
+    def test_join_controls_preserve_identifier_digits(
+        self, joiner, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert (
+            readings_agree(
+                left.format(joiner=joiner), right.format(joiner=joiner), None
+            )
+            == verdict
+        )
+
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
 
@@ -1257,6 +1285,11 @@ def with_stored_results(
         ("का1", "का01", "differ"),
         ("A\u20dd1", "A\u20dd01", "differ"),
         ("e\u03011 total 6.7", "e\u03011 total 6,7", "format"),
+        ("A\u200c1", "A\u200c01", "differ"),
+        ("A\u200d1", "A\u200d01", "differ"),
+        ("1\u200cx", "01\u200cx", "differ"),
+        ("1\u200dx", "01\u200dx", "differ"),
+        ("A\u200d1 total 6.7", "A\u200d1 total 6,7", "format"),
         ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
         ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
     ],
