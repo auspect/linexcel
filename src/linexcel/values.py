@@ -342,8 +342,9 @@ def _separators_only(left: str, right: str) -> bool:
     disagreement blames the workbook for a regional setting.
 
     The text around the numbers must match exactly — this is not a fuzzy
-    comparison. Only the numbers are read leniently, and only in the sense of
-    "is there a reading under which these are the same value".
+    comparison. Only standalone numbers are read leniently, and only in the
+    sense of "is there a reading under which these are the same value".
+    Numbers attached to words may be identifiers and must remain unchanged.
     """
     left_numbers = list(_NUMBER_RE.finditer(left))
     right_numbers = list(_NUMBER_RE.finditer(right))
@@ -357,11 +358,22 @@ def _separators_only(left: str, right: str) -> bool:
     # every digit: float conversion and numeric tolerances can hide changed
     # identifiers, tiny decimals and even overflow two different strings to inf.
     for a, b in zip(left_numbers, right_numbers):
-        # An unconsumed decimal mark means this is only a numeric suffix
-        # (A.1, A,01), not a standalone number. Its leading zeroes may carry
-        # meaning, so do not normalize it as an integer or guess a decimal.
-        if (a.start() and left[a.start() - 1] in ".,") or (
-            b.start() and right[b.start() - 1] in ".,"
+        # Word adjacency (v1.0, 01beta) or an unconsumed decimal mark
+        # (A.1, A,01) makes the number ambiguous. Preserve it literally:
+        # zeroes and separators may be part of an identifier.
+        if any(
+            (
+                match.start()
+                and (
+                    text[match.start() - 1].isalnum()
+                    or text[match.start() - 1] in "_.,"
+                )
+            )
+            or (
+                match.end() < len(text)
+                and (text[match.end()].isalnum() or text[match.end()] == "_")
+            )
+            for text, match in ((left, a), (right, b))
         ):
             if a.group() != b.group():
                 return False

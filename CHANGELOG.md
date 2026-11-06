@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve numbers attached to words in text comparisons. Identifiers such as
+  `v1.0` versus `v01.0`, `A1` versus `A01`, and `1.0beta` versus `01.0beta`
+  now produce divergence verdicts and warnings. Unchanged identifiers still
+  allow regional formatting differences in separate numbers in the same text.
+  This conservative rule also treats attached units such as `6.7kg` literally;
+  separated units such as `6.7 kg` retain regional-format tolerance.
 - Preserve ambiguous numeric suffixes after an attached dot or comma in text
   comparisons. `A.1` versus `A.01` now produces a divergence and warning;
   unchanged suffixes still allow regional formatting elsewhere in the text.
