@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve ambiguous numeric suffixes after an attached dot or comma in text
+  comparisons. `A.1` versus `A.01` now produces a divergence and warning;
+  unchanged suffixes still allow regional formatting elsewhere in the text.
 - Recognize leading decimal marks in text comparisons. Values such as `.1`
   and `.01` now produce a divergence instead of a formatting verdict, while
   equivalent `.50`, `0.5` and `,5` readings retain regional-format tolerance.

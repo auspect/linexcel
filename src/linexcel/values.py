@@ -356,10 +356,18 @@ def _separators_only(left: str, right: str) -> bool:
     # These digits are text, not approximate arithmetic results. Preserve
     # every digit: float conversion and numeric tolerances can hide changed
     # identifiers, tiny decimals and even overflow two different strings to inf.
-    return all(
-        _read_number(a.group()) & _read_number(b.group())
-        for a, b in zip(left_numbers, right_numbers)
-    )
+    for a, b in zip(left_numbers, right_numbers):
+        # An unconsumed decimal mark means this is only a numeric suffix
+        # (A.1, A,01), not a standalone number. Its leading zeroes may carry
+        # meaning, so do not normalize it as an integer or guess a decimal.
+        if (a.start() and left[a.start() - 1] in ".,") or (
+            b.start() and right[b.start() - 1] in ".,"
+        ):
+            if a.group() != b.group():
+                return False
+        elif not (_read_number(a.group()) & _read_number(b.group())):
+            return False
+    return True
 
 
 def readings_agree(
