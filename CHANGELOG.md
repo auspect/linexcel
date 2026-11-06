@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in slash-connected text identifiers such as `A/1`
+  versus `A/01` and `1/beta` versus `01/beta`, including mixed slash/sign runs.
+  Compact fractions and dates are also compared literally because their
+  meaning cannot be inferred from text alone. Separate quantities such as
+  `A / 6.7` versus `A / 6,7` retain regional-format tolerance.
 - Preserve literal digits in text identifiers joined by plus signs, including
   mixed plus/minus runs (`A+1` versus `A+01`, `A+-1` versus `A+-01`).
   Changed padding or decimal separators now produces a divergence verdict and
