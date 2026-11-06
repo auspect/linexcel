@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare numbers embedded in text exactly when recognizing regional separator
+  differences. Changed identifiers, tiny decimals and long digit sequences now
+  produce divergence verdicts and warnings instead of being mistaken for a
+  formatting change; numeric calculation tolerances are preserved.
 - Validate both generated workbooks in all nine supported report languages by
   default, using the product language registry. The documented acceptance
   command no longer reports generation success after only three reports;

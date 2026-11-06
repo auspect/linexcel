@@ -1073,13 +1073,23 @@ class TestReadingsAgree:
             ("1234.5", "1.234,5", "format"),  # German grouping
             ("1234.5", "1'234.5", "format"),  # Swiss grouping
             ("A 1,5 B", "A 1.5 B", "format"),
+            ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
+            ("Value 0.0000000001", "Value 0,0000000001", "format"),
+            ("1" + "0" * 400, "1" + "0" * 400 + ",0", "format"),
             # the same value, written the same way
             ("Réf. 12", "Réf. 12", "same"),
             (6.7, 6.7, "same"),
+            (1_234_567_890, 1_234_567_891, "same"),  # numeric tolerance retained
             # genuinely not the same
             ("oui", "non", "differ"),
             ("6.7 €", "6.8 €", "differ"),
             (6.7, 6.8, "differ"),
+            ("ID 1234567890", "ID 1234567891", "differ"),
+            ("Value 0.0000000001", "Value 0.0000000002", "differ"),
+            ("ID 9007199254740992", "ID 9007199254740993", "differ"),
+            ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
+            ("1" + "0" * 400, "2" + "0" * 400, "differ"),
+            ("A 6.7 B 1234567890", "A 6,7 B 1234567891", "differ"),
             # a comma that separates words, not decimals
             ("oui, non", "oui. non", "differ"),
             # the text around the numbers has to match
@@ -1149,6 +1159,36 @@ def with_stored_results(
                 blob = xml.encode("utf-8")
             dst.writestr(item, blob)
     return out.getvalue()
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    ("recalculated", "stored", "verdict"),
+    [
+        ("ID 1234567890", "ID 1234567891", "differ"),
+        ("Value 0.0000000001", "Value 0.0000000002", "differ"),
+        ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
+        ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
+    ],
+)
+def test_text_digits_cache_verdict_and_warnings(
+    recalculated, stored, verdict, slow_reader, monkeypatch
+):
+    from linexcel import ExecutionPolicy
+
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = with_stored_results(build({"A1": recalculated, "B1": "=A1"}), {"B1": stored})
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = node_of(graph, "c:S!B1")
+    assert node["valueSource"] == "engine"
+    assert node["value"] == recalculated
+    assert node["cachedValue"] == stored
+    assert node["cachedAgreement"] == verdict
+    warnings = [w for w in graph["meta"]["warnings"] if "S!B1:" in w]
+    assert bool(warnings) == (verdict == "differ")
+    if warnings:
+        assert recalculated in warnings[0] and stored in warnings[0]
 
 
 class TestAFrenchWorkbookEndToEnd:

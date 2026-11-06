@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import math
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
@@ -295,7 +296,7 @@ _GROUP_MARKS = " \u00a0\u202f'.,"
 _GROUPED_RE = re.compile(r"^\d{1,3}(?:[ \u00a0\u202f'.,]\d{3})*$|^\d+$")
 
 
-def _read_number(text: str) -> set[float]:
+def _read_number(text: str) -> set[Decimal]:
     """Every value ``text`` could be, read as a number.
 
     A set, because some spellings are genuinely ambiguous: ``1,234`` is a
@@ -308,7 +309,7 @@ def _read_number(text: str) -> set[float]:
     three digits. Without that, ``1 2`` reads as twelve, and two genuinely
     different texts would be called one value written two ways.
     """
-    readings: set[float] = set()
+    readings: set[Decimal] = set()
     for decimal_mark in (".", ","):
         parts = text.split(decimal_mark)
         if len(parts) > 2:
@@ -322,8 +323,8 @@ def _read_number(text: str) -> set[float]:
         for mark in _GROUP_MARKS:
             digits = digits.replace(mark, "")
         try:
-            readings.add(float(f"{digits}.{fraction}" if fraction else digits))
-        except ValueError:
+            readings.add(Decimal(f"{digits}.{fraction}" if fraction else digits))
+        except InvalidOperation:
             continue
     return readings
 
@@ -348,12 +349,11 @@ def _separators_only(left: str, right: str) -> bool:
         return False
     if not left_numbers:
         return False  # no numbers at all: the strings simply differ
+    # These digits are text, not approximate arithmetic results. Preserve
+    # every digit: float conversion and numeric tolerances can hide changed
+    # identifiers, tiny decimals and even overflow two different strings to inf.
     return all(
-        any(
-            math.isclose(a_val, b_val, rel_tol=1e-9, abs_tol=1e-9)
-            for a_val in _read_number(a.group())
-            for b_val in _read_number(b.group())
-        )
+        _read_number(a.group()) & _read_number(b.group())
         for a, b in zip(left_numbers, right_numbers)
     )
 
