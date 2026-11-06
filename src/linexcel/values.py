@@ -337,11 +337,13 @@ def _read_number(text: str) -> set[Decimal]:
 def _is_word_character(char: str) -> bool:
     # Combining marks belong to the surrounding text, including decomposed
     # accents and vowel signs. str.isalnum() and regex \w exclude them.
-    # Join controls also connect text; they do not separate a quantity from
-    # an identifier. Keep this explicit rather than treating every Cf as a word.
+    # Format controls (joiners, directional marks, etc.) do not prove that
+    # digits are a standalone quantity. Preserve adjacent digits literally;
+    # a visible space still allows regional formatting of a separate number.
     return (
         char.isalnum()
-        or char in "_\u200c\u200d"
+        or char == "_"
+        or unicodedata.category(char) == "Cf"
         or unicodedata.category(char).startswith("M")
     )
 

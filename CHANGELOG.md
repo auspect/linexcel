@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits adjacent to all Unicode format controls in text
+  comparisons, including word joiners and directional marks. Invisible
+  characters no longer hide changed identifier padding or decimal separators;
+  quantities separated by spaces retain regional-format tolerance.
 - Preserve literal identifier digits next to Unicode join controls U+200C
   and U+200D. Changed zero padding or decimal separators now produces a
   divergence verdict and warning; separate quantities retain regional-format
