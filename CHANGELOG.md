@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Validate both generated workbooks in all nine supported report languages by
+  default, using the product language registry. The documented acceptance
+  command no longer reports generation success after only three reports;
+  optional AI stages must also complete for every requested language.
 - Compare recalculated durations against Excel's typed duration caches using
   elapsed seconds, including negative and multi-day values in both date systems.
   Badges and warnings agree, tolerate half-millisecond cache rounding and retain
