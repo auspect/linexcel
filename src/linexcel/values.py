@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 import math
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -333,6 +334,12 @@ def _read_number(text: str) -> set[Decimal]:
     return readings
 
 
+def _is_word_character(char: str) -> bool:
+    # Combining marks belong to the surrounding text, including decomposed
+    # accents and vowel signs. str.isalnum() and regex \w exclude them.
+    return char.isalnum() or char == "_" or unicodedata.category(char).startswith("M")
+
+
 def _separators_only(left: str, right: str) -> bool:
     """True when two strings differ in nothing but how numbers are written.
 
@@ -365,14 +372,11 @@ def _separators_only(left: str, right: str) -> bool:
             (
                 match.start()
                 and (
-                    text[match.start() - 1].isalnum()
-                    or text[match.start() - 1] in "_.,"
+                    _is_word_character(text[match.start() - 1])
+                    or text[match.start() - 1] in ".,"
                 )
             )
-            or (
-                match.end() < len(text)
-                and (text[match.end()].isalnum() or text[match.end()] == "_")
-            )
+            or (match.end() < len(text) and _is_word_character(text[match.end()]))
             for text, match in ((left, a), (right, b))
         ):
             if a.group() != b.group():

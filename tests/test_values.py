@@ -1151,6 +1151,32 @@ class TestReadingsAgree:
 
         assert readings_agree(recalculated, stored, None) == verdict
 
+    @pytest.mark.parametrize("mark", ["\u0301", "\u093e", "\u20dd"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("e{mark}1", "e{mark}01", "differ"),
+            ("e{mark}01", "e{mark}1", "differ"),
+            ("1{mark}x", "01{mark}x", "differ"),
+            ("e{mark}1.0", "e{mark}1,0", "differ"),
+            ("e{mark}.1", "e{mark}.01", "differ"),
+            ("e{mark}1 total 6.7", "e{mark}1 total 6,7", "format"),
+            ("e{mark} 6.7", "e{mark} 6,7", "format"),
+            ("e{mark} .50", "e{mark} 0,5", "format"),
+            ("6.7 e{mark}", "6,7 e{mark}", "format"),
+            ("e{mark}01", "e{mark}01", "same"),
+        ],
+    )
+    def test_combining_marks_preserve_identifier_digits(
+        self, mark, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert (
+            readings_agree(left.format(mark=mark), right.format(mark=mark), None)
+            == verdict
+        )
+
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
 
@@ -1226,6 +1252,11 @@ def with_stored_results(
         ("1.0beta", "01.0beta", "differ"),
         ("v1.0 total 6.7", "v01.0 total 6,7", "differ"),
         ("v1.0 total 6.7", "v1.0 total 6,7", "format"),
+        ("e\u03011", "e\u030101", "differ"),
+        ("1\u0301x", "01\u0301x", "differ"),
+        ("का1", "का01", "differ"),
+        ("A\u20dd1", "A\u20dd01", "differ"),
+        ("e\u03011 total 6.7", "e\u03011 total 6,7", "format"),
         ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
         ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
     ],

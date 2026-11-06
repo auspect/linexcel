@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve numbers adjacent to Unicode combining marks in text comparisons.
+  Decomposed accents (`é1` versus `é01`), vowel signs and enclosing marks
+  now retain literal identifier digits and produce divergence warnings.
+  Separate numbers in the same text still allow regional formatting.
 - Preserve numbers attached to words in text comparisons. Identifiers such as
   `v1.0` versus `v01.0`, `A1` versus `A01`, and `1.0beta` versus `01.0beta`
   now produce divergence verdicts and warnings. Unchanged identifiers still
