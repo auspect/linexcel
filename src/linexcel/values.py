@@ -287,7 +287,7 @@ def _jsonable(value):
 #: A number as some spreadsheet somewhere writes it: digits, with runs
 #: separated by a group mark — space, non-breaking space, narrow no-break
 #: space, apostrophe, dot or comma — and possibly a decimal mark.
-_NUMBER_RE = re.compile(r"\d[\d   '.,]*\d|\d")
+_NUMBER_RE = re.compile(r"(?<![\w.,])[.,]\d+|\d[\d   '.,]*\d|\d")
 #: Marks a spreadsheet may use to group digits. The dot and the comma are in
 #: here too: which of the two groups and which one separates the decimal part
 #: is exactly what changes from one regional setting to the next.
@@ -317,6 +317,10 @@ def _read_number(text: str) -> set[Decimal]:
         whole, fraction = parts[0], parts[1] if len(parts) == 2 else ""
         if fraction and not fraction.isdigit():
             continue
+        # A leading decimal mark belongs to the number: .1 is not the
+        # integer 1 preceded by punctuation (which would also match .01).
+        if not whole and fraction:
+            whole = "0"
         if not _GROUPED_RE.match(whole):
             continue
         digits = whole

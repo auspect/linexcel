@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recognize leading decimal marks in text comparisons. Values such as `.1`
+  and `.01` now produce a divergence instead of a formatting verdict, while
+  equivalent `.50`, `0.5` and `,5` readings retain regional-format tolerance.
 - Compare numbers embedded in text exactly when recognizing regional separator
   differences. Changed identifiers, tiny decimals and long digit sequences now
   produce divergence verdicts and warnings instead of being mistaken for a
