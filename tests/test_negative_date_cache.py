@@ -17,7 +17,7 @@ from linexcel.loader import (
 )
 
 
-def workbook_bytes(epoch_1904, serial, number_format):
+def workbook_bytes(epoch_1904, serial, number_format, *, cache_serial=None):
     workbook = Workbook()
     if epoch_1904:
         workbook.epoch = dt.datetime(1904, 1, 1)
@@ -40,9 +40,10 @@ def workbook_bytes(epoch_1904, serial, number_format):
         for entry in original.infolist():
             content = original.read(entry)
             if entry.filename == "xl/worksheets/sheet1.xml":
+                stored = serial if cache_serial is None else cache_serial
                 content, count = re.subn(
                     rb"<f>A1</f><v(?:\s*/>|></v>)",
-                    f"<f>A1</f><v>{serial}</v>".encode(),
+                    f"<f>A1</f><v>{stored}</v>".encode(),
                     content,
                 )
                 assert count == 1
@@ -97,6 +98,34 @@ def test_analysis_reports_complete_negative_date_cache(
     assert node["cachedValue"] == expected
     assert node["value"] == -2.25
     assert node["valueSource"] == "engine"
+    assert node["valueDate"] == expected[:10]
+    assert node["cachedAgreement"] == "same"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [-40000.25, -2.25, -1, -0.25])
+@pytest.mark.parametrize("offset_seconds", [-0.00025, 0.00025, 1, 86400])
+def test_negative_date_comparison_preserves_rounding_and_real_gaps(
+    epoch_1904, slow_reader, serial, offset_seconds, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(
+        epoch_1904,
+        serial + offset_seconds / 86400,
+        "yyyy-mm-dd hh:mm:ss.000",
+        cache_serial=serial,
+    )
+    result = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))
+    node = next(n for n in result["graph"]["nodes"] if n.get("addr") == "B1")
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == ("same" if offset_seconds < 0.0005 else "differ")
+    # Warnings and the serialized node must tell the same story.
+    mismatch = any(
+        "Dates!B1" in warning for warning in result["graph"]["meta"]["warnings"]
+    )
+    assert mismatch is (offset_seconds >= 0.0005)
 
 
 @pytest.mark.parametrize("epoch_1904", [False, True])

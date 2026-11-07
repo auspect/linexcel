@@ -68,13 +68,13 @@ def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
     if days != days or days in (float("inf"), float("-inf")):
         return None
     if epoch_1904:
-        if days < 0:
-            return None
         base = EXCEL_EPOCH_1904
     else:
-        if days < 1 or 60 <= days < 61:
+        if 0 <= days < 1 or 60 <= days < 61:
             return None
-        base = EPOCH_EARLY_1900 if days < 60 else EXCEL_EPOCH_1900
+        # Negative cached serials use the unshifted epoch, as the workbook
+        # readers do. Only Jan/Feb 1900 need the phantom-leap-day correction.
+        base = EPOCH_EARLY_1900 if 1 <= days < 60 else EXCEL_EPOCH_1900
     try:
         # Only whole days determine the date. timedelta rounds fractions to
         # microseconds, which could otherwise move a value across midnight.

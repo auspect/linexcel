@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full workbook analysis compares negative date results against their complete
+  saved timestamps in either Excel calendar. Matching values and rounding within
+  0.5 ms no longer produce false differences; real time and day gaps remain
+  visible, and reports retain the recalculated date for display.
+
 - The fallback workbook reader preserves dates whose format contains literal
   elapsed-time labels such as `yyyy-mm-dd "[ss]"`. It restores the saved calendar
   value instead of reporting a duration, including formula caches, both Excel
