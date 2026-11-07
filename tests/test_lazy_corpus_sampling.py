@@ -61,6 +61,32 @@ def test_cache_comparison_respects_unknown_volatile_and_numeric_tolerance():
     )
 
 
+@pytest.mark.parametrize("saved", [0.5, 46023.0])
+@pytest.mark.parametrize("offset_ms", [-1000, -0.75, -0.25, 0, 0.25, 0.75, 1000])
+@pytest.mark.parametrize("with_targeted_verdict", [False, True])
+def test_iso_cache_precision_without_date_format(
+    saved, offset_ms, with_targeted_verdict
+):
+    node = {
+        "cache_status": "saved",
+        "cached_comparison_value": saved,
+        "numberFormat": "General",
+        "sourceValueProvenance": {"storageType": "d"},
+    }
+    raw = saved + offset_ms / 86400000
+    result = {"status": "completed", "value": raw}
+    if with_targeted_verdict:
+        result.update(_cache_comparison(node, raw, raw, datetime(1899, 12, 30)))
+    expected = (
+        "exact_agreement"
+        if offset_ms == 0
+        else "numeric_tolerance_agreement"
+        if abs(offset_ms) < 0.5
+        else "cache_difference_requires_review"
+    )
+    assert corpus.comparison(node, result) == expected
+
+
 def test_evaluation_exception_does_not_count_another_import():
     summary = {"imports": {"succeeded": 1}}
     report = {}

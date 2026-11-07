@@ -314,8 +314,11 @@ def _cache_comparison(
             and isinstance(comparison_value, (int, float))
             and not isinstance(comparison_value, bool)
         ):
-            if isinstance(raw, (dt.datetime, dt.date, dt.time)) or is_date_format(
-                node.get("numberFormat") or "General"
+            # ISO date caches carry their type in OOXML even with General format.
+            if (
+                isinstance(raw, (dt.datetime, dt.date, dt.time))
+                or node.get("sourceValueProvenance", {}).get("storageType") == "d"
+                or is_date_format(node.get("numberFormat") or "General")
             ):
                 same_value = temporal_serials_agree(comparison_value, saved)
             else:

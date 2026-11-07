@@ -108,7 +108,10 @@ def comparison(node, result):
         # Temporal serials tolerate cache rounding, never a relative day error.
         if (
             temporal_serials_agree(value, saved)
-            if is_date_format(node.get("numberFormat") or "General")
+            if (
+                node.get("sourceValueProvenance", {}).get("storageType") == "d"
+                or is_date_format(node.get("numberFormat") or "General")
+            )
             else readings_agree(value, saved, None) == "same"
         ):
             return "numeric_tolerance_agreement"

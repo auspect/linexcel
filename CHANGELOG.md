@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ISO date and time caches retain temporal comparison precision even when
+  their cell uses General format. Targeted recalculation, dependency results
+  and corpus validation tolerate rounding within 0.5 ms and flag larger gaps.
+
 - Corpus validation preserves differences established before JSON serialization.
   Non-finite numeric results no longer agree with literal `inf`, `-inf` or `nan`
   caches; matching literal text still agrees, including dependent formulas.

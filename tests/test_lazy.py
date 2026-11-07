@@ -497,6 +497,39 @@ def test_typed_temporal_cache_rounding_without_format(kind, offset_ms):
     assert result["comparison"] == ("equal" if abs(offset_ms) < 0.5 else "different")
 
 
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    "cache_text", ["2026-01-01", "2026-01-01T12:00:00", "12:00:00"]
+)
+@pytest.mark.parametrize("offset_ms", [-1000, -0.75, -0.25, 0, 0.25, 0.75, 1000])
+def test_iso_cache_without_date_format_preserves_temporal_precision(
+    tmp_path, epoch_1904, cache_text, offset_ms
+):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import from_ISO8601, to_excel
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+    saved = to_excel(from_ISO8601(cache_text), epoch)
+    raw = saved + offset_ms / 86400000
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = f"={raw!r}"
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, cache_text, "d")
+    result = evaluate_node(path, "Sheet!B1")
+    assert result["status"] == "completed"
+    expected = "equal" if abs(offset_ms) < 0.5 else "different"
+    assert result["comparison"] == expected
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        step = next(s for s in result["steps"] if s["nodeId"] == node_id)
+        assert step["comparison"] == expected
+        assert step["comparisonValue"] == raw
+
+
 def test_engine_arrays_preserve_values_and_limitations_are_not_results():
     import pytest
 
