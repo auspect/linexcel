@@ -474,7 +474,12 @@ def _read_source(path, store):
                 )
                 for e in root.findall("{*}cellXfs/{*}xf")
             ] or ["General"]
-        format_kinds = [(is_date_format(f), is_timedelta_format(f)) for f in formats]
+        # Elapsed-format detection does not strip literals itself. A quoted
+        # "[h]" label on a date must not turn its cache into a timedelta.
+        format_kinds = [
+            (is_date_format(f), is_timedelta_format(re.sub(r'"[^"]*"|\\.', "", f)))
+            for f in formats
+        ]
         string_part = next(
             (
                 _part("xl/workbook.xml", v[1])

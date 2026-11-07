@@ -11,13 +11,15 @@ import argparse
 import base64
 import hashlib
 import json
-import math
 import re
 import time
 from collections import Counter, defaultdict
 from importlib.metadata import version
 from pathlib import Path
 
+from openpyxl.styles.numbers import is_date_format
+
+from linexcel.values import readings_agree, temporal_serials_agree
 from linexcel.web import TERMINAL, TaskStore, WebConfig
 
 
@@ -84,6 +86,15 @@ def comparison(node, result):
         return "volatile_not_comparable"
     if node.get("cache_status") != "saved":
         return "cache_unknown"
+    # The targeted verdict compares original types before JSON serialization.
+    # In particular, numeric inf/NaN and literal text can share a JSON string;
+    # their display equality must never overturn a known raw-value difference.
+    if result.get("comparison") == "different":
+        return "cache_difference_requires_review"
+    # Error values and literal text share their display spelling after JSON
+    # serialization. Use the source types, as targeted recalculation does.
+    if (node.get("cachedValueKind") == "error") != (result.get("valueKind") == "error"):
+        return "cache_difference_requires_review"
     saved = node.get("cached_comparison_value", node.get("cached_value"))
     value = result.get("comparisonValue", result.get("value"))
     if type(value) is type(saved) and value == saved:
@@ -94,7 +105,15 @@ def comparison(node, result):
         and isinstance(value, (int, float))
         and not isinstance(value, bool)
     ):
-        if math.isclose(saved, value, rel_tol=1e-9, abs_tol=1e-8):
+        # Temporal serials tolerate cache rounding, never a relative day error.
+        if (
+            temporal_serials_agree(value, saved)
+            if (
+                node.get("sourceValueProvenance", {}).get("storageType") == "d"
+                or is_date_format(node.get("numberFormat") or "General")
+            )
+            else readings_agree(value, saved, None) == "same"
+        ):
             return "numeric_tolerance_agreement"
     return "cache_difference_requires_review"
 

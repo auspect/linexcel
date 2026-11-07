@@ -75,14 +75,15 @@ def value_graph():
             "id": "formula-samples",
             "kind": "group",
             "formula": "=B1*2",
-            "count": 2,
+            "count": 3,
             "samples": [
                 {
                     "addr": "A1",
                     "value": 4,
                     "cachedValue": 4,
                     "valueSource": "engine",
-                }
+                },
+                {"addr": "A2", "value": 6, "valueSource": "engine"},
             ],
             "value": 4,
         },
@@ -163,11 +164,29 @@ def test_input_and_name_readings_keep_their_provenance_in_every_language(
             text["value_col_read"] in panel.locator(".lin-vtable thead").text_content()
         )
         assert text["value_col_calc"] not in panel.text_content()
-        for node_id in ["formula", "formula-name", "formula-samples"]:
+        assert panel.locator(".lin-comparison-scope").inner_text() == text[
+            "value_sample_scope"
+        ].format(compared=1, shown=2)
+        for node_id in ["formula", "formula-name"]:
             panel = select(page, node_id, fallback=True)
-            assert text["value_match"] in panel.text_content()
+            assert panel.locator(".lin-vcard").count() == 1
+            assert panel.locator(".lin-verdict").inner_text() == text["value_match"]
             assert text["value_col_calc"] in panel.text_content()
             assert text["value_col_read"] not in panel.text_content()
+            if node_id == "formula-name":
+                assert panel.locator("code.lin-formula").all_text_contents() == [
+                    "=2+3",
+                    "Params!C4",
+                ]
+        panel = select(page, "formula-samples", fallback=True)
+        assert panel.locator(".lin-verdict").inner_text() == text["value_sample_match"]
+        assert panel.locator(".lin-comparison-scope").inner_text() == text[
+            "value_sample_scope"
+        ].format(compared=1, shown=2)
+        assert text["sampled_cells"].format(shown=2, count=3) in panel.text_content()
+        assert text["value_col_calc"] in panel.text_content()
+        assert text["value_col_read"] not in panel.text_content()
+        assert text["value_match"] not in panel.text_content()
         assert not errors
     finally:
         page.close()
@@ -185,10 +204,23 @@ def test_named_reading_and_formula_keep_distinct_labels_in_the_live_graph(
         assert text["value_read_match"] in panel.text_content()
         assert text["value_col_read"] in panel.text_content()
         assert text["value_match"] not in panel.text_content()
-        panel = select(page, "formula", fallback=False)
-        assert text["value_match"] in panel.text_content()
-        assert text["value_col_calc"] in panel.text_content()
-        assert text["value_col_read"] not in panel.text_content()
+        for node_id in ["formula", "formula-name"]:
+            panel = select(page, node_id, fallback=False)
+            assert panel.locator(".lin-vcard").count() == 1
+            assert panel.locator(".lin-verdict").inner_text() == text["value_match"]
+            assert text["value_col_calc"] in panel.text_content()
+            assert text["value_col_read"] not in panel.text_content()
+            if node_id == "formula-name":
+                assert panel.locator("code.lin-formula").all_text_contents() == [
+                    "=2+3",
+                    "Params!C4",
+                ]
+        panel = select(page, "formula-samples", fallback=False)
+        assert panel.locator(".lin-verdict").inner_text() == text["value_sample_match"]
+        assert panel.locator(".lin-comparison-scope").inner_text() == text[
+            "value_sample_scope"
+        ].format(compared=1, shown=2)
+        assert text["value_match"] not in panel.text_content()
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
         assert not errors
     finally:

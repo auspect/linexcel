@@ -26,7 +26,8 @@ from xml.etree import ElementTree
 from xml.sax.saxutils import unescape
 
 from openpyxl import load_workbook
-from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format
+from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
+from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH, from_excel
 
 from linexcel.limits import limit_or_default
 from linexcel.progress import Reporter
@@ -64,9 +65,11 @@ class CachedValues:
         epoch_1904: bool,
         truncated_sheets: set[str] | None = None,
         error_cells: set[tuple[str, int, int]] | None = None,
+        duration_cells: set[tuple[str, int, int]] | None = None,
     ):
         self._values = values
         self._date_cells = date_cells
+        self._duration_cells = duration_cells or set()
         self.epoch_1904 = epoch_1904
         self.truncated_sheets = truncated_sheets or set()
         self.error_cells = error_cells
@@ -76,6 +79,11 @@ class CachedValues:
 
     def is_date(self, sheet: str, row: int, col: int) -> bool:
         return (sheet, row, col) in self._date_cells
+
+    def is_temporal(self, sheet: str, row: int, col: int) -> bool:
+        """Dates and elapsed durations need absolute cache-rounding tolerance."""
+        key = (sheet, row, col)
+        return key in self._date_cells or key in self._duration_cells
 
     def is_error(self, sheet: str | None, row: int, col: int) -> bool | None:
         """Source cell type, not an inference from a '#VALUE!' text spelling."""
@@ -196,7 +204,15 @@ def load_cached_values(
         )
     try:
         return finish(_load_cached_values_calamine(data, reporter, **reader_kwargs))
-    except Exception as exc:
+    except BaseException as exc:
+        # PyO3 exposes Rust panics as BaseException, outside Exception, and
+        # python-calamine does not export their class. Only its runtime panic
+        # may use the fallback; cancellation and process exit must propagate.
+        if not isinstance(exc, Exception) and not (
+            type(exc).__module__ == "pyo3_runtime"
+            and type(exc).__name__ == "PanicException"
+        ):
+            raise
         # Not silent: the slow reader detects dates from the number format
         # rather than from the type, which is a different answer on an edge
         # case, and someone comparing two runs deserves to know which read it.
@@ -317,7 +333,7 @@ def _load_cached_values_calamine(
     values: dict[tuple[str, int, int], Any] = {}
     # A formula with no saved value still has a meaningful display format.
     # Calamine's value types alone cannot recover that source metadata.
-    date_cells = _date_formatted_cells(data)
+    date_cells, duration_cells = _temporal_formatted_cells(data)
     epoch_1904 = _detect_epoch_1904(data)
     errors = _error_cached_values(data)
     # Calamine drops trailing cells that carry only formatting; openpyxl and
@@ -370,29 +386,77 @@ def _load_cached_values_calamine(
                 values.setdefault(key, error)
             else:
                 truncated.add(name)
-    _restore_phantom_date_serials(data, values, epoch_1904)
+    _restore_lossy_date_caches(
+        data, values, epoch_1904, date_cells, restore_durations=True
+    )
     return CachedValues(
-        values, date_cells, epoch_1904, truncated, set(errors) & values.keys()
+        values,
+        date_cells,
+        epoch_1904,
+        truncated,
+        set(errors) & values.keys(),
+        duration_cells,
     )
 
 
-def _restore_phantom_date_serials(
-    data: bytes, values: dict[tuple[str, int, int], Any], epoch_1904: bool
+def _restore_lossy_date_caches(
+    data: bytes,
+    values: dict[tuple[str, int, int], Any],
+    epoch_1904: bool,
+    date_cells: set[tuple[str, int, int]],
+    error_cells: set[tuple[str, int, int]] | None = None,
+    *,
+    restore_durations: bool = False,
 ) -> None:
-    """Keep day 60 as its actual stored number, never invent Gregorian Feb 28.
+    """Recover dates whose day component was lost by a cache reader.
 
     Both readers collapse Excel's fictitious day to a representable date.
     Inspect only retained candidate dates and preserve all other cache values.
     The following real day is included because sub-millisecond rounding can
-    turn 60.999999999 into March 1 during import.
+    turn 60.999999999 into March 1 during import. Preserve serials just before
+    day 60 too: rounding February 28 into a Python date would skip the fictitious
+    day entirely and invent March 1.
+
+    Calamine also returns only a time for negative date serials and fractions
+    rounded into the next day at midnight. Reconvert numeric time caches using
+    the fallback reader's epoch and millisecond rounding, retaining the day
+    when necessary. Ordinary times and elapsed durations retain their types.
+
+    Openpyxl may interpret a quoted elapsed label in a calendar format as a
+    duration. Restore those cells from their original serial, using the format
+    classification that excludes literal labels.
+
+    Restore actual durations for both readers: openpyxl rounds through
+    total_seconds(), which can add a second to large durations, and Calamine
+    can lose milliseconds near the duration limits. Round the fractional day
+    directly so whole days cannot reduce float precision.
+
+    Dates and durations outside Python's representable ranges become synthetic
+    #VALUE! errors in openpyxl. Recover their numeric source and remove the
+    synthetic error flag; actual OOXML errors and text retain their source types.
     """
-    if epoch_1904:
-        return
     candidates = {
         key
         for key, value in values.items()
-        if isinstance(value, datetime.date)
-        and (value.year, value.month, value.day) in {(1900, 2, 28), (1900, 3, 1)}
+        if isinstance(value, datetime.time)
+        or (
+            isinstance(value, datetime.timedelta)
+            and (key in date_cells or restore_durations)
+        )
+        or (
+            value == "#VALUE!"
+            and (
+                key in date_cells
+                or (
+                    restore_durations and error_cells is not None and key in error_cells
+                )
+            )
+        )
+        or (
+            not epoch_1904
+            and isinstance(value, datetime.date)
+            and (value.year, value.month, value.day) in {(1900, 2, 28), (1900, 3, 1)}
+        )
     }
     if not candidates:
         return
@@ -424,20 +488,63 @@ def _restore_phantom_date_serials(
                                     serial = float(raw)
                                 except ValueError:
                                     serial = float("nan")
-                                if 60 <= serial < 61:
+                                if values[key] == "#VALUE!":
+                                    # The OOXML numeric type proves this error
+                                    # came from conversion, not the workbook.
                                     values[key] = serial
+                                    if error_cells is not None:
+                                        error_cells.discard(key)
+                                elif (
+                                    restore_durations
+                                    and isinstance(values[key], datetime.timedelta)
+                                    and key not in date_cells
+                                ):
+                                    days, fraction = divmod(serial, 1)
+                                    try:
+                                        values[key] = datetime.timedelta(
+                                            days=days,
+                                            milliseconds=round(fraction * 86_400_000),
+                                        )
+                                    except (OverflowError, ValueError):
+                                        values[key] = serial
+                                elif not epoch_1904 and (
+                                    60 <= serial < 61
+                                    or (
+                                        59 < serial < 60
+                                        and round(serial % 1 * 86_400_000) == 86_400_000
+                                    )
+                                ):
+                                    values[key] = serial
+                                elif isinstance(
+                                    values[key], (datetime.time, datetime.timedelta)
+                                ):
+                                    try:
+                                        values[key] = from_excel(
+                                            serial,
+                                            MAC_EPOCH if epoch_1904 else WINDOWS_EPOCH,
+                                        )
+                                    except (OverflowError, ValueError):
+                                        # Outside Python's date range, retain
+                                        # the stored number rather than a time
+                                        # that silently discards whole days.
+                                        values[key] = serial
+                                    if error_cells is not None:
+                                        error_cells.discard(key)
                     cell.clear()
     except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         pass
 
 
-def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
+def _temporal_formatted_cells(
+    data: bytes,
+) -> tuple[set[tuple[str, int, int]], set[tuple[str, int, int]]]:
     """Sparse format metadata, including formulas whose saved cache is empty."""
     result: set[tuple[str, int, int]] = set()
+    durations: set[tuple[str, int, int]] = set()
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             if "xl/styles.xml" not in archive.namelist():
-                return result
+                return result, durations
             styles = ElementTree.fromstring(archive.read("xl/styles.xml"))
             formats = dict(BUILTIN_FORMATS)
             formats.update(
@@ -451,8 +558,13 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                 for index, item in enumerate(styles.findall("{*}cellXfs/{*}xf"))
                 if _is_date_format(formats.get(int(item.get("numFmtId", "0"))))
             }
-            if not indices:
-                return result
+            duration_indices = {
+                index
+                for index, item in enumerate(styles.findall("{*}cellXfs/{*}xf"))
+                if _is_duration_format(formats.get(int(item.get("numFmtId", "0"))))
+            }
+            if not indices and not duration_indices:
+                return result, durations
             paths = _parse_sheet_targets(
                 archive.read("xl/workbook.xml").decode("utf-8"),
                 archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
@@ -462,8 +574,9 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                     address = re.search(rb'\br="([A-Z]{1,3})(\d+)"', cell.group(1))
                     style = re.search(rb'\bs="(\d+)"', cell.group(1))
                     index = int(style.group(1)) if style else 0
-                    if address and index in indices:
-                        result.add(
+                    if address and (index in indices or index in duration_indices):
+                        target = durations if index in duration_indices else result
+                        target.add(
                             (
                                 sheet,
                                 int(address.group(2)),
@@ -472,7 +585,7 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                         )
     except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         pass
-    return result
+    return result, durations
 
 
 def _stepped(phase_cm, items, verb: str):
@@ -512,6 +625,7 @@ def _load_cached_values_openpyxl(
     truncated: set[str] = set()
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
+    duration_cells: set[tuple[str, int, int]] = set()
     error_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = False
     try:
@@ -539,6 +653,8 @@ def _load_cached_values_openpyxl(
                     key = (ws.title, r, c)
                     if _is_date_format(getattr(cell, "number_format", None)):
                         date_cells.add(key)
+                    elif _is_duration_format(getattr(cell, "number_format", None)):
+                        duration_cells.add(key)
                     if cell.value is not None:
                         values[key] = cell.value
                         if cell.data_type == "e":
@@ -547,8 +663,12 @@ def _load_cached_values_openpyxl(
         pass
     finally:
         wb.close()
-    _restore_phantom_date_serials(data, values, epoch_1904)
-    return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
+    _restore_lossy_date_caches(
+        data, values, epoch_1904, date_cells, error_cells, restore_durations=True
+    )
+    return CachedValues(
+        values, date_cells, epoch_1904, truncated, error_cells, duration_cells
+    )
 
 
 def _detect_epoch_1904(data: bytes) -> bool:
@@ -579,6 +699,22 @@ def _is_date_format(number_format: Any) -> bool:
     if not number_format:
         return False
     try:
-        return bool(is_date_format(number_format))
+        # openpyxl's date predicate also includes elapsed formats such as
+        # [h]:mm:ss. Those are durations: their whole days must never become
+        # calendar dates, including on formula cells without a saved cache.
+        # The elapsed predicate itself does not ignore quoted/escaped literals.
+        tokens = re.sub(r'"[^"]*"|\\.', "", number_format)
+        return bool(is_date_format(number_format) and not is_timedelta_format(tokens))
+    except Exception:
+        return False
+
+
+def _is_duration_format(number_format: Any) -> bool:
+    """Elapsed tokens count only outside quoted or escaped format literals."""
+    if not number_format:
+        return False
+    try:
+        tokens = re.sub(r'"[^"]*"|\\.', "", number_format)
+        return bool(is_timedelta_format(tokens))
     except Exception:
         return False

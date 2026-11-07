@@ -362,6 +362,174 @@ def test_recalculated_excel_error_matches_same_saved_error(tmp_path):
     assert result["comparison"] == "equal"
 
 
+@pytest.mark.parametrize("cache", ["0.3", "0.31"])
+def test_target_and_dependency_cache_comparisons_tolerate_numeric_rounding(
+    tmp_path, cache
+):
+    def setup(book):
+        book.active["A1"] = "=0.1+0.2"
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, cache)
+    result = evaluate_node(path, "Sheet!B1")
+    expected = "equal" if cache == "0.3" else "different"
+    assert result["status"] == "completed"
+    assert result["comparison"] == expected
+    for step in result["steps"]:
+        if step["nodeId"] in {"Sheet!A1", "Sheet!B1"}:
+            assert step["comparison"] == expected
+            assert step["calculatedValue"] == result["value"]
+    assert result["value"] == 0.1 + 0.2
+
+
+@pytest.mark.parametrize(
+    ("raw", "saved", "number_format", "expected"),
+    [
+        (0.1 + 0.2, 0.3, "General", "equal"),
+        (1e6 + 0.0001, 1e6, "0.00", "equal"),
+        (0.0000000001, 0, "General", "equal"),
+        (0.00000001, 0, "General", "different"),
+        (1e6 + 0.01, 1e6, "0.00", "different"),
+        (1, True, "General", "different"),
+        (True, 1, "General", "different"),
+        (0.3, "0.3", "General", "different"),
+        (45000 + 1 / 86400, 45000, "yyyy-mm-dd", "different"),
+        (0.5 + 0.001 / 86400, 0.5, "hh:mm:ss.000", "different"),
+        (45000 + 1 / 86400, 45000, "[h]:mm:ss", "different"),
+        (True, True, "yyyy-mm-dd", "equal"),
+        (False, False, "hh:mm:ss", "equal"),
+        (True, 1, "yyyy-mm-dd", "different"),
+        (0, False, "[h]:mm:ss", "different"),
+        (0.5, "0.5", "hh:mm:ss", "different"),
+    ],
+)
+def test_numeric_cache_rounding_preserves_types_and_temporal_precision(
+    raw, saved, number_format, expected
+):
+    import datetime as dt
+
+    from linexcel.lazy import _cache_comparison
+
+    node = {
+        "cache_status": "saved",
+        "cached_value": saved,
+        "numberFormat": number_format,
+    }
+    assert (
+        _cache_comparison(node, raw, raw, dt.datetime(1899, 12, 30))["comparison"]
+        == expected
+    )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("base", "number_format"),
+    [
+        (45000, "yyyy-mm-dd hh:mm:ss.000"),
+        (0.5, "hh:mm:ss.000"),
+        (-1.5, "[h]:mm:ss.000"),
+    ],
+)
+@pytest.mark.parametrize("offset_ms", [-0.75, -0.25, 0.25, 0.75])
+def test_target_and_dependencies_tolerate_temporal_cache_rounding(
+    tmp_path, epoch_1904, base, number_format, offset_ms
+):
+    import datetime as dt
+
+    from linexcel.values import readings_agree, serial_to_date_text
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+    raw = base + offset_ms / 86400000
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = f"={raw!r}"
+        book.active["B1"] = "=A1"
+        for cell in ("A1", "B1"):
+            book.active[cell].number_format = number_format
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, str(base))
+    result = evaluate_node(path, "Sheet!B1")
+    assert result["status"] == "completed"
+    expected = "equal" if abs(offset_ms) < 0.5 else "different"
+    assert result["comparison"] == expected
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        step = next(s for s in result["steps"] if s["nodeId"] == node_id)
+        assert step["comparison"] == expected
+        assert step["comparisonValue"] == raw
+    # Independently check against the full analysis's typed cache comparison.
+    stored = (
+        dt.timedelta(days=base)
+        if base < 0
+        else dt.time(12)
+        if base < 1
+        else epoch + dt.timedelta(days=base)
+    )
+    full = readings_agree(raw, stored, serial_to_date_text(raw, epoch_1904))
+    assert (full == "same") == (expected == "equal")
+
+
+@pytest.mark.parametrize("offset_ms", [-0.75, -0.25, 0.25, 0.75])
+@pytest.mark.parametrize("kind", ["date", "datetime", "time"])
+def test_typed_temporal_cache_rounding_without_format(kind, offset_ms):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import to_excel
+
+    from linexcel.lazy import _cache_comparison
+
+    raw = {
+        "date": dt.date(2026, 1, 1),
+        "datetime": dt.datetime(2026, 1, 1, 12),
+        "time": dt.time(12),
+    }[kind]
+    epoch = dt.datetime(1904, 1, 1)
+    saved = to_excel(raw, epoch) + offset_ms / 86400000
+    node = {
+        "cache_status": "saved",
+        "cached_comparison_value": saved,
+        "cached_value": "display only",
+    }
+    result = _cache_comparison(node, raw, raw.isoformat(), epoch)
+    assert result["comparisonValue"] == to_excel(raw, epoch)
+    assert result["comparison"] == ("equal" if abs(offset_ms) < 0.5 else "different")
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    "cache_text", ["2026-01-01", "2026-01-01T12:00:00", "12:00:00"]
+)
+@pytest.mark.parametrize("offset_ms", [-1000, -0.75, -0.25, 0, 0.25, 0.75, 1000])
+def test_iso_cache_without_date_format_preserves_temporal_precision(
+    tmp_path, epoch_1904, cache_text, offset_ms
+):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import from_ISO8601, to_excel
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+    saved = to_excel(from_ISO8601(cache_text), epoch)
+    raw = saved + offset_ms / 86400000
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = f"={raw!r}"
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, cache_text, "d")
+    result = evaluate_node(path, "Sheet!B1")
+    assert result["status"] == "completed"
+    expected = "equal" if abs(offset_ms) < 0.5 else "different"
+    assert result["comparison"] == expected
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        step = next(s for s in result["steps"] if s["nodeId"] == node_id)
+        assert step["comparison"] == expected
+        assert step["comparisonValue"] == raw
+
+
 def test_engine_arrays_preserve_values_and_limitations_are_not_results():
     import pytest
 
@@ -465,7 +633,7 @@ def test_date_and_time_caches_compare_using_workbook_epoch(tmp_path, epoch_year)
     assert evaluate_node(path, "Sheet!A1")["value"] == to_excel(dates[0], epoch)
 
 
-def _replace_formula_caches(path, cache_text):
+def _replace_formula_caches(path, cache_text, cache_type=None):
     import zipfile
     from xml.etree import ElementTree
 
@@ -478,10 +646,133 @@ def _replace_formula_caches(path, cache_text):
         for cell in root.findall("{*}sheetData/{*}row/{*}c"):
             if cell.find("{*}f") is not None:
                 cell.find("{*}v").text = cache_text
+                if cache_type is not None:
+                    cell.set("t", cache_type)
         parts[name] = ElementTree.tostring(root)
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in parts.items():
             archive.writestr(name, data)
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    "number_format",
+    ['yyyy-mm-dd "[h]"', 'yyyy-mm-dd "[mm]"', 'yyyy-mm-dd "[ss]"', r"yyyy-mm-dd \[h\]"],
+)
+def test_literal_elapsed_markers_preserve_date_caches(
+    tmp_path, epoch_1904, number_format
+):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import from_excel
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = 45000.5
+        book.active["B1"] = "=A1"
+        book.active["C1"] = "=B1"
+        for address in ("A1", "B1", "C1"):
+            book.active[address].number_format = number_format
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, "45000.5")
+    expected = from_excel(45000.5, epoch).isoformat()
+    nodes = {n["id"]: n for n in build_structure(path)["nodes"]}
+    for address in ("A1", "B1", "C1"):
+        node = nodes[f"Sheet!{address}"]
+        assert node["cached_value"] == expected
+        assert node["cached_comparison_value"] == 45000.5
+    assert evaluate_node(path, "Sheet!A1")["value"] == expected
+    result = evaluate_node(path, "Sheet!C1")
+    assert result["status"] == "completed"
+    assert result["value"] == 45000.5
+    assert result["comparison"] == "equal"
+    for step in result["steps"]:
+        assert step["cachedValue"] == expected
+
+
+@pytest.mark.parametrize("number_format", ['[h]:mm:ss "[ss]"', "[mm]:ss", "[ss]"])
+@pytest.mark.parametrize("serial", [-1.5, 1.5])
+def test_actual_elapsed_formats_preserve_duration_caches(
+    tmp_path, number_format, serial
+):
+    import datetime as dt
+
+    def setup(book):
+        book.active["A1"] = serial
+        book.active["A1"].number_format = number_format
+
+    path = save(tmp_path, setup)
+    node = next(n for n in build_structure(path)["nodes"] if n["id"] == "Sheet!A1")
+    assert node["cached_value"] == str(dt.timedelta(days=serial))
+    assert node["cached_comparison_value"] == serial
+
+
+@pytest.mark.parametrize(
+    "formula,spelling",
+    [
+        ("=SUMSQ(1E308)", "inf"),
+        ("=PRODUCT(-1E308,1E308)", "-inf"),
+        ("=PRODUCT(0,SUMSQ(1E308))", "nan"),
+    ],
+)
+@pytest.mark.parametrize("literal_result", [False, True])
+def test_nonfinite_target_and_dependency_do_not_agree_with_text_cache(
+    tmp_path, formula, spelling, literal_result
+):
+    import json
+
+    def setup(book):
+        book.active["A1"] = f'="{spelling}"' if literal_result else formula
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, spelling, "str")
+    result = evaluate_node(path, "Sheet!B1")
+    expected = "equal" if literal_result else "different"
+    assert result["status"] == "completed"
+    assert result["value"] == spelling
+    assert result["cachedValue"] == spelling
+    assert result["comparison"] == expected
+    steps = {step["nodeId"]: step for step in result["steps"]}
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        assert steps[node_id]["calculatedValue"] == spelling
+        assert steps[node_id]["comparison"] == expected
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("raw", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("cache_kind", ["text", "number", "finite", "missing"])
+def test_nonfinite_cache_comparison_uses_numeric_value_before_serialization(
+    raw, cache_kind
+):
+    import datetime as dt
+    import json
+    import math
+
+    from linexcel.lazy import _cache_comparison, _engine_value
+
+    node = {
+        "cache_status": "missing" if cache_kind == "missing" else "saved",
+        "cached_value": str(raw)
+        if cache_kind == "text"
+        else 0
+        if cache_kind == "finite"
+        else raw,
+    }
+    result = _cache_comparison(node, raw, _engine_value(raw), dt.datetime(1899, 12, 30))
+    expected = (
+        "unknown"
+        if cache_kind == "missing"
+        else "equal"
+        if cache_kind == "number" and not math.isnan(raw)
+        else "different"
+    )
+    assert result["comparison"] == expected
+    assert result["comparisonValue"] == str(raw)
+    json.dumps(result, allow_nan=False)
 
 
 @pytest.mark.parametrize("saved_cache", [None, "999"])

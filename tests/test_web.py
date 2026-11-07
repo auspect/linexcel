@@ -538,11 +538,16 @@ def test_invalid_inputs_are_rejected_before_task_submission(app):
     assert app.store.tasks == {}
 
 
-def test_timeout_preserves_previous_graph_and_diagnostic(app):
+def test_timeout_preserves_previous_graph_and_diagnostic(app, monkeypatch):
     imported = app.store.create("owner", {"workbook": workbook()})
     project = imported["project"]["id"]
     wait(app.store, imported["task"]["id"])
     before = app.store.snapshot("owner", project)["graph"]
+    # Exercise timeout persistence independently of native RSS startup races.
+    # Real memory enforcement and monitor failures have separate coverage.
+    monkeypatch.setattr(
+        "linexcel._process_budget.MemoryMonitor.exceeded", lambda *_: False
+    )
     task = app.store.submit(
         "owner", project, "evaluate", "Sheet!B1", {"seconds": 0.001}
     )

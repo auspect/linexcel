@@ -299,8 +299,8 @@ def test_each_requested_stage_must_complete(
         validation_results["workbook"] = reviewed("workbook", receipts)
         validation_results["request_receipts"] = receipts
         return (
-            {} if language == "en" and missing == "nodes" else {"S!A1": "Complete"},
-            " " if language == "en" and missing == "overview" else "Overview",
+            {} if language == "zh" and missing == "nodes" else {"S!A1": "Complete"},
+            " " if language == "zh" and missing == "overview" else "Overview",
         )
 
     monkeypatch.setattr(manual, "document", document)
@@ -350,7 +350,7 @@ def test_each_requested_stage_must_complete(
                 }
             )
         return (
-            {} if language == "en" and missing == "vision" else {"S": "Visible image"}
+            {} if language == "zh" and missing == "vision" else {"S": "Visible image"}
         )
 
     monkeypatch.setattr(manual, "describe", describe)
@@ -360,7 +360,7 @@ def test_each_requested_stage_must_complete(
         "test",
         lambda: b"workbook",
         tmp_path / "source.xlsx",
-        ("fr", "en"),
+        manual.LANGUAGES,
         generated=False,
         root=tmp_path,
     )
@@ -373,6 +373,10 @@ def test_each_requested_stage_must_complete(
         vision=ai_mode == "full",
     )
     outcome = manual.run_case(case, args, ai_mode != "none", ai_mode == "full")
+    assert set(outcome["languages"]) == set(manual.LANGUAGES)
+    for language in manual.LANGUAGES:
+        assert case.output(language).is_file()
+        assert (tmp_path / f"sample-{language}-ai.json").is_file()
     required = {"images", "sheet"}
     if ai_mode != "none":
         required.update({"nodes", "overview"})
@@ -414,13 +418,18 @@ def test_optional_ai_does_not_make_complete_run_partial(
         manual, "check_local_provider", lambda *a: probes.append(a) or True
     )
     seen = []
+    requested_languages = {}
 
     def run(case, args, ai, vision):
         seen.append((ai, vision))
+        requested_languages[case.name] = case.languages
         return {"case": case.name, "passed": True}
 
     monkeypatch.setattr(manual, "run_case", run)
     assert manual.main() == 0
+    from linexcel.i18n import LANGUAGES
+
+    assert requested_languages == {"sales": LANGUAGES, "stress": LANGUAGES}
     evidence = json.loads((output / "validation.json").read_text())
     assert evidence["status"] == "passed"
     assert evidence["acceptance"]["delivery"] == "not_ready"

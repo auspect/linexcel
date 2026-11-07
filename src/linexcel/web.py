@@ -1270,18 +1270,32 @@ class TaskStore:
                     job = WorkerJob(process, request["memoryMb"])
                     job.resume(process)
                 while process.poll() is None:
-                    if memory.exceeded(process.pid):
-                        reason = "memory_limit"
-                        break
-                    if event.wait(0.05):
+                    # Stop an expired/cancelled job before sampling its process.
+                    # Native RSS reads can fail during startup; they must not
+                    # replace a termination reason that is already established.
+                    if event.is_set():
                         reason = "cancelled"
                         break
-                    if time.monotonic() - started >= task["budget"]["seconds"]:
+                    remaining = task["budget"]["seconds"] - (time.monotonic() - started)
+                    if remaining <= 0:
                         reason = "timeout"
+                        break
+                    if memory.exceeded(process.pid):
+                        reason = "memory_limit"
                         break
                     if self._storage_bytes() > self.config.max_storage_mb * 1048576:
                         reason = "storage_limit"
                         break
+                    if event.wait(min(0.05, remaining)):
+                        reason = "cancelled"
+                        break
+                # The child can exit during sampling or the final wait, so
+                # poll() alone cannot establish that completion was on time.
+                if reason is None:
+                    if event.is_set():
+                        reason = "cancelled"
+                    elif time.monotonic() - started >= task["budget"]["seconds"]:
+                        reason = "timeout"
             finally:
                 if job is not None:
                     job.close()

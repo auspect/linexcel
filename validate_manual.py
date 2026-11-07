@@ -69,6 +69,7 @@ except ImportError:  # pragma: no cover - openpyxl missing
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 import linexcel  # noqa: E402
 from linexcel.aidoc import AiDocError, OpenAICompatProvider  # noqa: E402
+from linexcel.i18n import LANGUAGES  # noqa: E402
 from linexcel.insights import _sheet_names, empty_sheet_render_exemptions  # noqa: E402
 
 #: Local OpenAI-compatible endpoint. Ollama serves one at this address.
@@ -133,7 +134,7 @@ CASES = {
         headline="B2B commercial and margin review",
         build=validation_workbooks.build_sales_workbook,
         workbook=Path("fy26_commercial_review.xlsx"),
-        languages=("fr", "en"),
+        languages=LANGUAGES,
         checks=(
             "'Workbook overview' — does the AI describe the *file*, not the graph?",
             "  It should name the title in B2, the hidden baseline/cost columns",
@@ -148,7 +149,7 @@ CASES = {
         headline="hostile English workbook",
         build=validation_workbooks.build_stress_workbook,
         workbook=Path("validation_stress.xlsx"),
-        languages=("en",),
+        languages=LANGUAGES,
         checks=(
             "'Errors' nodes — every Excel error value should render as #DIV/0!,",
             "  #N/A and so on, never as a raw engine object.",

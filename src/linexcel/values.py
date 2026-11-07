@@ -16,6 +16,8 @@ from __future__ import annotations
 import datetime
 import math
 import re
+import unicodedata
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
@@ -66,15 +68,17 @@ def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
     if days != days or days in (float("inf"), float("-inf")):
         return None
     if epoch_1904:
-        if days < 0:
-            return None
         base = EXCEL_EPOCH_1904
     else:
-        if days < 1 or 60 <= days < 61:
+        if 0 <= days < 1 or 60 <= days < 61:
             return None
-        base = EPOCH_EARLY_1900 if days < 60 else EXCEL_EPOCH_1900
+        # Negative cached serials use the unshifted epoch, as the workbook
+        # readers do. Only Jan/Feb 1900 need the phantom-leap-day correction.
+        base = EPOCH_EARLY_1900 if 1 <= days < 60 else EXCEL_EPOCH_1900
     try:
-        return (base + datetime.timedelta(days=days)).date().isoformat()
+        # Only whole days determine the date. timedelta rounds fractions to
+        # microseconds, which could otherwise move a value across midnight.
+        return (base + datetime.timedelta(days=math.floor(days))).date().isoformat()
     except (OverflowError, ValueError):
         return None
 
@@ -148,11 +152,134 @@ def _time_agreement(raw: Any, cached: Any, time_text: str | None) -> str | None:
             )
             else "differ"
         )
-    if isinstance(raw, datetime.time):
-        return "same" if raw.tzinfo is None and raw == stored_time else "differ"
     if isinstance(raw, str) and described_time is not None:
-        return "same" if _naive_time(raw) == stored_time else "differ"
+        raw = _naive_time(raw)
+    if isinstance(raw, datetime.time) and raw.tzinfo is None:
+        # Typed times and their JSON form have the same cache precision as
+        # numeric serials. Anchor both to one day: a time alone cannot prove
+        # that a near-midnight value and midnight belong to consecutive days.
+        difference = datetime.datetime.combine(
+            datetime.date.min, raw
+        ) - datetime.datetime.combine(datetime.date.min, stored_time)
+        return (
+            "same"
+            if abs(difference) <= datetime.timedelta(microseconds=500)
+            else "differ"
+        )
     return "differ"
+
+
+def _serial_datetime_agreement(
+    raw: Any, cached: Any, date_text: str | None, epoch_1904: bool | None
+) -> str | None:
+    """Compare the day and time, using the resolver's epoch-aware date label.
+
+    The label alone loses the fraction of a day. Cache readers round to
+    milliseconds, so compare the full difference with that precision, including
+    across midnight, not a relative tolerance proportional to the Excel serial.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if epoch_1904 is False and 60 <= raw < 61 and isinstance(cached, datetime.date):
+        # The phantom day has no date label. Measure from the following
+        # midnight in Excel's calendar, retaining the missing day when the
+        # typed cache precedes March 1. Never infer dates from literal strings.
+        stored = (
+            cached
+            if isinstance(cached, datetime.datetime)
+            else datetime.datetime.combine(cached, datetime.time.min)
+        )
+        if stored.tzinfo is not None:
+            return "differ"
+        following_day = datetime.datetime(1900, 3, 1)
+        stored_seconds = (stored - following_day).total_seconds()
+        if stored < following_day:
+            stored_seconds -= 86400
+        return (
+            "same"
+            if math.isclose(
+                (raw - 61) * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005
+            )
+            else "differ"
+        )
+    if (
+        date_text is None
+        and epoch_1904 is False
+        and 0 < raw < 1
+        and isinstance(cached, datetime.date)
+    ):
+        # Day zero has no display date in Excel's 1900 calendar. A typed
+        # cache can nevertheless round the final fraction up to January 1.
+        # Anchor that comparison to the preceding day without inventing a
+        # display label, inferring the calendar, or parsing literal text.
+        stored_day = cached.date() if isinstance(cached, datetime.datetime) else cached
+        if stored_day >= datetime.date(1900, 1, 1):
+            date_text = EPOCH_EARLY_1900.date().isoformat()
+    if date_text is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+        return None
+    if isinstance(cached, str):
+        try:
+            cached = datetime.datetime.fromisoformat(cached)
+        except ValueError:
+            return None
+    if isinstance(cached, datetime.datetime):
+        if cached.tzinfo is not None:
+            return "differ"
+        stored_date, stored_time = cached.date(), cached.time()
+    elif isinstance(cached, datetime.date):
+        stored_date, stored_time = cached, datetime.time.min
+    else:
+        return None
+    if not math.isfinite(raw):
+        return "differ"
+    try:
+        start_of_day = datetime.datetime.fromisoformat(date_text)
+    except ValueError:
+        return "differ"
+    stored_seconds = (
+        datetime.datetime.combine(stored_date, stored_time) - start_of_day
+    ).total_seconds()
+    if (
+        epoch_1904 is False
+        and 1 <= raw < 60
+        and stored_date >= datetime.date(1900, 3, 1)
+    ):
+        # Gregorian subtraction skips Excel's day 60. A result just before
+        # that day is still a full day away from March 1, not a rounding error.
+        stored_seconds += 86400
+    return (
+        "same"
+        if math.isclose(raw % 1 * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005)
+        else "differ"
+    )
+
+
+def _typed_datetime_agreement(
+    raw: Any, cached: Any, date_text: str | None
+) -> str | None:
+    """Retain the time in date objects and their metadata-backed JSON form."""
+    has_date = date_text is not None and bool(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text)
+    )
+
+    def as_datetime(value: Any) -> datetime.datetime | None:
+        if isinstance(value, datetime.datetime):
+            return value
+        if isinstance(value, datetime.date):
+            return datetime.datetime.combine(value, datetime.time.min)
+        if has_date and isinstance(value, str):
+            try:
+                return datetime.datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return None
+
+    left, right = as_datetime(raw), as_datetime(cached)
+    if left is None or right is None:
+        return None
+    if left.tzinfo is not None or right.tzinfo is not None:
+        return "differ"
+    return "same" if abs((left - right).total_seconds()) <= 0.0005 else "differ"
 
 
 def _error_kind(value: Any) -> str | None:
@@ -218,6 +345,8 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
 
 
 def _fmt_value(value: Any) -> str:
+    if isinstance(value, datetime.datetime) and value.time() != datetime.time.min:
+        return value.isoformat(sep=" ")
     return _date_text_of(value) or _excel_error_text(value) or str(value)
 
 
@@ -240,7 +369,7 @@ def _jsonable(value):
 #: A number as some spreadsheet somewhere writes it: digits, with runs
 #: separated by a group mark — space, non-breaking space, narrow no-break
 #: space, apostrophe, dot or comma — and possibly a decimal mark.
-_NUMBER_RE = re.compile(r"\d[\d   '.,]*\d|\d")
+_NUMBER_RE = re.compile(r"(?<![\w.,])[.,]\d+|\d[\d   '.,]*\d|\d")
 #: Marks a spreadsheet may use to group digits. The dot and the comma are in
 #: here too: which of the two groups and which one separates the decimal part
 #: is exactly what changes from one regional setting to the next.
@@ -249,7 +378,7 @@ _GROUP_MARKS = " \u00a0\u202f'.,"
 _GROUPED_RE = re.compile(r"^\d{1,3}(?:[ \u00a0\u202f'.,]\d{3})*$|^\d+$")
 
 
-def _read_number(text: str) -> set[float]:
+def _read_number(text: str) -> set[Decimal]:
     """Every value ``text`` could be, read as a number.
 
     A set, because some spellings are genuinely ambiguous: ``1,234`` is a
@@ -262,7 +391,7 @@ def _read_number(text: str) -> set[float]:
     three digits. Without that, ``1 2`` reads as twelve, and two genuinely
     different texts would be called one value written two ways.
     """
-    readings: set[float] = set()
+    readings: set[Decimal] = set()
     for decimal_mark in (".", ","):
         parts = text.split(decimal_mark)
         if len(parts) > 2:
@@ -270,16 +399,140 @@ def _read_number(text: str) -> set[float]:
         whole, fraction = parts[0], parts[1] if len(parts) == 2 else ""
         if fraction and not fraction.isdigit():
             continue
+        # A leading decimal mark belongs to the number: .1 is not the
+        # integer 1 preceded by punctuation (which would also match .01).
+        if not whole and fraction:
+            whole = "0"
         if not _GROUPED_RE.match(whole):
             continue
         digits = whole
         for mark in _GROUP_MARKS:
             digits = digits.replace(mark, "")
         try:
-            readings.add(float(f"{digits}.{fraction}" if fraction else digits))
-        except ValueError:
+            readings.add(Decimal(f"{digits}.{fraction}" if fraction else digits))
+        except InvalidOperation:
             continue
     return readings
+
+
+def _is_word_character(char: str) -> bool:
+    # Combining marks belong to the surrounding text, including decomposed
+    # accents and vowel signs. str.isalnum() and regex \w exclude them.
+    # Format controls (joiners, directional marks, etc.) do not prove that
+    # digits are a standalone quantity. Preserve adjacent digits literally;
+    # a visible space still allows regional formatting of a separate number.
+    return (
+        char.isalnum()
+        or char == "_"
+        or unicodedata.category(char) == "Cf"
+        or unicodedata.category(char).startswith("M")
+    )
+
+
+def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
+    # Signs, Unicode dash punctuation, colons and slashes can join identifiers
+    # or path components. Typographic dashes need the same literal treatment
+    # as ASCII hyphens ("A–1" and "A–01" are different identifiers).
+    # Minus, plus/minus, multiplication, division and dot operators are
+    # mathematical symbols (Sm), not dashes. They connect text too
+    # ("A⋅1" vs "A⋅01", likewise the distinct bullet operator "A∙1").
+    # Ratio and proportion signs ("A∶1", "A∷1") connect text like an ASCII colon.
+    # Both asterisks ("A∗1", "A*1") connect text like the multiplication sign.
+    # The caret also connects compact expressions ("A^1" versus "A^01").
+    # Equals signs connect compact assignments ("A=1" versus "A=01").
+    # Comparison signs also connect compact text ("A<1" versus "A<01"),
+    # including combinations such as <=, >= and <> and Unicode ≤, ≥, ≠ and ≡.
+    # Middle dots, bullets and the hyphenation point (Po) also join text
+    # ("A·1", "A•1", "A‧1").
+    # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
+    # standalone quantities with regional-format tolerance.
+    while 0 <= index < len(text) and (
+        text[index] in "+-−±∓×÷⋅·∙•‧∶∷∗*^=<>≤≥≠≡:/\\"
+        or unicodedata.category(text[index]) == "Pd"
+    ):
+        # Either slash can delimit a path component, even at a root
+        # or after a drive colon ("/1", "C:/1"). Its digits are literal;
+        # no word on the other side is needed to make the number ambiguous.
+        if text[index] in "/\\":
+            return True
+        index += direction
+    return 0 <= index < len(text) and _is_word_character(text[index])
+
+
+def _literal_number_edges(text: str, match: re.Match[str]) -> tuple[bool, bool]:
+    return (
+        bool(
+            match.start()
+            and (
+                _literal_across_connectors(text, match.start() - 1, -1)
+                or text[match.start() - 1] in ".,"
+            )
+        ),
+        _literal_across_connectors(text, match.end(), 1),
+    )
+
+
+def _text_number_parts(text: str) -> tuple[list[str], list[re.Match[str]]]:
+    """Separate identifiers from amounts without breaking valid digit groups."""
+    numbers = []
+    for match in _NUMBER_RE.finditer(text):
+        literal_left, literal_right = _literal_number_edges(text, match)
+        spaces = list(re.finditer(r"[ \u00a0\u202f]+", match.group()))
+        # The broad numeric regex can swallow "01 6.7" in "v01 6.7".
+        # When that is not a valid grouped number, whitespace separates the
+        # identifier at either edge from the amount. Valid groups attached to
+        # words remain ambiguous and retain their literal comparison.
+        if (
+            spaces
+            and (literal_left or literal_right)
+            and not _read_number(match.group())
+        ):
+            cuts = {match.start(), match.end()}
+            if literal_left:
+                cuts.add(match.start() + spaces[0].end())
+            if literal_right:
+                cuts.add(match.start() + spaces[-1].start())
+            bounds = sorted(cuts)
+            for start, end in zip(bounds, bounds[1:]):
+                numbers.extend(_NUMBER_RE.finditer(text, start, end))
+        else:
+            numbers.append(match)
+    amounts = []
+    for match in numbers:
+        # A run such as "6.7 8.9" is not one grouped number. Split only
+        # when every whitespace-delimited piece is a valid amount and no
+        # adjacent pair could be a grouped number. This permits "6 8.9"
+        # while preserving the ambiguous thousands in "1 234.5 6.7".
+        # Keep matches in the original text so edges and whitespace survive.
+        chunks = list(re.finditer(r"[^ \u00a0\u202f]+", match.group()))
+        if (
+            len(chunks) > 1
+            and not _read_number(match.group())
+            and all(_read_number(chunk.group()) for chunk in chunks)
+            and not any(
+                _read_number(match.group()[a.start() : b.end()])
+                for a, b in zip(chunks, chunks[1:])
+            )
+        ):
+            for chunk in chunks:
+                amounts.extend(
+                    _NUMBER_RE.finditer(
+                        text, match.start() + chunk.start(), match.start() + chunk.end()
+                    )
+                )
+        else:
+            amounts.append(match)
+    numbers = amounts
+    parts = []
+    end = 0
+    for match in numbers:
+        # Preserve each literal segment's position relative to the numbers.
+        # Joining with a text marker would collide with real characters:
+        # "#1" and "1#" must not both reduce to "##".
+        parts.append(text[end : match.start()])
+        end = match.end()
+    parts.append(text[end:])
+    return parts, numbers
 
 
 def _separators_only(left: str, right: str) -> bool:
@@ -291,24 +544,46 @@ def _separators_only(left: str, right: str) -> bool:
     disagreement blames the workbook for a regional setting.
 
     The text around the numbers must match exactly — this is not a fuzzy
-    comparison. Only the numbers are read leniently, and only in the sense of
-    "is there a reading under which these are the same value".
+    comparison. Only standalone numbers are read leniently, and only in the
+    sense of "is there a reading under which these are the same value".
+    Numbers attached to words may be identifiers and must remain unchanged.
     """
-    left_numbers = list(_NUMBER_RE.finditer(left))
-    right_numbers = list(_NUMBER_RE.finditer(right))
+    left_text, left_numbers = _text_number_parts(left)
+    right_text, right_numbers = _text_number_parts(right)
     if len(left_numbers) != len(right_numbers):
         return False
-    if _NUMBER_RE.sub("#", left) != _NUMBER_RE.sub("#", right):
+    if left_text != right_text:
         return False
     if not left_numbers:
         return False  # no numbers at all: the strings simply differ
-    return all(
-        any(
-            math.isclose(a_val, b_val, rel_tol=1e-9, abs_tol=1e-9)
-            for a_val in _read_number(a.group())
-            for b_val in _read_number(b.group())
-        )
-        for a, b in zip(left_numbers, right_numbers)
+    # These digits are text, not approximate arithmetic results. Preserve
+    # every digit: float conversion and numeric tolerances can hide changed
+    # identifiers, tiny decimals and even overflow two different strings to inf.
+    for a, b in zip(left_numbers, right_numbers):
+        # Unchanged fragments need no numeric interpretation. A version or
+        # address such as "1.2.3" must not veto a separate amount's regional
+        # formatting just because it is not itself a valid number.
+        if a.group() == b.group():
+            continue
+        # Word adjacency (v1.0, 01beta), including across connectors, or a decimal mark
+        # (A.1, A,01) makes the number ambiguous. Preserve it literally:
+        # zeroes and separators may be part of an identifier.
+        if any(_literal_number_edges(left, a) + _literal_number_edges(right, b)):
+            if a.group() != b.group():
+                return False
+        elif not (_read_number(a.group()) & _read_number(b.group())):
+            return False
+    return True
+
+
+def temporal_serials_agree(left: float, right: float) -> bool:
+    """Compare Excel day serials with the cache's absolute 0.5 ms precision."""
+    return (
+        not isinstance(left, bool)
+        and not isinstance(right, bool)
+        and math.isfinite(left)
+        and math.isfinite(right)
+        and math.isclose(left, right, rel_tol=0, abs_tol=0.0005 / 86400)
     )
 
 
@@ -319,6 +594,9 @@ def readings_agree(
     *,
     recalculated_is_error: bool | None = None,
     stored_is_error: bool | None = None,
+    stored_is_text: bool = False,
+    epoch_1904: bool | None = None,
+    date_formatted: bool = False,
 ) -> str:
     """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
 
@@ -332,27 +610,83 @@ def readings_agree(
     ``format`` is the middle answer neither of them had: the same value, spelt
     with the separators of whatever saved the file. Both readings are still
     shown; only the verdict softens.
+
+    ``stored_is_text`` identifies a literal cache string before serialization.
+    Otherwise date metadata may describe a serialized temporal cache, as in
+    older report callers; that compatibility does not prove a literal's type.
+    ``epoch_1904`` supplies the workbook calendar when day zero has no date label.
+    ``date_formatted`` preserves temporal precision for numeric date or duration
+    caches, including Excel's fictitious 1900 leap day and elapsed durations
+    beyond Python's range. It does not assign a calendar label to a duration.
     """
+    if stored_is_text and (
+        date_text is not None
+        or isinstance(recalculated, (datetime.date, datetime.time, datetime.timedelta))
+    ):
+        return "differ"
     if (
         recalculated_is_error is not None
         and stored_is_error is not None
         and recalculated_is_error != stored_is_error
     ):
         return "differ"
+    if isinstance(stored, datetime.timedelta) and isinstance(
+        recalculated, datetime.timedelta
+    ):
+        # Subtract before converting to seconds: long durations must retain
+        # microsecond precision, and negative durations keep their sign.
+        try:
+            difference = abs(recalculated - stored)
+        except OverflowError:
+            # Opposite timedelta limits are farther apart than a timedelta
+            # can represent, and therefore certainly exceed cache rounding.
+            return "differ"
+        return (
+            "same" if difference <= datetime.timedelta(microseconds=500) else "differ"
+        )
+    if isinstance(stored, datetime.timedelta) and isinstance(
+        recalculated, (int, float)
+    ):
+        # Elapsed formats store a duration, not a date or a time of day.
+        # Retain whole and negative days, and tolerate only cache rounding
+        # to milliseconds, independent of the duration's magnitude or epoch.
+        return (
+            "same"
+            if not isinstance(recalculated, bool)
+            and math.isfinite(recalculated)
+            and math.isclose(
+                # Remove whole days before converting: absolute totals lose
+                # sub-millisecond precision for large, unchanged durations.
+                (recalculated - stored.days) * 86400,
+                stored.seconds + stored.microseconds / 1_000_000,
+                rel_tol=0,
+                abs_tol=0.0005,
+            )
+            else "differ"
+        )
     time_agreement = _time_agreement(recalculated, stored, date_text)
     if time_agreement is not None:
         return time_agreement
+    datetime_agreement = _serial_datetime_agreement(
+        recalculated, stored, date_text, epoch_1904
+    )
+    if datetime_agreement is not None:
+        return datetime_agreement
+    typed_datetime_agreement = _typed_datetime_agreement(
+        recalculated, stored, date_text
+    )
+    if typed_datetime_agreement is not None:
+        return typed_datetime_agreement
+    if (
+        date_formatted
+        and isinstance(recalculated, (int, float))
+        and isinstance(stored, (int, float))
+        and not isinstance(recalculated, bool)
+        and not isinstance(stored, bool)
+    ):
+        return "same" if temporal_serials_agree(recalculated, stored) else "differ"
     if _values_differ(recalculated, stored, date_text):
         return "differ"
-    if date_text is not None:
-        stored_date = _date_text_of(stored)
-        if stored_date is None and isinstance(stored, str):
-            try:
-                stored_date = datetime.datetime.fromisoformat(stored).date().isoformat()
-            except ValueError:
-                pass
-        if stored_date is not None:
-            return "same" if date_text == stored_date else "differ"
     error_text = _excel_error_text(recalculated)
     if error_text is not None:
         return "same" if error_text == stored else "differ"

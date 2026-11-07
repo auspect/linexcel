@@ -134,7 +134,7 @@ class TestValueDate:
     def test_the_panel_prefers_the_date_over_the_raw_serial(self):
         html = render_html(graph(valueDate="2026-08-07", value=46236))
         assert "var dateText = o.valueDate || o.date;" in html
-        assert "var shown = dateText || fmt(o.value);" in html
+        assert "var shown = temporalReading(o.value, dateText);" in html
 
 
 class TestReadVersusRecalculated:
@@ -168,7 +168,7 @@ class TestReadVersusRecalculated:
         assert EN["value_not_in_file"] in html
         assert "_t('value_not_in_file')));" in html
         assert (
-            "if (!comparable.length && main.source === 'engine')\n"
+            "if (!rows.length && !comparable.length && main.source === 'engine')\n"
             "      sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?\n"
             "        'value_read_no_cache_desc' : 'value_no_cache_desc')));" in html
         )
@@ -219,13 +219,16 @@ class TestReadVersusRecalculated:
             in html
         )
 
-    def test_a_date_node_compares_the_cached_date_part_only(self):
-        # a file-cached "2026-08-07 00:00:00" is the same day as valueDate:
-        # the comparison must not fire on the time suffix
+    def test_a_legacy_date_node_compares_the_full_temporal_reading(self):
+        # Legacy reports normalize ISO spelling and zero padding, while retaining
+        # the time. Runtime coverage lives in test_viewer_browser.py.
         html = render_html(
             graph(valueDate="2026-08-07", value=46236, cachedValue="2026-08-07")
         )
-        assert "o.cachedValue.slice(0, 10) === dateText;" in html
+        assert (
+            "normalizedTemporalText(o.cachedValue) === normalizedTemporalText(shown)"
+            in html
+        )
         assert "(!!sameDate || cached === shown)" in html
         assert '"cachedValue": "2026-08-07"' in html
 

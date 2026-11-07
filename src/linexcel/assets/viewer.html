@@ -461,6 +461,7 @@
   }
   .lin-mdt td { font-variant-numeric: tabular-nums; }
   .lin-hint { color: var(--muted); font-size: .76rem; margin: .2rem 0; }
+  .lin-vcard .lin-comparison-scope { padding: 0 .55rem; }
   .lin-close {
     margin-left: auto; border: none; background: none; cursor: pointer;
     font-size: 1rem; color: var(--ink2); line-height: 1; padding: .2rem .3rem;
@@ -2245,9 +2246,12 @@
     if (n.kind === 'group') return '×' + (n.count || 0).toLocaleString(LANG);
     if (n.kind === 'vba') return n.procKind || '';
     if (n.kind === 'misc') return (n.count || 0).toLocaleString(LANG) + ' ' + _t('cells');
-    if (n.value !== undefined && n.value !== null) return fmt(n.value);
-    if (n.kind === 'input' && n.values && n.values.length)
-      return fmt(n.values[0].value);
+    if (n.value !== undefined && n.value !== null)
+      return temporalReading(n.value, n.valueDate || n.date);
+    if (n.kind === 'input' && n.values && n.values.length) {
+      var first = n.values[0];
+      return temporalReading(first.value, first.valueDate || first.date);
+    }
     return '';
   }
   function cardLabel(n) {
@@ -2906,7 +2910,8 @@
     if (n.kind === 'input' && n.values && n.values.length) {
       var si = section(_t('value_samples'));
       n.values.forEach(function (s) {
-        si.appendChild(el('div', 'lin-hint', s.addr + ' = ' + fmt(s.value)));
+        si.appendChild(el('div', 'lin-hint', s.addr + ' = ' +
+          temporalReading(s.value, s.valueDate || s.date)));
       });
       if (n.count > n.values.length)
         si.appendChild(el('div', 'lin-hint', '… ' + n.count.toLocaleString(LANG) + ' ' + _t('cells')));
@@ -2917,7 +2922,9 @@
     if (n.kind === 'name' && n.targets) {
       var sn = section(_t('target')); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
-      if (n.value !== undefined && n.value !== null) p.appendChild(valueSection(n));
+      // A formula already owns its value section above; keep the target once.
+      if (!n.formula && n.value !== undefined && n.value !== null)
+        p.appendChild(valueSection(n));
     }
     if (n.steps && (n.steps.children && n.steps.children.length || (n.steps.inputs && n.steps.inputs.length))) {
       var ss = section(_t('step_decomp'));
@@ -3034,6 +3041,31 @@
   // the two is on screen is the question this tool exists to answer. A column
   // with nothing to show says so — "not stored", "not recalculated" — because
   // an empty cell reads as a rendering bug rather than as a fact.
+  function temporalReading(value, dateText) {
+    if (!dateText || !/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return dateText || fmt(value);
+    // File-only datetime values already carry their time. The date metadata
+    // identifies their type; it must not replace the full stored reading.
+    if (typeof value === 'string') return fmt(value);
+    if (typeof value !== 'number' || !Number.isFinite(value)) return dateText;
+    // Python supplies the day in the workbook's date system. Add only the
+    // fractional day, rounded like the millisecond cache readers. UTC methods
+    // avoid applying the browser's timezone or daylight-saving transitions.
+    var start = Date.parse(dateText + 'T00:00:00Z');
+    var millis = Math.round((value - Math.floor(value)) * 86400000);
+    if (!Number.isFinite(start)) return dateText;
+    // Only day 59 of the 1900 calendar rolls into the phantom leap day.
+    // The 1904 calendar reaches this date with negative serials; day 60 of
+    // the 1900 calendar also uses this anchor when rounding to March 1.
+    if (dateText === '1900-02-28' && value >= 59 && value < 60 && millis === 86400000) return '1900-02-29';
+    var text = new Date(start + millis).toISOString().replace('T', ' ').replace(/Z$/, '');
+    return text.replace(/\.000$/, '').replace(/ 00:00:00$/, '');
+  }
+
+  function normalizedTemporalText(text) {
+    return text.replace('T', ' ').replace(/(\.\d*?)0+$/, '$1')
+      .replace(/\.$/, '').replace(/ 00:00:00$/, '');
+  }
+
   function readings(o, parent) {
     // The graph names these valueSource/valueDate, as it does on a node; the
     // range samples say source/date, so both spellings are read.
@@ -3046,14 +3078,14 @@
     var engineRead = src === 'engine' && (kind === 'input' || kind === 'name') &&
       !(typeof formula === 'string' && formula.trim());
     var dateText = o.valueDate || o.date;
-    var shown = dateText || fmt(o.value);
+    var shown = temporalReading(o.value, dateText);
     var hasValue = o.value !== undefined && o.value !== null;
     var hasCached = o.cachedValue !== undefined && o.cachedValue !== null;
     var cached = hasCached ? fmt(o.cachedValue) : null;
-    // A date cell compares on the date part only: a file-cached datetime string
-    // ("2026-08-07 00:00:00") is the same day as valueDate.
+    // Legacy reports lack the Python verdict. Ignore ISO spelling/zero padding,
+    // but never discard the time when comparing their displayed readings.
     var sameDate = dateText && typeof o.cachedValue === 'string' &&
-      o.cachedValue.slice(0, 10) === dateText;
+      normalizedTemporalText(o.cachedValue) === normalizedTemporalText(shown);
     // Two readings only when they are genuinely two: under 'file' or 'volatile'
     // the displayed value *is* the stored one, and a second identical column
     // would claim a corroboration that never happened.
@@ -3103,10 +3135,18 @@
       var verdictKey = !agree ? 'value_mismatch' : formatted ? 'value_match_format' : 'value_match';
       if (!formatted && comparable.every(function (r) { return r.engineRead; }))
         verdictKey = agree ? 'value_read_match' : 'value_read_mismatch';
+      if (rows.length && !formatted)
+        verdictKey = agree ? 'value_sample_match' : 'value_sample_mismatch';
       verdict.appendChild(document.createTextNode(_t(verdictKey)));
       card.appendChild(verdict);
     } else if (main.source === 'fallback') {
       card.className = 'lin-vcard is-guarded';
+    }
+    if (rows.length) {
+      card.appendChild(el('p', 'lin-hint lin-comparison-scope', _t('value_sample_scope', {
+        compared: comparable.length,
+        shown: rows.length
+      })));
     }
     card.appendChild(rows.length ? sampleTable(rows) : pairGrid(main));
     sv.appendChild(card);
@@ -3124,7 +3164,7 @@
       sv.appendChild(el('p', 'lin-hint', _t(src.descKey)));
     // Only one column carries a figure: name the reason rather than let the
     // reader take the empty half for a bug or for a disagreement.
-    if (!comparable.length && main.source === 'engine')
+    if (!rows.length && !comparable.length && main.source === 'engine')
       sv.appendChild(el('p', 'lin-hint', _t(main.engineRead ?
         'value_read_no_cache_desc' : 'value_no_cache_desc')));
     return sv;
@@ -3160,7 +3200,7 @@
   }
   // The sampled cells of a stretched group, one row each. A row whose two
   // readings disagree is marked on the row itself: the card-level verdict
-  // covers the whole sample, and would not say *which* cell drifted.
+  // covers the compared sample rows, and would not say *which* cell drifted.
   function sampleTable(rows) {
     var tbl = el('table', 'lin-vtable');
     var head = el('tr');

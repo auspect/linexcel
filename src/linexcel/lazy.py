@@ -16,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from openpyxl.styles.numbers import is_date_format
 from openpyxl.utils.datetime import to_excel
 
 from linexcel.refs import (
@@ -32,6 +33,8 @@ from linexcel.values import (
     EXCEL_ERRORS,
     _excel_error_text,
     _is_uncomputed,
+    readings_agree,
+    temporal_serials_agree,
 )
 
 _INPUT_ERROR_KINDS = {value: kind for kind, value in ERROR_KIND_TEXT.items()}
@@ -291,6 +294,8 @@ def _cache_comparison(
     comparison_value = (
         to_excel(raw, epoch)
         if isinstance(raw, (dt.datetime, dt.date, dt.time))
+        else raw
+        if isinstance(raw, float) and not math.isfinite(raw)
         else normalized
     )
     comparison = "unknown"
@@ -302,12 +307,35 @@ def _cache_comparison(
         same_error_type = (node.get("cachedValueKind") == "error") == (
             _excel_error_text(raw) is not None
         )
+        same_value = saved == comparison_value
+        if (
+            isinstance(saved, (int, float))
+            and not isinstance(saved, bool)
+            and isinstance(comparison_value, (int, float))
+            and not isinstance(comparison_value, bool)
+        ):
+            # ISO date caches carry their type in OOXML even with General format.
+            if (
+                isinstance(raw, (dt.datetime, dt.date, dt.time))
+                or node.get("sourceValueProvenance", {}).get("storageType") == "d"
+                or is_date_format(node.get("numberFormat") or "General")
+            ):
+                same_value = temporal_serials_agree(comparison_value, saved)
+            else:
+                same_value = readings_agree(comparison_value, saved, None) == "same"
         comparison = (
             "equal"
-            if same_boolean_type and same_error_type and saved == comparison_value
+            if same_boolean_type and same_error_type and same_value
             else "different"
         )
-    return {"comparisonValue": comparison_value, "comparison": comparison}
+    # JSON represents non-finite numbers as text; compare their numeric value
+    # first so a literal cache string cannot receive a false agreement verdict.
+    return {
+        "comparisonValue": _json(comparison_value)
+        if isinstance(comparison_value, float)
+        else comparison_value,
+        "comparison": comparison,
+    }
 
 
 def evaluate_node(

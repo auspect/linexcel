@@ -7,8 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-11-07
+
+### Fixed
+
+- Compare complete Excel dates, times and elapsed durations with an absolute
+  0.5 ms cache-rounding tolerance across analysis, targeted recalculation and
+  corpus validation. Preserve negative dates, both workbook calendars,
+  midnight rollover and Excel's fictitious February 29, 1900; real time and
+  day differences remain visible in verdicts and warnings.
+- Preserve temporal caches through both readers, including ISO dates with
+  General format, quoted or escaped elapsed-time literals, and serials outside
+  Python's calendar or duration range. Large durations no longer gain a second
+  during fallback conversion; recovered numeric durations retain temporal
+  comparison precision instead of hiding second-level differences.
+- Compare large fractional duration caches without converting their whole-day
+  components to seconds, avoiding false discrepancies from lost precision.
+  Restore Calamine duration fractions from OOXML too, preserving milliseconds
+  near the duration limits consistently with the fallback reader.
+- Recover from a Calamine Rust panic by falling back to openpyxl. Cache
+  retention limits and real Excel errors remain intact; keyboard interrupts,
+  process exits and asynchronous cancellation still propagate. Reader fallback
+  is reported, although upstream panic and conversion diagnostics can still
+  appear on stderr after successful recovery.
+- Keep result and cache types through report serialization, including uncached
+  results. Literal text no longer agrees with dates, times, durations,
+  non-finite numbers or spreadsheet errors solely because they display alike;
+  NaN remains unequal to itself. Report verdicts agree with analysis warnings.
+- Distinguish changed digits from regional number formatting in text. Identifiers,
+  versions, paths, Unicode marks and joiners, arithmetic/comparison connectors
+  and literal `#` positions remain significant. Standalone amounts and mixed
+  amount lists retain formatting tolerance beside unchanged identifiers;
+  ambiguous digit grouping is compared conservatively.
+- Display consistent dates and times, including milliseconds and calendar
+  rollover, in graph annotations, detail cards and source-range samples.
+  Elapsed formats retain numeric day values without invented calendar dates;
+  richer elapsed-time display remains limited.
+- Scope grouped verdicts to cells actually compared, distinguishing compared,
+  displayed and total counts in all nine languages. File-only and uncached
+  samples no longer imply verification of an entire group.
+- Render one value card and comparison verdict for formula-bearing defined-name
+  nodes supplied to the viewer, preserving their formula and targets. Standard
+  workbook analysis does not currently emit these formula-bearing name nodes.
+- Refresh README viewer screenshots from the validated synthetic workbook.
+- Exclude local gnhf run logs and validation artifacts explicitly from source
+  distributions, including when they are present in the release checkout.
+- Honor expired web-task deadlines and pending cancellation before sampling
+  worker memory; live-budget supervision errors still stop the worker.
+  Recheck termination after the child exits during sampling or the final wait,
+  so completed results cannot bypass an expired deadline.
+- Avoid returning Cytoscape collections from browser-test click dispatches.
+  Assertions retain their coverage without costly object serialization and
+  intermittent browser failures.
+
 ### Changed
 
+- Validate both generated workbooks in all nine report languages by default.
+  Browser regressions cover group verdicts, provenance and temporal display
+  at desktop and mobile widths; AI documentation and vision remain optional.
+- Share ordinary numeric comparison tolerance between full analysis, targeted
+  recalculation and corpus validation, including dependency results.
 - Refresh the locked Python toolchain and optional dependencies, including
   Pillow 13, Playwright 1.64.1 and MkDocs Material 9.8.0.
 - Update the locked Formualizer engine to 0.13.0 while retaining linexcel's

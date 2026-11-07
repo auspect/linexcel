@@ -111,11 +111,14 @@ and its matching `--vision-model`; record both configurations in the run. Do not
 silently retry a failed gateway against an unrelated provider. The documentation
 and vision endpoints can differ; an explicitly requested stage must complete.
 
-The generated Sales fixture requests French and English; the Stress fixture
-requests English. Complete every requested report language and screenshot.
+Both generated fixtures request all supported report languages: English,
+French, Spanish, German, Italian, Portuguese, Dutch, Japanese and Chinese.
+The language list follows the product registry so new languages join the gate.
+User-supplied workbooks (`--file` or a corpus manifest) retain English reports.
+Complete every requested report language and screenshot.
 When AI is requested, complete each node card, workbook overview and image
-description for the selected stages. A multilingual product does not
-make every fixture request all nine supported languages.
+description for the selected stages in each language; the per-workbook token
+budget is shared across all of them.
 
 ## Native visual evidence
 

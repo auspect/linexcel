@@ -29,7 +29,7 @@ def browser():
 def report(browser, tmp_path):
     pages = []
 
-    def open_report(graph, *, width=1440, height=900, language="en"):
+    def open_report(graph, *, width=1440, height=900, language="en", timezone_id="UTC"):
         graph = {
             **graph,
             "meta": {
@@ -41,7 +41,9 @@ def report(browser, tmp_path):
                 **graph.get("meta", {}),
             },
         }
-        page = browser.new_page(viewport={"width": width, "height": height})
+        page = browser.new_page(
+            viewport={"width": width, "height": height}, timezone_id=timezone_id
+        )
         pages.append(page)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -1618,4 +1620,500 @@ def test_graph_options_immediate_reopen_keeps_content_and_focus(report):
         " === 'lin-options-host'"
     )
     assert page.evaluate("document.activeElement.id") == "lin-options-toggle"
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("state", ["same", "differ", "format", "none"])
+def test_group_verdict_only_claims_compared_sample_cells(report, width, height, state):
+    samples = [
+        {"addr": "A2", "value": 2, "cachedValue": 2, "valueSource": "file"},
+        {"addr": "A3", "value": 3, "valueSource": "engine"},
+    ]
+    if state != "none":
+        samples.insert(
+            0,
+            {
+                "addr": "A1",
+                "value": 1,
+                "cachedValue": 2 if state == "differ" else 1,
+                "valueSource": "engine",
+                "cachedAgreement": state,
+            },
+        )
+    graph = {
+        "nodes": [
+            {
+                "id": "g",
+                "kind": "group",
+                "label": "S!A1:A100",
+                "sheet": "S",
+                "formula": "=B1",
+                "count": 100,
+                "value": 1,
+                "cachedValue": 1,
+                "cachedAgreement": "same",
+                "valueSource": "engine",
+                "samples": samples,
+            }
+        ],
+        "edges": [],
+    }
+    page, errors = report(graph, width=width, height=height)
+    page.evaluate("() => { cy.getElementById('g').emit('tap'); }")
+    panel = page.locator("#lin-panel")
+    compared = 0 if state == "none" else 1
+    assert panel.locator(".lin-comparison-scope").inner_text() == (
+        f"Compared sample cells: {compared} / {len(samples)}"
+    )
+    verdict = panel.locator(".lin-verdict")
+    if state == "none":
+        assert verdict.count() == 0
+        assert "The file stores no value to compare with" not in panel.inner_text()
+    else:
+        expected = {
+            "same": "Compared sample values match the file",
+            "differ": "At least one compared sample value differs from the file",
+            "format": "Different strings; possible number separator difference",
+        }
+        assert verdict.inner_text() == expected[state]
+    assert panel.locator(".lin-vtable tr.is-diff").count() == (state == "differ")
+    assert "Not recalculated" in panel.inner_text()
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("day", [46054, 44592], ids=["1900", "1904"])
+@pytest.mark.parametrize("timezone_id", ["America/New_York", "Asia/Tokyo"])
+def test_temporal_readings_retain_times_in_cards_and_samples(
+    report, width, height, day, timezone_id
+):
+    cases = [
+        (day + 0.75, "2026-02-01", "2026-02-01 18:00:00", "engine", "differ"),
+        (
+            day + 0.5 + 0.123 / 86400,
+            "2026-02-01",
+            "2026-02-01 12:00:00.123",
+            "engine",
+            "differ",
+        ),
+        (day, "2026-02-01", "2026-02-01", "engine", "differ"),
+        (
+            "2026-02-01 12:00:00.123000",
+            "2026-02-01",
+            "2026-02-01 12:00:00.123000",
+            "file",
+            "same",
+        ),
+        (
+            day + 1 - 0.0004 / 86400,
+            "2026-02-01",
+            "2026-02-02",
+            "engine",
+            "same",
+        ),
+        (
+            day + 1 - 0.001 / 86400,
+            "2026-02-01",
+            "2026-02-01 23:59:59.999",
+            "engine",
+            "differ",
+        ),
+        (0.5, "12:00:00", "12:00:00", "engine", "same"),
+        (
+            60 - 0.0004 / 86400,
+            "1900-02-28",
+            "1900-02-29",
+            "engine",
+            "same",
+        ),
+    ]
+    nodes = []
+    for index, (value, date_text, expected, source, agreement) in enumerate(cases):
+        cached = (
+            expected
+            if source == "file" or agreement == "same"
+            else "2026-02-01 12:00:00"
+        )
+        nodes.append(
+            {
+                "id": f"c{index}",
+                "kind": "cell",
+                "sheet": "Clock",
+                "label": f"Clock!B{index + 1}",
+                "formula": f"=A{index + 1}",
+                "value": value,
+                "valueDate": date_text,
+                "valueSource": source,
+                "cachedValue": cached,
+                "cachedAgreement": agreement,
+            }
+        )
+    # Samples use the alternate source/date field names.
+    nodes.append(
+        {
+            "id": "group",
+            "kind": "group",
+            "sheet": "Clock",
+            "label": f"Clock!B1:B{len(cases)}",
+            "formula": "=A1",
+            "count": len(cases),
+            "samples": [
+                {
+                    "addr": f"B{i + 1}",
+                    "value": node["value"],
+                    "date": node["valueDate"],
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                }
+                for i, node in enumerate(nodes)
+            ],
+        }
+    )
+    page, errors = report(
+        {"nodes": nodes, "edges": []},
+        width=width,
+        height=height,
+        timezone_id=timezone_id,
+    )
+    panel = page.locator("#lin-panel")
+    # Graph annotations and detail readings must describe the same instant.
+    for index, (_, _, expected, _, _) in enumerate(cases):
+        annotation = expected if len(expected) <= 24 else expected[:23] + "…"
+        assert (
+            page.evaluate("id => cy.getElementById(id).data('label')", f"c{index}")
+            == f"Clock!B{index + 1}\n{annotation}"
+        )
+    # Exercise the two card provenances; the table below covers every boundary.
+    for index in (0, 3):
+        _, _, expected, source, agreement = cases[index]
+        page.evaluate("id => { cy.getElementById(id).emit('tap'); }", f"c{index}")
+        values = panel.locator(".lin-reading-val").all_text_contents()
+        assert values == [
+            nodes[index]["cachedValue"],
+            "Not recalculated" if source == "file" else expected,
+        ]
+        assert panel.locator(".lin-vcard.is-diff").count() == (
+            source == "engine" and agreement == "differ"
+        )
+        assert panel.locator(".lin-verdict").count() == (source == "engine")
+        assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    page.evaluate("() => { cy.getElementById('group').emit('tap'); }")
+    rows = panel.locator(".lin-vtable tbody tr")
+    for index, (_, _, expected, source, _) in enumerate(cases):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            nodes[index]["cachedValue"],
+            "Not recalculated" if source == "file" else expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51])
+@pytest.mark.parametrize("cache_remaining_ms", [None, 1.0])
+def test_real_first_midnight_displays_consistently(
+    report, width, height, epoch_1904, remaining_ms, cache_remaining_ms
+):
+    from test_negative_date_cache import workbook_bytes
+
+    from linexcel import ExecutionPolicy
+    from linexcel.analyzer import analyze_workbook
+
+    serial = 1 - remaining_ms / 86_400_000
+    cache_serial = (
+        None if cache_remaining_ms is None else 1 - cache_remaining_ms / 86_400_000
+    )
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=cache_serial
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = (
+        ("1904-01-02" if epoch_1904 else "1900-01-01")
+        if remaining_ms < 0.5
+        else "23:59:59.999000"
+    )
+    # Both sample spellings are part of the report contract.
+    graph["nodes"].append(
+        {
+            "id": "sampled",
+            "kind": "group",
+            "label": "Dates!B1:B2",
+            "sheet": "Dates",
+            "formula": "=A1",
+            "count": 2,
+            "samples": [
+                node,
+                {
+                    "addr": "B2",
+                    "value": node["value"],
+                    "date": node["valueDate"],
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                },
+            ],
+        }
+    )
+    page, errors = report(graph, width=width, height=height)
+    assert page.evaluate(
+        "id => cy.getElementById(id).data('label')", node["id"]
+    ).endswith("\n" + expected)
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
+    panel = page.locator("#lin-panel")
+    assert panel.locator(".lin-reading-val").all_text_contents() == [
+        node["cachedValue"],
+        expected,
+    ]
+    differs = cache_remaining_ms is not None and remaining_ms < 0.5
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
+    rows = panel.locator(".lin-vtable tbody tr")
+    assert rows.count() == 2
+    for index in range(2):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            node["cachedValue"],
+            expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    "epoch_1904,boundary", [(False, 61), (True, 61), (True, -1401)]
+)
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51, 1])
+def test_real_phantom_end_displays_consistently(
+    report, width, height, slow_reader, epoch_1904, boundary, remaining_ms, monkeypatch
+):
+    from test_negative_date_cache import workbook_bytes
+
+    from linexcel import ExecutionPolicy
+    from linexcel.analyzer import analyze_workbook
+
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = boundary - remaining_ms / 86_400_000
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=boundary
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    if boundary == -1401:
+        # The 1904 calendar has no fictitious leap day, even for negative
+        # serials whose Gregorian date falls in February 1900.
+        expected = "1900-03-01" if remaining_ms < 0.5 else "1900-02-28 23:59:59.999"
+    elif epoch_1904:
+        expected = "1904-03-02" if remaining_ms < 0.5 else "1904-03-01 23:59:59.999"
+    else:
+        # Earlier fractions still have no real Gregorian date to display.
+        expected = "1900-03-01" if remaining_ms < 0.5 else "61"
+    # Both sample spellings are part of the report contract.
+    graph["nodes"].append(
+        {
+            "id": "sampled",
+            "kind": "group",
+            "label": "Dates!B1:B2",
+            "sheet": "Dates",
+            "formula": "=A1",
+            "count": 2,
+            "samples": [
+                node,
+                {
+                    "addr": "B2",
+                    "value": node["value"],
+                    "date": node.get("valueDate"),
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                },
+            ],
+        }
+    )
+    page, errors = report(graph, width=width, height=height)
+    assert page.evaluate(
+        "id => cy.getElementById(id).data('label')", node["id"]
+    ).endswith("\n" + expected)
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
+    panel = page.locator("#lin-panel")
+    assert panel.locator(".lin-reading-val").all_text_contents() == [
+        node["cachedValue"],
+        expected,
+    ]
+    differs = remaining_ms > 0.5
+    assert node["value"] == float(format(serial, ".16g"))
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == differs
+    assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
+    rows = panel.locator(".lin-vtable tbody tr")
+    assert rows.count() == 2
+    for index in range(2):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            node["cachedValue"],
+            expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    "serial,cache_serial",
+    [(1, 0.5), (1.5, 0.5), (-2.25, 0.5), (0, 1.5), (0.5, 1.5), (0.75, 1.5)],
+)
+def test_real_temporal_result_with_different_cache(
+    report, width, height, epoch_1904, serial, cache_serial
+):
+    from test_negative_date_cache import workbook_bytes
+
+    from linexcel import ExecutionPolicy
+    from linexcel.analyzer import analyze_workbook
+
+    data = workbook_bytes(epoch_1904, serial, "hh:mm:ss", cache_serial=cache_serial)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = {
+        1: "1904-01-02" if epoch_1904 else "1900-01-01",
+        1.5: "1904-01-02 12:00:00" if epoch_1904 else "1900-01-01 12:00:00",
+        -2.25: "1903-12-29 18:00:00" if epoch_1904 else "1899-12-27 18:00:00",
+        0: "1904-01-01" if epoch_1904 else "00:00:00",
+        0.5: "1904-01-01 12:00:00" if epoch_1904 else "12:00:00",
+        0.75: "1904-01-01 18:00:00" if epoch_1904 else "18:00:00",
+    }[serial]
+    graph["nodes"].append(
+        {
+            "id": "sampled",
+            "kind": "group",
+            "label": "Dates!B1:B2",
+            "sheet": "Dates",
+            "formula": "=A1",
+            "count": 2,
+            "samples": [
+                node,
+                {
+                    "addr": "B2",
+                    "value": node["value"],
+                    "date": node["valueDate"],
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                },
+            ],
+        }
+    )
+    page, errors = report(graph, width=width, height=height)
+    assert page.evaluate(
+        "id => cy.getElementById(id).data('label')", node["id"]
+    ).endswith("\n" + expected)
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
+    panel = page.locator("#lin-panel")
+    assert panel.locator(".lin-reading-val").all_text_contents() == [
+        node["cachedValue"],
+        expected,
+    ]
+    assert panel.locator(".lin-vcard.is-diff").count() == 1
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
+    rows = panel.locator(".lin-vtable tbody tr")
+    assert rows.count() == 2
+    for index in range(2):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            node["cachedValue"],
+            expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_graph_dates_for_names_and_input_samples_keep_plain_values(
+    report, width, height
+):
+    samples = [
+        {"addr": "A1", "value": 46054.75, "date": "2026-02-01"},
+        {"addr": "A2", "value": 0.5, "date": "12:00:00"},
+        {"addr": "A3", "value": 0},
+        {"addr": "A4", "value": False},
+        {"addr": "A5", "value": "plain text"},
+    ]
+    nodes = [
+        {
+            "id": "input",
+            "kind": "input",
+            "label": "Clock!A1:A5",
+            "sheet": "Clock",
+            "count": len(samples),
+            "values": samples,
+        },
+        {
+            "id": "named",
+            "kind": "name",
+            "label": "Appointment",
+            "sheet": "Clock",
+            "targets": ["Clock!A1"],
+            "value": 46054.75,
+            "valueDate": "2026-02-01",
+            "valueSource": "engine",
+        },
+        {"id": "zero", "kind": "cell", "label": "Zero", "value": 0},
+        {"id": "missing", "kind": "cell", "label": "Missing", "value": None},
+        {
+            "id": "number",
+            "kind": "cell",
+            "label": "Number",
+            "value": 46054.75,
+        },
+    ]
+    page, errors = report({"nodes": nodes, "edges": []}, width=width, height=height)
+    assert page.evaluate("cy.nodes().map(n => n.data('label'))") == [
+        "Clock!A1:A5\n2026-02-01 18:00:00",
+        "📛 Appointment\n2026-02-01 18:00:00",
+        "Zero\n0",
+        "Missing",
+        "Number\n46,054.75",
+    ]
+    page.evaluate("() => { cy.getElementById('input').emit('tap'); }")
+    panel = page.locator("#lin-panel")
+    for expected in (
+        "A1 = 2026-02-01 18:00:00",
+        "A2 = 12:00:00",
+        "A3 = 0",
+        "A4 = FALSE",
+        "A5 = plain text",
+    ):
+        assert expected in panel.inner_text()
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize(
+    "value,cached,agreement",
+    [
+        (46054.75, "2026-02-01", False),
+        (46054.75, "2026-02-01 12:00:00", False),
+        (46054.75, "2026-02-01T18:00:00", True),
+        (46054, "2026-02-01 00:00:00.000000", True),
+        (46054.5 + 0.123 / 86400, "2026-02-01 12:00:00.123000", True),
+    ],
+)
+def test_legacy_datetime_verdict_compares_the_displayed_time(
+    report, value, cached, agreement
+):
+    graph = filtered_graph()
+    node = graph["nodes"][1]
+    del node["cachedAgreement"]
+    node.update(value=value, cachedValue=cached, valueDate="2026-02-01")
+    page, errors = report(graph)
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
+    assert page.locator("#lin-panel .lin-vcard.is-diff").count() == (not agreement)
+    assert page.locator("#lin-panel .lin-verdict").count() == 1
     assert not errors

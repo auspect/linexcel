@@ -84,6 +84,43 @@ def resolver_for(
     return resolver
 
 
+@pytest.mark.parametrize("stored_hour", [0, 12, 13])
+def test_datetime_object_verdict_survives_resolver_serialization(stored_hour):
+    raw = datetime.datetime(2026, 8, 7, 12)
+    stored = datetime.datetime(2026, 8, 7, stored_hour)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, {(SHEET, 1, 1)}, False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == "2026-08-07 12:00:00"
+    assert fields["valueDate"] == "2026-08-07"
+    assert fields["cachedAgreement"] == ("same" if stored_hour == 12 else "differ")
+    assert bool(warnings) == (stored_hour != 12)
+    if warnings:
+        assert "2026-08-07 12:00:00" in warnings[0]
+        assert "differs from file value" in warnings[0]
+
+
+@pytest.mark.parametrize("microseconds", [0, 400, 500, 501, 1000])
+def test_time_rounding_verdict_survives_resolver_serialization(microseconds):
+    raw = datetime.time(12, microsecond=microseconds)
+    stored = datetime.time(12)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, {(SHEET, 1, 1)}, False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == raw.isoformat()
+    assert fields["valueDate"] == raw.isoformat()
+    assert fields["cachedAgreement"] == ("same" if microseconds <= 500 else "differ")
+    assert bool(warnings) == (microseconds > 500)
+
+
 class TestGuardedErrors:
     def test_native_missing_sheet_guard_evaluates_the_second_argument(self):
         graph = graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"})
@@ -1073,13 +1110,69 @@ class TestReadingsAgree:
             ("1234.5", "1.234,5", "format"),  # German grouping
             ("1234.5", "1'234.5", "format"),  # Swiss grouping
             ("A 1,5 B", "A 1.5 B", "format"),
+            ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
+            ("Value 0.0000000001", "Value 0,0000000001", "format"),
+            ("1" + "0" * 400, "1" + "0" * 400 + ",0", "format"),
             # the same value, written the same way
             ("Réf. 12", "Réf. 12", "same"),
             (6.7, 6.7, "same"),
+            (1_234_567_890, 1_234_567_891, "same"),  # numeric tolerance retained
             # genuinely not the same
             ("oui", "non", "differ"),
             ("6.7 €", "6.8 €", "differ"),
             (6.7, 6.8, "differ"),
+            ("ID 1234567890", "ID 1234567891", "differ"),
+            ("Value 0.0000000001", "Value 0.0000000002", "differ"),
+            (".1", ".01", "differ"),
+            (",1", ",01", "differ"),
+            ("Rate -.1", "Rate -.01", "differ"),
+            ("Rate +.1", "Rate +.01", "differ"),
+            ("Rate .50", "Rate .5", "format"),
+            ("Rate ,50", "Rate 0.5", "format"),
+            ("Rate .1", "Rate ,1", "format"),
+            ("Rate -.1", "Rate -0,1", "format"),
+            ("Rate -.1", "Rate .1", "differ"),
+            # Punctuation attached to a word is not a leading decimal mark.
+            ("A,1", "A1", "differ"),
+            ("A.1", "A0.1", "differ"),
+            ("A.1", "A.01", "differ"),
+            ("A.01", "A.1", "differ"),
+            ("A,1", "A,01", "differ"),
+            ("A.50", "A.5", "differ"),
+            ("Réf.1", "Réf.01", "differ"),
+            ("编号.1", "编号.01", "differ"),
+            ("A_.1", "A_.01", "differ"),
+            ("A..1", "A..01", "differ"),
+            ("A.1 total 6.7", "A.01 total 6,7", "differ"),
+            ("A.1 total 6.7", "A.1 total 6,7", "format"),
+            ("A.01 total 6.7", "A.01 total 6,7", "format"),
+            ("A,01 total .50", "A,01 total 0,5", "format"),
+            ("A.01", "A.01", "same"),
+            # Alphanumeric identifiers must retain their literal digits.
+            ("v1.0", "v01.0", "differ"),
+            ("v01.0", "v1.0", "differ"),
+            ("A1", "A01", "differ"),
+            ("v1.0", "v1,0", "differ"),
+            ("v1.00", "v1.0", "differ"),
+            ("Réf1", "Réf01", "differ"),
+            ("编号1", "编号01", "differ"),
+            ("A_1", "A_01", "differ"),
+            ("1.0beta", "01.0beta", "differ"),
+            ("1_tag", "01_tag", "differ"),
+            ("1号", "01号", "differ"),
+            ("v1.0 total 6.7", "v01.0 total 6,7", "differ"),
+            ("v1.0 total 6.7", "v1.0 total 6,7", "format"),
+            ("01beta total .50", "01beta total 0,5", "format"),
+            ("v01.0", "v01.0", "same"),
+            ("v 1.0", "v 01,0", "format"),
+            # Without unit metadata, attached unit text is ambiguous too.
+            ("6.7kg", "6,7kg", "differ"),
+            ("USD6.7", "USD6,7", "differ"),
+            ("6.7 kg", "6,7 kg", "format"),
+            ("ID 9007199254740992", "ID 9007199254740993", "differ"),
+            ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
+            ("1" + "0" * 400, "2" + "0" * 400, "differ"),
+            ("A 6.7 B 1234567890", "A 6,7 B 1234567891", "differ"),
             # a comma that separates words, not decimals
             ("oui, non", "oui. non", "differ"),
             # the text around the numbers has to match
@@ -1094,6 +1187,577 @@ class TestReadingsAgree:
         from linexcel.values import readings_agree
 
         assert readings_agree(recalculated, stored, None) == verdict
+
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6.7", "v01{space}6,7", "format"),
+            ("6.7{space}01beta", "6,7{space}01beta", "format"),
+            ("v01{space}1 234.5", "v01{space}1234,5", "format"),
+            ("1 234.5{space}01beta", "1234,5{space}01beta", "format"),
+            ("v01{space}6.7{space}02beta", "v01{space}6,7{space}02beta", "format"),
+            ("A-01{space}6.7", "A-01{space}6,7", "format"),
+            ("v01{space}6.7", "v1{space}6,7", "differ"),
+            ("6.7{space}01beta", "6,7{space}1beta", "differ"),
+            ("v01{space}6.7", "v01{space}6,8", "differ"),
+            ("v01{space}6.7", "v01\t6,7", "differ"),
+            # Valid digit grouping attached to a word remains ambiguous.
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+            ("USD1{space}234.5", "USD1{space}234,5", "differ"),
+        ],
+    )
+    def test_identifier_beside_separate_amount(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6.7{space}8.9", "v01{space}6,7{space}8,9", "format"),
+            ("6.7{space}8.9{space}01beta", "6,7{space}8,9{space}01beta", "format"),
+            (
+                "v01{space}6.7{space}8.9{space}02b",
+                "v01{space}6,7{space}8,9{space}02b",
+                "format",
+            ),
+            ("6.7{space}8.9", "6,7{space}8,9", "format"),
+            ("6.7{space}8.9{space}0.5", "6,7{space}8,9{space}0,50", "format"),
+            ("v01{space}6.7{space}8.9", "v1{space}6,7{space}8,9", "differ"),
+            ("6.7{space}8.9{space}01beta", "6,7{space}8,9{space}1beta", "differ"),
+            ("v01{space}6.7{space}8.9", "v01{space}6,8{space}8,9", "differ"),
+            ("v01{space}6.7{space}8.9", "v01{space}6,7{space}8,8", "differ"),
+            ("6.7{space}8.9", "6,7\t8,9", "differ"),
+            ("6.7{space}8.9", "6,7{space}8,9{space}0,5", "differ"),
+            # Valid digit groups remain conservative.
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+            ("6{space}7.8{space}9.1", "6{space}7,8{space}9,1", "format"),
+            ("1.234{space}567", "1234567", "format"),
+        ],
+    )
+    def test_consecutive_decimal_amounts(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6{space}8.9", "v01{space}6{space}8,9", "format"),
+            ("6{space}8.9{space}01beta", "6{space}8,9{space}01beta", "format"),
+            (
+                "v01{space}6{space}8.9{space}02b",
+                "v01{space}6{space}8,9{space}02b",
+                "format",
+            ),
+            ("8.9{space}6", "8,9{space}6", "format"),
+            ("6{space}8.9{space}2", "6{space}8,9{space}2", "format"),
+            ("6{space}8{space}9.1", "6{space}8{space}9,1", "format"),
+            ("v01{space}6{space}8.9", "v1{space}6{space}8,9", "differ"),
+            ("6{space}8.9{space}01beta", "6{space}8,9{space}1beta", "differ"),
+            ("v01{space}6{space}8.9", "v01{space}7{space}8,9", "differ"),
+            ("v01{space}6{space}8.9", "v01{space}6{space}8,8", "differ"),
+            ("6{space}8.9", "6\t8,9", "differ"),
+            ("6{space}8.9", "68,9", "differ"),
+            ("6{space}8.9", "6{space}8,9{space}2", "differ"),
+            ("1{space}234.5{space}6.7", "1{space}234,5{space}6,7", "differ"),
+            ("6.7{space}1{space}234", "6,7{space}1{space}234", "differ"),
+            ("1{space}234.5", "1234,5", "format"),
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+        ],
+    )
+    def test_mixed_integer_decimal_amounts(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("#1", "1#", "differ"),
+            ("##1", "1##", "differ"),
+            ("#1#2", "1##2", "differ"),
+            ("#1#2", "1#2#", "differ"),
+            ("#6.7", "6,7#", "differ"),
+            ("#1,234", "1234#", "differ"),
+            ("#1.2.3", "1.2.3#", "differ"),
+            ("#6.7#", "#6,7#", "format"),
+            ("#1#6.7", "#1#6,7", "format"),
+            ("#1.2.3; 6.7", "#1.2.3; 6,7", "format"),
+            ("#6.7#", "#6,8#", "differ"),
+            ("#1#", "#1#", "same"),
+            ("#", "##", "differ"),
+        ],
+    )
+    def test_literal_hash_positions_survive_numeric_comparison(
+        self, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        "fragment",
+        ["1.2.3", "127.0.0.1", "1,2,3", "1'2", "1 234.5 6.7", "1\u00a0234.5 6.7"],
+    )
+    @pytest.mark.parametrize("position", ["before", "after"])
+    def test_unchanged_numeric_fragment_beside_amount(self, fragment, position):
+        from linexcel.values import readings_agree
+
+        def text(value):
+            return (
+                f"{fragment}; total {value}"
+                if position == "before"
+                else f"total {value}; {fragment}"
+            )
+
+        assert readings_agree(text("6.7"), text("6,7"), None) == "format"
+        assert readings_agree(text("6,7"), text("6.7"), None) == "format"
+        assert readings_agree(text("6.7"), text("6,8"), None) == "differ"
+        assert readings_agree(text("6.7"), text("6.7"), None) == "same"
+        changed = text("6,7").replace(fragment, fragment + "0")
+        assert readings_agree(text("6.7"), changed, None) == "differ"
+        assert readings_agree(changed, text("6.7"), None) == "differ"
+
+    @pytest.mark.parametrize("mark", ["\u0301", "\u093e", "\u20dd"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("e{mark}1", "e{mark}01", "differ"),
+            ("e{mark}01", "e{mark}1", "differ"),
+            ("1{mark}x", "01{mark}x", "differ"),
+            ("e{mark}1.0", "e{mark}1,0", "differ"),
+            ("e{mark}.1", "e{mark}.01", "differ"),
+            ("e{mark}1 total 6.7", "e{mark}1 total 6,7", "format"),
+            ("e{mark} 6.7", "e{mark} 6,7", "format"),
+            ("e{mark} .50", "e{mark} 0,5", "format"),
+            ("6.7 e{mark}", "6,7 e{mark}", "format"),
+            ("e{mark}01", "e{mark}01", "same"),
+        ],
+    )
+    def test_combining_marks_preserve_identifier_digits(
+        self, mark, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert (
+            readings_agree(left.format(mark=mark), right.format(mark=mark), None)
+            == verdict
+        )
+
+    @pytest.mark.parametrize("joiner", ["\u200c", "\u200d"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A{joiner}1", "A{joiner}01", "differ"),
+            ("A{joiner}01", "A{joiner}1", "differ"),
+            ("1{joiner}x", "01{joiner}x", "differ"),
+            ("A{joiner}1.0", "A{joiner}1,0", "differ"),
+            ("A{joiner}.1", "A{joiner}.01", "differ"),
+            ("A{joiner}1 total 6.7", "A{joiner}1 total 6,7", "format"),
+            ("A{joiner} 6.7", "A{joiner} 6,7", "format"),
+            ("A{joiner} .50", "A{joiner} 0,5", "format"),
+            ("6.7 A{joiner}", "6,7 A{joiner}", "format"),
+            ("A{joiner}01", "A{joiner}01", "same"),
+        ],
+    )
+    def test_join_controls_preserve_identifier_digits(
+        self, joiner, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert (
+            readings_agree(
+                left.format(joiner=joiner), right.format(joiner=joiner), None
+            )
+            == verdict
+        )
+
+    @pytest.mark.parametrize(
+        "control",
+        ["\u2060", "\u200e", "\u200f", "\u2066", "\u200b", "\ufeff", "\u00ad"],
+    )
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A{c}1", "A{c}01", "differ"),
+            ("A{c}01", "A{c}1", "differ"),
+            ("1{c}x", "01{c}x", "differ"),
+            ("A{c}1.0", "A{c}1,0", "differ"),
+            ("A{c}.1", "A{c}.01", "differ"),
+            ("A{c}1 total 6.7", "A{c}1 total 6,7", "format"),
+            ("A{c} 6.7", "A{c} 6,7", "format"),
+            ("A{c} .50", "A{c} 0,5", "format"),
+            ("6.7 {c}x", "6,7 {c}x", "format"),
+            ("A{c}01", "A{c}01", "same"),
+        ],
+    )
+    def test_format_controls_preserve_adjacent_digits(
+        self, control, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert (
+            readings_agree(left.format(c=control), right.format(c=control), None)
+            == verdict
+        )
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A-1", "A-01", "differ"),
+            ("A-1.0", "A-1,0", "differ"),
+            ("A-.1", "A-.01", "differ"),
+            ("A--1", "A--01", "differ"),
+            ("1-beta", "01-beta", "differ"),
+            ("1--beta", "01--beta", "differ"),
+            ("1.0-beta", "1,0-beta", "differ"),
+            ("编号-1", "编号-01", "differ"),
+            ("e\u0301-1", "e\u0301-01", "differ"),
+            ("A\u2060-1", "A\u2060-01", "differ"),
+            ("1-\u200dx", "01-\u200dx", "differ"),
+            ("A-1 total 6.7", "A-01 total 6,7", "differ"),
+            ("A-01 total 6.7", "A-01 total 6,7", "format"),
+            ("01-beta total .50", "01-beta total 0,5", "format"),
+            ("A-01", "A-01", "same"),
+            ("-6.7 €", "-6,7 €", "format"),
+            ("-.50", "-0,5", "format"),
+            ("A -6.7", "A -6,7", "format"),
+            ("A- 6.7", "A- 6,7", "format"),
+            ("A\u00a0-6.7", "A\u00a0-6,7", "format"),
+            ("A\u202f-6.7", "A\u202f-6,7", "format"),
+            ("6.7 - beta", "6,7 - beta", "format"),
+            ("-1234.5", "-1 234,5", "format"),
+            ("-6.7", "6,7", "differ"),
+            ("-6.7", "+6,7", "differ"),
+            ("-6.7", "-6,8", "differ"),
+        ],
+    )
+    def test_hyphenated_identifiers_and_signed_quantities(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A+1", "A+01", "differ"),
+            ("A+1.0", "A+1,0", "differ"),
+            ("A+.1", "A+.01", "differ"),
+            ("A++1", "A++01", "differ"),
+            ("A+-1", "A+-01", "differ"),
+            ("A-+1", "A-+01", "differ"),
+            ("1+beta", "01+beta", "differ"),
+            ("1++beta", "01++beta", "differ"),
+            ("1+-beta", "01+-beta", "differ"),
+            ("1.0+beta", "1,0+beta", "differ"),
+            ("编号+1", "编号+01", "differ"),
+            ("e\u0301+1", "e\u0301+01", "differ"),
+            ("A\u2060+1", "A\u2060+01", "differ"),
+            ("1+\u200dx", "01+\u200dx", "differ"),
+            ("1+6.7", "1+6,7", "differ"),
+            ("A+1 total 6.7", "A+01 total 6,7", "differ"),
+            ("A+01 total 6.7", "A+01 total 6,7", "format"),
+            ("01+beta total .50", "01+beta total 0,5", "format"),
+            ("A+01", "A+01", "same"),
+            ("+6.7 €", "+6,7 €", "format"),
+            ("+.50", "+0,5", "format"),
+            ("A +6.7", "A +6,7", "format"),
+            ("A+ 6.7", "A+ 6,7", "format"),
+            ("A\u00a0+6.7", "A\u00a0+6,7", "format"),
+            ("A\u202f+6.7", "A\u202f+6,7", "format"),
+            ("6.7 + beta", "6,7 + beta", "format"),
+            ("+1234.5", "+1 234,5", "format"),
+            ("+6.7", "6,7", "differ"),
+            ("+6.7", "-6,7", "differ"),
+            ("+6.7", "+6,8", "differ"),
+        ],
+    )
+    def test_plus_identifiers_and_signed_quantities(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A/1", "A/01", "differ"),
+            ("A/1.0", "A/1,0", "differ"),
+            ("A/.1", "A/.01", "differ"),
+            ("A//1", "A//01", "differ"),
+            ("A/-1", "A/-01", "differ"),
+            ("A+/1", "A+/01", "differ"),
+            ("1/beta", "01/beta", "differ"),
+            ("1//beta", "01//beta", "differ"),
+            ("1/-beta", "01/-beta", "differ"),
+            ("1.0/beta", "1,0/beta", "differ"),
+            ("编号/1", "编号/01", "differ"),
+            ("e\u0301/1", "e\u0301/01", "differ"),
+            ("A\u2060/1", "A\u2060/01", "differ"),
+            ("1/\u200dx", "01/\u200dx", "differ"),
+            ("1/2", "01/2", "differ"),
+            ("1/6.7", "1/6,7", "differ"),
+            ("1/2/2026", "01/02/2026", "differ"),
+            ("A/1 total 6.7", "A/01 total 6,7", "differ"),
+            ("A/01 total 6.7", "A/01 total 6,7", "format"),
+            ("01/beta total .50", "01/beta total 0,5", "format"),
+            ("A/01", "A/01", "same"),
+            ("A / 6.7", "A / 6,7", "format"),
+            ("A/ 6.7", "A/ 6,7", "format"),
+            ("A /6.7", "A /6,7", "differ"),
+            ("6.7 / beta", "6,7 / beta", "format"),
+            ("A\u00a0/6.7", "A\u00a0/6,7", "differ"),
+            ("A\u202f/6.7", "A\u202f/6,7", "differ"),
+            ("/6.7/", "/6,7/", "differ"),
+            ("A /-1234.5", "A /-1 234,5", "differ"),
+            ("A /6.7", "A /6,8", "differ"),
+        ],
+    )
+    def test_slash_identifiers_and_separate_quantities(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A\\1", "A\\01", "differ"),
+            ("A\\1.0", "A\\1,0", "differ"),
+            ("A\\.1", "A\\.01", "differ"),
+            ("A\\\\1", "A\\\\01", "differ"),
+            ("A/\\1", "A/\\01", "differ"),
+            ("1\\/beta", "01\\/beta", "differ"),
+            ("A\\-1", "A\\-01", "differ"),
+            ("A+\\1", "A+\\01", "differ"),
+            ("1\\beta", "01\\beta", "differ"),
+            ("1\\\\beta", "01\\\\beta", "differ"),
+            ("1\\-beta", "01\\-beta", "differ"),
+            ("1.0\\beta", "1,0\\beta", "differ"),
+            ("编号\\1", "编号\\01", "differ"),
+            ("e\u0301\\1", "e\u0301\\01", "differ"),
+            ("A\u2060\\1", "A\u2060\\01", "differ"),
+            ("1\\\u200dx", "01\\\u200dx", "differ"),
+            ("1\\2", "01\\2", "differ"),
+            ("1\\6.7", "1\\6,7", "differ"),
+            ("1\\2\\2026", "01\\02\\2026", "differ"),
+            ("A\\1 total 6.7", "A\\01 total 6,7", "differ"),
+            ("A\\01 total 6.7", "A\\01 total 6,7", "format"),
+            ("01\\beta total .50", "01\\beta total 0,5", "format"),
+            ("A\\01", "A\\01", "same"),
+            ("A \\ 6.7", "A \\ 6,7", "format"),
+            ("A\\ 6.7", "A\\ 6,7", "format"),
+            ("A \\6.7", "A \\6,7", "differ"),
+            ("6.7 \\ beta", "6,7 \\ beta", "format"),
+            ("A\u00a0\\6.7", "A\u00a0\\6,7", "differ"),
+            ("A\u202f\\6.7", "A\u202f\\6,7", "differ"),
+            ("\\6.7\\", "\\6,7\\", "differ"),
+            ("A \\-1234.5", "A \\-1 234,5", "differ"),
+            ("A \\6.7", "A \\6,8", "differ"),
+        ],
+    )
+    def test_backslash_identifiers_and_separate_quantities(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            (r"C:\1", r"C:\01", "differ"),
+            (r"C:\6.7", r"C:\6,7", "differ"),
+            (r"C:\.50", r"C:\0,5", "differ"),
+            (r"\1", r"\01", "differ"),
+            (r"\\1", r"\\01", "differ"),
+            (r"\6.7", r"\6,7", "differ"),
+            (r"\-1", r"\-01", "differ"),
+            (r"\/+1", r"\/+01", "differ"),
+            (r".\1", r".\01", "differ"),
+            (r"..\1", r"..\01", "differ"),
+            (r"A.\1", r"A.\01", "differ"),
+            ("1\\", "01\\", "differ"),
+            ("6.7\\", "6,7\\", "differ"),
+            ("1-/\\", "01-/\\", "differ"),
+            (r"(\1)", r"(\01)", "differ"),
+            (r"C:\01 total 6.7", r"C:\01 total 6,7", "format"),
+            (r"\01 total .50", r"\01 total 0,5", "format"),
+            (r"C:\01", r"C:\01", "same"),
+            (r"\01", r"\01", "same"),
+            (r"C:\ 6.7", r"C:\ 6,7", "format"),
+            (r"\ 6.7", r"\ 6,7", "format"),
+            ("6.7 \\", "6,7 \\", "format"),
+            ("\\\u00a06.7", "\\\u00a06,7", "format"),
+            ("\\\u202f6.7", "\\\u202f6,7", "format"),
+            (r"C:\ 6.7", r"C:\ 6,8", "differ"),
+            (r"\1 total 6.7", r"\01 total 6,7", "differ"),
+        ],
+    )
+    def test_rooted_path_components_remain_literal(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("C:/1", "C:/01", "differ"),
+            ("C:/6.7", "C:/6,7", "differ"),
+            ("C:/.50", "C:/0,5", "differ"),
+            ("/1", "/01", "differ"),
+            ("//1", "//01", "differ"),
+            ("/6.7", "/6,7", "differ"),
+            ("/-1", "/-01", "differ"),
+            ("/+-1", "/+-01", "differ"),
+            ("./1", "./01", "differ"),
+            ("../1", "../01", "differ"),
+            ("A./1", "A./01", "differ"),
+            ("1/", "01/", "differ"),
+            ("6.7/", "6,7/", "differ"),
+            ("1-//", "01-//", "differ"),
+            ("(/1)", "(/01)", "differ"),
+            ("C:/01 total 6.7", "C:/01 total 6,7", "format"),
+            ("/01 total .50", "/01 total 0,5", "format"),
+            ("C:/01", "C:/01", "same"),
+            ("/01", "/01", "same"),
+            ("C:/ 6.7", "C:/ 6,7", "format"),
+            ("/ 6.7", "/ 6,7", "format"),
+            ("6.7 /", "6,7 /", "format"),
+            ("/\u00a06.7", "/\u00a06,7", "format"),
+            ("/\u202f6.7", "/\u202f6,7", "format"),
+            ("C:/ 6.7", "C:/ 6,8", "differ"),
+            ("/1 total 6.7", "/01 total 6,7", "differ"),
+        ],
+    )
+    def test_forward_slash_rooted_path_components_remain_literal(
+        self, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("1:2", "01:2", "differ"),
+            ("1:2", "1:02", "differ"),
+            ("12:01", "12:1", "differ"),
+            ("01:02:03", "1:2:3", "differ"),
+            ("A:1", "A:01", "differ"),
+            ("1:beta", "01:beta", "differ"),
+            ("A::1", "A::01", "differ"),
+            ("A:-1", "A:-01", "differ"),
+            ("1+:beta", "01+:beta", "differ"),
+            ("A:6.7", "A:6,7", "differ"),
+            ("6.7:2", "6,7:2", "differ"),
+            ("1:6.7", "1:6,7", "differ"),
+            ("e\u0301:1", "e\u0301:01", "differ"),
+            ("A\u2060:1", "A\u2060:01", "differ"),
+            ("A:01 total 6.7", "A:01 total 6,7", "format"),
+            ("12:01 total .50", "12:01 total 0,5", "format"),
+            ("12:01", "12:01", "same"),
+            ("A:01", "A:01", "same"),
+            ("Total: 6.7", "Total: 6,7", "format"),
+            ("6.7 : total", "6,7 : total", "format"),
+            (":6.7", ":6,7", "format"),
+            ("6.7:", "6,7:", "format"),
+            ("Total:\u00a06.7", "Total:\u00a06,7", "format"),
+            ("Total:\u202f6.7", "Total:\u202f6,7", "format"),
+            ("Total: -6.7", "Total: -6,7", "format"),
+            ("Total: 6.7", "Total: 6,8", "differ"),
+            ("A:1 total 6.7", "A:01 total 6,7", "differ"),
+        ],
+    )
+    def test_colon_connected_digits_remain_literal(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        "dash",
+        [
+            "\u2010",
+            "\u2011",
+            "\u2012",
+            "\u2013",
+            "\u2014",
+            "\u2015",
+            "\u2212",
+            "\u00b1",
+            "\u2213",
+            "\u00d7",
+            "\u00f7",
+            "\u22c5",
+            "\u00b7",
+            "\u2219",
+            "\u2022",
+            "\u2027",
+            "\u2236",
+            "\u2237",
+            "\u2217",
+            "*",
+            "^",
+            "=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "<>",
+            "≤",
+            "≥",
+            "≠",
+            "≡",
+            "\ufe63",
+            "\uff0d",
+            "\U00010ead",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A{d}1", "A{d}01", "differ"),
+            ("1{d}beta", "01{d}beta", "differ"),
+            ("1{d}2", "01{d}2", "differ"),
+            ("1{d}2", "1{d}02", "differ"),
+            ("A{d}6.7", "A{d}6,7", "differ"),
+            ("A{d}+-1", "A{d}+-01", "differ"),
+            ("1-+{d}beta", "01-+{d}beta", "differ"),
+            ("e\u0301{d}1", "e\u0301{d}01", "differ"),
+            ("A\u2060{d}1", "A\u2060{d}01", "differ"),
+            ("A{d}01 total 6.7", "A{d}01 total 6,7", "format"),
+            ("A{d}01", "A{d}01", "same"),
+            ("{d}6.7 €", "{d}6,7 €", "format"),
+            ("A {d}6.7", "A {d}6,7", "format"),
+            ("A{d} 6.7", "A{d} 6,7", "format"),
+            ("6.7 {d} beta", "6,7 {d} beta", "format"),
+            ("A{d}\u00a06.7", "A{d}\u00a06,7", "format"),
+            ("A{d}\u202f6.7", "A{d}\u202f6,7", "format"),
+            ("A {d} 6.7", "A {d} 6,8", "differ"),
+        ],
+    )
+    def test_unicode_dash_identifiers_and_separate_quantities(
+        self, dash, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(d=dash), right.format(d=dash)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
 
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
@@ -1132,6 +1796,7 @@ def with_stored_results(
     """
     import re as _re
     import zipfile
+    from xml.sax.saxutils import escape
 
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w") as dst:
@@ -1143,12 +1808,364 @@ def with_stored_results(
                 for address, text in cells.items():
                     xml = _re.sub(
                         rf'<c r="{address}"([^>]*)>(<f>.*?</f>)\s*<v\s*/>',
-                        rf'<c r="{address}"\g<1> t="{cell_type}">\g<2><v>{text}</v>',
+                        # Cached text can contain backslashes; a replacement
+                        # template would interpret them as escapes/backrefs.
+                        lambda m: (
+                            f'<c r="{address}"{m[1]} t="{cell_type}">'
+                            f"{m[2]}<v>{escape(text)}</v>"
+                        ),
                         xml,
                     )
                 blob = xml.encode("utf-8")
             dst.writestr(item, blob)
     return out.getvalue()
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    ("recalculated", "stored", "verdict"),
+    [
+        ("#1", "1#", "differ"),
+        ("1#", "#1", "differ"),
+        ("#1#2", "1##2", "differ"),
+        ("#6.7", "6,7#", "differ"),
+        ("#1.2.3", "1.2.3#", "differ"),
+        ("#6.7#", "#6,7#", "format"),
+        ("#1.2.3; 6.7", "#1.2.3; 6,7", "format"),
+        ("#6.7#", "#6,8#", "differ"),
+        ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,7", "format"),
+        ("Version 1.2.3 total 6.7", "Version 1.2.4 total 6,7", "differ"),
+        ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,8", "differ"),
+        ("1,2,3; 6.7", "1,2,3; 6,7", "format"),
+        ("6.7; 1'2", "6,7; 1'2", "format"),
+        ("127.0.0.1: 6.7", "127.0.0.1: 6,7", "format"),
+        ("127.0.0.1: 6.7", "127.00.0.1: 6,7", "differ"),
+        ("1 234.5 6.7; 8.9", "1 234.5 6.7; 8,9", "format"),
+        ("1 234.5 6.7; 8.9", "1 234,5 6,7; 8,9", "differ"),
+        ("v01 6 8.9", "v01 6 8,9", "format"),
+        ("6 8.9 01beta", "6 8,9 01beta", "format"),
+        ("v01 6 8.9", "v1 6 8,9", "differ"),
+        ("v01 6 8.9", "v01 7 8,9", "differ"),
+        ("v01 6 8.9", "v01 6 8,8", "differ"),
+        ("1 234.5 6.7", "1 234,5 6,7", "differ"),
+        ("ID 1234567890", "ID 1234567891", "differ"),
+        ("Value 0.0000000001", "Value 0.0000000002", "differ"),
+        ("Rate .1", "Rate .01", "differ"),
+        ("Rate -,1", "Rate -,01", "differ"),
+        ("Rate .50", "Rate 0,5", "format"),
+        ("A.1", "A.01", "differ"),
+        ("A,1", "A,01", "differ"),
+        ("A.50", "A.5", "differ"),
+        ("A.1 total 6.7", "A.01 total 6,7", "differ"),
+        ("A.01 total 6.7", "A.01 total 6,7", "format"),
+        ("v1.0", "v01.0", "differ"),
+        ("A1", "A01", "differ"),
+        ("1.0beta", "01.0beta", "differ"),
+        ("v1.0 total 6.7", "v01.0 total 6,7", "differ"),
+        ("v1.0 total 6.7", "v1.0 total 6,7", "format"),
+        ("A-1", "A-01", "differ"),
+        ("1-beta", "01-beta", "differ"),
+        ("A\u2060-1", "A\u2060-01", "differ"),
+        ("A-01 total 6.7", "A-01 total 6,7", "format"),
+        ("-6.7 €", "-6,7 €", "format"),
+        ("A -6.7", "A -6,7", "format"),
+        (r"C:\1", r"C:\01", "differ"),
+        (r"\1", r"\01", "differ"),
+        (r"C:\6.7", r"C:\6,7", "differ"),
+        ("1\\", "01\\", "differ"),
+        (r"C:\01 total 6.7", r"C:\01 total 6,7", "format"),
+        (r"\01 total .50", r"\01 total 0,5", "format"),
+        (r"C:\ 6.7", r"C:\ 6,7", "format"),
+        ("C:/1", "C:/01", "differ"),
+        ("/1", "/01", "differ"),
+        ("C:/6.7", "C:/6,7", "differ"),
+        ("1/", "01/", "differ"),
+        ("C:/01 total 6.7", "C:/01 total 6,7", "format"),
+        ("/01 total .50", "/01 total 0,5", "format"),
+        ("C:/ 6.7", "C:/ 6,7", "format"),
+        (r"A\1", r"A\01", "differ"),
+        (r"1\beta", r"01\beta", "differ"),
+        (r"A/\-1", r"A/\-01", "differ"),
+        ("A\u2060\\1", "A\u2060\\01", "differ"),
+        (r"1\2", r"01\2", "differ"),
+        (r"A\01 total 6.7", r"A\01 total 6,7", "format"),
+        (r"A \ 6.7", r"A \ 6,7", "format"),
+        ("A/1", "A/01", "differ"),
+        ("1/beta", "01/beta", "differ"),
+        ("A/-1", "A/-01", "differ"),
+        ("A\u2060/1", "A\u2060/01", "differ"),
+        ("1/2", "01/2", "differ"),
+        ("A/01 total 6.7", "A/01 total 6,7", "format"),
+        ("A / 6.7", "A / 6,7", "format"),
+        ("A+1", "A+01", "differ"),
+        ("1+beta", "01+beta", "differ"),
+        ("A+-1", "A+-01", "differ"),
+        ("A\u2060+1", "A\u2060+01", "differ"),
+        ("A+01 total 6.7", "A+01 total 6,7", "format"),
+        ("+6.7 €", "+6,7 €", "format"),
+        ("A +6.7", "A +6,7", "format"),
+        ("e\u03011", "e\u030101", "differ"),
+        ("1\u0301x", "01\u0301x", "differ"),
+        ("का1", "का01", "differ"),
+        ("A\u20dd1", "A\u20dd01", "differ"),
+        ("e\u03011 total 6.7", "e\u03011 total 6,7", "format"),
+        ("A\u20601", "A\u206001", "differ"),
+        ("A\u200e1", "A\u200e01", "differ"),
+        ("1\u200fx", "01\u200fx", "differ"),
+        ("A\u2066.1", "A\u2066.01", "differ"),
+        ("A\u20601 total 6.7", "A\u20601 total 6,7", "format"),
+        ("A\u200c1", "A\u200c01", "differ"),
+        ("A\u200d1", "A\u200d01", "differ"),
+        ("1\u200cx", "01\u200cx", "differ"),
+        ("1\u200dx", "01\u200dx", "differ"),
+        ("A\u200d1 total 6.7", "A\u200d1 total 6,7", "format"),
+        ("1:2", "01:2", "differ"),
+        ("12:01", "12:1", "differ"),
+        ("A:1", "A:01", "differ"),
+        ("1:beta", "01:beta", "differ"),
+        ("A:-1", "A:-01", "differ"),
+        ("A:6.7", "A:6,7", "differ"),
+        ("A:01 total 6.7", "A:01 total 6,7", "format"),
+        ("Total: 6.7", "Total: 6,7", "format"),
+        ("A–1", "A–01", "differ"),
+        ("1—beta", "01—beta", "differ"),
+        ("A‑6.7", "A‑6,7", "differ"),
+        ("1–2", "1–02", "differ"),
+        ("A–+-1", "A–+-01", "differ"),
+        ("A–01 total 6.7", "A–01 total 6,7", "format"),
+        ("A –6.7", "A –6,7", "format"),
+        ("A– 6.7", "A– 6,7", "format"),
+        ("A−1", "A−01", "differ"),
+        ("1−beta", "01−beta", "differ"),
+        ("A−6.7", "A−6,7", "differ"),
+        ("1−2", "1−02", "differ"),
+        ("A−+-1", "A−+-01", "differ"),
+        ("A−01 total 6.7", "A−01 total 6,7", "format"),
+        ("A −6.7", "A −6,7", "format"),
+        ("A− 6.7", "A− 6,7", "format"),
+        ("A±1", "A±01", "differ"),
+        ("1±beta", "01±beta", "differ"),
+        ("A±6.7", "A±6,7", "differ"),
+        ("1±2", "1±02", "differ"),
+        ("A±+-1", "A±+-01", "differ"),
+        ("A±01 total 6.7", "A±01 total 6,7", "format"),
+        ("A ±6.7", "A ±6,7", "format"),
+        ("A± 6.7", "A± 6,7", "format"),
+        ("A∓1", "A∓01", "differ"),
+        ("1∓beta", "01∓beta", "differ"),
+        ("A∓6.7", "A∓6,7", "differ"),
+        ("1∓2", "1∓02", "differ"),
+        ("A∓+-1", "A∓+-01", "differ"),
+        ("A∓01 total 6.7", "A∓01 total 6,7", "format"),
+        ("A ∓6.7", "A ∓6,7", "format"),
+        ("A∓ 6.7", "A∓ 6,7", "format"),
+        ("A×1", "A×01", "differ"),
+        ("1×beta", "01×beta", "differ"),
+        ("A×6.7", "A×6,7", "differ"),
+        ("1×2", "1×02", "differ"),
+        ("A×+-1", "A×+-01", "differ"),
+        ("A×01 total 6.7", "A×01 total 6,7", "format"),
+        ("A ×6.7", "A ×6,7", "format"),
+        ("A× 6.7", "A× 6,7", "format"),
+        ("A÷1", "A÷01", "differ"),
+        ("1÷beta", "01÷beta", "differ"),
+        ("A÷6.7", "A÷6,7", "differ"),
+        ("1÷2", "1÷02", "differ"),
+        ("A÷+-1", "A÷+-01", "differ"),
+        ("A÷01 total 6.7", "A÷01 total 6,7", "format"),
+        ("A ÷6.7", "A ÷6,7", "format"),
+        ("A÷ 6.7", "A÷ 6,7", "format"),
+        ("A⋅1", "A⋅01", "differ"),
+        ("1⋅beta", "01⋅beta", "differ"),
+        ("A⋅6.7", "A⋅6,7", "differ"),
+        ("1⋅2", "1⋅02", "differ"),
+        ("A⋅+-1", "A⋅+-01", "differ"),
+        ("A⋅01 total 6.7", "A⋅01 total 6,7", "format"),
+        ("A ⋅6.7", "A ⋅6,7", "format"),
+        ("A⋅ 6.7", "A⋅ 6,7", "format"),
+        ("A·1", "A·01", "differ"),
+        ("1·beta", "01·beta", "differ"),
+        ("A·6.7", "A·6,7", "differ"),
+        ("1·2", "1·02", "differ"),
+        ("A·+-1", "A·+-01", "differ"),
+        ("A·01 total 6.7", "A·01 total 6,7", "format"),
+        ("A ·6.7", "A ·6,7", "format"),
+        ("A· 6.7", "A· 6,7", "format"),
+        ("A∙1", "A∙01", "differ"),
+        ("1∙beta", "01∙beta", "differ"),
+        ("A∙6.7", "A∙6,7", "differ"),
+        ("1∙2", "1∙02", "differ"),
+        ("A∙+-1", "A∙+-01", "differ"),
+        ("A∙01 total 6.7", "A∙01 total 6,7", "format"),
+        ("A ∙6.7", "A ∙6,7", "format"),
+        ("A∙ 6.7", "A∙ 6,7", "format"),
+        ("A•1", "A•01", "differ"),
+        ("1•beta", "01•beta", "differ"),
+        ("A•6.7", "A•6,7", "differ"),
+        ("1•2", "1•02", "differ"),
+        ("A•+-1", "A•+-01", "differ"),
+        ("A•01 total 6.7", "A•01 total 6,7", "format"),
+        ("A •6.7", "A •6,7", "format"),
+        ("A• 6.7", "A• 6,7", "format"),
+        ("A∶1", "A∶01", "differ"),
+        ("1∶beta", "01∶beta", "differ"),
+        ("A∶6.7", "A∶6,7", "differ"),
+        ("1∶2", "1∶02", "differ"),
+        ("A∶+-1", "A∶+-01", "differ"),
+        ("A∶01 total 6.7", "A∶01 total 6,7", "format"),
+        ("A ∶6.7", "A ∶6,7", "format"),
+        ("A∶ 6.7", "A∶ 6,7", "format"),
+        ("A∷1", "A∷01", "differ"),
+        ("1∷beta", "01∷beta", "differ"),
+        ("A∷6.7", "A∷6,7", "differ"),
+        ("1∷2", "1∷02", "differ"),
+        ("A∷+-1", "A∷+-01", "differ"),
+        ("A∷01 total 6.7", "A∷01 total 6,7", "format"),
+        ("A ∷6.7", "A ∷6,7", "format"),
+        ("A∷ 6.7", "A∷ 6,7", "format"),
+        ("A∗1", "A∗01", "differ"),
+        ("1∗beta", "01∗beta", "differ"),
+        ("A∗6.7", "A∗6,7", "differ"),
+        ("1∗2", "1∗02", "differ"),
+        ("A∗+-1", "A∗+-01", "differ"),
+        ("A∗01 total 6.7", "A∗01 total 6,7", "format"),
+        ("A ∗6.7", "A ∗6,7", "format"),
+        ("A∗ 6.7", "A∗ 6,7", "format"),
+        ("A*1", "A*01", "differ"),
+        ("1*beta", "01*beta", "differ"),
+        ("A*6.7", "A*6,7", "differ"),
+        ("1*2", "1*02", "differ"),
+        ("A*+-1", "A*+-01", "differ"),
+        ("A*01 total 6.7", "A*01 total 6,7", "format"),
+        ("A *6.7", "A *6,7", "format"),
+        ("A* 6.7", "A* 6,7", "format"),
+        ("A^1", "A^01", "differ"),
+        ("1^beta", "01^beta", "differ"),
+        ("A^6.7", "A^6,7", "differ"),
+        ("1^2", "1^02", "differ"),
+        ("A^+-1", "A^+-01", "differ"),
+        ("A^01 total 6.7", "A^01 total 6,7", "format"),
+        ("A ^6.7", "A ^6,7", "format"),
+        ("A^ 6.7", "A^ 6,7", "format"),
+        ("v01 6.7", "v01 6,7", "format"),
+        ("6.7 01beta", "6,7 01beta", "format"),
+        ("v01 1 234.5", "v01 1234,5", "format"),
+        ("v01 6.7", "v1 6,7", "differ"),
+        ("v01 6.7", "v01 6,8", "differ"),
+        ("v01 6.7 8.9", "v01 6,7 8,9", "format"),
+        ("6.7 8.9 01beta", "6,7 8,9 01beta", "format"),
+        ("v01 6.7 8.9", "v1 6,7 8,9", "differ"),
+        ("v01 6.7 8.9", "v01 6,7 8,8", "differ"),
+        ("A≠1", "A≠01", "differ"),
+        ("1≠beta", "01≠beta", "differ"),
+        ("A≠6.7", "A≠6,7", "differ"),
+        ("1≠2", "1≠02", "differ"),
+        ("A≠+-1", "A≠+-01", "differ"),
+        ("A≠01 total 6.7", "A≠01 total 6,7", "format"),
+        ("A ≠6.7", "A ≠6,7", "format"),
+        ("A≠ 6.7", "A≠ 6,7", "format"),
+        ("A≡1", "A≡01", "differ"),
+        ("1≡beta", "01≡beta", "differ"),
+        ("A≡6.7", "A≡6,7", "differ"),
+        ("1≡2", "1≡02", "differ"),
+        ("A≡+-1", "A≡+-01", "differ"),
+        ("A≡01 total 6.7", "A≡01 total 6,7", "format"),
+        ("A ≡6.7", "A ≡6,7", "format"),
+        ("A≡ 6.7", "A≡ 6,7", "format"),
+        ("A≤1", "A≤01", "differ"),
+        ("1≤beta", "01≤beta", "differ"),
+        ("A≤6.7", "A≤6,7", "differ"),
+        ("1≤2", "1≤02", "differ"),
+        ("A≤+-1", "A≤+-01", "differ"),
+        ("A≤01 total 6.7", "A≤01 total 6,7", "format"),
+        ("A ≤6.7", "A ≤6,7", "format"),
+        ("A≤ 6.7", "A≤ 6,7", "format"),
+        ("A≥1", "A≥01", "differ"),
+        ("1≥beta", "01≥beta", "differ"),
+        ("A≥6.7", "A≥6,7", "differ"),
+        ("1≥2", "1≥02", "differ"),
+        ("A≥+-1", "A≥+-01", "differ"),
+        ("A≥01 total 6.7", "A≥01 total 6,7", "format"),
+        ("A ≥6.7", "A ≥6,7", "format"),
+        ("A≥ 6.7", "A≥ 6,7", "format"),
+        ("A<1", "A<01", "differ"),
+        ("1<beta", "01<beta", "differ"),
+        ("A<6.7", "A<6,7", "differ"),
+        ("1<2", "1<02", "differ"),
+        ("A<+-1", "A<+-01", "differ"),
+        ("A<01 total 6.7", "A<01 total 6,7", "format"),
+        ("A <6.7", "A <6,7", "format"),
+        ("A< 6.7", "A< 6,7", "format"),
+        ("A>1", "A>01", "differ"),
+        ("1>beta", "01>beta", "differ"),
+        ("A>6.7", "A>6,7", "differ"),
+        ("1>2", "1>02", "differ"),
+        ("A>+-1", "A>+-01", "differ"),
+        ("A>01 total 6.7", "A>01 total 6,7", "format"),
+        ("A >6.7", "A >6,7", "format"),
+        ("A> 6.7", "A> 6,7", "format"),
+        ("A<=1", "A<=01", "differ"),
+        ("1<=beta", "01<=beta", "differ"),
+        ("A<=6.7", "A<=6,7", "differ"),
+        ("1<=2", "1<=02", "differ"),
+        ("A<=+-1", "A<=+-01", "differ"),
+        ("A<=01 total 6.7", "A<=01 total 6,7", "format"),
+        ("A <=6.7", "A <=6,7", "format"),
+        ("A<= 6.7", "A<= 6,7", "format"),
+        ("A>=1", "A>=01", "differ"),
+        ("1>=beta", "01>=beta", "differ"),
+        ("A>=6.7", "A>=6,7", "differ"),
+        ("1>=2", "1>=02", "differ"),
+        ("A>=+-1", "A>=+-01", "differ"),
+        ("A>=01 total 6.7", "A>=01 total 6,7", "format"),
+        ("A >=6.7", "A >=6,7", "format"),
+        ("A>= 6.7", "A>= 6,7", "format"),
+        ("A<>1", "A<>01", "differ"),
+        ("1<>beta", "01<>beta", "differ"),
+        ("A<>6.7", "A<>6,7", "differ"),
+        ("1<>2", "1<>02", "differ"),
+        ("A<>+-1", "A<>+-01", "differ"),
+        ("A<>01 total 6.7", "A<>01 total 6,7", "format"),
+        ("A <>6.7", "A <>6,7", "format"),
+        ("A<> 6.7", "A<> 6,7", "format"),
+        ("A=1", "A=01", "differ"),
+        ("1=beta", "01=beta", "differ"),
+        ("A=6.7", "A=6,7", "differ"),
+        ("1=2", "1=02", "differ"),
+        ("A=+-1", "A=+-01", "differ"),
+        ("A=01 total 6.7", "A=01 total 6,7", "format"),
+        ("A =6.7", "A =6,7", "format"),
+        ("A= 6.7", "A= 6,7", "format"),
+        ("A‧1", "A‧01", "differ"),
+        ("1‧beta", "01‧beta", "differ"),
+        ("A‧6.7", "A‧6,7", "differ"),
+        ("1‧2", "1‧02", "differ"),
+        ("A‧+-1", "A‧+-01", "differ"),
+        ("A‧01 total 6.7", "A‧01 total 6,7", "format"),
+        ("A ‧6.7", "A ‧6,7", "format"),
+        ("A‧ 6.7", "A‧ 6,7", "format"),
+        ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
+        ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
+    ],
+)
+def test_text_digits_cache_verdict_and_warnings(
+    recalculated, stored, verdict, slow_reader, monkeypatch
+):
+    from linexcel import ExecutionPolicy
+
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = with_stored_results(build({"A1": recalculated, "B1": "=A1"}), {"B1": stored})
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = node_of(graph, "c:S!B1")
+    assert node["valueSource"] == "engine"
+    assert node["value"] == recalculated
+    assert node["cachedValue"] == stored
+    assert node["cachedAgreement"] == verdict
+    warnings = [w for w in graph["meta"]["warnings"] if "S!B1:" in w]
+    assert bool(warnings) == (verdict == "differ")
+    if warnings:
+        assert recalculated in warnings[0] and stored in warnings[0]
 
 
 class TestAFrenchWorkbookEndToEnd:
@@ -1193,3 +2210,282 @@ class TestAFrenchWorkbookEndToEnd:
         assert node["cachedAgreement"] == "differ"
         (warning,) = [w for w in result.warnings if "B2" in w]
         assert "oui" in warning and "non" in warning
+
+
+@pytest.mark.parametrize("days", [-1, 0, 1])
+@pytest.mark.parametrize("offset", [-1000, -500, -250, 0, 250, 500, 1000])
+@pytest.mark.parametrize("as_text", [False, True])
+def test_duration_verdict_survives_resolver_serialization(days, offset, as_text):
+    stored = datetime.timedelta(days=days)
+    raw = stored + datetime.timedelta(microseconds=offset)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): str(raw) if as_text else raw},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    agrees = not as_text and abs(offset) <= 500
+    assert fields["value"] == str(raw)
+    assert fields["cachedValue"] == str(stored)
+    assert fields["valueSource"] == "engine"
+    assert fields["cachedAgreement"] == ("same" if agrees else "differ")
+    assert bool(warnings) == (not agrees)
+    assert "valueDate" not in fields
+
+
+@pytest.mark.parametrize("days", [-1, 0, 1])
+def test_typed_duration_does_not_match_literal_cache_text(days):
+    raw = datetime.timedelta(days=days)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): str(raw)}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == fields["cachedValue"] == str(raw)
+    assert fields["cachedAgreement"] == "differ"
+    assert bool(warnings)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56, 123000),
+        datetime.time(0),
+        datetime.time(12, 34, 56, 123000),
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+def test_temporal_cache_retains_type_against_literal_text(stored, source):
+    from linexcel.values import _date_text_of, _fmt_value, _jsonable
+
+    key = (SHEET, 1, 1)
+    text = _fmt_value(stored)
+    warnings = []
+    resolver = resolver_for(
+        {key: text} if source != "file" else {},
+        CachedValues({key: stored}, {key}, False),
+        warnings,
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["cachedValue"] == text
+    assert fields["value"] == (text if source == "engine" else _jsonable(stored))
+    assert fields["valueSource"] == source
+    assert fields["cachedAgreement"] == ("differ" if source == "engine" else "same")
+    assert bool(warnings) == (source == "engine")
+    if source == "engine":
+        assert "valueDate" not in fields
+        assert fields["valueKind"] == "text"
+    else:
+        assert fields["valueDate"] == _date_text_of(stored)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56, 123000),
+        datetime.time(0),
+        datetime.time(12, 34, 56, 123000),
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+def test_temporal_result_does_not_retype_literal_cache(raw, source):
+    from linexcel.values import _date_text_of, _fmt_value, _jsonable
+
+    key = (SHEET, 1, 1)
+    text = _fmt_value(raw)
+    warnings = []
+    resolver = resolver_for(
+        {key: raw} if source != "file" else {},
+        CachedValues({key: text}, {key}, False),
+        warnings,
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["cachedValue"] == text
+    assert fields["value"] == (_jsonable(raw) if source == "engine" else text)
+    assert fields["valueSource"] == source
+    assert fields["cachedAgreement"] == ("differ" if source == "engine" else "same")
+    assert bool(warnings) == (source == "engine")
+    if source == "engine":
+        assert fields["valueDate"] == _date_text_of(raw)
+    else:
+        assert "valueDate" not in fields
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("serial", "stored"),
+    [(46054, "2026-02-01"), (46054.5, "2026-02-01 12:00:00")],
+)
+def test_date_formatted_formula_does_not_agree_with_literal_cache(
+    slow_reader, epoch_1904, serial, stored, monkeypatch
+):
+    from linexcel import ExecutionPolicy
+
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    wb = Workbook()
+    if epoch_1904:
+        wb.epoch = datetime.datetime(1904, 1, 1)
+    ws = wb.active
+    ws.title = SHEET
+    ws["A1"] = serial - (1462 if epoch_1904 else 0)
+    ws["B1"] = "=A1"
+    ws["B1"].number_format = "yyyy-mm-dd hh:mm:ss"
+    buf = io.BytesIO()
+    wb.save(buf)
+    data = with_stored_results(buf.getvalue(), {"B1": stored})
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = node_of(graph, "c:S!B1")
+    assert node["valueSource"] == "engine"
+    assert node["cachedValue"] == stored
+    assert node["cachedAgreement"] == "differ"
+    assert any(
+        "S!B1:" in w and "differs from file" in w for w in graph["meta"]["warnings"]
+    )
+
+
+@pytest.mark.parametrize("raw", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "cache_kind", ["same_number", "opposite_number", "text", "finite"]
+)
+def test_nonfinite_verdict_retains_numeric_types(raw, cache_kind):
+    import math
+
+    stored = {
+        "same_number": raw,
+        "opposite_number": -raw,
+        "text": str(raw),
+        "finite": 42,
+    }[cache_kind]
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    agrees = cache_kind == "same_number" and not math.isnan(raw)
+    assert fields["value"] == str(raw)
+    assert fields["cachedAgreement"] == ("same" if agrees else "differ")
+    assert bool(warnings) == (not agrees)
+    # Display serialization must still produce valid JSON.
+    json.dumps(fields, allow_nan=False)
+
+
+@pytest.mark.parametrize("stored", [float("nan"), float("inf"), float("-inf")])
+def test_literal_result_does_not_agree_with_nonfinite_numeric_cache(stored):
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): str(stored)},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == fields["cachedValue"] == str(stored)
+    assert fields["cachedAgreement"] == "differ"
+    assert warnings
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56),
+        datetime.time(12, 34, 56),
+        datetime.timedelta(days=2, seconds=3),
+        42,
+        1.5,
+        True,
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+@pytest.mark.parametrize("literal_text", [False, True])
+def test_report_value_kinds_preserve_source_types(raw, source, literal_text):
+    from linexcel.values import _jsonable
+
+    key = (SHEET, 1, 1)
+    if literal_text:
+        raw = str(_jsonable(raw))
+    resolver = resolver_for(
+        {key: raw} if source != "file" else {},
+        CachedValues({key: raw}, set(), False, error_cells=set()),
+        [],
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["valueSource"] == source
+    expected_kind = "text" if literal_text else "value"
+    assert fields["valueKind"] == expected_kind
+    assert fields["cachedValueKind"] == expected_kind
+    json.dumps(fields, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("raw", "kind"),
+    [
+        ("#DIV/0!", "text"),
+        ({"type": "Error", "kind": "Div"}, "error"),
+        ("", "text"),
+        ("hello", "text"),
+        (42, "value"),
+        (False, "value"),
+        (float("nan"), "value"),
+        (float("inf"), "value"),
+        (datetime.date(2026, 8, 7), "value"),
+        (datetime.datetime(2026, 8, 7, 12, 34), "value"),
+        (datetime.time(12, 34), "value"),
+        (datetime.timedelta(days=2), "value"),
+    ],
+)
+def test_uncached_result_retains_value_kind(raw, kind):
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw}, CachedValues({}, set(), False), warnings
+    )
+    for _ in range(2):
+        fields = resolver.describe(SHEET, 1, 1)
+        assert fields["valueKind"] == kind
+        assert fields["valueSource"] == "engine"
+        assert "cachedValue" not in fields
+        assert "cachedValueKind" not in fields
+        assert "cachedAgreement" not in fields
+        json.dumps(fields, allow_nan=False)
+    assert not warnings
+
+
+@pytest.mark.parametrize("sheet", [SHEET, None])
+def test_missing_result_has_no_value_kind(sheet):
+    resolver = resolver_for({}, CachedValues({}, set(), False), [])
+    fields = resolver.describe(sheet, 1, 1)
+    assert fields["value"] is None
+    assert "valueKind" not in fields
+
+
+def test_uncached_graph_distinguishes_error_from_error_like_text():
+    graph = graph_of({"A1": '="#DIV/0!"', "A2": "=1/0"})
+    text = node_of(graph, "c:S!A1")
+    error = node_of(graph, "c:S!A2")
+    assert text["value"] == error["value"] == "#DIV/0!"
+    assert text["valueKind"] == "text"
+    assert error["valueKind"] == "error"
+    assert "cachedValue" not in text
+    assert "cachedValue" not in error

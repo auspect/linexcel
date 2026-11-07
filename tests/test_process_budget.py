@@ -3,8 +3,10 @@
 import ctypes
 import errno
 import os
+import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -161,6 +163,150 @@ def test_application_uses_the_same_sampled_memory_limit(monkeypatch, tmp_path):
         assert result["error"]["kind"] == "memory_limit"
         assert result["error"]["memoryLimitKind"] == "process_group_sampled_rss"
         assert result["error"]["memoryPeakMiB"] == 129.0
+        assert all(child.poll() is not None for child in children)
+    finally:
+        app.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Darwin uses POSIX process groups")
+@pytest.mark.parametrize("termination", ["timeout", "cancelled", "live"])
+def test_web_termination_precedes_rss_but_live_monitor_errors_propagate(
+    monkeypatch, tmp_path, termination
+):
+    app = create_app(tmp_path / "workspace")
+    try:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        calls = []
+
+        def unreadable(self, group):
+            calls.append(group)
+            raise PermissionError("Cannot supervise macOS worker memory")
+
+        monkeypatch.setattr(budget.MemoryMonitor, "exceeded", unreadable)
+        children = workload(monkeypatch, "time.sleep(30)")
+        if termination == "timeout":
+            launch = subprocess.Popen
+
+            def delayed_launch(*args, **kwargs):
+                child = launch(*args, **kwargs)
+                time.sleep(0.02)
+                return child
+
+            monkeypatch.setattr(subprocess, "Popen", delayed_launch)
+        event = threading.Event()
+        if termination == "cancelled":
+            event.set()
+        root = tmp_path / "task"
+        root.mkdir()
+        task = {
+            "operation": "import",
+            "nodeId": None,
+            "budget": {
+                "memoryMb": 128,
+                "seconds": 0.001 if termination == "timeout" else 5,
+            },
+        }
+        if termination == "live":
+            with pytest.raises(PermissionError, match="Cannot supervise macOS"):
+                app.store._worker(task, root, event)
+            assert len(calls) == 1
+        else:
+            result = app.store._worker(task, root, event)
+            assert result["error"]["kind"] == termination
+            assert calls == []
+        assert children and all(child.poll() is not None for child in children)
+    finally:
+        app.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Darwin uses POSIX process groups")
+def test_web_cancellation_during_wait_prevents_completed_result_publication(
+    monkeypatch, tmp_path
+):
+    app = create_app(tmp_path / "workspace")
+    try:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(budget.MemoryMonitor, "exceeded", lambda *_: False)
+        children = workload(
+            monkeypatch,
+            "(root/'result.json').write_text(json.dumps({'result':{'published':True}}))",
+        )
+        root = tmp_path / "task"
+        root.mkdir()
+
+        class CancelAfterExit(threading.Event):
+            def wait(self, timeout=None):
+                (root / "ready").touch()
+                assert children[0].wait(timeout=5) == 0
+                self.set()
+                return True
+
+        result = app.store._worker(
+            {
+                "operation": "import",
+                "nodeId": None,
+                "budget": {"memoryMb": 128, "seconds": 5},
+            },
+            root,
+            CancelAfterExit(),
+        )
+        assert (root / "result.json").exists()
+        assert result["error"]["kind"] == "cancelled"
+        assert "result" not in result
+        assert all(child.poll() is not None for child in children)
+    finally:
+        app.close()
+
+
+@pytest.mark.parametrize("completion_stage", ["memory", "storage", "wait"])
+@pytest.mark.parametrize("elapsed", [4.999, 5.0, 5.001])
+def test_web_completed_worker_must_still_meet_deadline(
+    monkeypatch, tmp_path, completion_stage, elapsed
+):
+    app = create_app(tmp_path / "workspace")
+    try:
+        clock = [0.0]
+        monkeypatch.setattr(
+            "linexcel.web.time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        children = workload(
+            monkeypatch,
+            "(root/'result.json').write_text(json.dumps({'result':{'published':True}}))",
+        )
+        root = tmp_path / "task"
+        root.mkdir()
+
+        def finish(stage):
+            if stage == completion_stage:
+                (root / "ready").touch()
+                assert children[0].wait(timeout=5) == 0
+                clock[0] = elapsed
+            return False
+
+        monkeypatch.setattr(
+            budget.MemoryMonitor, "exceeded", lambda *_: finish("memory")
+        )
+        monkeypatch.setattr(app.store, "_storage_bytes", lambda: int(finish("storage")))
+
+        class FinishDuringWait(threading.Event):
+            def wait(self, timeout=None):
+                return finish("wait")
+
+        result = app.store._worker(
+            {
+                "operation": "import",
+                "nodeId": None,
+                "budget": {"memoryMb": 128, "seconds": 5},
+            },
+            root,
+            FinishDuringWait(),
+        )
+        assert (root / "result.json").exists()
+        if elapsed < 5:
+            assert result == {"result": {"published": True}}
+        else:
+            assert result["error"]["kind"] == "timeout"
+            assert "result" not in result
         assert all(child.poll() is not None for child in children)
     finally:
         app.close()

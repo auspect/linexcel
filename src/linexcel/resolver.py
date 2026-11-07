@@ -9,6 +9,7 @@ from analyzer.py.
 from __future__ import annotations
 
 import datetime
+import math
 import re
 import time
 from pathlib import Path
@@ -35,6 +36,7 @@ from linexcel.loader import CachedValues
 from linexcel.refs import a1, parse_ref, parse_ref_detailed
 from linexcel.rewrite import qualify_sheet
 from linexcel.values import (
+    EPOCH_EARLY_1900,
     EXCEL_EPOCH_1900,
     _date_text_of,
     _error_kind,
@@ -208,6 +210,10 @@ class _ValueResolver:
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
         self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
+        self._result_is_text: dict[tuple[str, int, int], bool] = {}
+        self._comparison_results: dict[
+            tuple[str, int, int], datetime.timedelta | float
+        ] = {}
         self._external_ranges: dict[tuple[str, str, str], str] = {}
         self._external_sheet_names = {sheet.casefold() for sheet in engine_sheets}
         self._external_exprs: set[tuple[str, str]] = set()
@@ -288,31 +294,54 @@ class _ValueResolver:
         fields: dict[str, Any] = {"value": value}
         if source is not None:
             fields["valueSource"] = source
+        # A result's type is known even when the workbook has no saved cache.
+        result_error = self._result_is_error.get((sheet, row, col))
+        if value is not None and result_error is not None:
+            fields["valueKind"] = (
+                "error"
+                if result_error
+                else (
+                    "text"
+                    if self._result_is_text.get((sheet, row, col), False)
+                    else "value"
+                )
+            )
         cached = self.cached_value(sheet, row, col)
-        if cached is not None:
+        if cached is not None and sheet is not None:
             fields["cachedValue"] = cached
             # Decided here rather than in the viewer's JavaScript: the same
             # question was being answered twice, with two different answers.
-            result_error = self._result_is_error.get((sheet, row, col))
             cached_error = self.cached.is_error(sheet, row, col)
+            comparison_cache = cached
+            comparison_value = value
+            raw_cache = self.cached.get(sheet, row, col)
+            if source not in ("file", "volatile"):
+                # Durations and non-finite numbers serialize as strings; keep
+                # their original types distinct from literal text results.
+                comparison_value = self._comparison_results.get(
+                    (sheet, row, col), value
+                )
+                # A date/time cache must also retain its type: a formula
+                # returning identical-looking text is still a different value.
+                if isinstance(
+                    raw_cache, (datetime.date, datetime.time, datetime.timedelta)
+                ) or (isinstance(raw_cache, float) and not math.isfinite(raw_cache)):
+                    comparison_cache = raw_cache
             fields["cachedAgreement"] = readings_agree(
-                value,
-                cached,
+                comparison_value,
+                comparison_cache,
                 date_text,
                 recalculated_is_error=result_error,
                 stored_is_error=cached_error,
+                stored_is_text=isinstance(raw_cache, str) and not cached_error,
+                epoch_1904=self.cached.epoch_1904,
+                date_formatted=self.cached.is_temporal(sheet, row, col),
             )
             if cached_error is not None:
                 fields["cachedValueKind"] = (
                     "error"
                     if cached_error
-                    else ("text" if isinstance(cached, str) else "value")
-                )
-            if result_error is not None:
-                fields["valueKind"] = (
-                    "error"
-                    if result_error
-                    else ("text" if isinstance(value, str) else "value")
+                    else ("text" if isinstance(raw_cache, str) else "value")
                 )
         if date_text is not None:
             fields["valueDate"] = date_text
@@ -783,6 +812,7 @@ class _ValueResolver:
     ) -> tuple[Any, str | None, str | None]:
         raw = self.cached.get(sheet, row, col)
         self._result_is_error[(sheet, row, col)] = self.cached.is_error(sheet, row, col)
+        self._result_is_text[(sheet, row, col)] = isinstance(raw, str)
         if raw is None:
             return None, None, None
         date_text = _date_text_of(raw)
@@ -792,17 +822,54 @@ class _ValueResolver:
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return _date_text_of(raw)
         cached = self.cached.get(sheet, row, col)
+        first_midnight = 0 < raw < 1 and round(raw * 86_400_000) == 86_400_000
         if isinstance(cached, datetime.time):
-            return serial_to_time_text(raw) if cached.tzinfo is None else None
-        is_date = isinstance(cached, (datetime.datetime, datetime.date))
+            if cached.tzinfo is not None:
+                return None
+            time_text = serial_to_time_text(raw)
+            if time_text is not None:
+                return time_text
+            # A differing cache may still be a time while the result contains
+            # whole days. Keep its calendar date, including rounded midnight.
+        is_date = isinstance(cached, (datetime.date, datetime.time))
         if not is_date and not self.cached.is_date(sheet, row, col):
             return None
-        return serial_to_date_text(raw, self.cached.epoch_1904)
+        if not self.cached.epoch_1904 and first_midnight:
+            # The viewer adds the rounded fraction to this day anchor. Excel's
+            # day zero has no date label, but its final fraction rounds to Jan 1.
+            # Supply the preceding day only at that boundary; using Jan 1 here
+            # would advance twice. Ordinary day-zero times keep their time label.
+            return EPOCH_EARLY_1900.date().isoformat()
+        if (
+            not self.cached.epoch_1904
+            and 60 <= raw < 61
+            and round(raw % 1 * 86_400_000) == 86_400_000
+        ):
+            # Only the final fraction of the fictitious leap day rounds to a
+            # real date. The viewer adds that rounded fraction to the anchor;
+            # February 28 therefore displays March 1 without advancing twice.
+            return "1900-02-28"
+        # Day zero in the 1900 calendar has no date label, but its fraction
+        # still represents a time even when a differing cache contains a date.
+        return serial_to_date_text(raw, self.cached.epoch_1904) or serial_to_time_text(
+            raw
+        )
 
     def _check_mismatch(
         self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
     ) -> None:
         key = (sheet, row, col)
+        # JSON strings also represent dates, durations and non-finite numbers.
+        # Classify the original reading, before its display serialization.
+        self._result_is_text[key] = isinstance(raw, str)
+        # Preserve types whose JSON representation is indistinguishable from
+        # literal text. Parsing that text would accept string results too.
+        if isinstance(raw, datetime.timedelta) or (
+            isinstance(raw, float) and not math.isfinite(raw)
+        ):
+            self._comparison_results[key] = raw
+        else:
+            self._comparison_results.pop(key, None)
         if key in self._compared:
             return
         self._compared.add(key)
@@ -815,6 +882,10 @@ class _ValueResolver:
                 date_text,
                 recalculated_is_error=_error_kind(raw) is not None,
                 stored_is_error=self.cached.is_error(sheet, row, col),
+                stored_is_text=isinstance(cached, str)
+                and not self.cached.is_error(sheet, row, col),
+                epoch_1904=self.cached.epoch_1904,
+                date_formatted=self.cached.is_temporal(sheet, row, col),
             )
             != "differ"
         ):
