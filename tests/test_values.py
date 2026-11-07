@@ -2285,3 +2285,74 @@ def test_temporal_cache_retains_type_against_literal_text(stored, source):
         assert fields["valueKind"] == "text"
     else:
         assert fields["valueDate"] == _date_text_of(stored)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56, 123000),
+        datetime.time(0),
+        datetime.time(12, 34, 56, 123000),
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+def test_temporal_result_does_not_retype_literal_cache(raw, source):
+    from linexcel.values import _date_text_of, _fmt_value, _jsonable
+
+    key = (SHEET, 1, 1)
+    text = _fmt_value(raw)
+    warnings = []
+    resolver = resolver_for(
+        {key: raw} if source != "file" else {},
+        CachedValues({key: text}, {key}, False),
+        warnings,
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["cachedValue"] == text
+    assert fields["value"] == (_jsonable(raw) if source == "engine" else text)
+    assert fields["valueSource"] == source
+    assert fields["cachedAgreement"] == ("differ" if source == "engine" else "same")
+    assert bool(warnings) == (source == "engine")
+    if source == "engine":
+        assert fields["valueDate"] == _date_text_of(raw)
+    else:
+        assert "valueDate" not in fields
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("serial", "stored"),
+    [(46054, "2026-02-01"), (46054.5, "2026-02-01 12:00:00")],
+)
+def test_date_formatted_formula_does_not_agree_with_literal_cache(
+    slow_reader, epoch_1904, serial, stored, monkeypatch
+):
+    from linexcel import ExecutionPolicy
+
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    wb = Workbook()
+    if epoch_1904:
+        wb.epoch = datetime.datetime(1904, 1, 1)
+    ws = wb.active
+    ws.title = SHEET
+    ws["A1"] = serial - (1462 if epoch_1904 else 0)
+    ws["B1"] = "=A1"
+    ws["B1"].number_format = "yyyy-mm-dd hh:mm:ss"
+    buf = io.BytesIO()
+    wb.save(buf)
+    data = with_stored_results(buf.getvalue(), {"B1": stored})
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = node_of(graph, "c:S!B1")
+    assert node["valueSource"] == "engine"
+    assert node["cachedValue"] == stored
+    assert node["cachedAgreement"] == "differ"
+    assert any(
+        "S!B1:" in w and "differs from file" in w for w in graph["meta"]["warnings"]
+    )

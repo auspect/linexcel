@@ -551,6 +551,7 @@ def readings_agree(
     *,
     recalculated_is_error: bool | None = None,
     stored_is_error: bool | None = None,
+    stored_is_text: bool = False,
 ) -> str:
     """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
 
@@ -564,7 +565,16 @@ def readings_agree(
     ``format`` is the middle answer neither of them had: the same value, spelt
     with the separators of whatever saved the file. Both readings are still
     shown; only the verdict softens.
+
+    ``stored_is_text`` identifies a literal cache string before serialization.
+    Otherwise date metadata may describe a serialized temporal cache, as in
+    older report callers; that compatibility does not prove a literal's type.
     """
+    if stored_is_text and (
+        date_text is not None
+        or isinstance(recalculated, (datetime.date, datetime.time, datetime.timedelta))
+    ):
+        return "differ"
     if (
         recalculated_is_error is not None
         and stored_is_error is not None

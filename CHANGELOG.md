@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recalculated dates and times no longer agree with literal cache strings
+  that happen to display the same date or time. Warnings and report verdicts
+  preserve the cache's text type, including date-formatted numeric results;
+  genuine temporal caches retain their rounding tolerance.
+
 - Report verdicts now retain the type of cached dates and times. A formula
   returning literal text such as `12:00:00` no longer appears to agree with a
   stored time while the analysis warns of a difference. Values retained from
