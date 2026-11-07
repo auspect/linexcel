@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nodes supplied to the viewer, preserving their formula and targets. Standard
   workbook analysis does not currently emit these formula-bearing name nodes.
 - Refresh README viewer screenshots from the validated synthetic workbook.
+- Exclude local gnhf run logs and validation artifacts explicitly from source
+  distributions, including when they are present in the release checkout.
 
 ### Changed
 
