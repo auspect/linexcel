@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare separate amounts beside unchanged identifiers using regional number
+  formatting (`v01 6.7` versus `v01 6,7`, and `6.7 01beta` versus `6,7 01beta`).
+  Invalid digit grouping no longer merges the identifier with its neighboring
+  amount. Changed identifiers, amounts and separating whitespace still diverge;
+  valid grouped numbers attached to words remain literal because they are ambiguous.
+
 - Preserve literal digits in text joined by Unicode inequality and equivalence
   signs `≠` and `≡` (`A≠1` versus `A≠01`), including compact comparisons and
   mixed connectors. Changed padding or decimal separators now produce divergence

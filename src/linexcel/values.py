@@ -378,6 +378,53 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     return 0 <= index < len(text) and _is_word_character(text[index])
 
 
+def _literal_number_edges(text: str, match: re.Match[str]) -> tuple[bool, bool]:
+    return (
+        bool(
+            match.start()
+            and (
+                _literal_across_connectors(text, match.start() - 1, -1)
+                or text[match.start() - 1] in ".,"
+            )
+        ),
+        _literal_across_connectors(text, match.end(), 1),
+    )
+
+
+def _text_number_parts(text: str) -> tuple[str, list[re.Match[str]]]:
+    """Separate identifiers from amounts without breaking valid digit groups."""
+    numbers = []
+    for match in _NUMBER_RE.finditer(text):
+        literal_left, literal_right = _literal_number_edges(text, match)
+        spaces = list(re.finditer(r"[ \u00a0\u202f]+", match.group()))
+        # The broad numeric regex can swallow "01 6.7" in "v01 6.7".
+        # When that is not a valid grouped number, whitespace separates the
+        # identifier at either edge from the amount. Valid groups attached to
+        # words remain ambiguous and retain their literal comparison.
+        if (
+            spaces
+            and (literal_left or literal_right)
+            and not _read_number(match.group())
+        ):
+            cuts = {match.start(), match.end()}
+            if literal_left:
+                cuts.add(match.start() + spaces[0].end())
+            if literal_right:
+                cuts.add(match.start() + spaces[-1].start())
+            bounds = sorted(cuts)
+            for start, end in zip(bounds, bounds[1:]):
+                numbers.extend(_NUMBER_RE.finditer(text, start, end))
+        else:
+            numbers.append(match)
+    parts = []
+    end = 0
+    for match in numbers:
+        parts.extend((text[end : match.start()], "#"))
+        end = match.end()
+    parts.append(text[end:])
+    return "".join(parts), numbers
+
+
 def _separators_only(left: str, right: str) -> bool:
     """True when two strings differ in nothing but how numbers are written.
 
@@ -391,11 +438,11 @@ def _separators_only(left: str, right: str) -> bool:
     sense of "is there a reading under which these are the same value".
     Numbers attached to words may be identifiers and must remain unchanged.
     """
-    left_numbers = list(_NUMBER_RE.finditer(left))
-    right_numbers = list(_NUMBER_RE.finditer(right))
+    left_text, left_numbers = _text_number_parts(left)
+    right_text, right_numbers = _text_number_parts(right)
     if len(left_numbers) != len(right_numbers):
         return False
-    if _NUMBER_RE.sub("#", left) != _NUMBER_RE.sub("#", right):
+    if left_text != right_text:
         return False
     if not left_numbers:
         return False  # no numbers at all: the strings simply differ
@@ -406,17 +453,7 @@ def _separators_only(left: str, right: str) -> bool:
         # Word adjacency (v1.0, 01beta), including across connectors, or a decimal mark
         # (A.1, A,01) makes the number ambiguous. Preserve it literally:
         # zeroes and separators may be part of an identifier.
-        if any(
-            (
-                match.start()
-                and (
-                    _literal_across_connectors(text, match.start() - 1, -1)
-                    or text[match.start() - 1] in ".,"
-                )
-            )
-            or _literal_across_connectors(text, match.end(), 1)
-            for text, match in ((left, a), (right, b))
-        ):
+        if any(_literal_number_edges(left, a) + _literal_number_edges(right, b)):
             if a.group() != b.group():
                 return False
         elif not (_read_number(a.group()) & _read_number(b.group())):

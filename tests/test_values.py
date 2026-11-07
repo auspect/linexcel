@@ -1151,6 +1151,32 @@ class TestReadingsAgree:
 
         assert readings_agree(recalculated, stored, None) == verdict
 
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6.7", "v01{space}6,7", "format"),
+            ("6.7{space}01beta", "6,7{space}01beta", "format"),
+            ("v01{space}1 234.5", "v01{space}1234,5", "format"),
+            ("1 234.5{space}01beta", "1234,5{space}01beta", "format"),
+            ("v01{space}6.7{space}02beta", "v01{space}6,7{space}02beta", "format"),
+            ("A-01{space}6.7", "A-01{space}6,7", "format"),
+            ("v01{space}6.7", "v1{space}6,7", "differ"),
+            ("6.7{space}01beta", "6,7{space}1beta", "differ"),
+            ("v01{space}6.7", "v01{space}6,8", "differ"),
+            ("v01{space}6.7", "v01\t6,7", "differ"),
+            # Valid digit grouping attached to a word remains ambiguous.
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+            ("USD1{space}234.5", "USD1{space}234,5", "differ"),
+        ],
+    )
+    def test_identifier_beside_separate_amount(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
     @pytest.mark.parametrize("mark", ["\u0301", "\u093e", "\u20dd"])
     @pytest.mark.parametrize(
         ("left", "right", "verdict"),
@@ -1846,6 +1872,11 @@ def with_stored_results(
         ("A^01 total 6.7", "A^01 total 6,7", "format"),
         ("A ^6.7", "A ^6,7", "format"),
         ("A^ 6.7", "A^ 6,7", "format"),
+        ("v01 6.7", "v01 6,7", "format"),
+        ("6.7 01beta", "6,7 01beta", "format"),
+        ("v01 1 234.5", "v01 1234,5", "format"),
+        ("v01 6.7", "v1 6,7", "differ"),
+        ("v01 6.7", "v01 6,8", "differ"),
         ("A≠1", "A≠01", "differ"),
         ("1≠beta", "01≠beta", "differ"),
         ("A≠6.7", "A≠6,7", "differ"),
