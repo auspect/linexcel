@@ -109,6 +109,75 @@ def test_numeric_tolerance_uses_comparison_values_before_display_values():
     assert corpus.comparison(node, result) == "cache_difference_requires_review"
 
 
+@pytest.mark.parametrize("text", ["#DIV/0!", "#N/A", "#VALUE!"])
+@pytest.mark.parametrize("saved_error", [False, True])
+@pytest.mark.parametrize("result_error", [False, True])
+def test_error_looking_text_retains_its_type(text, saved_error, result_error):
+    node = {
+        "cache_status": "saved",
+        "cached_value": text,
+        "cachedValueKind": "error" if saved_error else "scalar",
+    }
+    raw = (
+        {
+            "type": "Error",
+            "kind": {"#DIV/0!": "Div", "#N/A": "Na", "#VALUE!": "Value"}[text],
+        }
+        if result_error
+        else text
+    )
+    result = {
+        "status": "completed",
+        "value": text,
+        "valueKind": "error" if result_error else "scalar",
+        **_cache_comparison(node, raw, text, datetime(1899, 12, 30)),
+    }
+    expected = (
+        "exact_agreement"
+        if saved_error == result_error
+        else "cache_difference_requires_review"
+    )
+    assert corpus.comparison(node, result) == expected
+    assert (expected == "exact_agreement") == (result["comparison"] == "equal")
+
+
+@pytest.mark.parametrize("saved_error", [False, True])
+@pytest.mark.parametrize("result_error", [False, True])
+def test_workbook_error_cache_verdict_matches_targeted_recalculation(
+    tmp_path, saved_error, result_error
+):
+    import zipfile
+    from xml.etree import ElementTree
+
+    from openpyxl import Workbook
+
+    from linexcel.lazy import build_structure, evaluate_node
+
+    book = Workbook()
+    book.active["A1"] = "=NA()" if result_error else '="#N/A"'
+    path = tmp_path / "error-types.xlsx"
+    book.save(path)
+    with zipfile.ZipFile(path) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    root = ElementTree.fromstring(parts["xl/worksheets/sheet1.xml"])
+    cell = root.find("{*}sheetData/{*}row/{*}c")
+    cell.set("t", "e" if saved_error else "str")
+    cell.find("{*}v").text = "#N/A"
+    parts["xl/worksheets/sheet1.xml"] = ElementTree.tostring(root)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    node = next(n for n in build_structure(path)["nodes"] if n["id"] == "Sheet!A1")
+    result = evaluate_node(path, "Sheet!A1")
+    assert result["status"] == "completed"
+    assert result["value"] == node["cached_value"] == "#N/A"
+    agrees = saved_error == result_error
+    assert result["comparison"] == ("equal" if agrees else "different")
+    assert corpus.comparison(node, result) == (
+        "exact_agreement" if agrees else "cache_difference_requires_review"
+    )
+
+
 @pytest.mark.parametrize(
     "number_format",
     ["yyyy-mm-dd hh:mm:ss", "yyyy-mm-dd", "hh:mm:ss", "[h]:mm:ss", "[mm]:ss"],

@@ -86,6 +86,10 @@ def comparison(node, result):
         return "volatile_not_comparable"
     if node.get("cache_status") != "saved":
         return "cache_unknown"
+    # Error values and literal text share their display spelling after JSON
+    # serialization. Use the source types, as targeted recalculation does.
+    if (node.get("cachedValueKind") == "error") != (result.get("valueKind") == "error"):
+        return "cache_difference_requires_review"
     saved = node.get("cached_comparison_value", node.get("cached_value"))
     value = result.get("comparisonValue", result.get("value"))
     if type(value) is type(saved) and value == saved:

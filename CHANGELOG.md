@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Corpus validation distinguishes spreadsheet errors from literal text with
+  the same spelling, such as `#N/A`. These type mismatches now require review,
+  consistent with targeted recalculation, while matching errors still agree.
+
 - Recalculated results retain their value kind even when the workbook has no
   saved cache. Literal text such as `#DIV/0!` remains distinguishable from a
   spreadsheet error in reports and documentation context; missing results
