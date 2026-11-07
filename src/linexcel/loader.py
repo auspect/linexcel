@@ -386,7 +386,9 @@ def _load_cached_values_calamine(
                 values.setdefault(key, error)
             else:
                 truncated.add(name)
-    _restore_lossy_date_caches(data, values, epoch_1904, date_cells)
+    _restore_lossy_date_caches(
+        data, values, epoch_1904, date_cells, restore_durations=True
+    )
     return CachedValues(
         values,
         date_cells,
@@ -424,9 +426,10 @@ def _restore_lossy_date_caches(
     duration. Restore those cells from their original serial, using the format
     classification that excludes literal labels.
 
-    For the fallback reader, restore actual durations too: openpyxl rounds
-    through total_seconds(), which can add a second to large durations. Round
-    the fractional day directly so whole days cannot reduce float precision.
+    Restore actual durations for both readers: openpyxl rounds through
+    total_seconds(), which can add a second to large durations, and Calamine
+    can lose milliseconds near the duration limits. Round the fractional day
+    directly so whole days cannot reduce float precision.
 
     Dates and durations outside Python's representable ranges become synthetic
     #VALUE! errors in openpyxl. Recover their numeric source and remove the

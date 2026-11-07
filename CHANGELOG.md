@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison precision instead of hiding second-level differences.
 - Compare large fractional duration caches without converting their whole-day
   components to seconds, avoiding false discrepancies from lost precision.
+  Restore Calamine duration fractions from OOXML too, preserving milliseconds
+  near the duration limits consistently with the fallback reader.
 - Recover from a Calamine Rust panic by falling back to openpyxl. Cache
   retention limits and real Excel errors remain intact; keyboard interrupts,
   process exits and asynchronous cancellation still propagate. Reader fallback

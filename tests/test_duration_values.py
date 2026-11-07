@@ -123,7 +123,10 @@ def test_large_duration_comparison_preserves_cache_rounding(serial, offset_ms):
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
-@pytest.mark.parametrize("serial", [-100_000_000.123, 100_000_000.123])
+@pytest.mark.parametrize(
+    "serial",
+    [-100_000_000.123, 100_000_000.123, -999_999_998.8304746, 999_999_998.5210763],
+)
 @pytest.mark.parametrize("offset_seconds", [0, 1])
 def test_large_fractional_duration_cache_verdict_and_warnings(
     serial, epoch_1904, slow_reader, offset_seconds, monkeypatch
