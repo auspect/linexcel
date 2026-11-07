@@ -158,6 +158,47 @@ def test_duration_cache_verdict_and_warnings_agree(
     ) == (expected == "differ")
 
 
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [-1_000_000_000, 1_000_000_000])
+@pytest.mark.parametrize("offset_seconds", [0, 1, -1, 86400])
+def test_numeric_duration_recovery_keeps_temporal_comparison(
+    serial, offset_seconds, epoch_1904, slow_reader, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = duration_workbook(
+        "[h]:mm:ss.000", serial, epoch_1904, serial + offset_seconds / 86400
+    )
+    cached = load_cached_values(data)
+    assert cached.is_temporal("Durations", 1, 2)
+    assert not cached.is_date("Durations", 1, 2)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Durations!B1")
+    assert node["cachedAgreement"] == ("same" if offset_seconds == 0 else "differ")
+    assert node["valueSource"] == "engine"
+    assert "valueDate" not in node
+    assert any(
+        "Durations!B1:" in warning and "differs from file" in warning
+        for warning in graph["meta"]["warnings"]
+    ) == (offset_seconds != 0)
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("number_format", ["General", '0 "[h]"', r"0 \[h\]"])
+def test_numeric_format_literals_keep_numeric_tolerance(
+    slow_reader, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = duration_workbook(number_format, 1_000_000_000, False, 1_000_000_000.00001)
+    cached = load_cached_values(data)
+    assert not cached.is_temporal("Durations", 1, 2)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Durations!B1")
+    assert node["cachedAgreement"] == "same"
+
+
 @pytest.mark.parametrize(
     ("formula", "source", "expected"),
     [

@@ -7,427 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-11-07
+
 ### Fixed
 
-- A recoverable Calamine Rust panic now switches cached-value reading to
-  openpyxl, preserving extremely negative elapsed durations and reporting the
-  fallback. Cache retention limits still apply, and process-control exceptions
-  such as keyboard interrupts and exits continue to propagate.
-
-- Elapsed-duration caches beyond Python's duration range retain their stored
-  numbers instead of becoming synthetic `#VALUE!` errors. This also applies
-  when the fast reader overflows and falls back; real Excel errors, literal
-  text and cache retention limits remain intact.
-
-- Large elapsed-duration caches no longer gain a second in the fallback reader.
-  Fractional days are rounded directly to milliseconds, preserving agreement
-  with the stored duration while still reporting real one-second differences.
-
-- Date-formatted numeric caches outside Python's calendar range retain their
-  original numbers in the fallback reader instead of becoming `#VALUE!` errors.
-  Comparisons now agree across both readers; real Excel errors, literal text
-  and cache retention limits remain intact.
-
-- Formula-bearing defined-name nodes supplied to the HTML viewer now show one
-  value card and comparison verdict, preserving both the formula and its targets.
-  Browser regressions cover all nine languages and the live graph at desktop
-  and mobile widths. Standard workbook analysis does not currently emit these
-  formula-bearing name nodes.
-
-- Multilingual browser regressions now check the sample-scoped verdict for
-  formula groups and distinguish compared, displayed and total cells. Individual
-  formula and input provenance checks remain covered, including the live graph
-  at desktop and mobile widths.
-
-- Negative dates in the 1904 calendar rounding from February 28, 1900 to
-  March 1 now display `1900-03-01` instead of an invented `1900-02-29` in
-  graph labels, detail cards and sampled rows. The 1900 calendar retains its
-  fictitious leap day; original serials and comparison verdicts are preserved.
-
-- Results rounding from the end of Excel's fictitious February 29, 1900 to
-  March 1 now display `1900-03-01` instead of plain `61` in graph labels,
-  detail cards and sampled rows. The original serials and comparison verdicts
-  are preserved; earlier fractions without a real calendar date remain numeric.
-
-- Date comparisons accept rounding within 0.5 ms from the end of Excel's
-  fictitious February 29, 1900 to a March 1 cache. Typed caches are compared
-  on Excel's calendar even when the result has no representable Python date;
-  real time gaps and literal date text remain distinct.
-
-- Date comparisons retain Excel's fictitious leap day when rounding across
-  February 28, 1900. A result just before day 60 no longer agrees with a March 1
-  cache, and readers preserve the original serial when rounding the cache
-  would otherwise skip that day. Sub-millisecond rounding remains accepted.
-
-- Numeric caches for Excel's fictitious February 29, 1900 now use the same
-  0.5 ms comparison tolerance as other dates. Reports and warnings no longer
-  accept millisecond differences through the ordinary numeric tolerance;
-  the original serials and comparisons of General-format numbers are preserved.
-
-- Fractional-day results in the 1900 calendar retain their time display when
-  the saved cache contains a full date. Graph labels, detail cards and sampled
-  rows now show times such as `12:00:00` instead of plain `0.5`; real cache
-  discrepancies remain flagged and the 1904 calendar keeps its date display.
-
-- Results containing whole days retain their calendar date when the saved cache
-  is only a time. Both Excel calendars now display dates and times in graph
-  labels, detail cards and sampled rows instead of plain serial numbers;
-  ordinary times and real cache discrepancies keep their meaning.
-
-- Results rounding to the first midnight retain their date display even when
-  the saved cache is still a time. Both Excel calendars now show the next day
-  in graph labels, detail cards and sampled rows; real cache discrepancies
-  remain flagged.
-
-- Reports with date caches display a date for 1900-calendar results that round
-  to the first midnight, instead of a plain `1` beside the January 1 cache. Graph
-  labels, detail cards and sampled rows share the same temporal reading;
-  numeric values, comparison verdicts and ordinary times remain unchanged.
-
-- Full workbook analysis accepts rounding within 0.5 ms at the first midnight
-  of the 1900 calendar. A numeric result just below one day now agrees with its
-  typed January 1 cache; real time gaps and literal text remain distinct.
-
-- The fast workbook reader retains the next day when a time cache just before
-  the first midnight rounds up to a complete day. Both readers now preserve
-  the same timestamp in either Excel calendar, including formula caches;
-  ordinary times, elapsed durations and retention limits keep their meaning.
-
-- Full workbook analysis compares negative date results against their complete
-  saved timestamps in either Excel calendar. Matching values and rounding within
-  0.5 ms no longer produce false differences; real time and day gaps remain
-  visible, and reports retain the recalculated date for display.
-
-- The fallback workbook reader preserves dates whose format contains literal
-  elapsed-time labels such as `yyyy-mm-dd "[ss]"`. It restores the saved calendar
-  value instead of reporting a duration, including formula caches, both Excel
-  calendars and the fictitious 1900 leap day; actual durations remain durations.
-
-- Full workbook analysis preserves the day component of negative date caches.
-  The fast reader no longer turns a stored serial such as `-2.25` into only
-  `18:00:00`; it retains the complete timestamp for either workbook calendar,
-  while ordinary times, elapsed durations and cache retention limits are unchanged.
-
-- Interactive workbook imports preserve date caches when their number format
-  contains a literal elapsed-time label such as `yyyy-mm-dd "[h]"`.
-  Quoted or escaped labels no longer turn dates into durations; real elapsed
-  formats and the underlying numeric values retain their meaning.
-
-- ISO date and time caches retain temporal comparison precision even when
-  their cell uses General format. Targeted recalculation, dependency results
-  and corpus validation tolerate rounding within 0.5 ms and flag larger gaps.
-
-- Corpus validation preserves differences established before JSON serialization.
-  Non-finite numeric results no longer agree with literal `inf`, `-inf` or `nan`
-  caches; matching literal text still agrees, including dependent formulas.
-
-- Targeted recalculation compares non-finite numeric results before converting
-  them to JSON strings. Results such as `SUMSQ(1E308)` no longer agree with a
-  literal `inf` cache, including dependency results; literal text still agrees
-  with matching text, and NaN remains unequal to itself.
-
-- Corpus validation distinguishes spreadsheet errors from literal text with
-  the same spelling, such as `#N/A`. These type mismatches now require review,
-  consistent with targeted recalculation, while matching errors still agree.
-
-- Recalculated results retain their value kind even when the workbook has no
-  saved cache. Literal text such as `#DIV/0!` remains distinguishable from a
-  spreadsheet error in reports and documentation context; missing results
-  are not assigned an invented type or cache comparison.
-
-- Report value kinds now use the original result and cache types. Dates, times,
-  durations and non-finite numbers serialized as strings are no longer labelled
-  as literal text, including values retained from the file or volatile formulas.
-  Actual text and spreadsheet errors keep their distinct classifications.
-
-- Report comparisons retain the numeric type of non-finite results and caches
-  after JSON serialization. Literal strings such as `nan` or `inf` no longer
-  receive a false agreement verdict, and NaN remains unequal to itself,
-  consistent with the analysis warnings.
-
-- Recalculated dates and times no longer agree with literal cache strings
-  that happen to display the same date or time. Warnings and report verdicts
-  preserve the cache's text type, including date-formatted numeric results;
-  genuine temporal caches retain their rounding tolerance.
-
-- Report verdicts now retain the type of cached dates and times. A formula
-  returning literal text such as `12:00:00` no longer appears to agree with a
-  stored time while the analysis warns of a difference. Values retained from
-  the file, including volatile formulas, keep their existing verdicts.
-
-- Typed duration results now retain their comparison type after report
-  serialization. Equal durations and cache rounding within 0.5 ms agree in
-  both warnings and report verdicts; larger differences and literal text
-  resembling a duration remain distinct.
-
-- Targeted recalculation and corpus validation now tolerate temporal cache
-  rounding within 0.5 ms for dates, times and elapsed durations, including
-  dependency results. Larger differences still require review; tolerance does
-  not grow with the Excel serial's magnitude.
-
-- The corpus validator no longer applies ordinary numeric rounding tolerance
-  to Excel date, time or elapsed-duration formats. Temporal differences beyond
-  cache rounding require review, matching targeted recalculation.
-
-- The corpus validator now shares the product's numeric rounding tolerance.
-  Differences such as `5e-9` against zero are flagged for review, while ordinary
-  floating-point rounding and the existing relative tolerance remain accepted.
-
-- Targeted recalculations now use the full analysis's numeric rounding tolerance
-  for ordinary numbers, both on the selected cell and its dependency results.
-  For example, `0.1+0.2` agrees with a saved `0.3`; larger differences and type
-  mismatches still differ. Date, time and duration comparisons remain unchanged.
-
-- Apply the cache's 0.5 ms rounding tolerance to recalculated Python time
-  objects and their serialized report values. Sub-millisecond rounding no
-  longer produces false divergence warnings; larger differences, timezone
-  mismatches and times on opposite sides of midnight still differ.
-
-- Compare the full timestamp of recalculated Python dates and datetimes, including
-  their serialized report values. Different hours on the same day now produce
-  divergence verdicts and warnings. Date-only values mean midnight; cache rounding
-  within 0.5 ms is tolerated across midnight, without assuming a timezone.
-
-- Preserve the position of literal `#` characters when comparing text with
-  regional number formatting. Texts such as `#1` and `1#` now produce divergence
-  verdicts and warnings; unchanged surrounding text such as `#6.7#` versus
-  `#6,7#` retains formatting tolerance.
-
-- Unchanged numeric-looking text, such as the version in `Version 1.2.3 total
-  6.7`, no longer prevents recognizing regional formatting of a separate amount
-  (`6,7`). Changed versions, addresses, ambiguous digit runs and amounts still
-  produce divergence verdicts and warnings.
-
-- Compare mixed integer and decimal amount lists across regional formatting
-  (`v01 6 8.9` versus `v01 6 8,9`). Identifier digits, changed amounts and
-  separating whitespace remain protected. Runs containing a possible grouped
-  number, such as `1 234.5 6.7`, remain conservatively compared.
-
-- Compare consecutive decimal amounts using regional number formatting
-  (`v01 6.7 8.9` versus `v01 6,7 8,9`), including amounts between identifiers.
-  Invalid numeric runs split only when each part is a valid decimal amount;
-  identifier digits, separating whitespace and valid digit groups stay protected.
-
-- Compare separate amounts beside unchanged identifiers using regional number
-  formatting (`v01 6.7` versus `v01 6,7`, and `6.7 01beta` versus `6,7 01beta`).
-  Invalid digit grouping no longer merges the identifier with its neighboring
-  amount. Changed identifiers, amounts and separating whitespace still diverge;
-  valid grouped numbers attached to words remain literal because they are ambiguous.
-
-- Preserve literal digits in text joined by Unicode inequality and equivalence
-  signs `≠` and `≡` (`A≠1` versus `A≠01`), including compact comparisons and
-  mixed connectors. Changed padding or decimal separators now produce divergence
-  verdicts and warnings; standalone quantities and amounts separated by whitespace
-  retain regional formatting tolerance.
-
-- Preserve literal digits in text joined by Unicode comparison signs `≤` and
-  `≥` (`A≤1` versus `A≤01`), including compact comparisons and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by ASCII comparison signs `<` and `>`
-  (`A<1` versus `A<01`), including `<=`, `>=`, `<>` and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the equals sign `=`
-  (`A=1` versus `A=01`), including compact assignments and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the caret `^`
-  (`A^1` versus `A^01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the ASCII asterisk `*`
-  (`A*1` versus `A*01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the asterisk operator `∗` (U+2217)
-  (`A∗1` versus `A∗01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the proportion sign `∷` (U+2237)
-  (`A∷1` versus `A∷01`), including compact proportions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the ratio sign `∶` (U+2236)
-  (`A∶1` versus `A∶01`), including compact ratios and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the hyphenation point `‧` (U+2027)
-  (`A‧1` versus `A‧01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the bullet `•` (U+2022)
-  (`A•1` versus `A•01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the bullet operator `∙` (U+2219)
-  (`A∙1` versus `A∙01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the middle dot `·`
-  (`A·1` versus `A·01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the dot operator `⋅`
-  (`A⋅1` versus `A⋅01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the division sign `÷`
-  (`A÷1` versus `A÷01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the multiplication sign `×`
-  (`A×1` versus `A×01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by plus/minus signs `±` and `∓`
-  (`A±1` versus `A±01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone quantities and amounts separated by whitespace retain
-  regional formatting tolerance.
-
-- Preserve literal digits in text joined by the Unicode minus sign U+2212
-  (`A−1` versus `A−01`), including compact expressions and mixed connectors.
-  Changed padding or decimal separators now produce divergence verdicts and
-  warnings; standalone negative quantities and amounts separated by whitespace
-  retain regional formatting tolerance.
-
-- Preserve literal digits in text joined by Unicode dash punctuation, including
-  en dashes, em dashes and non-breaking hyphens (`A–1` versus `A–01`). Mixed
-  connector runs and numeric ranges follow the same rule as ASCII hyphens;
-  standalone quantities and amounts separated by whitespace retain regional
-  formatting tolerance.
-
-- Preserve literal digits in colon-connected text such as `1:2` versus `01:2`,
-  `12:01` versus `12:1` and `A:1` versus `A:01`. Textual times, ratios and
-  identifiers no longer hide changed padding or decimal separators as regional
-  formatting. Whitespace-separated quantities (`Total: 6.7` versus `Total: 6,7`)
-  and separate amounts after unchanged identifiers retain regional tolerance.
-
-- Preserve literal digits next to forward slashes in rooted and drive paths
-  (`/1` versus `/01`, `C:/1` versus `C:/01`) and trailing path separators.
-  Changed padding or decimal separators now produces divergence verdicts and
-  warnings, matching backslash paths. Whitespace-separated quantities and
-  separate amounts following unchanged paths retain regional-format tolerance.
-
-- Preserve literal digits next to backslashes even without a connecting word,
-  including drive paths (`C:\1` versus `C:\01`), rooted paths (`\1` versus
-  `\01`) and numeric components ending in a backslash. Changed padding or
-  decimal separators now produces divergence verdicts and warnings. Regional
-  formatting remains accepted for quantities separated from the backslash
-  by whitespace, or separate amounts following an unchanged path.
-- Preserve literal digits in backslash-connected identifiers and path components
-  such as `A\1` versus `A\01` and `1\beta` versus `01\beta`, including mixed
-  sign/slash/backslash runs. Changed digits or decimal separators now produce
-  divergence verdicts and warnings; separate quantities such as `A \ 6.7`
-  versus `A \ 6,7` retain regional-format tolerance.
-- Preserve literal digits in slash-connected text identifiers such as `A/1`
-  versus `A/01` and `1/beta` versus `01/beta`, including mixed slash/sign runs.
-  Compact fractions and dates are also compared literally because their
-  meaning cannot be inferred from text alone. Separate quantities such as
-  `A / 6.7` versus `A / 6,7` retain regional-format tolerance.
-- Preserve literal digits in text identifiers joined by plus signs, including
-  mixed plus/minus runs (`A+1` versus `A+01`, `A+-1` versus `A+-01`).
-  Changed padding or decimal separators now produces a divergence verdict and
-  warning; standalone positive quantities such as `+6.7 €` versus `+6,7 €`
-  retain regional-format tolerance.
-- Preserve literal digits in hyphenated text identifiers such as `A-1` versus
-  `A-01` and `1-beta` versus `01-beta`. Changed padding or decimal separators
-  now produces a divergence verdict and warning. Standalone negative quantities
-  such as `-6.7 €` versus `-6,7 €` retain regional-format tolerance.
-- Preserve literal digits adjacent to all Unicode format controls in text
-  comparisons, including word joiners and directional marks. Invisible
-  characters no longer hide changed identifier padding or decimal separators;
-  quantities separated by spaces retain regional-format tolerance.
-- Preserve literal identifier digits next to Unicode join controls U+200C
-  and U+200D. Changed zero padding or decimal separators now produces a
-  divergence verdict and warning; separate quantities retain regional-format
-  tolerance.
-- Preserve numbers adjacent to Unicode combining marks in text comparisons.
-  Decomposed accents (`é1` versus `é01`), vowel signs and enclosing marks
-  now retain literal identifier digits and produce divergence warnings.
-  Separate numbers in the same text still allow regional formatting.
-- Preserve numbers attached to words in text comparisons. Identifiers such as
-  `v1.0` versus `v01.0`, `A1` versus `A01`, and `1.0beta` versus `01.0beta`
-  now produce divergence verdicts and warnings. Unchanged identifiers still
-  allow regional formatting differences in separate numbers in the same text.
-  This conservative rule also treats attached units such as `6.7kg` literally;
-  separated units such as `6.7 kg` retain regional-format tolerance.
-- Preserve ambiguous numeric suffixes after an attached dot or comma in text
-  comparisons. `A.1` versus `A.01` now produces a divergence and warning;
-  unchanged suffixes still allow regional formatting elsewhere in the text.
-- Recognize leading decimal marks in text comparisons. Values such as `.1`
-  and `.01` now produce a divergence instead of a formatting verdict, while
-  equivalent `.50`, `0.5` and `,5` readings retain regional-format tolerance.
-- Compare numbers embedded in text exactly when recognizing regional separator
-  differences. Changed identifiers, tiny decimals and long digit sequences now
-  produce divergence verdicts and warnings instead of being mistaken for a
-  formatting change; numeric calculation tolerances are preserved.
-- Validate both generated workbooks in all nine supported report languages by
-  default, using the product language registry. The documented acceptance
-  command no longer reports generation success after only three reports;
-  optional AI stages must also complete for every requested language.
-- Compare recalculated durations against Excel's typed duration caches using
-  elapsed seconds, including negative and multi-day values in both date systems.
-  Badges and warnings agree, tolerate half-millisecond cache rounding and retain
-  real differences without treating duration-shaped text as a numeric result.
-- Stop treating elapsed formats such as `[h]:mm:ss`, `[mm]:ss` and `[ss].000`
-  as calendar dates. Duration inputs and formulas, including formulas without
-  saved results, retain their numeric day values without invented 1900/1904
-  date labels. Elapsed-time display remains limited.
-- Show dates and times in graph node annotations and source-range samples using
-  the detail panel's temporal formatter. Named values and source ranges no
-  longer show Excel serials where a dated reading is available; ordinary numbers
-  retain their numeric display.
-- Preserve times in viewer date readings, including file-only values and sampled
-  rows. Recalculated serials display milliseconds and round across midnight
-  without depending on the browser timezone, respecting Excel's phantom leap day.
-  Legacy reports without a stored comparison verdict now compare the time too.
-- Scope grouped value verdicts to compared sample cells and show the compared
-  count, including zero. File-only and uncached rows no longer imply that an
-  entire group was verified; all nine report languages retain this distinction.
-- Tolerate date-time cache rounding across midnight within half a millisecond,
-  while retaining detection of real time and day differences in both Excel
-  date systems. Date labels use whole serial days to avoid premature rollover
-  from microsecond rounding.
-- Compare the time as well as the day when checking recalculated Excel serials
-  against date-time caches. Same-day hour differences now produce divergence
-  badges and warnings, including caches at midnight, for both Excel date systems.
-  Warning messages retain the stored time; cache millisecond rounding remains
-  tolerated.
+- Compare complete Excel dates, times and elapsed durations with an absolute
+  0.5 ms cache-rounding tolerance across analysis, targeted recalculation and
+  corpus validation. Preserve negative dates, both workbook calendars,
+  midnight rollover and Excel's fictitious February 29, 1900; real time and
+  day differences remain visible in verdicts and warnings.
+- Preserve temporal caches through both readers, including ISO dates with
+  General format, quoted or escaped elapsed-time literals, and serials outside
+  Python's calendar or duration range. Large durations no longer gain a second
+  during fallback conversion; recovered numeric durations retain temporal
+  comparison precision instead of hiding second-level differences.
+- Recover from a Calamine Rust panic by falling back to openpyxl. Cache
+  retention limits and real Excel errors remain intact; keyboard interrupts,
+  process exits and asynchronous cancellation still propagate. Reader fallback
+  is reported, although upstream panic and conversion diagnostics can still
+  appear on stderr after successful recovery.
+- Keep result and cache types through report serialization, including uncached
+  results. Literal text no longer agrees with dates, times, durations,
+  non-finite numbers or spreadsheet errors solely because they display alike;
+  NaN remains unequal to itself. Report verdicts agree with analysis warnings.
+- Distinguish changed digits from regional number formatting in text. Identifiers,
+  versions, paths, Unicode marks and joiners, arithmetic/comparison connectors
+  and literal `#` positions remain significant. Standalone amounts and mixed
+  amount lists retain formatting tolerance beside unchanged identifiers;
+  ambiguous digit grouping is compared conservatively.
+- Display consistent dates and times, including milliseconds and calendar
+  rollover, in graph annotations, detail cards and source-range samples.
+  Elapsed formats retain numeric day values without invented calendar dates;
+  richer elapsed-time display remains limited.
+- Scope grouped verdicts to cells actually compared, distinguishing compared,
+  displayed and total counts in all nine languages. File-only and uncached
+  samples no longer imply verification of an entire group.
+- Render one value card and comparison verdict for formula-bearing defined-name
+  nodes supplied to the viewer, preserving their formula and targets. Standard
+  workbook analysis does not currently emit these formula-bearing name nodes.
+- Refresh README viewer screenshots from the validated synthetic workbook.
 
 ### Changed
 
+- Validate both generated workbooks in all nine report languages by default.
+  Browser regressions cover group verdicts, provenance and temporal display
+  at desktop and mobile widths; AI documentation and vision remain optional.
+- Share ordinary numeric comparison tolerance between full analysis, targeted
+  recalculation and corpus validation, including dependency results.
 - Refresh the locked Python toolchain and optional dependencies, including
   Pillow 13, Playwright 1.64.1 and MkDocs Material 9.8.0.
 - Update the locked Formualizer engine to 0.13.0 while retaining linexcel's

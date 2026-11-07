@@ -615,8 +615,9 @@ def readings_agree(
     Otherwise date metadata may describe a serialized temporal cache, as in
     older report callers; that compatibility does not prove a literal's type.
     ``epoch_1904`` supplies the workbook calendar when day zero has no date label.
-    ``date_formatted`` preserves temporal precision for numeric date caches,
-    including Excel's fictitious 1900 leap day, which has no Python date.
+    ``date_formatted`` preserves temporal precision for numeric date or duration
+    caches, including Excel's fictitious 1900 leap day and elapsed durations
+    beyond Python's range. It does not assign a calendar label to a duration.
     """
     if stored_is_text and (
         date_text is not None

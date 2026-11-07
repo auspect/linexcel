@@ -65,9 +65,11 @@ class CachedValues:
         epoch_1904: bool,
         truncated_sheets: set[str] | None = None,
         error_cells: set[tuple[str, int, int]] | None = None,
+        duration_cells: set[tuple[str, int, int]] | None = None,
     ):
         self._values = values
         self._date_cells = date_cells
+        self._duration_cells = duration_cells or set()
         self.epoch_1904 = epoch_1904
         self.truncated_sheets = truncated_sheets or set()
         self.error_cells = error_cells
@@ -77,6 +79,11 @@ class CachedValues:
 
     def is_date(self, sheet: str, row: int, col: int) -> bool:
         return (sheet, row, col) in self._date_cells
+
+    def is_temporal(self, sheet: str, row: int, col: int) -> bool:
+        """Dates and elapsed durations need absolute cache-rounding tolerance."""
+        key = (sheet, row, col)
+        return key in self._date_cells or key in self._duration_cells
 
     def is_error(self, sheet: str | None, row: int, col: int) -> bool | None:
         """Source cell type, not an inference from a '#VALUE!' text spelling."""
@@ -326,7 +333,7 @@ def _load_cached_values_calamine(
     values: dict[tuple[str, int, int], Any] = {}
     # A formula with no saved value still has a meaningful display format.
     # Calamine's value types alone cannot recover that source metadata.
-    date_cells = _date_formatted_cells(data)
+    date_cells, duration_cells = _temporal_formatted_cells(data)
     epoch_1904 = _detect_epoch_1904(data)
     errors = _error_cached_values(data)
     # Calamine drops trailing cells that carry only formatting; openpyxl and
@@ -381,7 +388,12 @@ def _load_cached_values_calamine(
                 truncated.add(name)
     _restore_lossy_date_caches(data, values, epoch_1904, date_cells)
     return CachedValues(
-        values, date_cells, epoch_1904, truncated, set(errors) & values.keys()
+        values,
+        date_cells,
+        epoch_1904,
+        truncated,
+        set(errors) & values.keys(),
+        duration_cells,
     )
 
 
@@ -520,13 +532,16 @@ def _restore_lossy_date_caches(
         pass
 
 
-def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
+def _temporal_formatted_cells(
+    data: bytes,
+) -> tuple[set[tuple[str, int, int]], set[tuple[str, int, int]]]:
     """Sparse format metadata, including formulas whose saved cache is empty."""
     result: set[tuple[str, int, int]] = set()
+    durations: set[tuple[str, int, int]] = set()
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             if "xl/styles.xml" not in archive.namelist():
-                return result
+                return result, durations
             styles = ElementTree.fromstring(archive.read("xl/styles.xml"))
             formats = dict(BUILTIN_FORMATS)
             formats.update(
@@ -540,8 +555,13 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                 for index, item in enumerate(styles.findall("{*}cellXfs/{*}xf"))
                 if _is_date_format(formats.get(int(item.get("numFmtId", "0"))))
             }
-            if not indices:
-                return result
+            duration_indices = {
+                index
+                for index, item in enumerate(styles.findall("{*}cellXfs/{*}xf"))
+                if _is_duration_format(formats.get(int(item.get("numFmtId", "0"))))
+            }
+            if not indices and not duration_indices:
+                return result, durations
             paths = _parse_sheet_targets(
                 archive.read("xl/workbook.xml").decode("utf-8"),
                 archive.read("xl/_rels/workbook.xml.rels").decode("utf-8"),
@@ -551,8 +571,9 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                     address = re.search(rb'\br="([A-Z]{1,3})(\d+)"', cell.group(1))
                     style = re.search(rb'\bs="(\d+)"', cell.group(1))
                     index = int(style.group(1)) if style else 0
-                    if address and index in indices:
-                        result.add(
+                    if address and (index in indices or index in duration_indices):
+                        target = durations if index in duration_indices else result
+                        target.add(
                             (
                                 sheet,
                                 int(address.group(2)),
@@ -561,7 +582,7 @@ def _date_formatted_cells(data: bytes) -> set[tuple[str, int, int]]:
                         )
     except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         pass
-    return result
+    return result, durations
 
 
 def _stepped(phase_cm, items, verb: str):
@@ -601,6 +622,7 @@ def _load_cached_values_openpyxl(
     truncated: set[str] = set()
     values: dict[tuple[str, int, int], Any] = {}
     date_cells: set[tuple[str, int, int]] = set()
+    duration_cells: set[tuple[str, int, int]] = set()
     error_cells: set[tuple[str, int, int]] = set()
     epoch_1904 = False
     try:
@@ -628,6 +650,8 @@ def _load_cached_values_openpyxl(
                     key = (ws.title, r, c)
                     if _is_date_format(getattr(cell, "number_format", None)):
                         date_cells.add(key)
+                    elif _is_duration_format(getattr(cell, "number_format", None)):
+                        duration_cells.add(key)
                     if cell.value is not None:
                         values[key] = cell.value
                         if cell.data_type == "e":
@@ -639,7 +663,9 @@ def _load_cached_values_openpyxl(
     _restore_lossy_date_caches(
         data, values, epoch_1904, date_cells, error_cells, restore_durations=True
     )
-    return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
+    return CachedValues(
+        values, date_cells, epoch_1904, truncated, error_cells, duration_cells
+    )
 
 
 def _detect_epoch_1904(data: bytes) -> bool:
@@ -676,5 +702,16 @@ def _is_date_format(number_format: Any) -> bool:
         # The elapsed predicate itself does not ignore quoted/escaped literals.
         tokens = re.sub(r'"[^"]*"|\\.', "", number_format)
         return bool(is_date_format(number_format) and not is_timedelta_format(tokens))
+    except Exception:
+        return False
+
+
+def _is_duration_format(number_format: Any) -> bool:
+    """Elapsed tokens count only outside quoted or escaped format literals."""
+    if not number_format:
+        return False
+    try:
+        tokens = re.sub(r'"[^"]*"|\\.', "", number_format)
+        return bool(is_timedelta_format(tokens))
     except Exception:
         return False
