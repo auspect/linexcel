@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in colon-connected text such as `1:2` versus `01:2`,
+  `12:01` versus `12:1` and `A:1` versus `A:01`. Textual times, ratios and
+  identifiers no longer hide changed padding or decimal separators as regional
+  formatting. Whitespace-separated quantities (`Total: 6.7` versus `Total: 6,7`)
+  and separate amounts after unchanged identifiers retain regional tolerance.
+
 - Preserve literal digits next to forward slashes in rooted and drive paths
   (`/1` versus `/01`, `C:/1` versus `C:/01`) and trailing path separators.
   Changed padding or decimal separators now produces divergence verdicts and

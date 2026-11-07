@@ -1472,6 +1472,44 @@ class TestReadingsAgree:
         assert readings_agree(left, right, None) == verdict
         assert readings_agree(right, left, None) == verdict
 
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("1:2", "01:2", "differ"),
+            ("1:2", "1:02", "differ"),
+            ("12:01", "12:1", "differ"),
+            ("01:02:03", "1:2:3", "differ"),
+            ("A:1", "A:01", "differ"),
+            ("1:beta", "01:beta", "differ"),
+            ("A::1", "A::01", "differ"),
+            ("A:-1", "A:-01", "differ"),
+            ("1+:beta", "01+:beta", "differ"),
+            ("A:6.7", "A:6,7", "differ"),
+            ("6.7:2", "6,7:2", "differ"),
+            ("1:6.7", "1:6,7", "differ"),
+            ("e\u0301:1", "e\u0301:01", "differ"),
+            ("A\u2060:1", "A\u2060:01", "differ"),
+            ("A:01 total 6.7", "A:01 total 6,7", "format"),
+            ("12:01 total .50", "12:01 total 0,5", "format"),
+            ("12:01", "12:01", "same"),
+            ("A:01", "A:01", "same"),
+            ("Total: 6.7", "Total: 6,7", "format"),
+            ("6.7 : total", "6,7 : total", "format"),
+            (":6.7", ":6,7", "format"),
+            ("6.7:", "6,7:", "format"),
+            ("Total:\u00a06.7", "Total:\u00a06,7", "format"),
+            ("Total:\u202f6.7", "Total:\u202f6,7", "format"),
+            ("Total: -6.7", "Total: -6,7", "format"),
+            ("Total: 6.7", "Total: 6,8", "differ"),
+            ("A:1 total 6.7", "A:01 total 6,7", "differ"),
+        ],
+    )
+    def test_colon_connected_digits_remain_literal(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
 
@@ -1608,6 +1646,14 @@ def with_stored_results(
         ("1\u200cx", "01\u200cx", "differ"),
         ("1\u200dx", "01\u200dx", "differ"),
         ("A\u200d1 total 6.7", "A\u200d1 total 6,7", "format"),
+        ("1:2", "01:2", "differ"),
+        ("12:01", "12:1", "differ"),
+        ("A:1", "A:01", "differ"),
+        ("1:beta", "01:beta", "differ"),
+        ("A:-1", "A:-01", "differ"),
+        ("A:6.7", "A:6,7", "differ"),
+        ("A:01 total 6.7", "A:01 total 6,7", "format"),
+        ("Total: 6.7", "Total: 6,7", "format"),
         ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
         ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
     ],
