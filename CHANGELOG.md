@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in text joined by Unicode dash punctuation, including
+  en dashes, em dashes and non-breaking hyphens (`A–1` versus `A–01`). Mixed
+  connector runs and numeric ranges follow the same rule as ASCII hyphens;
+  standalone quantities and amounts separated by whitespace retain regional
+  formatting tolerance.
+
 - Preserve literal digits in colon-connected text such as `1:2` versus `01:2`,
   `12:01` versus `12:1` and `A:1` versus `A:01`. Textual times, ratios and
   identifiers no longer hide changed padding or decimal separators as regional

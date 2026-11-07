@@ -349,10 +349,14 @@ def _is_word_character(char: str) -> bool:
 
 
 def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
-    # Signs, colons and slashes can join identifiers or path components.
+    # Signs, Unicode dash punctuation, colons and slashes can join identifiers
+    # or path components. Typographic dashes need the same literal treatment
+    # as ASCII hyphens ("A–1" and "A–01" are different identifiers).
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
-    while 0 <= index < len(text) and text[index] in "+-:/\\":
+    while 0 <= index < len(text) and (
+        text[index] in "+-:/\\" or unicodedata.category(text[index]) == "Pd"
+    ):
         # Either slash can delimit a path component, even at a root
         # or after a drive colon ("/1", "C:/1"). Its digits are literal;
         # no word on the other side is needed to make the number ambiguous.

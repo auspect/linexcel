@@ -1510,6 +1510,52 @@ class TestReadingsAgree:
         assert readings_agree(left, right, None) == verdict
         assert readings_agree(right, left, None) == verdict
 
+    @pytest.mark.parametrize(
+        "dash",
+        [
+            "\u2010",
+            "\u2011",
+            "\u2012",
+            "\u2013",
+            "\u2014",
+            "\u2015",
+            "\ufe63",
+            "\uff0d",
+            "\U00010ead",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A{d}1", "A{d}01", "differ"),
+            ("1{d}beta", "01{d}beta", "differ"),
+            ("1{d}2", "01{d}2", "differ"),
+            ("1{d}2", "1{d}02", "differ"),
+            ("A{d}6.7", "A{d}6,7", "differ"),
+            ("A{d}+-1", "A{d}+-01", "differ"),
+            ("1-+{d}beta", "01-+{d}beta", "differ"),
+            ("e\u0301{d}1", "e\u0301{d}01", "differ"),
+            ("A\u2060{d}1", "A\u2060{d}01", "differ"),
+            ("A{d}01 total 6.7", "A{d}01 total 6,7", "format"),
+            ("A{d}01", "A{d}01", "same"),
+            ("{d}6.7 €", "{d}6,7 €", "format"),
+            ("A {d}6.7", "A {d}6,7", "format"),
+            ("A{d} 6.7", "A{d} 6,7", "format"),
+            ("6.7 {d} beta", "6,7 {d} beta", "format"),
+            ("A{d}\u00a06.7", "A{d}\u00a06,7", "format"),
+            ("A{d}\u202f6.7", "A{d}\u202f6,7", "format"),
+            ("A {d} 6.7", "A {d} 6,8", "differ"),
+        ],
+    )
+    def test_unicode_dash_identifiers_and_separate_quantities(
+        self, dash, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(d=dash), right.format(d=dash)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
 
@@ -1654,6 +1700,14 @@ def with_stored_results(
         ("A:6.7", "A:6,7", "differ"),
         ("A:01 total 6.7", "A:01 total 6,7", "format"),
         ("Total: 6.7", "Total: 6,7", "format"),
+        ("A–1", "A–01", "differ"),
+        ("1—beta", "01—beta", "differ"),
+        ("A‑6.7", "A‑6,7", "differ"),
+        ("1–2", "1–02", "differ"),
+        ("A–+-1", "A–+-01", "differ"),
+        ("A–01 total 6.7", "A–01 total 6,7", "format"),
+        ("A –6.7", "A –6,7", "format"),
+        ("A– 6.7", "A– 6,7", "format"),
         ("ID 9007199254740992", "ID 9 007 199 254 740 993", "differ"),
         ("ID 9007199254740993", "ID 9 007 199 254 740 993", "format"),
     ],
