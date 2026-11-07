@@ -2356,3 +2356,45 @@ def test_date_formatted_formula_does_not_agree_with_literal_cache(
     assert any(
         "S!B1:" in w and "differs from file" in w for w in graph["meta"]["warnings"]
     )
+
+
+@pytest.mark.parametrize("raw", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "cache_kind", ["same_number", "opposite_number", "text", "finite"]
+)
+def test_nonfinite_verdict_retains_numeric_types(raw, cache_kind):
+    import math
+
+    stored = {
+        "same_number": raw,
+        "opposite_number": -raw,
+        "text": str(raw),
+        "finite": 42,
+    }[cache_kind]
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    agrees = cache_kind == "same_number" and not math.isnan(raw)
+    assert fields["value"] == str(raw)
+    assert fields["cachedAgreement"] == ("same" if agrees else "differ")
+    assert bool(warnings) == (not agrees)
+    # Display serialization must still produce valid JSON.
+    json.dumps(fields, allow_nan=False)
+
+
+@pytest.mark.parametrize("stored", [float("nan"), float("inf"), float("-inf")])
+def test_literal_result_does_not_agree_with_nonfinite_numeric_cache(stored):
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): str(stored)},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == fields["cachedValue"] == str(stored)
+    assert fields["cachedAgreement"] == "differ"
+    assert warnings

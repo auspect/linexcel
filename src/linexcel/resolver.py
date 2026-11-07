@@ -9,6 +9,7 @@ from analyzer.py.
 from __future__ import annotations
 
 import datetime
+import math
 import re
 import time
 from pathlib import Path
@@ -208,7 +209,9 @@ class _ValueResolver:
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
         self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
-        self._duration_results: dict[tuple[str, int, int], datetime.timedelta] = {}
+        self._comparison_results: dict[
+            tuple[str, int, int], datetime.timedelta | float
+        ] = {}
         self._external_ranges: dict[tuple[str, str, str], str] = {}
         self._external_sheet_names = {sheet.casefold() for sheet in engine_sheets}
         self._external_exprs: set[tuple[str, str]] = set()
@@ -300,14 +303,16 @@ class _ValueResolver:
             comparison_value = value
             raw_cache = self.cached.get(sheet, row, col)
             if source not in ("file", "volatile"):
-                # Keep proof of the duration type for comparison. Its display
-                # text alone could equally be a formula's literal string result.
-                comparison_value = self._duration_results.get((sheet, row, col), value)
+                # Durations and non-finite numbers serialize as strings; keep
+                # their original types distinct from literal text results.
+                comparison_value = self._comparison_results.get(
+                    (sheet, row, col), value
+                )
                 # A date/time cache must also retain its type: a formula
                 # returning identical-looking text is still a different value.
                 if isinstance(
                     raw_cache, (datetime.date, datetime.time, datetime.timedelta)
-                ):
+                ) or (isinstance(raw_cache, float) and not math.isfinite(raw_cache)):
                     comparison_cache = raw_cache
             fields["cachedAgreement"] = readings_agree(
                 comparison_value,
@@ -818,12 +823,14 @@ class _ValueResolver:
         self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
     ) -> None:
         key = (sheet, row, col)
-        # Keep the proof of a duration result after value() serializes it.
-        # Parsing its display text would also accept literal string results.
-        if isinstance(raw, datetime.timedelta):
-            self._duration_results[key] = raw
+        # Preserve types whose JSON representation is indistinguishable from
+        # literal text. Parsing that text would accept string results too.
+        if isinstance(raw, datetime.timedelta) or (
+            isinstance(raw, float) and not math.isfinite(raw)
+        ):
+            self._comparison_results[key] = raw
         else:
-            self._duration_results.pop(key, None)
+            self._comparison_results.pop(key, None)
         if key in self._compared:
             return
         self._compared.add(key)

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report comparisons retain the numeric type of non-finite results and caches
+  after JSON serialization. Literal strings such as `nan` or `inf` no longer
+  receive a false agreement verdict, and NaN remains unequal to itself,
+  consistent with the analysis warnings.
+
 - Recalculated dates and times no longer agree with literal cache strings
   that happen to display the same date or time. Warnings and report verdicts
   preserve the cache's text type, including date-formatted numeric results;
