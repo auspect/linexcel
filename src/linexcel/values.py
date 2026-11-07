@@ -348,11 +348,16 @@ def _is_word_character(char: str) -> bool:
     )
 
 
-def _word_across_connectors(text: str, index: int, direction: int) -> bool:
+def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # Signs, slashes and backslashes can join identifiers or path components.
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and text[index] in "+-/\\":
+        # A backslash itself can delimit a path component, even at a root
+        # or after a drive colon ("\\1", "C:\\1"). Its digits are literal;
+        # no word on the other side is needed to make the number ambiguous.
+        if text[index] == "\\":
+            return True
         index += direction
     return 0 <= index < len(text) and _is_word_character(text[index])
 
@@ -389,11 +394,11 @@ def _separators_only(left: str, right: str) -> bool:
             (
                 match.start()
                 and (
-                    _word_across_connectors(text, match.start() - 1, -1)
+                    _literal_across_connectors(text, match.start() - 1, -1)
                     or text[match.start() - 1] in ".,"
                 )
             )
-            or _word_across_connectors(text, match.end(), 1)
+            or _literal_across_connectors(text, match.end(), 1)
             for text, match in ((left, a), (right, b))
         ):
             if a.group() != b.group():
