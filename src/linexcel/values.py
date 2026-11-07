@@ -180,6 +180,28 @@ def _serial_datetime_agreement(
     """
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
+    if epoch_1904 is False and 60 <= raw < 61 and isinstance(cached, datetime.date):
+        # The phantom day has no date label. Measure from the following
+        # midnight in Excel's calendar, retaining the missing day when the
+        # typed cache precedes March 1. Never infer dates from literal strings.
+        stored = (
+            cached
+            if isinstance(cached, datetime.datetime)
+            else datetime.datetime.combine(cached, datetime.time.min)
+        )
+        if stored.tzinfo is not None:
+            return "differ"
+        following_day = datetime.datetime(1900, 3, 1)
+        stored_seconds = (stored - following_day).total_seconds()
+        if stored < following_day:
+            stored_seconds -= 86400
+        return (
+            "same"
+            if math.isclose(
+                (raw - 61) * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005
+            )
+            else "differ"
+        )
     if (
         date_text is None
         and epoch_1904 is False

@@ -29,6 +29,12 @@ from linexcel.values import readings_agree
         (60 - 0.25 / 86_400_000, 60, "same"),
         (60, 60 - 0.25 / 86_400_000, "same"),
         (60 - 1 / 86_400_000, 60, "differ"),
+        (61 - 0.25 / 86_400_000, 61, "same"),
+        (61 - 0.49 / 86_400_000, 61, "same"),
+        (61 - 0.51 / 86_400_000, 61, "differ"),
+        (61 - 1 / 86_400_000, 61, "differ"),
+        (61, 61 - 0.25 / 86_400_000, "same"),
+        (61 - 0.25 / 86_400_000, 59, "differ"),
     ],
 )
 def test_leap_day_boundary_preserves_serial_distance(
@@ -41,13 +47,35 @@ def test_leap_day_boundary_preserves_serial_distance(
     )
     graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
     node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
-    assert node["value"] == serial
+    assert node["value"] == float(format(serial, ".16g"))
     assert node["cachedAgreement"] == expected
     assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == (
         expected == "differ"
     )
     if not epoch_1904 and 60 - 0.5 / 86_400_000 < cache_serial <= 60:
         assert node["cachedValue"] == cache_serial
+
+
+@pytest.mark.parametrize(
+    ("cached", "epoch_1904", "expected"),
+    [
+        (dt.datetime(1900, 3, 1), False, "same"),
+        (dt.date(1900, 3, 1), False, "same"),
+        (dt.datetime(1900, 3, 1, tzinfo=dt.UTC), False, "differ"),
+        (dt.datetime(1900, 2, 28), False, "differ"),
+        (dt.datetime(1900, 3, 2), False, "differ"),
+        ("1900-03-01", False, "differ"),
+        (dt.datetime(1900, 3, 1), None, "differ"),
+        (dt.datetime(1900, 3, 1), True, "differ"),
+    ],
+)
+def test_phantom_end_comparison_requires_typed_cache_and_calendar(
+    cached, epoch_1904, expected
+):
+    assert (
+        readings_agree(61 - 0.25 / 86_400_000, cached, None, epoch_1904=epoch_1904)
+        == expected
+    )
 
 
 @pytest.mark.parametrize("slow_reader", [False, True])

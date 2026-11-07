@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Date comparisons accept rounding within 0.5 ms from the end of Excel's
+  fictitious February 29, 1900 to a March 1 cache. Typed caches are compared
+  on Excel's calendar even when the result has no representable Python date;
+  real time gaps and literal date text remain distinct.
+
 - Date comparisons retain Excel's fictitious leap day when rounding across
   February 28, 1900. A result just before day 60 no longer agrees with a March 1
   cache, and readers preserve the original serial when rounding the cache
