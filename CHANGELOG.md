@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the position of literal `#` characters when comparing text with
+  regional number formatting. Texts such as `#1` and `1#` now produce divergence
+  verdicts and warnings; unchanged surrounding text such as `#6.7#` versus
+  `#6,7#` retains formatting tolerance.
+
 - Unchanged numeric-looking text, such as the version in `Version 1.2.3 total
   6.7`, no longer prevents recognizing regional formatting of a separate amount
   (`6,7`). Changed versions, addresses, ambiguous digit runs and amounts still

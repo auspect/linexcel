@@ -391,7 +391,7 @@ def _literal_number_edges(text: str, match: re.Match[str]) -> tuple[bool, bool]:
     )
 
 
-def _text_number_parts(text: str) -> tuple[str, list[re.Match[str]]]:
+def _text_number_parts(text: str) -> tuple[list[str], list[re.Match[str]]]:
     """Separate identifiers from amounts without breaking valid digit groups."""
     numbers = []
     for match in _NUMBER_RE.finditer(text):
@@ -445,10 +445,13 @@ def _text_number_parts(text: str) -> tuple[str, list[re.Match[str]]]:
     parts = []
     end = 0
     for match in numbers:
-        parts.extend((text[end : match.start()], "#"))
+        # Preserve each literal segment's position relative to the numbers.
+        # Joining with a text marker would collide with real characters:
+        # "#1" and "1#" must not both reduce to "##".
+        parts.append(text[end : match.start()])
         end = match.end()
     parts.append(text[end:])
-    return "".join(parts), numbers
+    return parts, numbers
 
 
 def _separators_only(left: str, right: str) -> bool:

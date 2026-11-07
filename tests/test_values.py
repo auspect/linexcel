@@ -1244,6 +1244,32 @@ class TestReadingsAgree:
         assert readings_agree(right, left, None) == verdict
 
     @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("#1", "1#", "differ"),
+            ("##1", "1##", "differ"),
+            ("#1#2", "1##2", "differ"),
+            ("#1#2", "1#2#", "differ"),
+            ("#6.7", "6,7#", "differ"),
+            ("#1,234", "1234#", "differ"),
+            ("#1.2.3", "1.2.3#", "differ"),
+            ("#6.7#", "#6,7#", "format"),
+            ("#1#6.7", "#1#6,7", "format"),
+            ("#1.2.3; 6.7", "#1.2.3; 6,7", "format"),
+            ("#6.7#", "#6,8#", "differ"),
+            ("#1#", "#1#", "same"),
+            ("#", "##", "differ"),
+        ],
+    )
+    def test_literal_hash_positions_survive_numeric_comparison(
+        self, left, right, verdict
+    ):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
         "fragment",
         ["1.2.3", "127.0.0.1", "1,2,3", "1'2", "1 234.5 6.7", "1\u00a0234.5 6.7"],
     )
@@ -1762,6 +1788,14 @@ def with_stored_results(
 @pytest.mark.parametrize(
     ("recalculated", "stored", "verdict"),
     [
+        ("#1", "1#", "differ"),
+        ("1#", "#1", "differ"),
+        ("#1#2", "1##2", "differ"),
+        ("#6.7", "6,7#", "differ"),
+        ("#1.2.3", "1.2.3#", "differ"),
+        ("#6.7#", "#6,7#", "format"),
+        ("#1.2.3; 6.7", "#1.2.3; 6,7", "format"),
+        ("#6.7#", "#6,8#", "differ"),
         ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,7", "format"),
         ("Version 1.2.3 total 6.7", "Version 1.2.4 total 6,7", "differ"),
         ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,8", "differ"),
