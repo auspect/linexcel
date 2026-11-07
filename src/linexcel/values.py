@@ -352,12 +352,12 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # Signs, Unicode dash punctuation, colons and slashes can join identifiers
     # or path components. Typographic dashes need the same literal treatment
     # as ASCII hyphens ("A–1" and "A–01" are different identifiers).
-    # Minus and plus/minus signs are mathematical symbols (Sm), not dash
-    # punctuation. They can connect text too ("A±1" versus "A±01").
+    # Minus, plus/minus and multiplication signs are mathematical symbols
+    # (Sm), not dash punctuation. They can connect text too ("A×1" vs "A×01").
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and (
-        text[index] in "+-−±∓:/\\" or unicodedata.category(text[index]) == "Pd"
+        text[index] in "+-−±∓×:/\\" or unicodedata.category(text[index]) == "Pd"
     ):
         # Either slash can delimit a path component, even at a root
         # or after a drive colon ("/1", "C:/1"). Its digits are literal;
