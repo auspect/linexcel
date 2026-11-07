@@ -2247,3 +2247,41 @@ def test_typed_duration_does_not_match_literal_cache_text(days):
     assert fields["value"] == fields["cachedValue"] == str(raw)
     assert fields["cachedAgreement"] == "differ"
     assert bool(warnings)
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56, 123000),
+        datetime.time(0),
+        datetime.time(12, 34, 56, 123000),
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+def test_temporal_cache_retains_type_against_literal_text(stored, source):
+    from linexcel.values import _date_text_of, _fmt_value, _jsonable
+
+    key = (SHEET, 1, 1)
+    text = _fmt_value(stored)
+    warnings = []
+    resolver = resolver_for(
+        {key: text} if source != "file" else {},
+        CachedValues({key: stored}, {key}, False),
+        warnings,
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["cachedValue"] == text
+    assert fields["value"] == (text if source == "engine" else _jsonable(stored))
+    assert fields["valueSource"] == source
+    assert fields["cachedAgreement"] == ("differ" if source == "engine" else "same")
+    assert bool(warnings) == (source == "engine")
+    if source == "engine":
+        assert "valueDate" not in fields
+        assert fields["valueKind"] == "text"
+    else:
+        assert fields["valueDate"] == _date_text_of(stored)

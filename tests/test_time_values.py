@@ -299,3 +299,34 @@ def test_date_label_does_not_round_a_fraction_up_to_the_next_day(epoch_1904):
     raw = math.nextafter(2.0, 0.0)
     expected = "1904-01-02" if epoch_1904 else "1900-01-01"
     assert serial_to_date_text(raw, epoch_1904) == expected
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    ("text", "fraction", "whole_date"),
+    [
+        ("00:00:00", 0, False),
+        ("12:00:00", 0.5, False),
+        ("2026-02-01", 0, True),
+        ("2026-02-01 12:00:00", 0.5, True),
+    ],
+)
+def test_formula_text_does_not_agree_with_identically_displayed_temporal_cache(
+    epoch_1904, slow_reader, text, fraction, whole_date, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    day = (44592 if epoch_1904 else 46054) if whole_date else 0
+    data = _time_workbook(text, day + fraction, epoch_1904)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Clock!B1")
+    assert node["value"] == node["cachedValue"] == text
+    assert node["valueSource"] == "engine"
+    assert node["valueKind"] == "text"
+    assert "valueDate" not in node
+    assert node["cachedAgreement"] == "differ"
+    assert any(
+        "Clock!B1:" in warning and "differs from file value" in warning
+        for warning in graph["meta"]["warnings"]
+    )

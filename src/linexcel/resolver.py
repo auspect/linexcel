@@ -303,7 +303,11 @@ class _ValueResolver:
                 # Keep proof of the duration type for comparison. Its display
                 # text alone could equally be a formula's literal string result.
                 comparison_value = self._duration_results.get((sheet, row, col), value)
-                if isinstance(raw_cache, datetime.timedelta):
+                # A date/time cache must also retain its type: a formula
+                # returning identical-looking text is still a different value.
+                if isinstance(
+                    raw_cache, (datetime.date, datetime.time, datetime.timedelta)
+                ):
                     comparison_cache = raw_cache
             fields["cachedAgreement"] = readings_agree(
                 comparison_value,

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report verdicts now retain the type of cached dates and times. A formula
+  returning literal text such as `12:00:00` no longer appears to agree with a
+  stored time while the analysis warns of a difference. Values retained from
+  the file, including volatile formulas, keep their existing verdicts.
+
 - Typed duration results now retain their comparison type after report
   serialization. Equal durations and cache rounding within 0.5 ms agree in
   both warnings and report verdicts; larger differences and literal text
