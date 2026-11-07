@@ -572,6 +572,20 @@ def readings_agree(
     ):
         return "differ"
     if isinstance(stored, datetime.timedelta) and isinstance(
+        recalculated, datetime.timedelta
+    ):
+        # Subtract before converting to seconds: long durations must retain
+        # microsecond precision, and negative durations keep their sign.
+        try:
+            difference = abs(recalculated - stored)
+        except OverflowError:
+            # Opposite timedelta limits are farther apart than a timedelta
+            # can represent, and therefore certainly exceed cache rounding.
+            return "differ"
+        return (
+            "same" if difference <= datetime.timedelta(microseconds=500) else "differ"
+        )
+    if isinstance(stored, datetime.timedelta) and isinstance(
         recalculated, (int, float)
     ):
         # Elapsed formats store a duration, not a date or a time of day.

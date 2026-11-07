@@ -180,3 +180,22 @@ def test_duration_comparison_preserves_result_type_and_cache_only_provenance(
         "Durations!B1:" in w and "differs from file" in w
         for w in graph["meta"]["warnings"]
     ) == (expected == "differ")
+
+
+@pytest.mark.parametrize("days", [-999_999_998, -1, 0, 1, 999_999_998])
+@pytest.mark.parametrize("offset", [-1000, -501, -500, -250, 0, 250, 500, 501, 1000])
+def test_typed_durations_tolerate_only_cache_rounding(days, offset):
+    stored = datetime.timedelta(days=days)
+    raw = stored + datetime.timedelta(microseconds=offset)
+    expected = "same" if abs(offset) <= 500 else "differ"
+    assert readings_agree(raw, stored, None) == expected
+    assert readings_agree(stored, raw, None) == expected
+
+
+def test_opposite_duration_limits_differ_without_overflow():
+    assert (
+        readings_agree(datetime.timedelta.min, datetime.timedelta.max, None) == "differ"
+    )
+    assert (
+        readings_agree(datetime.timedelta.max, datetime.timedelta.min, None) == "differ"
+    )

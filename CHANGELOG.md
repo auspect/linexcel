@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Typed duration results now retain their comparison type after report
+  serialization. Equal durations and cache rounding within 0.5 ms agree in
+  both warnings and report verdicts; larger differences and literal text
+  resembling a duration remain distinct.
+
 - Targeted recalculation and corpus validation now tolerate temporal cache
   rounding within 0.5 ms for dates, times and elapsed durations, including
   dependency results. Larger differences still require review; tolerance does

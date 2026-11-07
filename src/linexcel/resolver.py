@@ -208,6 +208,7 @@ class _ValueResolver:
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
         self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
+        self._duration_results: dict[tuple[str, int, int], datetime.timedelta] = {}
         self._external_ranges: dict[tuple[str, str, str], str] = {}
         self._external_sheet_names = {sheet.casefold() for sheet in engine_sheets}
         self._external_exprs: set[tuple[str, str]] = set()
@@ -296,16 +297,16 @@ class _ValueResolver:
             result_error = self._result_is_error.get((sheet, row, col))
             cached_error = self.cached.is_error(sheet, row, col)
             comparison_cache = cached
+            comparison_value = value
             raw_cache = self.cached.get(sheet, row, col)
-            if isinstance(raw_cache, datetime.timedelta) and source not in (
-                "file",
-                "volatile",
-            ):
+            if source not in ("file", "volatile"):
                 # Keep proof of the duration type for comparison. Its display
                 # text alone could equally be a formula's literal string result.
-                comparison_cache = raw_cache
+                comparison_value = self._duration_results.get((sheet, row, col), value)
+                if isinstance(raw_cache, datetime.timedelta):
+                    comparison_cache = raw_cache
             fields["cachedAgreement"] = readings_agree(
-                value,
+                comparison_value,
                 comparison_cache,
                 date_text,
                 recalculated_is_error=result_error,
@@ -812,6 +813,12 @@ class _ValueResolver:
         self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
     ) -> None:
         key = (sheet, row, col)
+        # Keep the proof of a duration result after value() serializes it.
+        # Parsing its display text would also accept literal string results.
+        if isinstance(raw, datetime.timedelta):
+            self._duration_results[key] = raw
+        else:
+            self._duration_results.pop(key, None)
         if key in self._compared:
             return
         self._compared.add(key)

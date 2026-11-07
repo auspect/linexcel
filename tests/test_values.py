@@ -2210,3 +2210,40 @@ class TestAFrenchWorkbookEndToEnd:
         assert node["cachedAgreement"] == "differ"
         (warning,) = [w for w in result.warnings if "B2" in w]
         assert "oui" in warning and "non" in warning
+
+
+@pytest.mark.parametrize("days", [-1, 0, 1])
+@pytest.mark.parametrize("offset", [-1000, -500, -250, 0, 250, 500, 1000])
+@pytest.mark.parametrize("as_text", [False, True])
+def test_duration_verdict_survives_resolver_serialization(days, offset, as_text):
+    stored = datetime.timedelta(days=days)
+    raw = stored + datetime.timedelta(microseconds=offset)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): str(raw) if as_text else raw},
+        CachedValues({(SHEET, 1, 1): stored}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    agrees = not as_text and abs(offset) <= 500
+    assert fields["value"] == str(raw)
+    assert fields["cachedValue"] == str(stored)
+    assert fields["valueSource"] == "engine"
+    assert fields["cachedAgreement"] == ("same" if agrees else "differ")
+    assert bool(warnings) == (not agrees)
+    assert "valueDate" not in fields
+
+
+@pytest.mark.parametrize("days", [-1, 0, 1])
+def test_typed_duration_does_not_match_literal_cache_text(days):
+    raw = datetime.timedelta(days=days)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): str(raw)}, set(), False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == fields["cachedValue"] == str(raw)
+    assert fields["cachedAgreement"] == "differ"
+    assert bool(warnings)
