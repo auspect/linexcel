@@ -202,6 +202,35 @@ def test_first_midnight_display_with_time_only_cache(
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [1, 1.5, -2.25, 0, 0.5])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss", "hh:mm:ss"])
+def test_date_results_with_time_only_cache(
+    epoch_1904, slow_reader, serial, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(epoch_1904, serial, number_format, cache_serial=0.5)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = {
+        1: "1904-01-02" if epoch_1904 else "1900-01-01",
+        1.5: "1904-01-02" if epoch_1904 else "1900-01-01",
+        -2.25: "1903-12-29" if epoch_1904 else "1899-12-27",
+        0: "00:00:00",
+        0.5: "12:00:00",
+    }[serial]
+    assert node["value"] == serial
+    assert node["valueSource"] == "engine"
+    assert node["cachedValue"] == "12:00:00"
+    assert node["cachedAgreement"] == ("same" if serial == 0.5 else "differ")
+    assert any("Dates!B1" in warning for warning in graph["meta"]["warnings"]) is (
+        serial != 0.5
+    )
+    assert node["valueDate"] == expected
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
 def test_analysis_reports_complete_negative_date_cache(
     epoch_1904, slow_reader, monkeypatch
 ):

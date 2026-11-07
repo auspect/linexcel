@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Results containing whole days retain their calendar date when the saved cache
+  is only a time. Both Excel calendars now display dates and times in graph
+  labels, detail cards and sampled rows instead of plain serial numbers;
+  ordinary times and real cache discrepancies keep their meaning.
+
 - Results rounding to the first midnight retain their date display even when
   the saved cache is still a time. Both Excel calendars now show the next day
   in graph labels, detail cards and sampled rows; real cache discrepancies

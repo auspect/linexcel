@@ -825,10 +825,11 @@ class _ValueResolver:
         if isinstance(cached, datetime.time):
             if cached.tzinfo is not None:
                 return None
-            if not first_midnight:
-                return serial_to_time_text(raw)
-            # A differing cache may still be a time while the result rounds
-            # into the next day. Preserve that day instead of displaying 1.
+            time_text = serial_to_time_text(raw)
+            if time_text is not None:
+                return time_text
+            # A differing cache may still be a time while the result contains
+            # whole days. Keep its calendar date, including rounded midnight.
         is_date = isinstance(cached, (datetime.date, datetime.time))
         if not is_date and not self.cached.is_date(sheet, row, col):
             return None
