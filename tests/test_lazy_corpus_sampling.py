@@ -2,10 +2,12 @@
 
 import importlib.util
 import math
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from linexcel.lazy import _cache_comparison
 from linexcel.values import readings_agree
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts/validate_lazy_corpus.py"
@@ -105,3 +107,48 @@ def test_numeric_tolerance_uses_comparison_values_before_display_values():
     }
     result = {"status": "completed", "value": "0.00", "comparisonValue": 5e-9}
     assert corpus.comparison(node, result) == "cache_difference_requires_review"
+
+
+@pytest.mark.parametrize(
+    "number_format",
+    ["yyyy-mm-dd hh:mm:ss", "yyyy-mm-dd", "hh:mm:ss", "[h]:mm:ss", "[mm]:ss"],
+)
+@pytest.mark.parametrize(
+    ("saved", "value", "expected"),
+    [
+        (45000.0, 45000 + 1 / 86400, "cache_difference_requires_review"),
+        (45000.0, 45000 - 1 / 86400, "cache_difference_requires_review"),
+        (0.5, 0.5 + 5e-10, "cache_difference_requires_review"),
+        (45000.0, 45000.0, "exact_agreement"),
+        (45000, 45000.0, "numeric_tolerance_agreement"),
+    ],
+)
+def test_temporal_serials_match_targeted_comparison(
+    number_format, saved, value, expected
+):
+    node = {
+        "cache_status": "saved",
+        "cached_value": "same displayed date",
+        "cached_comparison_value": saved,
+        "numberFormat": number_format,
+    }
+    result = {
+        "status": "completed",
+        "value": "same displayed date",
+        **_cache_comparison(node, value, value, datetime(1899, 12, 30)),
+    }
+    assert corpus.comparison(node, result) == expected
+    assert (expected != "cache_difference_requires_review") == (
+        result["comparison"] == "equal"
+    )
+
+
+@pytest.mark.parametrize("number_format", [None, "General", "0.00", '0.00 "days"'])
+def test_non_temporal_formats_keep_numeric_tolerance(number_format):
+    node = {
+        "cache_status": "saved",
+        "cached_value": 45000.0,
+        "numberFormat": number_format,
+    }
+    result = {"status": "completed", "value": 45000 + 1 / 86400}
+    assert corpus.comparison(node, result) == "numeric_tolerance_agreement"

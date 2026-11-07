@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The corpus validator no longer applies ordinary numeric rounding tolerance
+  to Excel date, time or elapsed-duration formats. Unequal temporal serials
+  require review, matching targeted recalculation; equal serials still agree.
+
 - The corpus validator now shares the product's numeric rounding tolerance.
   Differences such as `5e-9` against zero are flagged for review, while ordinary
   floating-point rounding and the existing relative tolerance remain accepted.
