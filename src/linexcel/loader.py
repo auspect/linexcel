@@ -197,7 +197,15 @@ def load_cached_values(
         )
     try:
         return finish(_load_cached_values_calamine(data, reporter, **reader_kwargs))
-    except Exception as exc:
+    except BaseException as exc:
+        # PyO3 exposes Rust panics as BaseException, outside Exception, and
+        # python-calamine does not export their class. Only its runtime panic
+        # may use the fallback; cancellation and process exit must propagate.
+        if not isinstance(exc, Exception) and not (
+            type(exc).__module__ == "pyo3_runtime"
+            and type(exc).__name__ == "PanicException"
+        ):
+            raise
         # Not silent: the slow reader detects dates from the number format
         # rather than from the type, which is a different answer on an edge
         # case, and someone comparing two runs deserves to know which read it.

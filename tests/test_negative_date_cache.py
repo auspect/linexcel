@@ -1,5 +1,6 @@
 """Temporal caches retain their calendar meaning across both source readers."""
 
+import asyncio
 import datetime as dt
 import io
 import re
@@ -708,3 +709,71 @@ def test_analysis_compares_out_of_range_duration_cache(
     provenance = node["sourceValueProvenance"]
     assert provenance["storageType"] == "n"
     assert float(provenance["rawXmlValue"]) == serial + offset
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("cell_limit", [1, 100])
+def test_calamine_duration_panic_falls_back_with_source_values(epoch_1904, cell_limit):
+    serial = -1_000_000_000_000
+    data = workbook_bytes(epoch_1904, serial, "[h]:mm:ss.000")
+    warnings = []
+    cached = load_cached_values(data, warnings, max_cells_per_sheet=cell_limit)
+    assert cached.epoch_1904 is epoch_1904
+    assert cached.get("Dates", 1, 1) == serial
+    assert not cached.is_date("Dates", 1, 1)
+    assert not cached.is_error("Dates", 1, 1)
+    assert any("openpyxl" in w and "PanicException" in w for w in warnings)
+    if cell_limit == 1:
+        assert len(cached) == 1
+        assert cached.get("Dates", 1, 2) is None
+        assert cached.truncated_sheets == {"Dates"}
+        assert any("limited to the first 1 cells" in w for w in warnings)
+    else:
+        assert cached.get("Dates", 1, 2) == serial
+        assert cached.get("Dates", 1, 3) == serial
+        assert not cached.truncated_sheets
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("isolated", [False, True])
+def test_analysis_survives_calamine_duration_panic(epoch_1904, isolated):
+    serial = -1_000_000_000_000
+    data = workbook_bytes(epoch_1904, serial, "[h]:mm:ss.000")
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=isolated))[
+        "graph"
+    ]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["value"] == node["cachedValue"] == serial
+    assert node["cachedValueKind"] == "value"
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == "same"
+    assert node["sourceValueProvenance"]["storageType"] == "n"
+    assert any("PanicException" in w for w in graph["meta"]["warnings"])
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [
+        asyncio.CancelledError(),
+        KeyboardInterrupt(),
+        SystemExit(7),
+        GeneratorExit(),
+        BaseException("unrelated failure"),
+        type("PanicException", (BaseException,), {"__module__": "another_module"})(),
+        type("OtherFailure", (BaseException,), {"__module__": "pyo3_runtime"})(),
+    ],
+)
+def test_cache_reader_does_not_swallow_process_control(exception, monkeypatch):
+    def fail(*args, **kwargs):
+        raise exception
+
+    def unexpected_fallback(*args, **kwargs):
+        pytest.fail("Process-control exceptions must not invoke the fallback reader")
+
+    monkeypatch.setattr("linexcel.loader._load_cached_values_calamine", fail)
+    monkeypatch.setattr(
+        "linexcel.loader._load_cached_values_openpyxl", unexpected_fallback
+    )
+    with pytest.raises(type(exception)) as caught:
+        load_cached_values(workbook_bytes(False, 1, "General"))
+    assert caught.value is exception

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A recoverable Calamine Rust panic now switches cached-value reading to
+  openpyxl, preserving extremely negative elapsed durations and reporting the
+  fallback. Cache retention limits still apply, and process-control exceptions
+  such as keyboard interrupts and exits continue to propagate.
+
 - Elapsed-duration caches beyond Python's duration range retain their stored
   numbers instead of becoming synthetic `#VALUE!` errors. This also applies
   when the fast reader overflows and falls back; real Excel errors, literal
