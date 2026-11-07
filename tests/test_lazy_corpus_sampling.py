@@ -109,6 +109,89 @@ def test_numeric_tolerance_uses_comparison_values_before_display_values():
     assert corpus.comparison(node, result) == "cache_difference_requires_review"
 
 
+@pytest.mark.parametrize("text", ["nan", "inf", "-inf"])
+@pytest.mark.parametrize("literal_result", [False, True])
+def test_serialized_nonfinite_verdict_preserves_raw_comparison(text, literal_result):
+    node = {"cache_status": "saved", "cached_value": text}
+    raw = text if literal_result else float(text)
+    result = {
+        "status": "completed",
+        "value": text,
+        **_cache_comparison(node, raw, text, datetime(1899, 12, 30)),
+    }
+    assert corpus.comparison(node, result) == (
+        "exact_agreement" if literal_result else "cache_difference_requires_review"
+    )
+
+
+@pytest.mark.parametrize(
+    "formula,text",
+    [
+        ("=SUMSQ(1E308)", "inf"),
+        ("=PRODUCT(-1E308,1E308)", "-inf"),
+        ("=PRODUCT(0,SUMSQ(1E308))", "nan"),
+    ],
+)
+@pytest.mark.parametrize("literal_result", [False, True])
+def test_workbook_nonfinite_cache_verdict_matches_targeted_recalculation(
+    tmp_path, formula, text, literal_result
+):
+    import json
+    import zipfile
+    from xml.etree import ElementTree
+
+    from openpyxl import Workbook
+
+    from linexcel.lazy import build_structure, evaluate_node
+
+    book = Workbook()
+    book.active["A1"] = f'="{text}"' if literal_result else formula
+    book.active["B1"] = "=A1"
+    path = tmp_path / "nonfinite.xlsx"
+    book.save(path)
+    with zipfile.ZipFile(path) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    root = ElementTree.fromstring(parts["xl/worksheets/sheet1.xml"])
+    for cell in root.findall("{*}sheetData/{*}row/{*}c"):
+        cell.set("t", "str")
+        cell.find("{*}v").text = text
+    parts["xl/worksheets/sheet1.xml"] = ElementTree.tostring(root)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    nodes = {node["id"]: node for node in build_structure(path)["nodes"]}
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        result = evaluate_node(path, node_id)
+        result = json.loads(json.dumps(result, allow_nan=False))
+        assert result["status"] == "completed"
+        assert result["value"] == nodes[node_id]["cached_value"] == text
+        assert result["comparison"] == ("equal" if literal_result else "different")
+        assert corpus.comparison(nodes[node_id], result) == (
+            "exact_agreement" if literal_result else "cache_difference_requires_review"
+        )
+
+
+@pytest.mark.parametrize(
+    "node_changes,result_changes,expected",
+    [
+        ({}, {"status": "unsupported"}, "not_calculated"),
+        ({}, {"volatile": True}, "volatile_not_comparable"),
+        ({"cache_status": "unknown"}, {}, "cache_unknown"),
+    ],
+)
+def test_raw_difference_does_not_override_noncomparable_states(
+    node_changes, result_changes, expected
+):
+    node = {"cache_status": "saved", "cached_value": "nan", **node_changes}
+    result = {
+        "status": "completed",
+        "value": "nan",
+        "comparison": "different",
+        **result_changes,
+    }
+    assert corpus.comparison(node, result) == expected
+
+
 @pytest.mark.parametrize("text", ["#DIV/0!", "#N/A", "#VALUE!"])
 @pytest.mark.parametrize("saved_error", [False, True])
 @pytest.mark.parametrize("result_error", [False, True])

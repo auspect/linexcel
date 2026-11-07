@@ -86,6 +86,11 @@ def comparison(node, result):
         return "volatile_not_comparable"
     if node.get("cache_status") != "saved":
         return "cache_unknown"
+    # The targeted verdict compares original types before JSON serialization.
+    # In particular, numeric inf/NaN and literal text can share a JSON string;
+    # their display equality must never overturn a known raw-value difference.
+    if result.get("comparison") == "different":
+        return "cache_difference_requires_review"
     # Error values and literal text share their display spelling after JSON
     # serialization. Use the source types, as targeted recalculation does.
     if (node.get("cachedValueKind") == "error") != (result.get("valueKind") == "error"):

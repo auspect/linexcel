@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Corpus validation preserves differences established before JSON serialization.
+  Non-finite numeric results no longer agree with literal `inf`, `-inf` or `nan`
+  caches; matching literal text still agrees, including dependent formulas.
+
 - Targeted recalculation compares non-finite numeric results before converting
   them to JSON strings. Results such as `SUMSQ(1E308)` no longer agree with a
   literal `inf` cache, including dependency results; literal text still agrees
