@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multilingual browser regressions now check the sample-scoped verdict for
+  formula groups and distinguish compared, displayed and total cells. Individual
+  formula and input provenance checks remain covered, including the live graph
+  at desktop and mobile widths.
+
 - Negative dates in the 1904 calendar rounding from February 28, 1900 to
   March 1 now display `1900-03-01` instead of an invented `1900-02-29` in
   graph labels, detail cards and sampled rows. The 1900 calendar retains its
