@@ -359,12 +359,14 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # Both asterisks ("A∗1", "A*1") connect text like the multiplication sign.
     # The caret also connects compact expressions ("A^1" versus "A^01").
     # Equals signs connect compact assignments ("A=1" versus "A=01").
+    # Comparison signs also connect compact text ("A<1" versus "A<01"),
+    # including combinations such as <=, >= and <>.
     # Middle dots, bullets and the hyphenation point (Po) also join text
     # ("A·1", "A•1", "A‧1").
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and (
-        text[index] in "+-−±∓×÷⋅·∙•‧∶∷∗*^=:/\\"
+        text[index] in "+-−±∓×÷⋅·∙•‧∶∷∗*^=<>:/\\"
         or unicodedata.category(text[index]) == "Pd"
     ):
         # Either slash can delimit a path component, even at a root

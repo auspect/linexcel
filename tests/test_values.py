@@ -1535,6 +1535,11 @@ class TestReadingsAgree:
             "*",
             "^",
             "=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "<>",
             "\ufe63",
             "\uff0d",
             "\U00010ead",
@@ -1609,6 +1614,7 @@ def with_stored_results(
     """
     import re as _re
     import zipfile
+    from xml.sax.saxutils import escape
 
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w") as dst:
@@ -1624,7 +1630,7 @@ def with_stored_results(
                         # template would interpret them as escapes/backrefs.
                         lambda m: (
                             f'<c r="{address}"{m[1]} t="{cell_type}">'
-                            f"{m[2]}<v>{text}</v>"
+                            f"{m[2]}<v>{escape(text)}</v>"
                         ),
                         xml,
                     )
@@ -1836,6 +1842,46 @@ def with_stored_results(
         ("A^01 total 6.7", "A^01 total 6,7", "format"),
         ("A ^6.7", "A ^6,7", "format"),
         ("A^ 6.7", "A^ 6,7", "format"),
+        ("A<1", "A<01", "differ"),
+        ("1<beta", "01<beta", "differ"),
+        ("A<6.7", "A<6,7", "differ"),
+        ("1<2", "1<02", "differ"),
+        ("A<+-1", "A<+-01", "differ"),
+        ("A<01 total 6.7", "A<01 total 6,7", "format"),
+        ("A <6.7", "A <6,7", "format"),
+        ("A< 6.7", "A< 6,7", "format"),
+        ("A>1", "A>01", "differ"),
+        ("1>beta", "01>beta", "differ"),
+        ("A>6.7", "A>6,7", "differ"),
+        ("1>2", "1>02", "differ"),
+        ("A>+-1", "A>+-01", "differ"),
+        ("A>01 total 6.7", "A>01 total 6,7", "format"),
+        ("A >6.7", "A >6,7", "format"),
+        ("A> 6.7", "A> 6,7", "format"),
+        ("A<=1", "A<=01", "differ"),
+        ("1<=beta", "01<=beta", "differ"),
+        ("A<=6.7", "A<=6,7", "differ"),
+        ("1<=2", "1<=02", "differ"),
+        ("A<=+-1", "A<=+-01", "differ"),
+        ("A<=01 total 6.7", "A<=01 total 6,7", "format"),
+        ("A <=6.7", "A <=6,7", "format"),
+        ("A<= 6.7", "A<= 6,7", "format"),
+        ("A>=1", "A>=01", "differ"),
+        ("1>=beta", "01>=beta", "differ"),
+        ("A>=6.7", "A>=6,7", "differ"),
+        ("1>=2", "1>=02", "differ"),
+        ("A>=+-1", "A>=+-01", "differ"),
+        ("A>=01 total 6.7", "A>=01 total 6,7", "format"),
+        ("A >=6.7", "A >=6,7", "format"),
+        ("A>= 6.7", "A>= 6,7", "format"),
+        ("A<>1", "A<>01", "differ"),
+        ("1<>beta", "01<>beta", "differ"),
+        ("A<>6.7", "A<>6,7", "differ"),
+        ("1<>2", "1<>02", "differ"),
+        ("A<>+-1", "A<>+-01", "differ"),
+        ("A<>01 total 6.7", "A<>01 total 6,7", "format"),
+        ("A <>6.7", "A <>6,7", "format"),
+        ("A<> 6.7", "A<> 6,7", "format"),
         ("A=1", "A=01", "differ"),
         ("1=beta", "01=beta", "differ"),
         ("A=6.7", "A=6,7", "differ"),
