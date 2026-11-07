@@ -566,6 +566,7 @@ def readings_agree(
     stored_is_error: bool | None = None,
     stored_is_text: bool = False,
     epoch_1904: bool | None = None,
+    date_formatted: bool = False,
 ) -> str:
     """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
 
@@ -584,6 +585,8 @@ def readings_agree(
     Otherwise date metadata may describe a serialized temporal cache, as in
     older report callers; that compatibility does not prove a literal's type.
     ``epoch_1904`` supplies the workbook calendar when day zero has no date label.
+    ``date_formatted`` preserves temporal precision for numeric date caches,
+    including Excel's fictitious 1900 leap day, which has no Python date.
     """
     if stored_is_text and (
         date_text is not None
@@ -641,6 +644,14 @@ def readings_agree(
     )
     if typed_datetime_agreement is not None:
         return typed_datetime_agreement
+    if (
+        date_formatted
+        and isinstance(recalculated, (int, float))
+        and isinstance(stored, (int, float))
+        and not isinstance(recalculated, bool)
+        and not isinstance(stored, bool)
+    ):
+        return "same" if temporal_serials_agree(recalculated, stored) else "differ"
     if _values_differ(recalculated, stored, date_text):
         return "differ"
     error_text = _excel_error_text(recalculated)

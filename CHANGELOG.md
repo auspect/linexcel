@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Numeric caches for Excel's fictitious February 29, 1900 now use the same
+  0.5 ms comparison tolerance as other dates. Reports and warnings no longer
+  accept millisecond differences through the ordinary numeric tolerance;
+  the original serials and comparisons of General-format numbers are preserved.
+
 - Fractional-day results in the 1900 calendar retain their time display when
   the saved cache contains a full date. Graph labels, detail cards and sampled
   rows now show times such as `12:00:00` instead of plain `0.5`; real cache

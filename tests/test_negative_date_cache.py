@@ -15,6 +15,48 @@ from linexcel.loader import (
     _load_cached_values_openpyxl,
     load_cached_values,
 )
+from linexcel.values import readings_agree
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("offset_ms", [-4, -1, -0.25, 0, 0.25, 1, 4])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "General"])
+def test_phantom_date_cache_uses_temporal_precision(
+    slow_reader, offset_ms, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 60.5 + offset_ms / 86_400_000
+    data = workbook_bytes(False, serial, number_format, cache_serial=60.5)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    differs = number_format != "General" and abs(offset_ms) > 0.5
+    assert node["value"] == serial
+    assert node["cachedValue"] == 60.5
+    assert node["valueSource"] == "engine"
+    assert "valueDate" not in node  # Do not invent a representable calendar day.
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert (
+        any("Dates!B1" in warning for warning in graph["meta"]["warnings"]) is differs
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "cached", "expected"),
+    [
+        (60.5 + 0.25 / 86_400_000, 60.5, "same"),
+        (60.5 + 4 / 86_400_000, 60.5, "differ"),
+        (True, True, "same"),
+        (True, 1, "differ"),
+        (1, True, "differ"),
+        ("60.5", 60.5, "differ"),
+        (60.5, "60.5", "differ"),
+        (float("inf"), 60.5, "differ"),
+        (float("nan"), 60.5, "differ"),
+    ],
+)
+def test_numeric_date_comparison_preserves_types(raw, cached, expected):
+    assert readings_agree(raw, cached, None, date_formatted=True) == expected
 
 
 def workbook_bytes(epoch_1904, serial, number_format, *, cache_serial=None):
