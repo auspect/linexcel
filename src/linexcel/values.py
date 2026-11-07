@@ -152,10 +152,20 @@ def _time_agreement(raw: Any, cached: Any, time_text: str | None) -> str | None:
             )
             else "differ"
         )
-    if isinstance(raw, datetime.time):
-        return "same" if raw.tzinfo is None and raw == stored_time else "differ"
     if isinstance(raw, str) and described_time is not None:
-        return "same" if _naive_time(raw) == stored_time else "differ"
+        raw = _naive_time(raw)
+    if isinstance(raw, datetime.time) and raw.tzinfo is None:
+        # Typed times and their JSON form have the same cache precision as
+        # numeric serials. Anchor both to one day: a time alone cannot prove
+        # that a near-midnight value and midnight belong to consecutive days.
+        difference = datetime.datetime.combine(
+            datetime.date.min, raw
+        ) - datetime.datetime.combine(datetime.date.min, stored_time)
+        return (
+            "same"
+            if abs(difference) <= datetime.timedelta(microseconds=500)
+            else "differ"
+        )
     return "differ"
 
 

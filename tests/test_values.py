@@ -104,6 +104,23 @@ def test_datetime_object_verdict_survives_resolver_serialization(stored_hour):
         assert "differs from file value" in warnings[0]
 
 
+@pytest.mark.parametrize("microseconds", [0, 400, 500, 501, 1000])
+def test_time_rounding_verdict_survives_resolver_serialization(microseconds):
+    raw = datetime.time(12, microsecond=microseconds)
+    stored = datetime.time(12)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, {(SHEET, 1, 1)}, False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == raw.isoformat()
+    assert fields["valueDate"] == raw.isoformat()
+    assert fields["cachedAgreement"] == ("same" if microseconds <= 500 else "differ")
+    assert bool(warnings) == (microseconds > 500)
+
+
 class TestGuardedErrors:
     def test_native_missing_sheet_guard_evaluates_the_second_argument(self):
         graph = graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"})

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apply the cache's 0.5 ms rounding tolerance to recalculated Python time
+  objects and their serialized report values. Sub-millisecond rounding no
+  longer produces false divergence warnings; larger differences, timezone
+  mismatches and times on opposite sides of midnight still differ.
+
 - Compare the full timestamp of recalculated Python dates and datetimes, including
   their serialized report values. Different hours on the same day now produce
   divergence verdicts and warnings. Date-only values mean midnight; cache rounding

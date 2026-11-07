@@ -17,6 +17,38 @@ from linexcel.values import readings_agree, serial_to_date_text, serial_to_time_
 
 
 @pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize("offset", [-1000, -501, -500, -400, 0, 400, 500, 501, 1000])
+def test_typed_time_readings_tolerate_only_cache_rounding(serialized, offset):
+    raw = datetime.time(12)
+    stored = (
+        datetime.datetime(2026, 8, 7, 12) + datetime.timedelta(microseconds=offset)
+    ).time()
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    expected = "same" if abs(offset) <= 500 else "differ"
+    assert readings_agree(raw, stored, "12:00:00") == expected
+    assert readings_agree(stored, raw, "12:00:00") == expected
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_typed_time_rounding_does_not_wrap_around_midnight(serialized):
+    raw, stored = datetime.time(23, 59, 59, 999600), datetime.time.min
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    assert readings_agree(raw, stored, "23:59:59.999600") == "differ"
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_typed_time_rounding_does_not_assume_a_timezone(serialized):
+    raw = datetime.time(12, tzinfo=datetime.UTC)
+    stored = datetime.time(12)
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    assert readings_agree(raw, stored, "12:00:00") == "differ"
+    assert readings_agree(stored, raw, "12:00:00") == "differ"
+
+
+@pytest.mark.parametrize("serialized", [False, True])
 @pytest.mark.parametrize(
     ("offset", "verdict"),
     [(0, "same"), (0.0004, "same"), (0.001, "differ"), (3600, "differ")],
