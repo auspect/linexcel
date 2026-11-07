@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Date-formatted numeric caches outside Python's calendar range retain their
+  original numbers in the fallback reader instead of becoming `#VALUE!` errors.
+  Comparisons now agree across both readers; real Excel errors, literal text
+  and cache retention limits remain intact.
+
 - Formula-bearing defined-name nodes supplied to the HTML viewer now show one
   value card and comparison verdict, preserving both the formula and its targets.
   Browser regressions cover all nine languages and the live graph at desktop

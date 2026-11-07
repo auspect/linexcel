@@ -382,6 +382,7 @@ def _restore_lossy_date_caches(
     values: dict[tuple[str, int, int], Any],
     epoch_1904: bool,
     date_cells: set[tuple[str, int, int]],
+    error_cells: set[tuple[str, int, int]] | None = None,
 ) -> None:
     """Recover dates whose day component was lost by a cache reader.
 
@@ -400,12 +401,17 @@ def _restore_lossy_date_caches(
     Openpyxl may interpret a quoted elapsed label in a calendar format as a
     duration. Restore those cells from their original serial, using the format
     classification that excludes literal labels. Actual durations are untouched.
+
+    Dates outside Python's calendar range become synthetic #VALUE! errors in
+    openpyxl. Recover their numeric source and remove the synthetic error flag;
+    actual OOXML error cells and literal text must retain their source types.
     """
     candidates = {
         key
         for key, value in values.items()
         if isinstance(value, datetime.time)
         or (isinstance(value, datetime.timedelta) and key in date_cells)
+        or (value == "#VALUE!" and key in date_cells)
         or (
             not epoch_1904
             and isinstance(value, datetime.date)
@@ -450,8 +456,11 @@ def _restore_lossy_date_caches(
                                     )
                                 ):
                                     values[key] = serial
-                                elif isinstance(
-                                    values[key], (datetime.time, datetime.timedelta)
+                                elif (
+                                    isinstance(
+                                        values[key], (datetime.time, datetime.timedelta)
+                                    )
+                                    or values[key] == "#VALUE!"
                                 ):
                                     try:
                                         values[key] = from_excel(
@@ -463,6 +472,8 @@ def _restore_lossy_date_caches(
                                         # the stored number rather than a time
                                         # that silently discards whole days.
                                         values[key] = serial
+                                    if error_cells is not None:
+                                        error_cells.discard(key)
                     cell.clear()
     except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         pass
@@ -584,7 +595,7 @@ def _load_cached_values_openpyxl(
         pass
     finally:
         wb.close()
-    _restore_lossy_date_caches(data, values, epoch_1904, date_cells)
+    _restore_lossy_date_caches(data, values, epoch_1904, date_cells, error_cells)
     return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
 
 

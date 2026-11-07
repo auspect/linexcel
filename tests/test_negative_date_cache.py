@@ -211,6 +211,70 @@ def test_negative_dates_agree_across_cache_readers(epoch_1904, serial, number_fo
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [-1_000_000, 4_000_000])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd", "hh:mm:ss"])
+def test_out_of_range_date_cache_retains_source_number(
+    epoch_1904, slow_reader, serial, number_format
+):
+    data = workbook_bytes(epoch_1904, serial, number_format)
+    cached = load_cached_values(data, max_dense_cells=0 if slow_reader else 100)
+    for column in (1, 2):
+        assert cached.get("Dates", 1, column) == serial
+        assert cached.is_date("Dates", 1, column)
+        assert cached.is_error("Dates", 1, column) is False
+
+    limited = load_cached_values(
+        data, max_cells_per_sheet=1, max_dense_cells=0 if slow_reader else 100
+    )
+    assert len(limited) == 1
+    assert limited.get("Dates", 1, 1) == serial
+    assert limited.get("Dates", 1, 2) is None
+    assert limited.truncated_sheets == {"Dates"}
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("offset", [0, 1])
+def test_analysis_compares_out_of_range_date_cache(
+    epoch_1904, slow_reader, offset, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(
+        epoch_1904, 4_000_000, "yyyy-mm-dd", cache_serial=4_000_000 + offset
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["value"] == 4_000_000
+    assert node["cachedValue"] == 4_000_000 + offset
+    assert node["valueSource"] == "engine"
+    assert "valueDate" not in node
+    assert node["cachedAgreement"] == ("differ" if offset else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) is bool(offset)
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
+def test_date_formatted_error_and_literal_cache_keep_source_type(slow_reader):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet["A1"] = "#VALUE!"
+    sheet["B1"] = "#VALUE!"
+    sheet["B1"].data_type = "s"
+    for cell in sheet[1]:
+        cell.number_format = "yyyy-mm-dd"
+    source = io.BytesIO()
+    workbook.save(source)
+    cached = load_cached_values(
+        source.getvalue(), max_dense_cells=0 if slow_reader else 100
+    )
+    assert cached.get("Sheet", 1, 1) == "#VALUE!"
+    assert cached.is_error("Sheet", 1, 1) is True
+    assert cached.get("Sheet", 1, 2) == "#VALUE!"
+    assert cached.is_error("Sheet", 1, 2) is False
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
 def test_negative_date_cache_preserves_retention_limit(epoch_1904, slow_reader):
     data = workbook_bytes(epoch_1904, -2.25, "yyyy-mm-dd")
     cached = load_cached_values(
