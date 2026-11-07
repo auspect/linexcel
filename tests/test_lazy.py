@@ -397,6 +397,11 @@ def test_target_and_dependency_cache_comparisons_tolerate_numeric_rounding(
         (45000 + 1 / 86400, 45000, "yyyy-mm-dd", "different"),
         (0.5 + 0.001 / 86400, 0.5, "hh:mm:ss.000", "different"),
         (45000 + 1 / 86400, 45000, "[h]:mm:ss", "different"),
+        (True, True, "yyyy-mm-dd", "equal"),
+        (False, False, "hh:mm:ss", "equal"),
+        (True, 1, "yyyy-mm-dd", "different"),
+        (0, False, "[h]:mm:ss", "different"),
+        (0.5, "0.5", "hh:mm:ss", "different"),
     ],
 )
 def test_numeric_cache_rounding_preserves_types_and_temporal_precision(
@@ -415,6 +420,81 @@ def test_numeric_cache_rounding_preserves_types_and_temporal_precision(
         _cache_comparison(node, raw, raw, dt.datetime(1899, 12, 30))["comparison"]
         == expected
     )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("base", "number_format"),
+    [
+        (45000, "yyyy-mm-dd hh:mm:ss.000"),
+        (0.5, "hh:mm:ss.000"),
+        (-1.5, "[h]:mm:ss.000"),
+    ],
+)
+@pytest.mark.parametrize("offset_ms", [-0.75, -0.25, 0.25, 0.75])
+def test_target_and_dependencies_tolerate_temporal_cache_rounding(
+    tmp_path, epoch_1904, base, number_format, offset_ms
+):
+    import datetime as dt
+
+    from linexcel.values import readings_agree, serial_to_date_text
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+    raw = base + offset_ms / 86400000
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = f"={raw!r}"
+        book.active["B1"] = "=A1"
+        for cell in ("A1", "B1"):
+            book.active[cell].number_format = number_format
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, str(base))
+    result = evaluate_node(path, "Sheet!B1")
+    assert result["status"] == "completed"
+    expected = "equal" if abs(offset_ms) < 0.5 else "different"
+    assert result["comparison"] == expected
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        step = next(s for s in result["steps"] if s["nodeId"] == node_id)
+        assert step["comparison"] == expected
+        assert step["comparisonValue"] == raw
+    # Independently check against the full analysis's typed cache comparison.
+    stored = (
+        dt.timedelta(days=base)
+        if base < 0
+        else dt.time(12)
+        if base < 1
+        else epoch + dt.timedelta(days=base)
+    )
+    full = readings_agree(raw, stored, serial_to_date_text(raw, epoch_1904))
+    assert (full == "same") == (expected == "equal")
+
+
+@pytest.mark.parametrize("offset_ms", [-0.75, -0.25, 0.25, 0.75])
+@pytest.mark.parametrize("kind", ["date", "datetime", "time"])
+def test_typed_temporal_cache_rounding_without_format(kind, offset_ms):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import to_excel
+
+    from linexcel.lazy import _cache_comparison
+
+    raw = {
+        "date": dt.date(2026, 1, 1),
+        "datetime": dt.datetime(2026, 1, 1, 12),
+        "time": dt.time(12),
+    }[kind]
+    epoch = dt.datetime(1904, 1, 1)
+    saved = to_excel(raw, epoch) + offset_ms / 86400000
+    node = {
+        "cache_status": "saved",
+        "cached_comparison_value": saved,
+        "cached_value": "display only",
+    }
+    result = _cache_comparison(node, raw, raw.isoformat(), epoch)
+    assert result["comparisonValue"] == to_excel(raw, epoch)
+    assert result["comparison"] == ("equal" if abs(offset_ms) < 0.5 else "different")
 
 
 def test_engine_arrays_preserve_values_and_limitations_are_not_results():

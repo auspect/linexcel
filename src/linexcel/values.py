@@ -533,6 +533,17 @@ def _separators_only(left: str, right: str) -> bool:
     return True
 
 
+def temporal_serials_agree(left: float, right: float) -> bool:
+    """Compare Excel day serials with the cache's absolute 0.5 ms precision."""
+    return (
+        not isinstance(left, bool)
+        and not isinstance(right, bool)
+        and math.isfinite(left)
+        and math.isfinite(right)
+        and math.isclose(left, right, rel_tol=0, abs_tol=0.0005 / 86400)
+    )
+
+
 def readings_agree(
     recalculated: Any,
     stored: Any,

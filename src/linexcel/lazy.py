@@ -34,6 +34,7 @@ from linexcel.values import (
     _excel_error_text,
     _is_uncomputed,
     readings_agree,
+    temporal_serials_agree,
 )
 
 _INPUT_ERROR_KINDS = {value: kind for kind, value in ERROR_KIND_TEXT.items()}
@@ -307,14 +308,16 @@ def _cache_comparison(
         same_value = saved == comparison_value
         if (
             isinstance(saved, (int, float))
+            and not isinstance(saved, bool)
             and isinstance(comparison_value, (int, float))
-            and not isinstance(raw, (dt.datetime, dt.date, dt.time))
-            and not is_date_format(node.get("numberFormat") or "General")
+            and not isinstance(comparison_value, bool)
         ):
-            # Use the full analysis's numeric tolerance for ordinary numbers.
-            # Temporal serials (including elapsed formats) retain their stricter
-            # comparison: relative tolerance in days can hide whole seconds.
-            same_value = readings_agree(comparison_value, saved, None) == "same"
+            if isinstance(raw, (dt.datetime, dt.date, dt.time)) or is_date_format(
+                node.get("numberFormat") or "General"
+            ):
+                same_value = temporal_serials_agree(comparison_value, saved)
+            else:
+                same_value = readings_agree(comparison_value, saved, None) == "same"
         comparison = (
             "equal"
             if same_boolean_type and same_error_type and same_value

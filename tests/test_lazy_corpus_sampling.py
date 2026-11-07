@@ -118,7 +118,10 @@ def test_numeric_tolerance_uses_comparison_values_before_display_values():
     [
         (45000.0, 45000 + 1 / 86400, "cache_difference_requires_review"),
         (45000.0, 45000 - 1 / 86400, "cache_difference_requires_review"),
-        (0.5, 0.5 + 5e-10, "cache_difference_requires_review"),
+        (0.5, 0.5 + 5e-10, "numeric_tolerance_agreement"),
+        (45000.0, 45000 + 0.00025 / 86400, "numeric_tolerance_agreement"),
+        (45000.0, 45000 - 0.00025 / 86400, "numeric_tolerance_agreement"),
+        (45000.0, 45000 + 0.00075 / 86400, "cache_difference_requires_review"),
         (45000.0, 45000.0, "exact_agreement"),
         (45000, 45000.0, "numeric_tolerance_agreement"),
     ],

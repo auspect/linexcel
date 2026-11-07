@@ -19,7 +19,7 @@ from pathlib import Path
 
 from openpyxl.styles.numbers import is_date_format
 
-from linexcel.values import readings_agree
+from linexcel.values import readings_agree, temporal_serials_agree
 from linexcel.web import TERMINAL, TaskStore, WebConfig
 
 
@@ -96,11 +96,11 @@ def comparison(node, result):
         and isinstance(value, (int, float))
         and not isinstance(value, bool)
     ):
-        # Match targeted recalculation: relative tolerance on temporal serials
-        # can hide whole seconds. Equal numeric serials may differ in type.
-        if value == saved or (
-            not is_date_format(node.get("numberFormat") or "General")
-            and readings_agree(value, saved, None) == "same"
+        # Temporal serials tolerate cache rounding, never a relative day error.
+        if (
+            temporal_serials_agree(value, saved)
+            if is_date_format(node.get("numberFormat") or "General")
+            else readings_agree(value, saved, None) == "same"
         ):
             return "numeric_tolerance_agreement"
     return "cache_difference_requires_review"
