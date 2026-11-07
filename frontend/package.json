@@ -1,0 +1,19 @@
+{
+  "name": "linexcel-graph",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "1.1.8",
+    "@xyflow/react": "12.10.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "vite": "7.2.2"
+  }
+}

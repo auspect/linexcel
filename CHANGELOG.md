@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Bundle an offline React Flow dashboard graph with sheet, R1C1 formula-group
+  and cell drill-down, weighted relationships, breadcrumbs, minimap, layered
+  Dagre layout and an accessible relationship list. Cache bounded hierarchy
+  views against immutable SQLite indexes and open the workbook overview
+  automatically from the graph tab.
+- Use the full desktop workspace width, remember sidebar collapse, and provide
+  a graph focus mode. Consolidate authored inline presentation into CSS classes,
+  shared design tokens and responsive graph controls.
+- Debounce formula selection, abort superseded neighborhood requests, cancel
+  known superseded automatic calculations, reuse completed decomposition results,
+  and support cell deep links while retaining manual forced recalculation.
+- Add a reproducible frontend build/check and a three-viewport dashboard capture
+  probe. Python installations use the committed assets without Node or a CDN.
+
 ## [1.17.1] — 2026-11-07
 
 ### Fixed

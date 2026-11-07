@@ -48,8 +48,11 @@ substituting a partial range or another formula's saved value. The graph and
 previous results remain available after a task failure.
 
 The backend is Python (WSGI and isolated calculation workers). The browser
-interface is HTML, CSS and JavaScript, with Cytoscape.js for the graph; it does
-not run Python in the browser. Choose English or French in the interface, or
+interface is HTML, CSS and JavaScript, with a bundled React Flow graph and
+Dagre layered layout; it does not run Python in the browser or need Node on
+the user?s machine. The graph includes a minimap, fit controls and a focus mode.
+The workspace uses the full screen width; the desktop sidebar can be collapsed.
+The separate standalone HTML report retains its Cytoscape renderer. Choose English or French in the interface, or
 open `/?lang=en`. This choice is independent of the AI documentation language.
 
 Large workbooks are indexed once on disk. The interactive path streams sparse
@@ -90,12 +93,13 @@ worker memory budget than the default 512 MiB even though browsing stays small.
 Captures are served as individual images with thumbnails, without embedding every
 image in the project response. Rendering remains an explicit, budgeted operation.
 
-**Explore the workbook graph** starts a cancellable server task and saves a
-hierarchy on disk. It does not start Formualizer. Each view contains at most 32
+Opening **Graph** automatically starts a cancellable server task and saves a
+workbook ? sheets ? R1C1 formula groups ? cells hierarchy on disk.
+**Explore the workbook graph** can also start this operation explicitly. It does not start Formualizer. Each view contains at most 32
 groups or cells, plus the rest of the workbook. Click a group to expand it, use
 the breadcrumb to go back, or search for an exact cell reference to jump to its
-group. Positions and dependency counts are prepared by the server; the browser
-never downloads or lays out the entire workbook graph. The accessible list
+group. Dependency counts are aggregated in SQLite by the server; Dagre lays out only
+the bounded view in the browser. The browser never downloads the entire graph. The accessible list
 exposes each group's internal relationship count and weighted links between
 groups, including links outside the current group. Ranges remain grouped;
 unresolved or dynamic references retain the index's limitations. The saved graph
@@ -106,8 +110,10 @@ targeted recalculation keeps its 120-second default. Both are adjustable under
 **Limits per operation**. Exact node references use the index directly; other
 searches still match substrings and can take longer on very large workbooks.
 
-Selecting a formula immediately starts a fresh targeted calculation;
-simultaneous visits share the active task. **Recalculate** retries or refreshes
+Selecting a formula automatically starts a targeted calculation after a short
+debounce; superseded reads are aborted and known automatic tasks are cancelled.
+Completed results are reused for the immutable project revision; simultaneous
+visits share the active task. **Recalculate** retries or refreshes
 that cell and its dependencies. Source inputs and static VBA do not trigger
 calculation; navigation never evaluates the whole workbook.
 

@@ -46,6 +46,7 @@ validation_screenshots/
 site/
 
 graph.json
+frontend/node_modules/
 
 # Refactor planning notes (local-only, reference /tmp paths + agent tooling)
 REFACTOR_PLAN.md
