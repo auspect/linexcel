@@ -354,11 +354,11 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # as ASCII hyphens ("A–1" and "A–01" are different identifiers).
     # Minus, plus/minus, multiplication, division and dot operators are
     # mathematical symbols (Sm), not dashes. They connect text too
-    # ("A⋅1" vs "A⋅01").
+    # ("A⋅1" vs "A⋅01"). The middle dot (Po) also joins text ("A·1").
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and (
-        text[index] in "+-−±∓×÷⋅:/\\" or unicodedata.category(text[index]) == "Pd"
+        text[index] in "+-−±∓×÷⋅·:/\\" or unicodedata.category(text[index]) == "Pd"
     ):
         # Either slash can delimit a path component, even at a root
         # or after a drive colon ("/1", "C:/1"). Its digits are literal;
