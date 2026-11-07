@@ -2922,7 +2922,9 @@
     if (n.kind === 'name' && n.targets) {
       var sn = section(_t('target')); sn.appendChild(el('code', 'lin-formula', n.targets.join(' ; ')));
       p.appendChild(sn);
-      if (n.value !== undefined && n.value !== null) p.appendChild(valueSection(n));
+      // A formula already owns its value section above; keep the target once.
+      if (!n.formula && n.value !== undefined && n.value !== null)
+        p.appendChild(valueSection(n));
     }
     if (n.steps && (n.steps.children && n.steps.children.length || (n.steps.inputs && n.steps.inputs.length))) {
       var ss = section(_t('step_decomp'));

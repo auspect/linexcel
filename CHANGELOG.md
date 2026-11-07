@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Formula-bearing defined-name nodes supplied to the HTML viewer now show one
+  value card and comparison verdict, preserving both the formula and its targets.
+  Browser regressions cover all nine languages and the live graph at desktop
+  and mobile widths. Standard workbook analysis does not currently emit these
+  formula-bearing name nodes.
+
 - Multilingual browser regressions now check the sample-scoped verdict for
   formula groups and distinguish compared, displayed and total cells. Individual
   formula and input provenance checks remain covered, including the live graph
