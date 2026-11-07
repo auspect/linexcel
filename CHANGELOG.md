@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare mixed integer and decimal amount lists across regional formatting
+  (`v01 6 8.9` versus `v01 6 8,9`). Identifier digits, changed amounts and
+  separating whitespace remain protected. Runs containing a possible grouped
+  number, such as `1 234.5 6.7`, remain conservatively compared.
+
 - Compare consecutive decimal amounts using regional number formatting
   (`v01 6.7 8.9` versus `v01 6,7 8,9`), including amounts between identifiers.
   Invalid numeric runs split only when each part is a valid decimal amount;

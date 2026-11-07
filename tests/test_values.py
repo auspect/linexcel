@@ -1196,13 +1196,47 @@ class TestReadingsAgree:
             ("v01{space}6.7{space}8.9", "v01{space}6,7{space}8,8", "differ"),
             ("6.7{space}8.9", "6,7\t8,9", "differ"),
             ("6.7{space}8.9", "6,7{space}8,9{space}0,5", "differ"),
-            # Valid groups and mixed integer/decimal runs remain conservative.
+            # Valid digit groups remain conservative.
             ("v1{space}234.5", "v1{space}234,5", "differ"),
-            ("6{space}7.8{space}9.1", "6{space}7,8{space}9,1", "differ"),
+            ("6{space}7.8{space}9.1", "6{space}7,8{space}9,1", "format"),
             ("1.234{space}567", "1234567", "format"),
         ],
     )
     def test_consecutive_decimal_amounts(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6{space}8.9", "v01{space}6{space}8,9", "format"),
+            ("6{space}8.9{space}01beta", "6{space}8,9{space}01beta", "format"),
+            (
+                "v01{space}6{space}8.9{space}02b",
+                "v01{space}6{space}8,9{space}02b",
+                "format",
+            ),
+            ("8.9{space}6", "8,9{space}6", "format"),
+            ("6{space}8.9{space}2", "6{space}8,9{space}2", "format"),
+            ("6{space}8{space}9.1", "6{space}8{space}9,1", "format"),
+            ("v01{space}6{space}8.9", "v1{space}6{space}8,9", "differ"),
+            ("6{space}8.9{space}01beta", "6{space}8,9{space}1beta", "differ"),
+            ("v01{space}6{space}8.9", "v01{space}7{space}8,9", "differ"),
+            ("v01{space}6{space}8.9", "v01{space}6{space}8,8", "differ"),
+            ("6{space}8.9", "6\t8,9", "differ"),
+            ("6{space}8.9", "68,9", "differ"),
+            ("6{space}8.9", "6{space}8,9{space}2", "differ"),
+            ("1{space}234.5{space}6.7", "1{space}234,5{space}6,7", "differ"),
+            ("6.7{space}1{space}234", "6,7{space}1{space}234", "differ"),
+            ("1{space}234.5", "1234,5", "format"),
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+        ],
+    )
+    def test_mixed_integer_decimal_amounts(self, space, left, right, verdict):
         from linexcel.values import readings_agree
 
         left, right = left.format(space=space), right.format(space=space)
@@ -1705,6 +1739,12 @@ def with_stored_results(
 @pytest.mark.parametrize(
     ("recalculated", "stored", "verdict"),
     [
+        ("v01 6 8.9", "v01 6 8,9", "format"),
+        ("6 8.9 01beta", "6 8,9 01beta", "format"),
+        ("v01 6 8.9", "v1 6 8,9", "differ"),
+        ("v01 6 8.9", "v01 7 8,9", "differ"),
+        ("v01 6 8.9", "v01 6 8,8", "differ"),
+        ("1 234.5 6.7", "1 234,5 6,7", "differ"),
         ("ID 1234567890", "ID 1234567891", "differ"),
         ("Value 0.0000000001", "Value 0.0000000002", "differ"),
         ("Rate .1", "Rate .01", "differ"),
