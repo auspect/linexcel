@@ -353,10 +353,10 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and text[index] in "+-/\\":
-        # A backslash itself can delimit a path component, even at a root
-        # or after a drive colon ("\\1", "C:\\1"). Its digits are literal;
+        # Either slash can delimit a path component, even at a root
+        # or after a drive colon ("/1", "C:/1"). Its digits are literal;
         # no word on the other side is needed to make the number ambiguous.
-        if text[index] == "\\":
+        if text[index] in "/\\":
             return True
         index += direction
     return 0 <= index < len(text) and _is_word_character(text[index])

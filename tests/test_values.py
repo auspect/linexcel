@@ -1338,12 +1338,12 @@ class TestReadingsAgree:
             ("A/01", "A/01", "same"),
             ("A / 6.7", "A / 6,7", "format"),
             ("A/ 6.7", "A/ 6,7", "format"),
-            ("A /6.7", "A /6,7", "format"),
+            ("A /6.7", "A /6,7", "differ"),
             ("6.7 / beta", "6,7 / beta", "format"),
-            ("A\u00a0/6.7", "A\u00a0/6,7", "format"),
-            ("A\u202f/6.7", "A\u202f/6,7", "format"),
-            ("/6.7/", "/6,7/", "format"),
-            ("A /-1234.5", "A /-1 234,5", "format"),
+            ("A\u00a0/6.7", "A\u00a0/6,7", "differ"),
+            ("A\u202f/6.7", "A\u202f/6,7", "differ"),
+            ("/6.7/", "/6,7/", "differ"),
+            ("A /-1234.5", "A /-1 234,5", "differ"),
             ("A /6.7", "A /6,8", "differ"),
         ],
     )
@@ -1428,6 +1428,45 @@ class TestReadingsAgree:
         ],
     )
     def test_rooted_path_components_remain_literal(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("C:/1", "C:/01", "differ"),
+            ("C:/6.7", "C:/6,7", "differ"),
+            ("C:/.50", "C:/0,5", "differ"),
+            ("/1", "/01", "differ"),
+            ("//1", "//01", "differ"),
+            ("/6.7", "/6,7", "differ"),
+            ("/-1", "/-01", "differ"),
+            ("/+-1", "/+-01", "differ"),
+            ("./1", "./01", "differ"),
+            ("../1", "../01", "differ"),
+            ("A./1", "A./01", "differ"),
+            ("1/", "01/", "differ"),
+            ("6.7/", "6,7/", "differ"),
+            ("1-//", "01-//", "differ"),
+            ("(/1)", "(/01)", "differ"),
+            ("C:/01 total 6.7", "C:/01 total 6,7", "format"),
+            ("/01 total .50", "/01 total 0,5", "format"),
+            ("C:/01", "C:/01", "same"),
+            ("/01", "/01", "same"),
+            ("C:/ 6.7", "C:/ 6,7", "format"),
+            ("/ 6.7", "/ 6,7", "format"),
+            ("6.7 /", "6,7 /", "format"),
+            ("/\u00a06.7", "/\u00a06,7", "format"),
+            ("/\u202f6.7", "/\u202f6,7", "format"),
+            ("C:/ 6.7", "C:/ 6,8", "differ"),
+            ("/1 total 6.7", "/01 total 6,7", "differ"),
+        ],
+    )
+    def test_forward_slash_rooted_path_components_remain_literal(
+        self, left, right, verdict
+    ):
         from linexcel.values import readings_agree
 
         assert readings_agree(left, right, None) == verdict
@@ -1526,6 +1565,13 @@ def with_stored_results(
         (r"C:\01 total 6.7", r"C:\01 total 6,7", "format"),
         (r"\01 total .50", r"\01 total 0,5", "format"),
         (r"C:\ 6.7", r"C:\ 6,7", "format"),
+        ("C:/1", "C:/01", "differ"),
+        ("/1", "/01", "differ"),
+        ("C:/6.7", "C:/6,7", "differ"),
+        ("1/", "01/", "differ"),
+        ("C:/01 total 6.7", "C:/01 total 6,7", "format"),
+        ("/01 total .50", "/01 total 0,5", "format"),
+        ("C:/ 6.7", "C:/ 6,7", "format"),
         (r"A\1", r"A\01", "differ"),
         (r"1\beta", r"01\beta", "differ"),
         (r"A/\-1", r"A/\-01", "differ"),

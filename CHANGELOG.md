@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits next to forward slashes in rooted and drive paths
+  (`/1` versus `/01`, `C:/1` versus `C:/01`) and trailing path separators.
+  Changed padding or decimal separators now produces divergence verdicts and
+  warnings, matching backslash paths. Whitespace-separated quantities and
+  separate amounts following unchanged paths retain regional-format tolerance.
+
 - Preserve literal digits next to backslashes even without a connecting word,
   including drive paths (`C:\1` versus `C:\01`), rooted paths (`\1` versus
   `\01`) and numeric components ending in a backslash. Changed padding or
