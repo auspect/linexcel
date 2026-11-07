@@ -349,10 +349,10 @@ def _is_word_character(char: str) -> bool:
 
 
 def _word_across_connectors(text: str, index: int, direction: int) -> bool:
-    # Signs and slashes can join an identifier (A+01, 01-beta, A/01).
+    # Signs, slashes and backslashes can join identifiers or path components.
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
-    while 0 <= index < len(text) and text[index] in "+-/":
+    while 0 <= index < len(text) and text[index] in "+-/\\":
         index += direction
     return 0 <= index < len(text) and _is_word_character(text[index])
 

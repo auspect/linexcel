@@ -1353,6 +1353,49 @@ class TestReadingsAgree:
         assert readings_agree(left, right, None) == verdict
         assert readings_agree(right, left, None) == verdict
 
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("A\\1", "A\\01", "differ"),
+            ("A\\1.0", "A\\1,0", "differ"),
+            ("A\\.1", "A\\.01", "differ"),
+            ("A\\\\1", "A\\\\01", "differ"),
+            ("A/\\1", "A/\\01", "differ"),
+            ("1\\/beta", "01\\/beta", "differ"),
+            ("A\\-1", "A\\-01", "differ"),
+            ("A+\\1", "A+\\01", "differ"),
+            ("1\\beta", "01\\beta", "differ"),
+            ("1\\\\beta", "01\\\\beta", "differ"),
+            ("1\\-beta", "01\\-beta", "differ"),
+            ("1.0\\beta", "1,0\\beta", "differ"),
+            ("编号\\1", "编号\\01", "differ"),
+            ("e\u0301\\1", "e\u0301\\01", "differ"),
+            ("A\u2060\\1", "A\u2060\\01", "differ"),
+            ("1\\\u200dx", "01\\\u200dx", "differ"),
+            ("1\\2", "01\\2", "differ"),
+            ("1\\6.7", "1\\6,7", "differ"),
+            ("1\\2\\2026", "01\\02\\2026", "differ"),
+            ("A\\1 total 6.7", "A\\01 total 6,7", "differ"),
+            ("A\\01 total 6.7", "A\\01 total 6,7", "format"),
+            ("01\\beta total .50", "01\\beta total 0,5", "format"),
+            ("A\\01", "A\\01", "same"),
+            ("A \\ 6.7", "A \\ 6,7", "format"),
+            ("A\\ 6.7", "A\\ 6,7", "format"),
+            ("A \\6.7", "A \\6,7", "format"),
+            ("6.7 \\ beta", "6,7 \\ beta", "format"),
+            ("A\u00a0\\6.7", "A\u00a0\\6,7", "format"),
+            ("A\u202f\\6.7", "A\u202f\\6,7", "format"),
+            ("\\6.7\\", "\\6,7\\", "format"),
+            ("A \\-1234.5", "A \\-1 234,5", "format"),
+            ("A \\6.7", "A \\6,8", "differ"),
+        ],
+    )
+    def test_backslash_identifiers_and_separate_quantities(self, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
     def test_a_recalculated_error_over_a_stored_number_is_a_divergence(self):
         """The case a human found as a green banner over a red row.
 
@@ -1401,7 +1444,12 @@ def with_stored_results(
                 for address, text in cells.items():
                     xml = _re.sub(
                         rf'<c r="{address}"([^>]*)>(<f>.*?</f>)\s*<v\s*/>',
-                        rf'<c r="{address}"\g<1> t="{cell_type}">\g<2><v>{text}</v>',
+                        # Cached text can contain backslashes; a replacement
+                        # template would interpret them as escapes/backrefs.
+                        lambda m: (
+                            f'<c r="{address}"{m[1]} t="{cell_type}">'
+                            f"{m[2]}<v>{text}</v>"
+                        ),
                         xml,
                     )
                 blob = xml.encode("utf-8")
@@ -1434,6 +1482,13 @@ def with_stored_results(
         ("A-01 total 6.7", "A-01 total 6,7", "format"),
         ("-6.7 €", "-6,7 €", "format"),
         ("A -6.7", "A -6,7", "format"),
+        (r"A\1", r"A\01", "differ"),
+        (r"1\beta", r"01\beta", "differ"),
+        (r"A/\-1", r"A/\-01", "differ"),
+        ("A\u2060\\1", "A\u2060\\01", "differ"),
+        (r"1\2", r"01\2", "differ"),
+        (r"A\01 total 6.7", r"A\01 total 6,7", "format"),
+        (r"A \ 6.7", r"A \ 6,7", "format"),
         ("A/1", "A/01", "differ"),
         ("1/beta", "01/beta", "differ"),
         ("A/-1", "A/-01", "differ"),
