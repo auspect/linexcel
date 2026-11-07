@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refresh README viewer screenshots from the validated synthetic workbook.
 - Exclude local gnhf run logs and validation artifacts explicitly from source
   distributions, including when they are present in the release checkout.
+- Honor expired web-task deadlines and pending cancellation before sampling
+  worker memory; live-budget supervision errors still stop the worker.
+- Avoid returning Cytoscape collections from browser-test click dispatches.
+  Assertions retain their coverage without costly object serialization and
+  intermittent browser failures.
 
 ### Changed
 

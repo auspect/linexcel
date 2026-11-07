@@ -1789,7 +1789,7 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
     # Exercise the two card provenances; the table below covers every boundary.
     for index in (0, 3):
         _, _, expected, source, agreement = cases[index]
-        page.evaluate("id => cy.getElementById(id).emit('tap')", f"c{index}")
+        page.evaluate("id => { cy.getElementById(id).emit('tap'); }", f"c{index}")
         values = panel.locator(".lin-reading-val").all_text_contents()
         assert values == [
             nodes[index]["cachedValue"],
@@ -1800,7 +1800,7 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
         )
         assert panel.locator(".lin-verdict").count() == (source == "engine")
         assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
-    page.evaluate("cy.getElementById('group').emit('tap')")
+    page.evaluate("() => { cy.getElementById('group').emit('tap'); }")
     rows = panel.locator(".lin-vtable tbody tr")
     for index, (_, _, expected, source, _) in enumerate(cases):
         assert rows.nth(index).locator("td").all_text_contents() == [
@@ -1863,7 +1863,7 @@ def test_real_first_midnight_displays_consistently(
     assert page.evaluate(
         "id => cy.getElementById(id).data('label')", node["id"]
     ).endswith("\n" + expected)
-    page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
     panel = page.locator("#lin-panel")
     assert panel.locator(".lin-reading-val").all_text_contents() == [
         node["cachedValue"],
@@ -1872,7 +1872,7 @@ def test_real_first_midnight_displays_consistently(
     differs = cache_remaining_ms is not None and remaining_ms < 0.5
     assert node["cachedAgreement"] == ("differ" if differs else "same")
     assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
-    page.evaluate("cy.getElementById('sampled').emit('tap')")
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
     rows = panel.locator(".lin-vtable tbody tr")
     assert rows.count() == 2
     for index in range(2):
@@ -1941,7 +1941,7 @@ def test_real_phantom_end_displays_consistently(
     assert page.evaluate(
         "id => cy.getElementById(id).data('label')", node["id"]
     ).endswith("\n" + expected)
-    page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
     panel = page.locator("#lin-panel")
     assert panel.locator(".lin-reading-val").all_text_contents() == [
         node["cachedValue"],
@@ -1953,7 +1953,7 @@ def test_real_phantom_end_displays_consistently(
     assert node["cachedAgreement"] == ("differ" if differs else "same")
     assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == differs
     assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
-    page.evaluate("cy.getElementById('sampled').emit('tap')")
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
     rows = panel.locator(".lin-vtable tbody tr")
     assert rows.count() == 2
     for index in range(2):
@@ -2015,14 +2015,14 @@ def test_real_temporal_result_with_different_cache(
     assert page.evaluate(
         "id => cy.getElementById(id).data('label')", node["id"]
     ).endswith("\n" + expected)
-    page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
+    page.evaluate("id => { cy.getElementById(id).emit('tap'); }", node["id"])
     panel = page.locator("#lin-panel")
     assert panel.locator(".lin-reading-val").all_text_contents() == [
         node["cachedValue"],
         expected,
     ]
     assert panel.locator(".lin-vcard.is-diff").count() == 1
-    page.evaluate("cy.getElementById('sampled').emit('tap')")
+    page.evaluate("() => { cy.getElementById('sampled').emit('tap'); }")
     rows = panel.locator(".lin-vtable tbody tr")
     assert rows.count() == 2
     for index in range(2):
@@ -2081,7 +2081,7 @@ def test_graph_dates_for_names_and_input_samples_keep_plain_values(
         "Missing",
         "Number\n46,054.75",
     ]
-    page.evaluate("cy.getElementById('input').emit('tap')")
+    page.evaluate("() => { cy.getElementById('input').emit('tap'); }")
     panel = page.locator("#lin-panel")
     for expected in (
         "A1 = 2026-02-01 18:00:00",
@@ -2113,7 +2113,7 @@ def test_legacy_datetime_verdict_compares_the_displayed_time(
     del node["cachedAgreement"]
     node.update(value=value, cachedValue=cached, valueDate="2026-02-01")
     page, errors = report(graph)
-    page.evaluate("cy.getElementById('c').emit('tap')")
+    page.evaluate("() => { cy.getElementById('c').emit('tap'); }")
     assert page.locator("#lin-panel .lin-vcard.is-diff").count() == (not agreement)
     assert page.locator("#lin-panel .lin-verdict").count() == 1
     assert not errors
