@@ -231,6 +231,45 @@ def test_date_results_with_time_only_cache(
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [0, 0.5, 0.75])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss", "hh:mm:ss"])
+def test_time_results_with_full_date_cache(
+    epoch_1904, slow_reader, serial, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(epoch_1904, serial, number_format, cache_serial=1.5)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["value"] == serial
+    assert node["valueSource"] == "engine"
+    assert node["cachedValue"] == (
+        "1904-01-02 12:00:00" if epoch_1904 else "1900-01-01 12:00:00"
+    )
+    assert node["cachedAgreement"] == "differ"
+    assert any("Dates!B1" in warning for warning in graph["meta"]["warnings"])
+    assert node["valueDate"] == (
+        "1904-01-01"
+        if epoch_1904
+        else {0: "00:00:00", 0.5: "12:00:00", 0.75: "18:00:00"}[serial]
+    )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("serial", [0, 0.5])
+@pytest.mark.parametrize("number_format", ["General", "[h]:mm:ss"])
+def test_fractional_results_do_not_invent_time_format(
+    epoch_1904, serial, number_format
+):
+    data = workbook_bytes(epoch_1904, serial, number_format, cache_serial=1.5)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert "valueDate" not in node
+    assert node["cachedAgreement"] == "differ"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
 def test_analysis_reports_complete_negative_date_cache(
     epoch_1904, slow_reader, monkeypatch
 ):

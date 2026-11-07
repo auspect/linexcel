@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fractional-day results in the 1900 calendar retain their time display when
+  the saved cache contains a full date. Graph labels, detail cards and sampled
+  rows now show times such as `12:00:00` instead of plain `0.5`; real cache
+  discrepancies remain flagged and the 1904 calendar keeps its date display.
+
 - Results containing whole days retain their calendar date when the saved cache
   is only a time. Both Excel calendars now display dates and times in graph
   labels, detail cards and sampled rows instead of plain serial numbers;

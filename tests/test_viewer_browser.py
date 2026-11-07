@@ -1886,22 +1886,28 @@ def test_real_first_midnight_displays_consistently(
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 @pytest.mark.parametrize("epoch_1904", [False, True])
-@pytest.mark.parametrize("serial", [1, 1.5, -2.25])
-def test_real_date_result_with_time_only_cache(
-    report, width, height, epoch_1904, serial
+@pytest.mark.parametrize(
+    "serial,cache_serial",
+    [(1, 0.5), (1.5, 0.5), (-2.25, 0.5), (0, 1.5), (0.5, 1.5), (0.75, 1.5)],
+)
+def test_real_temporal_result_with_different_cache(
+    report, width, height, epoch_1904, serial, cache_serial
 ):
     from test_negative_date_cache import workbook_bytes
 
     from linexcel import ExecutionPolicy
     from linexcel.analyzer import analyze_workbook
 
-    data = workbook_bytes(epoch_1904, serial, "hh:mm:ss", cache_serial=0.5)
+    data = workbook_bytes(epoch_1904, serial, "hh:mm:ss", cache_serial=cache_serial)
     graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
     node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
     expected = {
         1: "1904-01-02" if epoch_1904 else "1900-01-01",
         1.5: "1904-01-02 12:00:00" if epoch_1904 else "1900-01-01 12:00:00",
         -2.25: "1903-12-29 18:00:00" if epoch_1904 else "1899-12-27 18:00:00",
+        0: "1904-01-01" if epoch_1904 else "00:00:00",
+        0.5: "1904-01-01 12:00:00" if epoch_1904 else "12:00:00",
+        0.75: "1904-01-01 18:00:00" if epoch_1904 else "18:00:00",
     }[serial]
     graph["nodes"].append(
         {
@@ -1931,7 +1937,7 @@ def test_real_date_result_with_time_only_cache(
     page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
     panel = page.locator("#lin-panel")
     assert panel.locator(".lin-reading-val").all_text_contents() == [
-        "12:00:00",
+        node["cachedValue"],
         expected,
     ]
     assert panel.locator(".lin-vcard.is-diff").count() == 1
@@ -1940,7 +1946,7 @@ def test_real_date_result_with_time_only_cache(
     assert rows.count() == 2
     for index in range(2):
         assert rows.nth(index).locator("td").all_text_contents() == [
-            "12:00:00",
+            node["cachedValue"],
             expected,
         ]
     assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
