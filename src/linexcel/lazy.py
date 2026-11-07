@@ -16,6 +16,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from openpyxl.styles.numbers import is_date_format
 from openpyxl.utils.datetime import to_excel
 
 from linexcel.refs import (
@@ -32,6 +33,7 @@ from linexcel.values import (
     EXCEL_ERRORS,
     _excel_error_text,
     _is_uncomputed,
+    readings_agree,
 )
 
 _INPUT_ERROR_KINDS = {value: kind for kind, value in ERROR_KIND_TEXT.items()}
@@ -302,9 +304,20 @@ def _cache_comparison(
         same_error_type = (node.get("cachedValueKind") == "error") == (
             _excel_error_text(raw) is not None
         )
+        same_value = saved == comparison_value
+        if (
+            isinstance(saved, (int, float))
+            and isinstance(comparison_value, (int, float))
+            and not isinstance(raw, (dt.datetime, dt.date, dt.time))
+            and not is_date_format(node.get("numberFormat") or "General")
+        ):
+            # Use the full analysis's numeric tolerance for ordinary numbers.
+            # Temporal serials (including elapsed formats) retain their stricter
+            # comparison: relative tolerance in days can hide whole seconds.
+            same_value = readings_agree(comparison_value, saved, None) == "same"
         comparison = (
             "equal"
-            if same_boolean_type and same_error_type and saved == comparison_value
+            if same_boolean_type and same_error_type and same_value
             else "different"
         )
     return {"comparisonValue": comparison_value, "comparison": comparison}

@@ -362,6 +362,61 @@ def test_recalculated_excel_error_matches_same_saved_error(tmp_path):
     assert result["comparison"] == "equal"
 
 
+@pytest.mark.parametrize("cache", ["0.3", "0.31"])
+def test_target_and_dependency_cache_comparisons_tolerate_numeric_rounding(
+    tmp_path, cache
+):
+    def setup(book):
+        book.active["A1"] = "=0.1+0.2"
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, cache)
+    result = evaluate_node(path, "Sheet!B1")
+    expected = "equal" if cache == "0.3" else "different"
+    assert result["status"] == "completed"
+    assert result["comparison"] == expected
+    for step in result["steps"]:
+        if step["nodeId"] in {"Sheet!A1", "Sheet!B1"}:
+            assert step["comparison"] == expected
+            assert step["calculatedValue"] == result["value"]
+    assert result["value"] == 0.1 + 0.2
+
+
+@pytest.mark.parametrize(
+    ("raw", "saved", "number_format", "expected"),
+    [
+        (0.1 + 0.2, 0.3, "General", "equal"),
+        (1e6 + 0.0001, 1e6, "0.00", "equal"),
+        (0.0000000001, 0, "General", "equal"),
+        (0.00000001, 0, "General", "different"),
+        (1e6 + 0.01, 1e6, "0.00", "different"),
+        (1, True, "General", "different"),
+        (True, 1, "General", "different"),
+        (0.3, "0.3", "General", "different"),
+        (45000 + 1 / 86400, 45000, "yyyy-mm-dd", "different"),
+        (0.5 + 0.001 / 86400, 0.5, "hh:mm:ss.000", "different"),
+        (45000 + 1 / 86400, 45000, "[h]:mm:ss", "different"),
+    ],
+)
+def test_numeric_cache_rounding_preserves_types_and_temporal_precision(
+    raw, saved, number_format, expected
+):
+    import datetime as dt
+
+    from linexcel.lazy import _cache_comparison
+
+    node = {
+        "cache_status": "saved",
+        "cached_value": saved,
+        "numberFormat": number_format,
+    }
+    assert (
+        _cache_comparison(node, raw, raw, dt.datetime(1899, 12, 30))["comparison"]
+        == expected
+    )
+
+
 def test_engine_arrays_preserve_values_and_limitations_are_not_results():
     import pytest
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Targeted recalculations now use the full analysis's numeric rounding tolerance
+  for ordinary numbers, both on the selected cell and its dependency results.
+  For example, `0.1+0.2` agrees with a saved `0.3`; larger differences and type
+  mismatches still differ. Date, time and duration comparisons remain unchanged.
+
 - Apply the cache's 0.5 ms rounding tolerance to recalculated Python time
   objects and their serialized report values. Sub-millisecond rounding no
   longer produces false divergence warnings; larger differences, timezone
