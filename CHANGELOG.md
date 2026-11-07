@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in text joined by the Unicode minus sign U+2212
+  (`A−1` versus `A−01`), including compact expressions and mixed connectors.
+  Changed padding or decimal separators now produce divergence verdicts and
+  warnings; standalone negative quantities and amounts separated by whitespace
+  retain regional formatting tolerance.
+
 - Preserve literal digits in text joined by Unicode dash punctuation, including
   en dashes, em dashes and non-breaking hyphens (`A–1` versus `A–01`). Mixed
   connector runs and numeric ranges follow the same rule as ASCII hyphens;
