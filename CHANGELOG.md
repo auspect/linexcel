@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full workbook analysis preserves the day component of negative date caches.
+  The fast reader no longer turns a stored serial such as `-2.25` into only
+  `18:00:00`; it retains the complete timestamp for either workbook calendar,
+  while ordinary times, elapsed durations and cache retention limits are unchanged.
+
 - Interactive workbook imports preserve date caches when their number format
   contains a literal elapsed-time label such as `yyyy-mm-dd "[h]"`.
   Quoted or escaped labels no longer turn dates into durations; real elapsed

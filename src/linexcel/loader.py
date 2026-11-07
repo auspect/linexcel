@@ -27,6 +27,7 @@ from xml.sax.saxutils import unescape
 
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import BUILTIN_FORMATS, is_date_format, is_timedelta_format
+from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH, from_excel
 
 from linexcel.limits import limit_or_default
 from linexcel.progress import Reporter
@@ -370,29 +371,35 @@ def _load_cached_values_calamine(
                 values.setdefault(key, error)
             else:
                 truncated.add(name)
-    _restore_phantom_date_serials(data, values, epoch_1904)
+    _restore_lossy_date_caches(data, values, epoch_1904)
     return CachedValues(
         values, date_cells, epoch_1904, truncated, set(errors) & values.keys()
     )
 
 
-def _restore_phantom_date_serials(
+def _restore_lossy_date_caches(
     data: bytes, values: dict[tuple[str, int, int], Any], epoch_1904: bool
 ) -> None:
-    """Keep day 60 as its actual stored number, never invent Gregorian Feb 28.
+    """Recover dates whose day component was lost by a cache reader.
 
     Both readers collapse Excel's fictitious day to a representable date.
     Inspect only retained candidate dates and preserve all other cache values.
     The following real day is included because sub-millisecond rounding can
     turn 60.999999999 into March 1 during import.
+
+    Calamine also returns only a time for negative date serials. Recover the
+    full timestamp using the same epoch and conversion as the fallback reader.
+    Ordinary time-only caches and elapsed durations retain their types.
     """
-    if epoch_1904:
-        return
     candidates = {
         key
         for key, value in values.items()
-        if isinstance(value, datetime.date)
-        and (value.year, value.month, value.day) in {(1900, 2, 28), (1900, 3, 1)}
+        if isinstance(value, datetime.time)
+        or (
+            not epoch_1904
+            and isinstance(value, datetime.date)
+            and (value.year, value.month, value.day) in {(1900, 2, 28), (1900, 3, 1)}
+        )
     }
     if not candidates:
         return
@@ -424,8 +431,21 @@ def _restore_phantom_date_serials(
                                     serial = float(raw)
                                 except ValueError:
                                     serial = float("nan")
-                                if 60 <= serial < 61:
+                                if not epoch_1904 and 60 <= serial < 61:
                                     values[key] = serial
+                                elif serial < 0 and isinstance(
+                                    values[key], datetime.time
+                                ):
+                                    try:
+                                        values[key] = from_excel(
+                                            serial,
+                                            MAC_EPOCH if epoch_1904 else WINDOWS_EPOCH,
+                                        )
+                                    except (OverflowError, ValueError):
+                                        # Outside Python's date range, retain
+                                        # the stored number rather than a time
+                                        # that silently discards whole days.
+                                        values[key] = serial
                     cell.clear()
     except (KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         pass
@@ -547,7 +567,7 @@ def _load_cached_values_openpyxl(
         pass
     finally:
         wb.close()
-    _restore_phantom_date_serials(data, values, epoch_1904)
+    _restore_lossy_date_caches(data, values, epoch_1904)
     return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
 
 
