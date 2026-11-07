@@ -476,6 +476,11 @@ def _separators_only(left: str, right: str) -> bool:
     # every digit: float conversion and numeric tolerances can hide changed
     # identifiers, tiny decimals and even overflow two different strings to inf.
     for a, b in zip(left_numbers, right_numbers):
+        # Unchanged fragments need no numeric interpretation. A version or
+        # address such as "1.2.3" must not veto a separate amount's regional
+        # formatting just because it is not itself a valid number.
+        if a.group() == b.group():
+            continue
         # Word adjacency (v1.0, 01beta), including across connectors, or a decimal mark
         # (A.1, A,01) makes the number ambiguous. Preserve it literally:
         # zeroes and separators may be part of an identifier.

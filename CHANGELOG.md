@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unchanged numeric-looking text, such as the version in `Version 1.2.3 total
+  6.7`, no longer prevents recognizing regional formatting of a separate amount
+  (`6,7`). Changed versions, addresses, ambiguous digit runs and amounts still
+  produce divergence verdicts and warnings.
+
 - Compare mixed integer and decimal amount lists across regional formatting
   (`v01 6 8.9` versus `v01 6 8,9`). Identifier digits, changed amounts and
   separating whitespace remain protected. Runs containing a possible grouped

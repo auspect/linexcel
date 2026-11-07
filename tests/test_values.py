@@ -1243,6 +1243,29 @@ class TestReadingsAgree:
         assert readings_agree(left, right, None) == verdict
         assert readings_agree(right, left, None) == verdict
 
+    @pytest.mark.parametrize(
+        "fragment",
+        ["1.2.3", "127.0.0.1", "1,2,3", "1'2", "1 234.5 6.7", "1\u00a0234.5 6.7"],
+    )
+    @pytest.mark.parametrize("position", ["before", "after"])
+    def test_unchanged_numeric_fragment_beside_amount(self, fragment, position):
+        from linexcel.values import readings_agree
+
+        def text(value):
+            return (
+                f"{fragment}; total {value}"
+                if position == "before"
+                else f"total {value}; {fragment}"
+            )
+
+        assert readings_agree(text("6.7"), text("6,7"), None) == "format"
+        assert readings_agree(text("6,7"), text("6.7"), None) == "format"
+        assert readings_agree(text("6.7"), text("6,8"), None) == "differ"
+        assert readings_agree(text("6.7"), text("6.7"), None) == "same"
+        changed = text("6,7").replace(fragment, fragment + "0")
+        assert readings_agree(text("6.7"), changed, None) == "differ"
+        assert readings_agree(changed, text("6.7"), None) == "differ"
+
     @pytest.mark.parametrize("mark", ["\u0301", "\u093e", "\u20dd"])
     @pytest.mark.parametrize(
         ("left", "right", "verdict"),
@@ -1739,6 +1762,15 @@ def with_stored_results(
 @pytest.mark.parametrize(
     ("recalculated", "stored", "verdict"),
     [
+        ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,7", "format"),
+        ("Version 1.2.3 total 6.7", "Version 1.2.4 total 6,7", "differ"),
+        ("Version 1.2.3 total 6.7", "Version 1.2.3 total 6,8", "differ"),
+        ("1,2,3; 6.7", "1,2,3; 6,7", "format"),
+        ("6.7; 1'2", "6,7; 1'2", "format"),
+        ("127.0.0.1: 6.7", "127.0.0.1: 6,7", "format"),
+        ("127.0.0.1: 6.7", "127.00.0.1: 6,7", "differ"),
+        ("1 234.5 6.7; 8.9", "1 234.5 6.7; 8,9", "format"),
+        ("1 234.5 6.7; 8.9", "1 234,5 6,7; 8,9", "differ"),
         ("v01 6 8.9", "v01 6 8,9", "format"),
         ("6 8.9 01beta", "6 8,9 01beta", "format"),
         ("v01 6 8.9", "v1 6 8,9", "differ"),
