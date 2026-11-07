@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report value kinds now use the original result and cache types. Dates, times,
+  durations and non-finite numbers serialized as strings are no longer labelled
+  as literal text, including values retained from the file or volatile formulas.
+  Actual text and spreadsheet errors keep their distinct classifications.
+
 - Report comparisons retain the numeric type of non-finite results and caches
   after JSON serialization. Literal strings such as `nan` or `inf` no longer
   receive a false agreement verdict, and NaN remains unequal to itself,

@@ -209,6 +209,7 @@ class _ValueResolver:
         self.n_unrecovered = 0
         self._step_cache: dict[str, tuple[Any, bool]] = {}
         self._result_is_error: dict[tuple[str, int, int], bool | None] = {}
+        self._result_is_text: dict[tuple[str, int, int], bool] = {}
         self._comparison_results: dict[
             tuple[str, int, int], datetime.timedelta | float
         ] = {}
@@ -326,13 +327,17 @@ class _ValueResolver:
                 fields["cachedValueKind"] = (
                     "error"
                     if cached_error
-                    else ("text" if isinstance(cached, str) else "value")
+                    else ("text" if isinstance(raw_cache, str) else "value")
                 )
             if result_error is not None:
                 fields["valueKind"] = (
                     "error"
                     if result_error
-                    else ("text" if isinstance(value, str) else "value")
+                    else (
+                        "text"
+                        if self._result_is_text.get((sheet, row, col), False)
+                        else "value"
+                    )
                 )
         if date_text is not None:
             fields["valueDate"] = date_text
@@ -803,6 +808,7 @@ class _ValueResolver:
     ) -> tuple[Any, str | None, str | None]:
         raw = self.cached.get(sheet, row, col)
         self._result_is_error[(sheet, row, col)] = self.cached.is_error(sheet, row, col)
+        self._result_is_text[(sheet, row, col)] = isinstance(raw, str)
         if raw is None:
             return None, None, None
         date_text = _date_text_of(raw)
@@ -823,6 +829,9 @@ class _ValueResolver:
         self, sheet: str, row: int, col: int, raw: Any, date_text: str | None
     ) -> None:
         key = (sheet, row, col)
+        # JSON strings also represent dates, durations and non-finite numbers.
+        # Classify the original reading, before its display serialization.
+        self._result_is_text[key] = isinstance(raw, str)
         # Preserve types whose JSON representation is indistinguishable from
         # literal text. Parsing that text would accept string results too.
         if isinstance(raw, datetime.timedelta) or (

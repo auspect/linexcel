@@ -2398,3 +2398,42 @@ def test_literal_result_does_not_agree_with_nonfinite_numeric_cache(stored):
     assert fields["value"] == fields["cachedValue"] == str(stored)
     assert fields["cachedAgreement"] == "differ"
     assert warnings
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        datetime.date(2026, 8, 7),
+        datetime.datetime(2026, 8, 7, 12, 34, 56),
+        datetime.time(12, 34, 56),
+        datetime.timedelta(days=2, seconds=3),
+        42,
+        1.5,
+        True,
+    ],
+)
+@pytest.mark.parametrize("source", ["engine", "file", "volatile"])
+@pytest.mark.parametrize("literal_text", [False, True])
+def test_report_value_kinds_preserve_source_types(raw, source, literal_text):
+    from linexcel.values import _jsonable
+
+    key = (SHEET, 1, 1)
+    if literal_text:
+        raw = str(_jsonable(raw))
+    resolver = resolver_for(
+        {key: raw} if source != "file" else {},
+        CachedValues({key: raw}, set(), False, error_cells=set()),
+        [],
+        engine_alive=source != "file",
+    )
+    fields = resolver.describe(
+        SHEET, 1, 1, formula="=NOW()" if source == "volatile" else None
+    )
+    assert fields["valueSource"] == source
+    expected_kind = "text" if literal_text else "value"
+    assert fields["valueKind"] == expected_kind
+    assert fields["cachedValueKind"] == expected_kind
+    json.dumps(fields, allow_nan=False)
