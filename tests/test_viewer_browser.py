@@ -1885,23 +1885,32 @@ def test_real_first_midnight_displays_consistently(
 
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
-@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize(
+    "epoch_1904,boundary", [(False, 61), (True, 61), (True, -1401)]
+)
 @pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51, 1])
 def test_real_phantom_end_displays_consistently(
-    report, width, height, epoch_1904, remaining_ms
+    report, width, height, slow_reader, epoch_1904, boundary, remaining_ms, monkeypatch
 ):
     from test_negative_date_cache import workbook_bytes
 
     from linexcel import ExecutionPolicy
     from linexcel.analyzer import analyze_workbook
 
-    serial = 61 - remaining_ms / 86_400_000
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = boundary - remaining_ms / 86_400_000
     data = workbook_bytes(
-        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=61
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=boundary
     )
     graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
     node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
-    if epoch_1904:
+    if boundary == -1401:
+        # The 1904 calendar has no fictitious leap day, even for negative
+        # serials whose Gregorian date falls in February 1900.
+        expected = "1900-03-01" if remaining_ms < 0.5 else "1900-02-28 23:59:59.999"
+    elif epoch_1904:
         expected = "1904-03-02" if remaining_ms < 0.5 else "1904-03-01 23:59:59.999"
     else:
         # Earlier fractions still have no real Gregorian date to display.
@@ -1939,7 +1948,10 @@ def test_real_phantom_end_displays_consistently(
         expected,
     ]
     differs = remaining_ms > 0.5
+    assert node["value"] == float(format(serial, ".16g"))
+    assert node["valueSource"] == "engine"
     assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == differs
     assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
     page.evaluate("cy.getElementById('sampled').emit('tap')")
     rows = panel.locator(".lin-vtable tbody tr")
