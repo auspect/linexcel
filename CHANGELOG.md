@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The corpus validator now shares the product's numeric rounding tolerance.
+  Differences such as `5e-9` against zero are flagged for review, while ordinary
+  floating-point rounding and the existing relative tolerance remain accepted.
+
 - Targeted recalculations now use the full analysis's numeric rounding tolerance
   for ordinary numbers, both on the selected cell and its dependency results.
   For example, `0.1+0.2` agrees with a saved `0.3`; larger differences and type

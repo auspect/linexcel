@@ -11,13 +11,13 @@ import argparse
 import base64
 import hashlib
 import json
-import math
 import re
 import time
 from collections import Counter, defaultdict
 from importlib.metadata import version
 from pathlib import Path
 
+from linexcel.values import readings_agree
 from linexcel.web import TERMINAL, TaskStore, WebConfig
 
 
@@ -94,7 +94,7 @@ def comparison(node, result):
         and isinstance(value, (int, float))
         and not isinstance(value, bool)
     ):
-        if math.isclose(saved, value, rel_tol=1e-9, abs_tol=1e-8):
+        if readings_agree(value, saved, None) == "same":
             return "numeric_tolerance_agreement"
     return "cache_difference_requires_review"
 
