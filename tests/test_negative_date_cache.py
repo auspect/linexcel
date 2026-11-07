@@ -1,4 +1,4 @@
-"""Negative date serials retain whole days when read from the source file."""
+"""Temporal caches retain their calendar meaning across both source readers."""
 
 import datetime as dt
 import io
@@ -97,3 +97,75 @@ def test_analysis_reports_complete_negative_date_cache(
     assert node["cachedValue"] == expected
     assert node["value"] == -2.25
     assert node["valueSource"] == "engine"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("serial", [-2.25, 0.75, 60.5, 45000.5])
+@pytest.mark.parametrize(
+    "number_format",
+    ['yyyy-mm-dd "[h]"', 'yyyy-mm-dd "[mm]"', 'yyyy-mm-dd "[ss]"', r"yyyy-mm-dd \[h\]"],
+)
+def test_literal_elapsed_labels_preserve_cache_types(epoch_1904, serial, number_format):
+    data = workbook_bytes(epoch_1904, serial, number_format)
+    # A literal label must behave exactly like the same calendar format without it.
+    plain = _load_cached_values_openpyxl(
+        workbook_bytes(epoch_1904, serial, "yyyy-mm-dd")
+    )
+    for reader in (_load_cached_values_calamine, _load_cached_values_openpyxl):
+        cached = reader(data)
+        for column in (1, 2):
+            expected = plain.get("Dates", 1, column)
+            actual = cached.get("Dates", 1, column)
+            assert actual == expected
+            assert type(actual) is type(expected)
+            assert cached.is_date("Dates", 1, column)
+        assert cached.get("Dates", 1, 3) == dt.timedelta(days=serial)
+        assert not cached.is_date("Dates", 1, 3)
+        assert cached.get("Dates", 1, 4) == serial
+        assert cached.get("Dates", 1, 5) == dt.time(18)
+        assert cached.get("Dates", 1, 6) == "18:00:00"
+        assert cached.get("Dates", 1, 7) is None
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+def test_literal_elapsed_label_preserves_retention_limit(epoch_1904, slow_reader):
+    data = workbook_bytes(epoch_1904, 45000.5, 'yyyy-mm-dd "[ss]"')
+    cached = load_cached_values(
+        data, max_cells_per_sheet=1, max_dense_cells=0 if slow_reader else 100
+    )
+    assert len(cached) == 1
+    expected = (
+        dt.datetime(2027, 3, 16, 12) if epoch_1904 else dt.datetime(2023, 3, 15, 12)
+    )
+    assert cached.get("Dates", 1, 1) == expected
+    assert cached.get("Dates", 1, 2) is None
+    assert cached.truncated_sheets == {"Dates"}
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+def test_analysis_preserves_dates_with_literal_elapsed_labels(
+    epoch_1904, slow_reader, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(epoch_1904, 45000.5, 'yyyy-mm-dd "[ss]"')
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = "2027-03-16 12:00:00" if epoch_1904 else "2023-03-15 12:00:00"
+    assert node["cachedValue"] == expected
+    assert node["value"] == 45000.5
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == "same"
+
+
+@pytest.mark.parametrize("serial", [-2.25, 60.5, 45000.5])
+@pytest.mark.parametrize("number_format", ['[h]:mm:ss "[ss]"', '[mm]:ss "[h]"'])
+def test_real_durations_with_literal_labels_remain_durations(serial, number_format):
+    data = workbook_bytes(False, serial, number_format)
+    for reader in (_load_cached_values_calamine, _load_cached_values_openpyxl):
+        cached = reader(data)
+        for column in (1, 2):
+            assert cached.get("Dates", 1, column) == dt.timedelta(days=serial)
+            assert not cached.is_date("Dates", 1, column)

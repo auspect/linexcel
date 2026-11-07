@@ -371,14 +371,17 @@ def _load_cached_values_calamine(
                 values.setdefault(key, error)
             else:
                 truncated.add(name)
-    _restore_lossy_date_caches(data, values, epoch_1904)
+    _restore_lossy_date_caches(data, values, epoch_1904, date_cells)
     return CachedValues(
         values, date_cells, epoch_1904, truncated, set(errors) & values.keys()
     )
 
 
 def _restore_lossy_date_caches(
-    data: bytes, values: dict[tuple[str, int, int], Any], epoch_1904: bool
+    data: bytes,
+    values: dict[tuple[str, int, int], Any],
+    epoch_1904: bool,
+    date_cells: set[tuple[str, int, int]],
 ) -> None:
     """Recover dates whose day component was lost by a cache reader.
 
@@ -390,11 +393,16 @@ def _restore_lossy_date_caches(
     Calamine also returns only a time for negative date serials. Recover the
     full timestamp using the same epoch and conversion as the fallback reader.
     Ordinary time-only caches and elapsed durations retain their types.
+
+    Openpyxl may interpret a quoted elapsed label in a calendar format as a
+    duration. Restore those cells from their original serial, using the format
+    classification that excludes literal labels. Actual durations are untouched.
     """
     candidates = {
         key
         for key, value in values.items()
         if isinstance(value, datetime.time)
+        or (isinstance(value, datetime.timedelta) and key in date_cells)
         or (
             not epoch_1904
             and isinstance(value, datetime.date)
@@ -433,9 +441,10 @@ def _restore_lossy_date_caches(
                                     serial = float("nan")
                                 if not epoch_1904 and 60 <= serial < 61:
                                     values[key] = serial
-                                elif serial < 0 and isinstance(
-                                    values[key], datetime.time
-                                ):
+                                elif (
+                                    serial < 0
+                                    and isinstance(values[key], datetime.time)
+                                ) or isinstance(values[key], datetime.timedelta):
                                     try:
                                         values[key] = from_excel(
                                             serial,
@@ -567,7 +576,7 @@ def _load_cached_values_openpyxl(
         pass
     finally:
         wb.close()
-    _restore_lossy_date_caches(data, values, epoch_1904)
+    _restore_lossy_date_caches(data, values, epoch_1904, date_cells)
     return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
 
 
