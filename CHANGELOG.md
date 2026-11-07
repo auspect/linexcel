@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reports with date caches display a date for 1900-calendar results that round
+  to the first midnight, instead of a plain `1` beside the January 1 cache. Graph
+  labels, detail cards and sampled rows share the same temporal reading;
+  numeric values, comparison verdicts and ordinary times remain unchanged.
+
 - Full workbook analysis accepts rounding within 0.5 ms at the first midnight
   of the 1900 calendar. A numeric result just below one day now agrees with its
   typed January 1 cache; real time gaps and literal text remain distinct.

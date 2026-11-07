@@ -138,9 +138,44 @@ def test_analysis_preserves_first_midnight_cache(epoch_1904, slow_reader, monkey
     assert node["value"] == serial
     assert node["valueSource"] == "engine"
     assert node["cachedAgreement"] == "same"
+    assert node["valueDate"] == ("1904-01-01" if epoch_1904 else "1899-12-31")
     assert not any(
         "Dates!B1" in warning for warning in result["graph"]["meta"]["warnings"]
     )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51])
+def test_first_midnight_display_anchor_preserves_rounding_boundary(
+    epoch_1904, slow_reader, remaining_ms, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 1 - remaining_ms / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000")
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = (
+        ("1904-01-01" if epoch_1904 else "1899-12-31")
+        if remaining_ms < 0.5
+        else "23:59:59.999000"
+    )
+    assert node["valueDate"] == expected
+    assert node["value"] == serial
+    assert node["cachedAgreement"] == "same"
+
+
+@pytest.mark.parametrize("number_format", ["General", "[h]:mm:ss.000"])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+def test_first_midnight_does_not_give_numbers_or_durations_a_date(
+    number_format, epoch_1904
+):
+    serial = 1 - 0.25 / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, number_format)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert "valueDate" not in node
 
 
 @pytest.mark.parametrize("epoch_1904", [False, True])

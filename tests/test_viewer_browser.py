@@ -1812,6 +1812,71 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
 
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51])
+def test_real_first_midnight_displays_consistently(
+    report, width, height, epoch_1904, remaining_ms
+):
+    from test_negative_date_cache import workbook_bytes
+
+    from linexcel import ExecutionPolicy
+    from linexcel.analyzer import analyze_workbook
+
+    serial = 1 - remaining_ms / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000")
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = (
+        ("1904-01-02" if epoch_1904 else "1900-01-01")
+        if remaining_ms < 0.5
+        else "23:59:59.999000"
+    )
+    # Both sample spellings are part of the report contract.
+    graph["nodes"].append(
+        {
+            "id": "sampled",
+            "kind": "group",
+            "label": "Dates!B1:B2",
+            "sheet": "Dates",
+            "formula": "=A1",
+            "count": 2,
+            "samples": [
+                node,
+                {
+                    "addr": "B2",
+                    "value": node["value"],
+                    "date": node["valueDate"],
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                },
+            ],
+        }
+    )
+    page, errors = report(graph, width=width, height=height)
+    assert page.evaluate(
+        "id => cy.getElementById(id).data('label')", node["id"]
+    ).endswith("\n" + expected)
+    page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
+    panel = page.locator("#lin-panel")
+    assert panel.locator(".lin-reading-val").all_text_contents() == [
+        node["cachedValue"],
+        expected,
+    ]
+    assert panel.locator(".lin-vcard.is-diff").count() == 0
+    page.evaluate("cy.getElementById('sampled').emit('tap')")
+    rows = panel.locator(".lin-vtable tbody tr")
+    assert rows.count() == 2
+    for index in range(2):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            node["cachedValue"],
+            expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 def test_graph_dates_for_names_and_input_samples_keep_plain_values(
     report, width, height
 ):

@@ -36,6 +36,7 @@ from linexcel.loader import CachedValues
 from linexcel.refs import a1, parse_ref, parse_ref_detailed
 from linexcel.rewrite import qualify_sheet
 from linexcel.values import (
+    EPOCH_EARLY_1900,
     EXCEL_EPOCH_1900,
     _date_text_of,
     _error_kind,
@@ -825,6 +826,16 @@ class _ValueResolver:
         is_date = isinstance(cached, (datetime.datetime, datetime.date))
         if not is_date and not self.cached.is_date(sheet, row, col):
             return None
+        if (
+            not self.cached.epoch_1904
+            and 0 < raw < 1
+            and round(raw * 86_400_000) == 86_400_000
+        ):
+            # The viewer adds the rounded fraction to this day anchor. Excel's
+            # day zero has no date label, but its final fraction rounds to Jan 1.
+            # Supply the preceding day only at that boundary; using Jan 1 here
+            # would advance twice. Ordinary day-zero times keep their time label.
+            return EPOCH_EARLY_1900.date().isoformat()
         return serial_to_date_text(raw, self.cached.epoch_1904)
 
     def _check_mismatch(
