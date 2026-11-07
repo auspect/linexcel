@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Date comparisons retain Excel's fictitious leap day when rounding across
+  February 28, 1900. A result just before day 60 no longer agrees with a March 1
+  cache, and readers preserve the original serial when rounding the cache
+  would otherwise skip that day. Sub-millisecond rounding remains accepted.
+
 - Numeric caches for Excel's fictitious February 29, 1900 now use the same
   0.5 ms comparison tolerance as other dates. Reports and warnings no longer
   accept millisecond differences through the ordinary numeric tolerance;

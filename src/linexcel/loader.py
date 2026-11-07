@@ -388,7 +388,9 @@ def _restore_lossy_date_caches(
     Both readers collapse Excel's fictitious day to a representable date.
     Inspect only retained candidate dates and preserve all other cache values.
     The following real day is included because sub-millisecond rounding can
-    turn 60.999999999 into March 1 during import.
+    turn 60.999999999 into March 1 during import. Preserve serials just before
+    day 60 too: rounding February 28 into a Python date would skip the fictitious
+    day entirely and invent March 1.
 
     Calamine also returns only a time for negative date serials and fractions
     rounded into the next day at midnight. Reconvert numeric time caches using
@@ -440,7 +442,13 @@ def _restore_lossy_date_caches(
                                     serial = float(raw)
                                 except ValueError:
                                     serial = float("nan")
-                                if not epoch_1904 and 60 <= serial < 61:
+                                if not epoch_1904 and (
+                                    60 <= serial < 61
+                                    or (
+                                        59 < serial < 60
+                                        and round(serial % 1 * 86_400_000) == 86_400_000
+                                    )
+                                ):
                                     values[key] = serial
                                 elif isinstance(
                                     values[key], (datetime.time, datetime.timedelta)

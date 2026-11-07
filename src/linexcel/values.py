@@ -217,6 +217,14 @@ def _serial_datetime_agreement(
     stored_seconds = (
         datetime.datetime.combine(stored_date, stored_time) - start_of_day
     ).total_seconds()
+    if (
+        epoch_1904 is False
+        and 1 <= raw < 60
+        and stored_date >= datetime.date(1900, 3, 1)
+    ):
+        # Gregorian subtraction skips Excel's day 60. A result just before
+        # that day is still a full day away from March 1, not a rounding error.
+        stored_seconds += 86400
     return (
         "same"
         if math.isclose(raw % 1 * 86400, stored_seconds, rel_tol=0, abs_tol=0.0005)

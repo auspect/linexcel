@@ -19,6 +19,38 @@ from linexcel.values import readings_agree
 
 
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("serial", "cache_serial", "expected"),
+    [
+        (60 - 0.25 / 86_400_000, 61, "differ"),
+        (61, 60 - 0.25 / 86_400_000, "differ"),
+        (60 - 0.25 / 86_400_000, 60 - 0.25 / 86_400_000, "same"),
+        (60 - 0.25 / 86_400_000, 60, "same"),
+        (60, 60 - 0.25 / 86_400_000, "same"),
+        (60 - 1 / 86_400_000, 60, "differ"),
+    ],
+)
+def test_leap_day_boundary_preserves_serial_distance(
+    slow_reader, epoch_1904, serial, cache_serial, expected, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=cache_serial
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["value"] == serial
+    assert node["cachedAgreement"] == expected
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == (
+        expected == "differ"
+    )
+    if not epoch_1904 and 60 - 0.5 / 86_400_000 < cache_serial <= 60:
+        assert node["cachedValue"] == cache_serial
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
 @pytest.mark.parametrize("offset_ms", [-4, -1, -0.25, 0, 0.25, 1, 4])
 @pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "General"])
 def test_phantom_date_cache_uses_temporal_precision(
