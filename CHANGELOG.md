@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare consecutive decimal amounts using regional number formatting
+  (`v01 6.7 8.9` versus `v01 6,7 8,9`), including amounts between identifiers.
+  Invalid numeric runs split only when each part is a valid decimal amount;
+  identifier digits, separating whitespace and valid digit groups stay protected.
+
 - Compare separate amounts beside unchanged identifiers using regional number
   formatting (`v01 6.7` versus `v01 6,7`, and `6.7 01beta` versus `6,7 01beta`).
   Invalid digit grouping no longer merges the identifier with its neighboring

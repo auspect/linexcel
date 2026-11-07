@@ -1177,6 +1177,38 @@ class TestReadingsAgree:
         assert readings_agree(left, right, None) == verdict
         assert readings_agree(right, left, None) == verdict
 
+    @pytest.mark.parametrize("space", [" ", "\u00a0", "\u202f"])
+    @pytest.mark.parametrize(
+        ("left", "right", "verdict"),
+        [
+            ("v01{space}6.7{space}8.9", "v01{space}6,7{space}8,9", "format"),
+            ("6.7{space}8.9{space}01beta", "6,7{space}8,9{space}01beta", "format"),
+            (
+                "v01{space}6.7{space}8.9{space}02b",
+                "v01{space}6,7{space}8,9{space}02b",
+                "format",
+            ),
+            ("6.7{space}8.9", "6,7{space}8,9", "format"),
+            ("6.7{space}8.9{space}0.5", "6,7{space}8,9{space}0,50", "format"),
+            ("v01{space}6.7{space}8.9", "v1{space}6,7{space}8,9", "differ"),
+            ("6.7{space}8.9{space}01beta", "6,7{space}8,9{space}1beta", "differ"),
+            ("v01{space}6.7{space}8.9", "v01{space}6,8{space}8,9", "differ"),
+            ("v01{space}6.7{space}8.9", "v01{space}6,7{space}8,8", "differ"),
+            ("6.7{space}8.9", "6,7\t8,9", "differ"),
+            ("6.7{space}8.9", "6,7{space}8,9{space}0,5", "differ"),
+            # Valid groups and mixed integer/decimal runs remain conservative.
+            ("v1{space}234.5", "v1{space}234,5", "differ"),
+            ("6{space}7.8{space}9.1", "6{space}7,8{space}9,1", "differ"),
+            ("1.234{space}567", "1234567", "format"),
+        ],
+    )
+    def test_consecutive_decimal_amounts(self, space, left, right, verdict):
+        from linexcel.values import readings_agree
+
+        left, right = left.format(space=space), right.format(space=space)
+        assert readings_agree(left, right, None) == verdict
+        assert readings_agree(right, left, None) == verdict
+
     @pytest.mark.parametrize("mark", ["\u0301", "\u093e", "\u20dd"])
     @pytest.mark.parametrize(
         ("left", "right", "verdict"),
@@ -1877,6 +1909,10 @@ def with_stored_results(
         ("v01 1 234.5", "v01 1234,5", "format"),
         ("v01 6.7", "v1 6,7", "differ"),
         ("v01 6.7", "v01 6,8", "differ"),
+        ("v01 6.7 8.9", "v01 6,7 8,9", "format"),
+        ("6.7 8.9 01beta", "6,7 8,9 01beta", "format"),
+        ("v01 6.7 8.9", "v1 6,7 8,9", "differ"),
+        ("v01 6.7 8.9", "v01 6,7 8,8", "differ"),
         ("A≠1", "A≠01", "differ"),
         ("1≠beta", "01≠beta", "differ"),
         ("A≠6.7", "A≠6,7", "differ"),

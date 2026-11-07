@@ -416,6 +416,31 @@ def _text_number_parts(text: str) -> tuple[str, list[re.Match[str]]]:
                 numbers.extend(_NUMBER_RE.finditer(text, start, end))
         else:
             numbers.append(match)
+    amounts = []
+    for match in numbers:
+        # A run such as "6.7 8.9" is not one grouped number. Split only
+        # when every whitespace-delimited piece is a valid decimal amount;
+        # integer pieces may instead be digit groups and remain ambiguous.
+        # Keep matches in the original text so edges and whitespace survive.
+        chunks = list(re.finditer(r"[^ \u00a0\u202f]+", match.group()))
+        if (
+            len(chunks) > 1
+            and not _read_number(match.group())
+            and all(
+                ("." in chunk.group() or "," in chunk.group())
+                and _read_number(chunk.group())
+                for chunk in chunks
+            )
+        ):
+            for chunk in chunks:
+                amounts.extend(
+                    _NUMBER_RE.finditer(
+                        text, match.start() + chunk.start(), match.start() + chunk.end()
+                    )
+                )
+        else:
+            amounts.append(match)
+    numbers = amounts
     parts = []
     end = 0
     for match in numbers:
