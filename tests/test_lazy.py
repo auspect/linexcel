@@ -654,6 +654,62 @@ def _replace_formula_caches(path, cache_text, cache_type=None):
             archive.writestr(name, data)
 
 
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    "number_format",
+    ['yyyy-mm-dd "[h]"', 'yyyy-mm-dd "[mm]"', 'yyyy-mm-dd "[ss]"', r"yyyy-mm-dd \[h\]"],
+)
+def test_literal_elapsed_markers_preserve_date_caches(
+    tmp_path, epoch_1904, number_format
+):
+    import datetime as dt
+
+    from openpyxl.utils.datetime import from_excel
+
+    epoch = dt.datetime(1904, 1, 1) if epoch_1904 else dt.datetime(1899, 12, 30)
+
+    def setup(book):
+        book.epoch = epoch
+        book.active["A1"] = 45000.5
+        book.active["B1"] = "=A1"
+        book.active["C1"] = "=B1"
+        for address in ("A1", "B1", "C1"):
+            book.active[address].number_format = number_format
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, "45000.5")
+    expected = from_excel(45000.5, epoch).isoformat()
+    nodes = {n["id"]: n for n in build_structure(path)["nodes"]}
+    for address in ("A1", "B1", "C1"):
+        node = nodes[f"Sheet!{address}"]
+        assert node["cached_value"] == expected
+        assert node["cached_comparison_value"] == 45000.5
+    assert evaluate_node(path, "Sheet!A1")["value"] == expected
+    result = evaluate_node(path, "Sheet!C1")
+    assert result["status"] == "completed"
+    assert result["value"] == 45000.5
+    assert result["comparison"] == "equal"
+    for step in result["steps"]:
+        assert step["cachedValue"] == expected
+
+
+@pytest.mark.parametrize("number_format", ['[h]:mm:ss "[ss]"', "[mm]:ss", "[ss]"])
+@pytest.mark.parametrize("serial", [-1.5, 1.5])
+def test_actual_elapsed_formats_preserve_duration_caches(
+    tmp_path, number_format, serial
+):
+    import datetime as dt
+
+    def setup(book):
+        book.active["A1"] = serial
+        book.active["A1"].number_format = number_format
+
+    path = save(tmp_path, setup)
+    node = next(n for n in build_structure(path)["nodes"] if n["id"] == "Sheet!A1")
+    assert node["cached_value"] == str(dt.timedelta(days=serial))
+    assert node["cached_comparison_value"] == serial
+
+
 @pytest.mark.parametrize(
     "formula,spelling",
     [

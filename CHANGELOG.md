@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Interactive workbook imports preserve date caches when their number format
+  contains a literal elapsed-time label such as `yyyy-mm-dd "[h]"`.
+  Quoted or escaped labels no longer turn dates into durations; real elapsed
+  formats and the underlying numeric values retain their meaning.
+
 - ISO date and time caches retain temporal comparison precision even when
   their cell uses General format. Targeted recalculation, dependency results
   and corpus validation tolerate rounding within 0.5 ms and flag larger gaps.
