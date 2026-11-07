@@ -600,7 +600,7 @@ def test_date_and_time_caches_compare_using_workbook_epoch(tmp_path, epoch_year)
     assert evaluate_node(path, "Sheet!A1")["value"] == to_excel(dates[0], epoch)
 
 
-def _replace_formula_caches(path, cache_text):
+def _replace_formula_caches(path, cache_text, cache_type=None):
     import zipfile
     from xml.etree import ElementTree
 
@@ -613,10 +613,77 @@ def _replace_formula_caches(path, cache_text):
         for cell in root.findall("{*}sheetData/{*}row/{*}c"):
             if cell.find("{*}f") is not None:
                 cell.find("{*}v").text = cache_text
+                if cache_type is not None:
+                    cell.set("t", cache_type)
         parts[name] = ElementTree.tostring(root)
     with zipfile.ZipFile(path, "w") as archive:
         for name, data in parts.items():
             archive.writestr(name, data)
+
+
+@pytest.mark.parametrize(
+    "formula,spelling",
+    [
+        ("=SUMSQ(1E308)", "inf"),
+        ("=PRODUCT(-1E308,1E308)", "-inf"),
+        ("=PRODUCT(0,SUMSQ(1E308))", "nan"),
+    ],
+)
+@pytest.mark.parametrize("literal_result", [False, True])
+def test_nonfinite_target_and_dependency_do_not_agree_with_text_cache(
+    tmp_path, formula, spelling, literal_result
+):
+    import json
+
+    def setup(book):
+        book.active["A1"] = f'="{spelling}"' if literal_result else formula
+        book.active["B1"] = "=A1"
+
+    path = save(tmp_path, setup)
+    _replace_formula_caches(path, spelling, "str")
+    result = evaluate_node(path, "Sheet!B1")
+    expected = "equal" if literal_result else "different"
+    assert result["status"] == "completed"
+    assert result["value"] == spelling
+    assert result["cachedValue"] == spelling
+    assert result["comparison"] == expected
+    steps = {step["nodeId"]: step for step in result["steps"]}
+    for node_id in ("Sheet!A1", "Sheet!B1"):
+        assert steps[node_id]["calculatedValue"] == spelling
+        assert steps[node_id]["comparison"] == expected
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("raw", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("cache_kind", ["text", "number", "finite", "missing"])
+def test_nonfinite_cache_comparison_uses_numeric_value_before_serialization(
+    raw, cache_kind
+):
+    import datetime as dt
+    import json
+    import math
+
+    from linexcel.lazy import _cache_comparison, _engine_value
+
+    node = {
+        "cache_status": "missing" if cache_kind == "missing" else "saved",
+        "cached_value": str(raw)
+        if cache_kind == "text"
+        else 0
+        if cache_kind == "finite"
+        else raw,
+    }
+    result = _cache_comparison(node, raw, _engine_value(raw), dt.datetime(1899, 12, 30))
+    expected = (
+        "unknown"
+        if cache_kind == "missing"
+        else "equal"
+        if cache_kind == "number" and not math.isnan(raw)
+        else "different"
+    )
+    assert result["comparison"] == expected
+    assert result["comparisonValue"] == str(raw)
+    json.dumps(result, allow_nan=False)
 
 
 @pytest.mark.parametrize("saved_cache", [None, "999"])

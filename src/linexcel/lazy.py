@@ -294,6 +294,8 @@ def _cache_comparison(
     comparison_value = (
         to_excel(raw, epoch)
         if isinstance(raw, (dt.datetime, dt.date, dt.time))
+        else raw
+        if isinstance(raw, float) and not math.isfinite(raw)
         else normalized
     )
     comparison = "unknown"
@@ -323,7 +325,14 @@ def _cache_comparison(
             if same_boolean_type and same_error_type and same_value
             else "different"
         )
-    return {"comparisonValue": comparison_value, "comparison": comparison}
+    # JSON represents non-finite numbers as text; compare their numeric value
+    # first so a literal cache string cannot receive a false agreement verdict.
+    return {
+        "comparisonValue": _json(comparison_value)
+        if isinstance(comparison_value, float)
+        else comparison_value,
+        "comparison": comparison,
+    }
 
 
 def evaluate_node(

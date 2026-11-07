@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Targeted recalculation compares non-finite numeric results before converting
+  them to JSON strings. Results such as `SUMSQ(1E308)` no longer agree with a
+  literal `inf` cache, including dependency results; literal text still agrees
+  with matching text, and NaN remains unequal to itself.
+
 - Corpus validation distinguishes spreadsheet errors from literal text with
   the same spelling, such as `#N/A`. These type mismatches now require review,
   consistent with targeted recalculation, while matching errors still agree.
