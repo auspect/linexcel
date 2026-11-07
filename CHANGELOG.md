@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The fast workbook reader retains the next day when a time cache just before
+  the first midnight rounds up to a complete day. Both readers now preserve
+  the same timestamp in either Excel calendar, including formula caches;
+  ordinary times, elapsed durations and retention limits keep their meaning.
+
 - Full workbook analysis compares negative date results against their complete
   saved timestamps in either Excel calendar. Matching values and rounding within
   0.5 ms no longer produce false differences; real time and day gaps remain

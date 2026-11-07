@@ -85,6 +85,66 @@ def test_negative_date_cache_preserves_retention_limit(epoch_1904, slow_reader):
 
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "hh:mm:ss.000"])
+@pytest.mark.parametrize("remaining_ms", [0.1, 0.25, 1.0])
+def test_first_midnight_cache_preserves_rounded_day(
+    epoch_1904, number_format, remaining_ms
+):
+    serial = 1 - remaining_ms / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, number_format)
+    if remaining_ms < 0.5:
+        expected = dt.datetime(1904, 1, 2) if epoch_1904 else dt.datetime(1900, 1, 1)
+    else:
+        expected = dt.time(23, 59, 59, 999000)
+    for reader in (_load_cached_values_calamine, _load_cached_values_openpyxl):
+        cached = reader(data)
+        for column in (1, 2):
+            assert cached.get("Dates", 1, column) == expected
+            assert cached.is_date("Dates", 1, column)
+        duration = cached.get("Dates", 1, 3)
+        assert isinstance(duration, dt.timedelta)
+        assert abs(
+            duration - dt.timedelta(days=1, milliseconds=-remaining_ms)
+        ) <= dt.timedelta(microseconds=500)
+        assert cached.get("Dates", 1, 4) == serial
+        assert cached.get("Dates", 1, 5) == dt.time(18)
+        assert cached.get("Dates", 1, 6) == "18:00:00"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+def test_first_midnight_cache_preserves_retention_limit(epoch_1904, slow_reader):
+    data = workbook_bytes(epoch_1904, 1 - 0.25 / 86_400_000, "hh:mm:ss.000")
+    cached = load_cached_values(
+        data, max_cells_per_sheet=1, max_dense_cells=0 if slow_reader else 100
+    )
+    expected = dt.datetime(1904, 1, 2) if epoch_1904 else dt.datetime(1900, 1, 1)
+    assert cached.get("Dates", 1, 1) == expected
+    assert len(cached) == 1
+    assert cached.get("Dates", 1, 2) is None
+    assert cached.truncated_sheets == {"Dates"}
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+def test_analysis_preserves_first_midnight_cache(epoch_1904, slow_reader, monkeypatch):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 1 - 0.25 / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000")
+    result = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))
+    node = next(n for n in result["graph"]["nodes"] if n.get("addr") == "B1")
+    assert node["cachedValue"] == ("1904-01-02" if epoch_1904 else "1900-01-01")
+    assert node["value"] == serial
+    assert node["valueSource"] == "engine"
+    if epoch_1904:
+        assert node["cachedAgreement"] == "same"
+        assert not any(
+            "Dates!B1" in warning for warning in result["graph"]["meta"]["warnings"]
+        )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
 def test_analysis_reports_complete_negative_date_cache(
     epoch_1904, slow_reader, monkeypatch

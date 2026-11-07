@@ -390,9 +390,10 @@ def _restore_lossy_date_caches(
     The following real day is included because sub-millisecond rounding can
     turn 60.999999999 into March 1 during import.
 
-    Calamine also returns only a time for negative date serials. Recover the
-    full timestamp using the same epoch and conversion as the fallback reader.
-    Ordinary time-only caches and elapsed durations retain their types.
+    Calamine also returns only a time for negative date serials and fractions
+    rounded into the next day at midnight. Reconvert numeric time caches using
+    the fallback reader's epoch and millisecond rounding, retaining the day
+    when necessary. Ordinary times and elapsed durations retain their types.
 
     Openpyxl may interpret a quoted elapsed label in a calendar format as a
     duration. Restore those cells from their original serial, using the format
@@ -441,10 +442,9 @@ def _restore_lossy_date_caches(
                                     serial = float("nan")
                                 if not epoch_1904 and 60 <= serial < 61:
                                     values[key] = serial
-                                elif (
-                                    serial < 0
-                                    and isinstance(values[key], datetime.time)
-                                ) or isinstance(values[key], datetime.timedelta):
+                                elif isinstance(
+                                    values[key], (datetime.time, datetime.timedelta)
+                                ):
                                     try:
                                         values[key] = from_excel(
                                             serial,
