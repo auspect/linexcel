@@ -16,6 +16,58 @@ from linexcel.loader import load_cached_values
 from linexcel.values import readings_agree, serial_to_date_text, serial_to_time_text
 
 
+@pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize(
+    ("offset", "verdict"),
+    [(0, "same"), (0.0004, "same"), (0.001, "differ"), (3600, "differ")],
+)
+def test_typed_datetime_readings_keep_hours_and_cache_precision(
+    serialized, offset, verdict
+):
+    raw = datetime.datetime(2026, 8, 7, 12)
+    stored = raw + datetime.timedelta(seconds=offset)
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    assert readings_agree(raw, stored, "2026-08-07") == verdict
+    assert readings_agree(stored, raw, "2026-08-07") == verdict
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize("hour", [0, 12])
+def test_typed_date_is_midnight_not_any_time_on_the_same_day(serialized, hour):
+    raw = datetime.datetime(2026, 8, 7, hour)
+    stored = datetime.date(2026, 8, 7)
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    verdict = "same" if hour == 0 else "differ"
+    assert readings_agree(raw, stored, "2026-08-07") == verdict
+    assert readings_agree(stored, raw, "2026-08-07") == verdict
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_typed_datetime_rounding_across_midnight(serialized):
+    raw = datetime.datetime(2026, 8, 7, 23, 59, 59, 999600)
+    stored = datetime.datetime(2026, 8, 8)
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    assert readings_agree(raw, stored, "2026-08-07") == "same"
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_typed_datetime_does_not_invent_a_timezone(serialized):
+    raw = datetime.datetime(2026, 8, 7, 12, tzinfo=datetime.UTC)
+    stored = datetime.datetime(2026, 8, 7, 12)
+    if serialized:
+        raw, stored = str(raw), str(stored)
+    assert readings_agree(raw, stored, "2026-08-07") == "differ"
+
+
+def test_timestamp_text_without_metadata_is_not_coerced():
+    assert (
+        readings_agree("2026-08-07T12:00:00", "2026-08-07 12:00:00", None) == "differ"
+    )
+
+
 @pytest.mark.parametrize(
     ("serial", "stored"),
     [

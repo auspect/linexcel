@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare the full timestamp of recalculated Python dates and datetimes, including
+  their serialized report values. Different hours on the same day now produce
+  divergence verdicts and warnings. Date-only values mean midnight; cache rounding
+  within 0.5 ms is tolerated across midnight, without assuming a timezone.
+
 - Preserve the position of literal `#` characters when comparing text with
   regional number formatting. Texts such as `#1` and `1#` now produce divergence
   verdicts and warnings; unchanged surrounding text such as `#6.7#` versus

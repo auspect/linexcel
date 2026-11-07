@@ -84,6 +84,26 @@ def resolver_for(
     return resolver
 
 
+@pytest.mark.parametrize("stored_hour", [0, 12, 13])
+def test_datetime_object_verdict_survives_resolver_serialization(stored_hour):
+    raw = datetime.datetime(2026, 8, 7, 12)
+    stored = datetime.datetime(2026, 8, 7, stored_hour)
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw},
+        CachedValues({(SHEET, 1, 1): stored}, {(SHEET, 1, 1)}, False),
+        warnings,
+    )
+    fields = resolver.describe(SHEET, 1, 1)
+    assert fields["value"] == "2026-08-07 12:00:00"
+    assert fields["valueDate"] == "2026-08-07"
+    assert fields["cachedAgreement"] == ("same" if stored_hour == 12 else "differ")
+    assert bool(warnings) == (stored_hour != 12)
+    if warnings:
+        assert "2026-08-07 12:00:00" in warnings[0]
+        assert "differs from file value" in warnings[0]
+
+
 class TestGuardedErrors:
     def test_native_missing_sheet_guard_evaluates_the_second_argument(self):
         graph = graph_of({"A1": "=IFERROR(NOSHEET!A1, 456)"})

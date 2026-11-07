@@ -201,6 +201,34 @@ def _serial_datetime_agreement(
     )
 
 
+def _typed_datetime_agreement(
+    raw: Any, cached: Any, date_text: str | None
+) -> str | None:
+    """Retain the time in date objects and their metadata-backed JSON form."""
+    has_date = date_text is not None and bool(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text)
+    )
+
+    def as_datetime(value: Any) -> datetime.datetime | None:
+        if isinstance(value, datetime.datetime):
+            return value
+        if isinstance(value, datetime.date):
+            return datetime.datetime.combine(value, datetime.time.min)
+        if has_date and isinstance(value, str):
+            try:
+                return datetime.datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return None
+
+    left, right = as_datetime(raw), as_datetime(cached)
+    if left is None or right is None:
+        return None
+    if left.tzinfo is not None or right.tzinfo is not None:
+        return "differ"
+    return "same" if abs((left - right).total_seconds()) <= 0.0005 else "differ"
+
+
 def _error_kind(value: Any) -> str | None:
     """Kind of an engine error value, or ``None`` when it is not one.
 
@@ -546,17 +574,13 @@ def readings_agree(
     datetime_agreement = _serial_datetime_agreement(recalculated, stored, date_text)
     if datetime_agreement is not None:
         return datetime_agreement
+    typed_datetime_agreement = _typed_datetime_agreement(
+        recalculated, stored, date_text
+    )
+    if typed_datetime_agreement is not None:
+        return typed_datetime_agreement
     if _values_differ(recalculated, stored, date_text):
         return "differ"
-    if date_text is not None:
-        stored_date = _date_text_of(stored)
-        if stored_date is None and isinstance(stored, str):
-            try:
-                stored_date = datetime.datetime.fromisoformat(stored).date().isoformat()
-            except ValueError:
-                pass
-        if stored_date is not None:
-            return "same" if date_text == stored_date else "differ"
     error_text = _excel_error_text(recalculated)
     if error_text is not None:
         return "same" if error_text == stored else "differ"
