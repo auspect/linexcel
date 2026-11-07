@@ -1814,8 +1814,9 @@ def test_temporal_readings_retain_times_in_cards_and_samples(
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51])
+@pytest.mark.parametrize("cache_remaining_ms", [None, 1.0])
 def test_real_first_midnight_displays_consistently(
-    report, width, height, epoch_1904, remaining_ms
+    report, width, height, epoch_1904, remaining_ms, cache_remaining_ms
 ):
     from test_negative_date_cache import workbook_bytes
 
@@ -1823,7 +1824,12 @@ def test_real_first_midnight_displays_consistently(
     from linexcel.analyzer import analyze_workbook
 
     serial = 1 - remaining_ms / 86_400_000
-    data = workbook_bytes(epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000")
+    cache_serial = (
+        None if cache_remaining_ms is None else 1 - cache_remaining_ms / 86_400_000
+    )
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=cache_serial
+    )
     graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
     node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
     expected = (
@@ -1863,7 +1869,9 @@ def test_real_first_midnight_displays_consistently(
         node["cachedValue"],
         expected,
     ]
-    assert panel.locator(".lin-vcard.is-diff").count() == 0
+    differs = cache_remaining_ms is not None and remaining_ms < 0.5
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
     page.evaluate("cy.getElementById('sampled').emit('tap')")
     rows = panel.locator(".lin-vtable tbody tr")
     assert rows.count() == 2

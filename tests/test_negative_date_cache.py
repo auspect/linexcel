@@ -180,6 +180,28 @@ def test_first_midnight_does_not_give_numbers_or_durations_a_date(
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "hh:mm:ss.000"])
+def test_first_midnight_display_with_time_only_cache(
+    epoch_1904, slow_reader, remaining_ms, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 1 - remaining_ms / 86_400_000
+    cache_serial = 1 - 1 / 86_400_000
+    data = workbook_bytes(epoch_1904, serial, number_format, cache_serial=cache_serial)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["cachedValue"] == "23:59:59.999000"
+    assert node["value"] == serial
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == "differ"
+    assert any("Dates!B1" in warning for warning in graph["meta"]["warnings"])
+    assert node["valueDate"] == ("1904-01-01" if epoch_1904 else "1899-12-31")
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
 def test_analysis_reports_complete_negative_date_cache(
     epoch_1904, slow_reader, monkeypatch
 ):

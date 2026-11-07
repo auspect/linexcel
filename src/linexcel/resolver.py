@@ -821,16 +821,18 @@ class _ValueResolver:
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             return _date_text_of(raw)
         cached = self.cached.get(sheet, row, col)
+        first_midnight = 0 < raw < 1 and round(raw * 86_400_000) == 86_400_000
         if isinstance(cached, datetime.time):
-            return serial_to_time_text(raw) if cached.tzinfo is None else None
-        is_date = isinstance(cached, (datetime.datetime, datetime.date))
+            if cached.tzinfo is not None:
+                return None
+            if not first_midnight:
+                return serial_to_time_text(raw)
+            # A differing cache may still be a time while the result rounds
+            # into the next day. Preserve that day instead of displaying 1.
+        is_date = isinstance(cached, (datetime.date, datetime.time))
         if not is_date and not self.cached.is_date(sheet, row, col):
             return None
-        if (
-            not self.cached.epoch_1904
-            and 0 < raw < 1
-            and round(raw * 86_400_000) == 86_400_000
-        ):
+        if not self.cached.epoch_1904 and first_midnight:
             # The viewer adds the rounded fraction to this day anchor. Excel's
             # day zero has no date label, but its final fraction rounds to Jan 1.
             # Supply the preceding day only at that boundary; using Jan 1 here

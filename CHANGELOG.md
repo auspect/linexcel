@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Results rounding to the first midnight retain their date display even when
+  the saved cache is still a time. Both Excel calendars now show the next day
+  in graph labels, detail cards and sampled rows; real cache discrepancies
+  remain flagged.
+
 - Reports with date caches display a date for 1900-calendar results that round
   to the first midnight, instead of a plain `1` beside the January 1 cache. Graph
   labels, detail cards and sampled rows share the same temporal reading;
