@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Results rounding from the end of Excel's fictitious February 29, 1900 to
+  March 1 now display `1900-03-01` instead of plain `61` in graph labels,
+  detail cards and sampled rows. The original serials and comparison verdicts
+  are preserved; earlier fractions without a real calendar date remain numeric.
+
 - Date comparisons accept rounding within 0.5 ms from the end of Excel's
   fictitious February 29, 1900 to a March 1 cache. Typed caches are compared
   on Excel's calendar even when the result has no representable Python date;

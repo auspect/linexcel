@@ -362,7 +362,12 @@ def test_cached_phantom_day_keeps_raw_serial_without_fictitious_iso(reader):
         fields = resolver.describe("S", row, 1)
         assert fields["value"] == fields["cachedValue"] == originals[row - 1]
         assert fields["cachedAgreement"] == "same"
-        assert "valueDate" not in fields
+        if row == 4:
+            # The final fraction rounds to March 1. This real-day anchor is
+            # only for display; the original phantom serial remains intact.
+            assert fields["valueDate"] == "1900-02-28"
+        else:
+            assert "valueDate" not in fields
         assert serial_to_date_text(originals[row - 1]) is None
 
 

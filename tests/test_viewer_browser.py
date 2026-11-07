@@ -1886,6 +1886,75 @@ def test_real_first_midnight_displays_consistently(
 
 @pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
 @pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51, 1])
+def test_real_phantom_end_displays_consistently(
+    report, width, height, epoch_1904, remaining_ms
+):
+    from test_negative_date_cache import workbook_bytes
+
+    from linexcel import ExecutionPolicy
+    from linexcel.analyzer import analyze_workbook
+
+    serial = 61 - remaining_ms / 86_400_000
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=61
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    if epoch_1904:
+        expected = "1904-03-02" if remaining_ms < 0.5 else "1904-03-01 23:59:59.999"
+    else:
+        # Earlier fractions still have no real Gregorian date to display.
+        expected = "1900-03-01" if remaining_ms < 0.5 else "61"
+    # Both sample spellings are part of the report contract.
+    graph["nodes"].append(
+        {
+            "id": "sampled",
+            "kind": "group",
+            "label": "Dates!B1:B2",
+            "sheet": "Dates",
+            "formula": "=A1",
+            "count": 2,
+            "samples": [
+                node,
+                {
+                    "addr": "B2",
+                    "value": node["value"],
+                    "date": node.get("valueDate"),
+                    "source": node["valueSource"],
+                    "cachedValue": node["cachedValue"],
+                    "cachedAgreement": node["cachedAgreement"],
+                },
+            ],
+        }
+    )
+    page, errors = report(graph, width=width, height=height)
+    assert page.evaluate(
+        "id => cy.getElementById(id).data('label')", node["id"]
+    ).endswith("\n" + expected)
+    page.evaluate("id => cy.getElementById(id).emit('tap')", node["id"])
+    panel = page.locator("#lin-panel")
+    assert panel.locator(".lin-reading-val").all_text_contents() == [
+        node["cachedValue"],
+        expected,
+    ]
+    differs = remaining_ms > 0.5
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert panel.locator(".lin-vcard.is-diff").count() == int(differs)
+    page.evaluate("cy.getElementById('sampled').emit('tap')")
+    rows = panel.locator(".lin-vtable tbody tr")
+    assert rows.count() == 2
+    for index in range(2):
+        assert rows.nth(index).locator("td").all_text_contents() == [
+            node["cachedValue"],
+            expected,
+        ]
+    assert panel.evaluate("e => e.scrollWidth === e.clientWidth")
+    assert not errors
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+@pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize(
     "serial,cache_serial",
     [(1, 0.5), (1.5, 0.5), (-2.25, 0.5), (0, 1.5), (0.5, 1.5), (0.75, 1.5)],

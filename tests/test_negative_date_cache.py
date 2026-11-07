@@ -79,6 +79,43 @@ def test_phantom_end_comparison_requires_typed_cache_and_calendar(
 
 
 @pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("remaining_ms", [0.25, 0.49, 0.51, 1])
+@pytest.mark.parametrize("cache_serial", [59, 61])
+def test_phantom_end_display_anchor(
+    slow_reader, epoch_1904, remaining_ms, cache_serial, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 61 - remaining_ms / 86_400_000
+    data = workbook_bytes(
+        epoch_1904, serial, "yyyy-mm-dd hh:mm:ss.000", cache_serial=cache_serial
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    expected = (
+        "1904-03-01" if epoch_1904 else "1900-02-28" if remaining_ms < 0.5 else None
+    )
+    assert node.get("valueDate") == expected
+    assert node["value"] == float(format(serial, ".16g"))
+    assert node["valueSource"] == "engine"
+    differs = cache_serial != 61 or remaining_ms > 0.5
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) == differs
+
+
+@pytest.mark.parametrize("number_format", ["General", "[h]:mm:ss.000"])
+@pytest.mark.parametrize("epoch_1904", [False, True])
+def test_phantom_end_does_not_give_numbers_or_durations_a_date(
+    number_format, epoch_1904
+):
+    data = workbook_bytes(epoch_1904, 61 - 0.25 / 86_400_000, number_format)
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert "valueDate" not in node
+
+
+@pytest.mark.parametrize("slow_reader", [False, True])
 @pytest.mark.parametrize("offset_ms", [-4, -1, -0.25, 0, 0.25, 1, 4])
 @pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "General"])
 def test_phantom_date_cache_uses_temporal_precision(

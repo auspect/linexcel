@@ -840,6 +840,15 @@ class _ValueResolver:
             # Supply the preceding day only at that boundary; using Jan 1 here
             # would advance twice. Ordinary day-zero times keep their time label.
             return EPOCH_EARLY_1900.date().isoformat()
+        if (
+            not self.cached.epoch_1904
+            and 60 <= raw < 61
+            and round(raw % 1 * 86_400_000) == 86_400_000
+        ):
+            # Only the final fraction of the fictitious leap day rounds to a
+            # real date. The viewer adds that rounded fraction to the anchor;
+            # February 28 therefore displays March 1 without advancing twice.
+            return "1900-02-28"
         # Day zero in the 1900 calendar has no date label, but its fraction
         # still represents a time even when a differing cache contains a date.
         return serial_to_date_text(raw, self.cached.epoch_1904) or serial_to_time_text(

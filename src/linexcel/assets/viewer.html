@@ -3051,8 +3051,9 @@
     var start = Date.parse(dateText + 'T00:00:00Z');
     var millis = Math.round((value - Math.floor(value)) * 86400000);
     if (!Number.isFinite(start)) return dateText;
-    // Excel's next day is the phantom leap day, not Gregorian March 1.
-    if (dateText === '1900-02-28' && millis === 86400000) return '1900-02-29';
+    // Day 59 rolls into the phantom leap day. Day 60 uses the same real-day
+    // anchor only when its final fraction rounds to Gregorian March 1.
+    if (dateText === '1900-02-28' && value < 60 && millis === 86400000) return '1900-02-29';
     var text = new Date(start + millis).toISOString().replace('T', ' ').replace(/Z$/, '');
     return text.replace(/\.000$/, '').replace(/ 00:00:00$/, '');
   }
