@@ -355,13 +355,13 @@ def _literal_across_connectors(text: str, index: int, direction: int) -> bool:
     # Minus, plus/minus, multiplication, division and dot operators are
     # mathematical symbols (Sm), not dashes. They connect text too
     # ("A⋅1" vs "A⋅01", likewise the distinct bullet operator "A∙1").
-    # The ratio sign ("A∶1" vs "A∶01") connects text like an ASCII colon.
+    # Ratio and proportion signs ("A∶1", "A∷1") connect text like an ASCII colon.
     # Middle dots, bullets and the hyphenation point (Po) also join text
     # ("A·1", "A•1", "A‧1").
     # Whitespace ends the search, so "A -6.7" and "A / 6.7" still contain
     # standalone quantities with regional-format tolerance.
     while 0 <= index < len(text) and (
-        text[index] in "+-−±∓×÷⋅·∙•‧∶:/\\" or unicodedata.category(text[index]) == "Pd"
+        text[index] in "+-−±∓×÷⋅·∙•‧∶∷:/\\" or unicodedata.category(text[index]) == "Pd"
     ):
         # Either slash can delimit a path component, even at a root
         # or after a drive colon ("/1", "C:/1"). Its digits are literal;
