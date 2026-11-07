@@ -1289,6 +1289,13 @@ class TaskStore:
                     if event.wait(min(0.05, remaining)):
                         reason = "cancelled"
                         break
+                # The child can exit during sampling or the final wait, so
+                # poll() alone cannot establish that completion was on time.
+                if reason is None:
+                    if event.is_set():
+                        reason = "cancelled"
+                    elif time.monotonic() - started >= task["budget"]["seconds"]:
+                        reason = "timeout"
             finally:
                 if job is not None:
                     job.close()

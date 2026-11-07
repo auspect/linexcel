@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python's calendar or duration range. Large durations no longer gain a second
   during fallback conversion; recovered numeric durations retain temporal
   comparison precision instead of hiding second-level differences.
+- Compare large fractional duration caches without converting their whole-day
+  components to seconds, avoiding false discrepancies from lost precision.
 - Recover from a Calamine Rust panic by falling back to openpyxl. Cache
   retention limits and real Excel errors remain intact; keyboard interrupts,
   process exits and asynchronous cancellation still propagate. Reader fallback
@@ -50,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distributions, including when they are present in the release checkout.
 - Honor expired web-task deadlines and pending cancellation before sampling
   worker memory; live-budget supervision errors still stop the worker.
+  Recheck termination after the child exits during sampling or the final wait,
+  so completed results cannot bypass an expired deadline.
 - Avoid returning Cytoscape collections from browser-test click dispatches.
   Assertions retain their coverage without costly object serialization and
   intermittent browser failures.

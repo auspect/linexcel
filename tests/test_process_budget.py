@@ -258,6 +258,60 @@ def test_web_cancellation_during_wait_prevents_completed_result_publication(
         app.close()
 
 
+@pytest.mark.parametrize("completion_stage", ["memory", "storage", "wait"])
+@pytest.mark.parametrize("elapsed", [4.999, 5.0, 5.001])
+def test_web_completed_worker_must_still_meet_deadline(
+    monkeypatch, tmp_path, completion_stage, elapsed
+):
+    app = create_app(tmp_path / "workspace")
+    try:
+        clock = [0.0]
+        monkeypatch.setattr(
+            "linexcel.web.time", SimpleNamespace(monotonic=lambda: clock[0])
+        )
+        children = workload(
+            monkeypatch,
+            "(root/'result.json').write_text(json.dumps({'result':{'published':True}}))",
+        )
+        root = tmp_path / "task"
+        root.mkdir()
+
+        def finish(stage):
+            if stage == completion_stage:
+                (root / "ready").touch()
+                assert children[0].wait(timeout=5) == 0
+                clock[0] = elapsed
+            return False
+
+        monkeypatch.setattr(
+            budget.MemoryMonitor, "exceeded", lambda *_: finish("memory")
+        )
+        monkeypatch.setattr(app.store, "_storage_bytes", lambda: int(finish("storage")))
+
+        class FinishDuringWait(threading.Event):
+            def wait(self, timeout=None):
+                return finish("wait")
+
+        result = app.store._worker(
+            {
+                "operation": "import",
+                "nodeId": None,
+                "budget": {"memoryMb": 128, "seconds": 5},
+            },
+            root,
+            FinishDuringWait(),
+        )
+        assert (root / "result.json").exists()
+        if elapsed < 5:
+            assert result == {"result": {"published": True}}
+        else:
+            assert result["error"]["kind"] == "timeout"
+            assert "result" not in result
+        assert all(child.poll() is not None for child in children)
+    finally:
+        app.close()
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Real libproc enforcement")
 @pytest.mark.parametrize("descendant", [False, True])
 def test_real_macos_group_memory_is_bounded(monkeypatch, descendant):

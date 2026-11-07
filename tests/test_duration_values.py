@@ -109,6 +109,40 @@ def test_duration_comparison_uses_elapsed_seconds(serial, offset_seconds, expect
     assert readings_agree(serial + offset_seconds / 86400, stored, None) == expected
 
 
+@pytest.mark.parametrize("serial", [-100_000_000.123, 100_000_000.123])
+@pytest.mark.parametrize("offset_ms", [-2, 0, 2])
+def test_large_duration_comparison_preserves_cache_rounding(serial, offset_ms):
+    from openpyxl.utils.datetime import from_excel
+
+    stored = from_excel(serial, timedelta=True)
+    stored += datetime.timedelta(milliseconds=offset_ms)
+    assert readings_agree(serial, stored, None) == (
+        "same" if offset_ms == 0 else "differ"
+    )
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("serial", [-100_000_000.123, 100_000_000.123])
+@pytest.mark.parametrize("offset_seconds", [0, 1])
+def test_large_fractional_duration_cache_verdict_and_warnings(
+    serial, epoch_1904, slow_reader, offset_seconds, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = duration_workbook(
+        "[h]:mm:ss.000", serial, epoch_1904, serial + offset_seconds / 86400
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(node for node in graph["nodes"] if node["id"] == "c:Durations!B1")
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == ("same" if offset_seconds == 0 else "differ")
+    assert any(
+        "Durations!B1:" in warning and "differs from file" in warning
+        for warning in graph["meta"]["warnings"]
+    ) == (offset_seconds != 0)
+
+
 @pytest.mark.parametrize(
     "raw",
     [

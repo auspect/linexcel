@@ -655,8 +655,10 @@ def readings_agree(
             if not isinstance(recalculated, bool)
             and math.isfinite(recalculated)
             and math.isclose(
-                recalculated * 86400,
-                stored.total_seconds(),
+                # Remove whole days before converting: absolute totals lose
+                # sub-millisecond precision for large, unchanged durations.
+                (recalculated - stored.days) * 86400,
+                stored.seconds + stored.microseconds / 1_000_000,
                 rel_tol=0,
                 abs_tol=0.0005,
             )
