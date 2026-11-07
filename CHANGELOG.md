@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recalculated results retain their value kind even when the workbook has no
+  saved cache. Literal text such as `#DIV/0!` remains distinguishable from a
+  spreadsheet error in reports and documentation context; missing results
+  are not assigned an invented type or cache comparison.
+
 - Report value kinds now use the original result and cache types. Dates, times,
   durations and non-finite numbers serialized as strings are no longer labelled
   as literal text, including values retained from the file or volatile formulas.

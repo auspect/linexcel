@@ -2437,3 +2437,55 @@ def test_report_value_kinds_preserve_source_types(raw, source, literal_text):
     assert fields["valueKind"] == expected_kind
     assert fields["cachedValueKind"] == expected_kind
     json.dumps(fields, allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("raw", "kind"),
+    [
+        ("#DIV/0!", "text"),
+        ({"type": "Error", "kind": "Div"}, "error"),
+        ("", "text"),
+        ("hello", "text"),
+        (42, "value"),
+        (False, "value"),
+        (float("nan"), "value"),
+        (float("inf"), "value"),
+        (datetime.date(2026, 8, 7), "value"),
+        (datetime.datetime(2026, 8, 7, 12, 34), "value"),
+        (datetime.time(12, 34), "value"),
+        (datetime.timedelta(days=2), "value"),
+    ],
+)
+def test_uncached_result_retains_value_kind(raw, kind):
+    warnings = []
+    resolver = resolver_for(
+        {(SHEET, 1, 1): raw}, CachedValues({}, set(), False), warnings
+    )
+    for _ in range(2):
+        fields = resolver.describe(SHEET, 1, 1)
+        assert fields["valueKind"] == kind
+        assert fields["valueSource"] == "engine"
+        assert "cachedValue" not in fields
+        assert "cachedValueKind" not in fields
+        assert "cachedAgreement" not in fields
+        json.dumps(fields, allow_nan=False)
+    assert not warnings
+
+
+@pytest.mark.parametrize("sheet", [SHEET, None])
+def test_missing_result_has_no_value_kind(sheet):
+    resolver = resolver_for({}, CachedValues({}, set(), False), [])
+    fields = resolver.describe(sheet, 1, 1)
+    assert fields["value"] is None
+    assert "valueKind" not in fields
+
+
+def test_uncached_graph_distinguishes_error_from_error_like_text():
+    graph = graph_of({"A1": '="#DIV/0!"', "A2": "=1/0"})
+    text = node_of(graph, "c:S!A1")
+    error = node_of(graph, "c:S!A2")
+    assert text["value"] == error["value"] == "#DIV/0!"
+    assert text["valueKind"] == "text"
+    assert error["valueKind"] == "error"
+    assert "cachedValue" not in text
+    assert "cachedValue" not in error

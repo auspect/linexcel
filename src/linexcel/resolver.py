@@ -293,12 +293,23 @@ class _ValueResolver:
         fields: dict[str, Any] = {"value": value}
         if source is not None:
             fields["valueSource"] = source
+        # A result's type is known even when the workbook has no saved cache.
+        result_error = self._result_is_error.get((sheet, row, col))
+        if value is not None and result_error is not None:
+            fields["valueKind"] = (
+                "error"
+                if result_error
+                else (
+                    "text"
+                    if self._result_is_text.get((sheet, row, col), False)
+                    else "value"
+                )
+            )
         cached = self.cached_value(sheet, row, col)
         if cached is not None and sheet is not None:
             fields["cachedValue"] = cached
             # Decided here rather than in the viewer's JavaScript: the same
             # question was being answered twice, with two different answers.
-            result_error = self._result_is_error.get((sheet, row, col))
             cached_error = self.cached.is_error(sheet, row, col)
             comparison_cache = cached
             comparison_value = value
@@ -328,16 +339,6 @@ class _ValueResolver:
                     "error"
                     if cached_error
                     else ("text" if isinstance(raw_cache, str) else "value")
-                )
-            if result_error is not None:
-                fields["valueKind"] = (
-                    "error"
-                    if result_error
-                    else (
-                        "text"
-                        if self._result_is_text.get((sheet, row, col), False)
-                        else "value"
-                    )
                 )
         if date_text is not None:
             fields["valueDate"] = date_text
