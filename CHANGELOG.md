@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Elapsed-duration caches beyond Python's duration range retain their stored
+  numbers instead of becoming synthetic `#VALUE!` errors. This also applies
+  when the fast reader overflows and falls back; real Excel errors, literal
+  text and cache retention limits remain intact.
+
 - Large elapsed-duration caches no longer gain a second in the fallback reader.
   Fractional days are rounded directly to milliseconds, preserving agreement
   with the stored duration while still reporting real one-second differences.

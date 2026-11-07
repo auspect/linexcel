@@ -408,9 +408,9 @@ def _restore_lossy_date_caches(
     through total_seconds(), which can add a second to large durations. Round
     the fractional day directly so whole days cannot reduce float precision.
 
-    Dates outside Python's calendar range become synthetic #VALUE! errors in
-    openpyxl. Recover their numeric source and remove the synthetic error flag;
-    actual OOXML error cells and literal text must retain their source types.
+    Dates and durations outside Python's representable ranges become synthetic
+    #VALUE! errors in openpyxl. Recover their numeric source and remove the
+    synthetic error flag; actual OOXML errors and text retain their source types.
     """
     candidates = {
         key
@@ -420,7 +420,15 @@ def _restore_lossy_date_caches(
             isinstance(value, datetime.timedelta)
             and (key in date_cells or restore_durations)
         )
-        or (value == "#VALUE!" and key in date_cells)
+        or (
+            value == "#VALUE!"
+            and (
+                key in date_cells
+                or (
+                    restore_durations and error_cells is not None and key in error_cells
+                )
+            )
+        )
         or (
             not epoch_1904
             and isinstance(value, datetime.date)
@@ -457,7 +465,13 @@ def _restore_lossy_date_caches(
                                     serial = float(raw)
                                 except ValueError:
                                     serial = float("nan")
-                                if (
+                                if values[key] == "#VALUE!":
+                                    # The OOXML numeric type proves this error
+                                    # came from conversion, not the workbook.
+                                    values[key] = serial
+                                    if error_cells is not None:
+                                        error_cells.discard(key)
+                                elif (
                                     restore_durations
                                     and isinstance(values[key], datetime.timedelta)
                                     and key not in date_cells
@@ -478,11 +492,8 @@ def _restore_lossy_date_caches(
                                     )
                                 ):
                                     values[key] = serial
-                                elif (
-                                    isinstance(
-                                        values[key], (datetime.time, datetime.timedelta)
-                                    )
-                                    or values[key] == "#VALUE!"
+                                elif isinstance(
+                                    values[key], (datetime.time, datetime.timedelta)
                                 ):
                                     try:
                                         values[key] = from_excel(
