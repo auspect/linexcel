@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve literal digits in text joined by the hyphenation point `‧` (U+2027)
+  (`A‧1` versus `A‧01`), including compact expressions and mixed connectors.
+  Changed padding or decimal separators now produce divergence verdicts and
+  warnings; standalone quantities and amounts separated by whitespace retain
+  regional formatting tolerance.
+
 - Preserve literal digits in text joined by the bullet `•` (U+2022)
   (`A•1` versus `A•01`), including compact expressions and mixed connectors.
   Changed padding or decimal separators now produce divergence verdicts and
