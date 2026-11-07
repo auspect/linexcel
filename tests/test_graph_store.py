@@ -1,5 +1,6 @@
 """Whole-workbook coverage remains exact in every bounded hierarchy view."""
 
+import json
 import os
 import sqlite3
 from contextlib import closing
@@ -81,3 +82,41 @@ def test_hierarchy_long_paths_close_handles_and_empty_workbook(tmp_path):
     artifact.rename(root / "old.sqlite")
     build_graph(index, artifact)
     assert read_view(artifact, generation(index))["meta"]["nodeCount"] == 0
+
+
+def test_sheet_overview_weights_and_r1c1_drilldown(tmp_path):
+    book = Workbook()
+    source_sheet = book.active
+    source_sheet.title = "Source"
+    target = book.create_sheet("Result")
+    for row in range(1, 81):
+        source_sheet.cell(row, 1, row)
+        target.cell(row, 1, f"=Source!A{row}*2")
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    stamp = generation(index)
+    overview = read_view(artifact, stamp)
+    sheets = {n["label"]: n for n in overview["nodes"]}
+    assert all(n["level"] == "sheet" for n in sheets.values())
+    assert overview["edges"] == [
+        {
+            "source": sheets["Source"]["id"],
+            "target": sheets["Result"]["id"],
+            "weight": 80,
+        }
+    ]
+    result = read_view(artifact, stamp, view=sheets["Result"]["viewId"])
+    assert result == read_view(artifact, stamp, sheet="Result")
+    patterns = [n for n in result["nodes"] if n["kind"] == "group"]
+    assert len(patterns) == 1
+    assert patterns[0]["level"] == "pattern"
+    assert patterns[0]["nodeCount"] == 80
+    assert patterns[0]["signature"]
+    leaf = read_view(artifact, stamp, node_id="Result!A80")
+    assert any(n.get("nodeId") == "Result!A80" for n in leaf["nodes"])
+    assert len(leaf["nodes"]) <= 33
+    assert len(json.dumps(overview)) < 20_000
