@@ -210,6 +210,57 @@ def test_negative_dates_agree_across_cache_readers(epoch_1904, serial, number_fo
 
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize(
+    ("serial", "expected"),
+    [
+        (2_958_465.9, dt.timedelta(days=2_958_465, hours=21, minutes=36)),
+        (-2_958_465.9, -dt.timedelta(days=2_958_465, hours=21, minutes=36)),
+        (60.5, dt.timedelta(days=60, hours=12)),
+        (1.999999997, dt.timedelta(days=2)),
+    ],
+)
+def test_fallback_duration_rounding_preserves_seconds(epoch_1904, serial, expected):
+    data = workbook_bytes(epoch_1904, serial, "[h]:mm:ss.000")
+    cached = _load_cached_values_openpyxl(data)
+    for column in (1, 2, 3):
+        assert cached.get("Dates", 1, column) == expected
+        assert not cached.is_date("Dates", 1, column)
+        assert not cached.is_error("Dates", 1, column)
+    limited = _load_cached_values_openpyxl(data, max_cells_per_sheet=1)
+    assert len(limited) == 1
+    assert limited.get("Dates", 1, 1) == expected
+    assert limited.get("Dates", 1, 2) is None
+    assert limited.truncated_sheets == {"Dates"}
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("offset_seconds", [0, 1, -1])
+def test_large_duration_cache_comparison(
+    epoch_1904, slow_reader, offset_seconds, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    serial = 2_958_465.9
+    data = workbook_bytes(
+        epoch_1904,
+        serial,
+        "[h]:mm:ss.000",
+        cache_serial=serial + offset_seconds / 86_400,
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    assert node["value"] == serial
+    assert node["valueSource"] == "engine"
+    assert node["cachedAgreement"] == ("differ" if offset_seconds else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) is bool(
+        offset_seconds
+    )
+    if not offset_seconds:
+        assert node["cachedValue"] == "2958465 days, 21:36:00"
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
 @pytest.mark.parametrize("slow_reader", [False, True])
 @pytest.mark.parametrize("serial", [-1_000_000, 4_000_000])
 @pytest.mark.parametrize("number_format", ["yyyy-mm-dd", "hh:mm:ss"])

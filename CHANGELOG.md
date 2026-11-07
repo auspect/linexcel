@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Large elapsed-duration caches no longer gain a second in the fallback reader.
+  Fractional days are rounded directly to milliseconds, preserving agreement
+  with the stored duration while still reporting real one-second differences.
+
 - Date-formatted numeric caches outside Python's calendar range retain their
   original numbers in the fallback reader instead of becoming `#VALUE!` errors.
   Comparisons now agree across both readers; real Excel errors, literal text

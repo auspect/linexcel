@@ -383,6 +383,8 @@ def _restore_lossy_date_caches(
     epoch_1904: bool,
     date_cells: set[tuple[str, int, int]],
     error_cells: set[tuple[str, int, int]] | None = None,
+    *,
+    restore_durations: bool = False,
 ) -> None:
     """Recover dates whose day component was lost by a cache reader.
 
@@ -400,7 +402,11 @@ def _restore_lossy_date_caches(
 
     Openpyxl may interpret a quoted elapsed label in a calendar format as a
     duration. Restore those cells from their original serial, using the format
-    classification that excludes literal labels. Actual durations are untouched.
+    classification that excludes literal labels.
+
+    For the fallback reader, restore actual durations too: openpyxl rounds
+    through total_seconds(), which can add a second to large durations. Round
+    the fractional day directly so whole days cannot reduce float precision.
 
     Dates outside Python's calendar range become synthetic #VALUE! errors in
     openpyxl. Recover their numeric source and remove the synthetic error flag;
@@ -410,7 +416,10 @@ def _restore_lossy_date_caches(
         key
         for key, value in values.items()
         if isinstance(value, datetime.time)
-        or (isinstance(value, datetime.timedelta) and key in date_cells)
+        or (
+            isinstance(value, datetime.timedelta)
+            and (key in date_cells or restore_durations)
+        )
         or (value == "#VALUE!" and key in date_cells)
         or (
             not epoch_1904
@@ -448,7 +457,20 @@ def _restore_lossy_date_caches(
                                     serial = float(raw)
                                 except ValueError:
                                     serial = float("nan")
-                                if not epoch_1904 and (
+                                if (
+                                    restore_durations
+                                    and isinstance(values[key], datetime.timedelta)
+                                    and key not in date_cells
+                                ):
+                                    days, fraction = divmod(serial, 1)
+                                    try:
+                                        values[key] = datetime.timedelta(
+                                            days=days,
+                                            milliseconds=round(fraction * 86_400_000),
+                                        )
+                                    except (OverflowError, ValueError):
+                                        values[key] = serial
+                                elif not epoch_1904 and (
                                     60 <= serial < 61
                                     or (
                                         59 < serial < 60
@@ -595,7 +617,9 @@ def _load_cached_values_openpyxl(
         pass
     finally:
         wb.close()
-    _restore_lossy_date_caches(data, values, epoch_1904, date_cells, error_cells)
+    _restore_lossy_date_caches(
+        data, values, epoch_1904, date_cells, error_cells, restore_durations=True
+    )
     return CachedValues(values, date_cells, epoch_1904, truncated, error_cells)
 
 
