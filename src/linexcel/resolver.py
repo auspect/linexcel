@@ -333,6 +333,7 @@ class _ValueResolver:
                 recalculated_is_error=result_error,
                 stored_is_error=cached_error,
                 stored_is_text=isinstance(raw_cache, str) and not cached_error,
+                epoch_1904=self.cached.epoch_1904,
             )
             if cached_error is not None:
                 fields["cachedValueKind"] = (
@@ -855,6 +856,7 @@ class _ValueResolver:
                 stored_is_error=self.cached.is_error(sheet, row, col),
                 stored_is_text=isinstance(cached, str)
                 and not self.cached.is_error(sheet, row, col),
+                epoch_1904=self.cached.epoch_1904,
             )
             != "differ"
         ):

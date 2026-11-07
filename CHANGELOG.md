@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full workbook analysis accepts rounding within 0.5 ms at the first midnight
+  of the 1900 calendar. A numeric result just below one day now agrees with its
+  typed January 1 cache; real time gaps and literal text remain distinct.
+
 - The fast workbook reader retains the next day when a time cache just before
   the first midnight rounds up to a complete day. Both readers now preserve
   the same timestamp in either Excel calendar, including formula caches;

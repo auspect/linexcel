@@ -330,3 +330,40 @@ def test_formula_text_does_not_agree_with_identically_displayed_temporal_cache(
         "Clock!B1:" in warning and "differs from file value" in warning
         for warning in graph["meta"]["warnings"]
     )
+
+
+@pytest.mark.parametrize("stored_type", ["date", "datetime", "text", "time"])
+@pytest.mark.parametrize("epoch_1904", [None, False, True])
+def test_first_midnight_requires_calendar_and_typed_date(stored_type, epoch_1904):
+    stored = {
+        "date": datetime.date(1900, 1, 1),
+        "datetime": datetime.datetime(1900, 1, 1),
+        "text": "1900-01-01",
+        "time": datetime.time(0),
+    }[stored_type]
+    expected = (
+        "same"
+        if epoch_1904 is False and stored_type in ("date", "datetime")
+        else "differ"
+    )
+    assert (
+        readings_agree(1 - 0.25 / 86_400_000, stored, None, epoch_1904=epoch_1904)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        datetime.datetime(1900, 1, 1, tzinfo=datetime.UTC),
+        datetime.datetime(1899, 12, 31),
+        datetime.datetime(1900, 1, 1, microsecond=1000),
+        datetime.datetime(1900, 1, 2),
+        datetime.datetime(1904, 1, 2),
+    ],
+)
+def test_first_midnight_does_not_hide_calendar_or_time_gaps(stored):
+    assert (
+        readings_agree(1 - 0.25 / 86_400_000, stored, None, epoch_1904=False)
+        == "differ"
+    )

@@ -137,11 +137,10 @@ def test_analysis_preserves_first_midnight_cache(epoch_1904, slow_reader, monkey
     assert node["cachedValue"] == ("1904-01-02" if epoch_1904 else "1900-01-01")
     assert node["value"] == serial
     assert node["valueSource"] == "engine"
-    if epoch_1904:
-        assert node["cachedAgreement"] == "same"
-        assert not any(
-            "Dates!B1" in warning for warning in result["graph"]["meta"]["warnings"]
-        )
+    assert node["cachedAgreement"] == "same"
+    assert not any(
+        "Dates!B1" in warning for warning in result["graph"]["meta"]["warnings"]
+    )
 
 
 @pytest.mark.parametrize("epoch_1904", [False, True])
@@ -258,3 +257,22 @@ def test_real_durations_with_literal_labels_remain_durations(serial, number_form
         for column in (1, 2):
             assert cached.get("Dates", 1, column) == dt.timedelta(days=serial)
             assert not cached.is_date("Dates", 1, column)
+
+
+@pytest.mark.parametrize("epoch_1904", [False, True])
+@pytest.mark.parametrize("slow_reader", [False, True])
+@pytest.mark.parametrize("offset_ms", [-1.0, -0.25, 0.25, 1.0])
+@pytest.mark.parametrize("number_format", ["yyyy-mm-dd hh:mm:ss.000", "hh:mm:ss.000"])
+def test_first_midnight_comparison_preserves_real_gaps(
+    epoch_1904, slow_reader, offset_ms, number_format, monkeypatch
+):
+    if slow_reader:
+        monkeypatch.setattr("linexcel.loader.MAX_DENSE_CELLS", 0)
+    data = workbook_bytes(
+        epoch_1904, 1 + offset_ms / 86_400_000, number_format, cache_serial=1
+    )
+    graph = analyze_workbook(data, execution=ExecutionPolicy(isolated=False))["graph"]
+    node = next(n for n in graph["nodes"] if n.get("addr") == "B1")
+    differs = abs(offset_ms) > 0.5
+    assert node["cachedAgreement"] == ("differ" if differs else "same")
+    assert any("Dates!B1" in w for w in graph["meta"]["warnings"]) is differs

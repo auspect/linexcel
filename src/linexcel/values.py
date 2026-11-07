@@ -170,7 +170,7 @@ def _time_agreement(raw: Any, cached: Any, time_text: str | None) -> str | None:
 
 
 def _serial_datetime_agreement(
-    raw: Any, cached: Any, date_text: str | None
+    raw: Any, cached: Any, date_text: str | None, epoch_1904: bool | None
 ) -> str | None:
     """Compare the day and time, using the resolver's epoch-aware date label.
 
@@ -180,6 +180,19 @@ def _serial_datetime_agreement(
     """
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
+    if (
+        date_text is None
+        and epoch_1904 is False
+        and 0 < raw < 1
+        and isinstance(cached, datetime.date)
+    ):
+        # Day zero has no display date in Excel's 1900 calendar. A typed
+        # cache can nevertheless round the final fraction up to January 1.
+        # Anchor that comparison to the preceding day without inventing a
+        # display label, inferring the calendar, or parsing literal text.
+        stored_day = cached.date() if isinstance(cached, datetime.datetime) else cached
+        if stored_day >= datetime.date(1900, 1, 1):
+            date_text = EPOCH_EARLY_1900.date().isoformat()
     if date_text is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
         return None
     if isinstance(cached, str):
@@ -552,6 +565,7 @@ def readings_agree(
     recalculated_is_error: bool | None = None,
     stored_is_error: bool | None = None,
     stored_is_text: bool = False,
+    epoch_1904: bool | None = None,
 ) -> str:
     """How the two readings of one cell relate: ``same``, ``format`` or ``differ``.
 
@@ -569,6 +583,7 @@ def readings_agree(
     ``stored_is_text`` identifies a literal cache string before serialization.
     Otherwise date metadata may describe a serialized temporal cache, as in
     older report callers; that compatibility does not prove a literal's type.
+    ``epoch_1904`` supplies the workbook calendar when day zero has no date label.
     """
     if stored_is_text and (
         date_text is not None
@@ -616,7 +631,9 @@ def readings_agree(
     time_agreement = _time_agreement(recalculated, stored, date_text)
     if time_agreement is not None:
         return time_agreement
-    datetime_agreement = _serial_datetime_agreement(recalculated, stored, date_text)
+    datetime_agreement = _serial_datetime_agreement(
+        recalculated, stored, date_text, epoch_1904
+    )
     if datetime_agreement is not None:
         return datetime_agreement
     typed_datetime_agreement = _typed_datetime_agreement(
