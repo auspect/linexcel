@@ -18,6 +18,7 @@ import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import "./graph.css";
 import "./shell.css";
+import "./theme.css";
 export { compressNeighborhood } from './aggregation.js';
 
 const Card = memo(({ data, selected }) => (

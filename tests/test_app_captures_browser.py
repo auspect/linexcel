@@ -297,7 +297,7 @@ def test_invalid_image_entries_and_base64_do_not_interrupt_application(browser):
         page.locator("#tab-captures").click()
         assert "Image indisponible" in page.locator("#capture-selected").inner_text()
         page.locator("#capture-next").click()
-        assert "CAPTURE 2 / 2" in page.locator("#capture-selected").inner_text()
+        assert "Capture 2 / 2" in page.locator("#capture-selected").inner_text()
         assert "Image indisponible" in page.locator("#capture-selected").inner_text()
         page.locator("#tab-graph").click()
         assert page.locator("#view-graph").is_visible()

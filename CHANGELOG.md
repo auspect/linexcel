@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and support cell deep links while retaining manual forced recalculation.
 - Add a reproducible frontend build/check and a three-viewport dashboard capture
   probe. Python installations use the committed assets without Node or a CDN.
+- Give the dashboard one visual system with a distinct look per kind of control:
+  a filled primary action, outlined secondary buttons, quiet toolbar buttons
+  with icons, underline view tabs, a segmented reader switch, sunken search
+  fields, a single depth stepper, text breadcrumbs and state chips (cache match,
+  server connection). Labels use sentence case, formulas a monospace face, and
+  graph cards quiet role tints without violet.
 
 ### Fixed
 
