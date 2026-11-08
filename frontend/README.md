@@ -13,7 +13,7 @@ Python users need no Node installation or network access. The committed
 under the existing mounted, authenticated application and CSP. The IIFE includes
 React, React DOM, React Flow and Dagre; it has no dynamic imports or CDN requests.
 Package versions are exact in `package.json`; transitive versions are locked.
-The runtime libraries use MIT and BSD-3-Clause licenses; their complete notices
+The runtime libraries use MIT, ISC and BSD-3-Clause licenses; their complete notices
 are in `THIRD_PARTY_NOTICES.md`, also packaged in the wheel. Vite is build-only.
 
 With Node 24 and npm 11:
@@ -39,6 +39,23 @@ cross-group edge weights and internal edge counts are SQL aggregates; ranges
 retain their compact index semantics. R1C1 pattern membership comes from the
 index, not from displayed formula text. A sheet or pattern above 32 children has
 additional bounded partition levels. Search continues to use disk-index pages.
+Partitions propagate actual address bounds, and deep breadcrumb trails fold
+intermediate ancestors into a native selector. Leaf cards read at most 32 source
+records, with 512-character formula and 256-character value previews; truncation
+is explicit and the complete cell remains available in the inspector.
+
+Neighborhoods summarize independent copied-formula siblings before layout,
+then their equal-adjacency inputs. Reachability checks protect running totals
+and other formula chains from being folded. Counts distinguish the loaded sample
+from the full indexed pattern. Ordinary views retain Dagre dependency layers;
+only an oversized rank can wrap within its own layer. Links use clear corridors
+between layers. Disconnected leaf grids show weighted outside bundles while
+the accessible list retains every individual relationship.
+
+`tests/fixtures/graph_layout_matrix.json` contains only bounded topology from
+the deterministic synthetic FY26, B2B FPnA and large20 fixtures, without workbook
+content or calculation results. The browser regression checks Summary C6/C10 at
+depths 1–3, B2B depth 3 and large20 depth 3 for desktop fit and card/edge clearance.
 
 Formula selection waits 180 ms before submitting a targeted calculation. It
 aborts superseded neighborhood reads, cancels known superseded automatic tasks,

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep ordinary neighborhoods in Dagre dependency layers after grouping copied
+  formula siblings; check fit and edge clearance across a fixed workbook matrix.
+  Show bounded formulas and values on leaf cards, bundle their outside links,
+  and retain meaningful, compact breadcrumbs for deep formula partitions.
+
 - Keep graph cards clear of floating controls, route reverse arrows around
   cards, pack disconnected cell groups, and skip redundant single partitions.
 - Expand focus mode over the entire viewport, dismiss search and action menus,

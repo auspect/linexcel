@@ -927,8 +927,13 @@ body.workspace-active #view-graph.graph-focus-mode {
 .graph-reader-heading { position: relative; }
 .graph-reader-heading #graph-recalculate { position: absolute; right: 10px; top: 8px; min-height: 36px; }
 .graph-reader-heading h3 { padding-right: 110px; }
-.graph-breadcrumb-panel #graph-breadcrumbs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
-.graph-breadcrumb-panel #graph-breadcrumbs button { flex-shrink: 0; }
+.graph-breadcrumb-panel #graph-breadcrumbs { flex-wrap: nowrap; max-width: 100%; }
+.graph-breadcrumb-panel #graph-breadcrumbs button { min-width: 0; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-breadcrumb-panel #graph-ancestors { width: 48px; min-width: 48px; padding: 4px; min-height: 30px; }
+@media (max-width: 650px) {
+  .graph-breadcrumb-panel #graph-breadcrumbs button { max-width: 172px; }
+  .graph-breadcrumb-panel #graph-ancestors { min-height: 44px; }
+}
 #welcome-projects { display: grid; gap: 6px; margin: 16px 0; text-align: left; }
 
 @media (max-width: 650px) {

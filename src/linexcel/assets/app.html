@@ -772,9 +772,10 @@ function cancelPendingSelection(){selectionRequest++;neighborRequest++;graphShee
 function cancelStructureView(){if(!structureController)return;structureRequest++;structureController.abort();structureController=null;structureLoading=false;updateStructureControls()}
 function cancelStructure(){structureRequest++;structureController?.abort();structureController=null;structureLoading=false;structureWanted=false;updateStructureControls()}
 $('graph-build-cancel').onclick=async()=>{const task=tasks.find(t=>t.operation==='build_graph'&&active(t));structureWanted=false;if(task)await cancelTask(task.id)};
-$('graph-neighborhood').onclick=()=>{cancelPendingSelection();cancelStructure();fullGraph=false;setGraphReaderVisible(true);graphSignature='';$('graph-build-status').textContent='';renderGraph()};
+$('graph-neighborhood').onclick=()=>{cancelPendingSelection();cancelStructure();fullGraph=false;$('graph-sheet').value=graphCenter()?.sheet||'';setGraphReaderVisible(true);graphSignature='';$('graph-build-status').textContent='';renderGraph()};
 function installStructureView(data){
  fullStructure=data;fullGraph=true;setGraphReaderVisible(false);structureWanted=false;graphSignature='';
+ const sheet=data.breadcrumbs.find(c=>c.level==='sheet');if(sheet)$('graph-sheet').value=sheet.label;else if(data.viewId===0)$('graph-sheet').value='';
  $('graph-build-status').textContent='';
 }
 async function loadStructureView(view=0,nodeId=null,selectionToken=null,userNavigation=false,stage=false,sheet=null){
@@ -808,16 +809,27 @@ function structureLabel(n){const label=n.kind==='outside'?(graph?.meta?.macroOnl
 function followStructureNode(n){if(n.viewId!==undefined)loadStructureView(n.viewId,null,null,true);else{setGraphReaderVisible(true);selectNode(n.nodeId)}}
 function renderStructureList(){
  const view=fullStructure,byId=new Map(view.nodes.map(n=>[n.id,n]));
- $('graph-breadcrumbs').innerHTML=view.breadcrumbs.map(c=>'<button data-graph-view="'+c.viewId+'" '+(c.viewId===view.viewId?'aria-current="page" disabled':'')+'>'+esc(c.label==='Classeur'?uiText('Classeur'):c.label)+'</button>').join('<span aria-hidden="true"> › </span>');
+ const trail=view.breadcrumbs,limit=$('graph-canvas').clientWidth<550?3:4;
+ const crumbLabel=c=>{let label=c.label==='Classeur'?uiText('Classeur'):c.label;
+  if(c.level==='pattern')label=(/^=([A-Z0-9_.]+)\(/i.exec(c.label)?.[1]||(uiLanguage==='en'?'Formula group':'Groupe de formules'))+' · '+c.nodeCount.toLocaleString(uiLocale())+(uiLanguage==='en'?' cells':' cellules');
+  else if(c.level==='sources')label=uiLanguage==='en'?'Input group':'Groupe d’entrées';
+  return label;};
+ const button=c=>'<button title="'+esc(c.label)+'" data-graph-view="'+c.viewId+'" '+(c.viewId===view.viewId?'aria-current="page" disabled':'')+'>'+esc(crumbLabel(c))+'</button>';
+ let parts=trail.map(button);
+ if(trail.length>limit){const keep=limit-2,head=trail[1]?.level==='sheet'?2:1,folded=trail.slice(head,-keep);
+  parts=[...trail.slice(0,head).map(button),'<select id="graph-ancestors" aria-label="'+(uiLanguage==='en'?'Intermediate graph levels':'Niveaux intermédiaires du graphe')+'"><option value="">…</option>'+folded.map(c=>'<option value="'+c.viewId+'">'+esc(crumbLabel(c))+'</option>').join('')+'</select>',...trail.slice(-keep).map(button)];}
+ $('graph-breadcrumbs').innerHTML=parts.join('<span aria-hidden="true"> › </span>');
+ if($('graph-ancestors'))$('graph-ancestors').onchange=e=>{if(e.target.value)loadStructureView(Number(e.target.value),null,null,true)};
  $('graph-breadcrumbs').querySelectorAll('[data-graph-view]').forEach(b=>b.onclick=()=>loadStructureView(Number(b.dataset.graphView),null,null,true));
- $('graph').innerHTML='<div class="ui-rule-17">'+view.nodes.map((n,i)=>'<button class="related" data-structure-node="'+i+'">'+esc(structureLabel(n))+'<small>'+n.internalEdges+(uiLanguage==='en'?' internal relationship(s)':' relation(s) interne(s)')+'</small></button>').join('')+'<ul>'+view.edges.map(e=>'<li>'+esc(structureLabel(byId.get(e.source)))+' → '+esc(structureLabel(byId.get(e.target)))+' : '+e.weight+'</li>').join('')+'</ul></div>';
+ $('graph').innerHTML='<div class="ui-rule-17">'+view.nodes.map((n,i)=>'<button class="related" data-structure-node="'+i+'">'+esc(structureLabel(n))+'<small>'+esc(structureDetail(n))+'</small></button>').join('')+'<ul>'+view.edges.map(e=>'<li>'+esc(structureLabel(byId.get(e.source)))+' → '+esc(structureLabel(byId.get(e.target)))+' : '+e.weight+'</li>').join('')+'</ul></div>';
  $('graph').querySelectorAll('[data-structure-node]').forEach(b=>b.onclick=()=>followStructureNode(view.nodes[Number(b.dataset.structureNode)]));
 }
+function structureDetail(n){return n.nodeId?(n.formula||show(n.value))+(n.contentTruncated?(uiLanguage==='en'?' · truncated':' · tronqué'):''):n.internalEdges+' '+(uiLanguage==='en'?'internal relationships':'relations internes')}
 function drawFullStructure(center){
  const flow=ensureGraphFlow();if(!flow)return;
  const key='hierarchy:'+current.id+':'+fullStructure.viewId,signature=key+':'+uiLanguage+':'+(center?.id||'')+':'+($('graph-canvas').clientWidth<550);
  if(graphSignature===signature)return;const fit=!graphRestore;graphCanvasKey=key;graphSignature=signature;
- flow.render(fullStructure.nodes.map(n=>({...n,original:n,type:n.level==='sheet'?'sheet':n.level==='pattern'?'formulaGroup':n.kind==='group'?'cellGroup':'cell',title:n.kind==='outside'?structureLabel(n).replace(/ · \d+$/,''):n.label==='∅'?structureLabel(n).replace(/ · \d+$/,''):n.label,count:n.viewId!==undefined?n.nodeCount:undefined,kindLabel:n.kind==='outside'?(uiLanguage==='en'?'Outside this group':'Hors de ce groupe'):n.level==='sheet'?(uiLanguage==='en'?'Sheet':'Feuille'):n.level==='pattern'?(uiLanguage==='en'?'Formula group':'Groupe de formules'):n.level==='sources'?(uiLanguage==='en'?'Input group':'Groupe d’entrées'):n.kind==='group'?(uiLanguage==='en'?'Cell group':'Groupe de cellules'):kindLabel(n.kind),subtitle:n.internalEdges+' '+(uiLanguage==='en'?'internal relationships':'relations internes'),tone:n.kind==='outside'?'outside':''})),fullStructure.edges,{language:uiLanguage,selected:center?.id,fit});restoreNavigation();
+ flow.render(fullStructure.nodes.map(n=>({...n,original:n,type:n.level==='sheet'?'sheet':n.level==='pattern'?'formulaGroup':n.kind==='group'?'cellGroup':'cell',title:n.kind==='outside'?structureLabel(n).replace(/ · \d+$/,''):n.label==='∅'?structureLabel(n).replace(/ · \d+$/,''):n.label,count:n.viewId!==undefined?n.nodeCount:undefined,kindLabel:n.kind==='outside'?(uiLanguage==='en'?'Outside this group':'Hors de ce groupe'):n.level==='sheet'?(uiLanguage==='en'?'Sheet':'Feuille'):n.level==='pattern'?(uiLanguage==='en'?'Formula group':'Groupe de formules'):n.level==='sources'?(uiLanguage==='en'?'Input group':'Groupe d’entrées'):n.kind==='group'?(uiLanguage==='en'?'Cell group':'Groupe de cellules'):kindLabel(n.kind),subtitle:structureDetail(n),valueLabel:n.nodeId&&n.formula?(uiLanguage==='en'?'Saved · ':'Enregistré · ')+show(n.value):'',tone:n.kind==='outside'?'outside':''})),fullStructure.edges,{language:uiLanguage,selected:fullStructure.focusedNodeId||center?.id,fit});restoreNavigation();
 }
 
 function provenance(value){return ({saved_cache:'Cache Excel enregistré',saved_input:'Entrée du classeur',saved_blank:'Cellule vide',reference_input:'Entrée du fichier de référence',targeted_recalculation:'Recalcul ciblé',unknown:'Inconnue'})[value]||show(value)}

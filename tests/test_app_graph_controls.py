@@ -280,7 +280,16 @@ def test_large_fanout_stays_readable_and_opens_bounded_indexed_cells(graph_app):
                 "meta": {"nodeCount": 12483, "edgeCount": 198},
                 "breadcrumbs": [
                     {"viewId": 0, "label": "Classeur"},
-                    {"viewId": -1, "label": "Forecast pattern"},
+                    {"viewId": -2, "label": "Forecast", "level": "sheet"},
+                    {"viewId": -3, "label": "D2 … P12484", "level": "partition"},
+                    {
+                        "viewId": -4,
+                        "label": "=SUMIFS(RC[-1])",
+                        "level": "pattern",
+                        "nodeCount": 12483,
+                    },
+                    {"viewId": -5, "label": "D2 … D1025", "level": "partition"},
+                    {"viewId": -1, "label": "D2 … D33", "level": "partition"},
                 ],
                 "nodes": [
                     {
@@ -321,15 +330,21 @@ def test_large_fanout_stays_readable_and_opens_bounded_indexed_cells(graph_app):
     assert data["group"]["patternTotal"] == 12483
     assert sorted(data["weights"]) == [1, 198]
     assert "200" in page.locator("#graph-notice").text_content()
+    page.locator("#graph-sheet").evaluate("e=>e.add(new Option('Forecast','Forecast'))")
     page.locator("#graph-canvas").evaluate(
         "(e,id)=>e._flow.select(id)", data["group"]["id"]
     )
     page.wait_for_function(
         "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length===32"
     )
-    assert (
-        page.locator("#graph-breadcrumbs").text_content().endswith("Forecast pattern")
+    assert page.locator("#graph-breadcrumbs button").nth(1).inner_text() == "Forecast"
+    assert page.locator("#graph-breadcrumbs").text_content().endswith("D2 … D33")
+    assert page.locator("#graph-sheet").input_value() == "Forecast"
+    assert page.locator("#graph-breadcrumbs").evaluate(
+        "e=>e.scrollWidth<=e.clientWidth"
     )
+    page.locator("#graph-neighborhood").click()
+    assert page.locator("#graph-sheet").input_value() == "Z first"
     assert not errors
 
 
@@ -401,6 +416,69 @@ def test_search_escapes_canvas_clip_and_uniform_bus_labels_are_hidden(graph_app)
     assert page.locator("#graph-canvas").evaluate(
         "e=>e._flow.getEdges().every(edge=>[1,5].includes(edge.weight)&&!edge.label)"
     )
+    page.wait_for_function(
+        "()=>document.querySelectorAll('.react-flow__edge-text').length===2"
+    )
+    assert page.locator("#graph-canvas").evaluate("""e=>{
+      const outside=e.querySelector('[data-id="rest"]').getBoundingClientRect();
+      return [...e.querySelectorAll('.react-flow__edge-text')].every(label=>
+        label.getBoundingClientRect().right<outside.left);
+    }""")
+    assert not errors
+
+
+def test_fixed_workbook_neighborhood_matrix_has_readable_fit_and_clear_routes(
+    graph_app,
+):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.wait_for_function("()=>document.querySelector('#graph-canvas')._flow")
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/graph_layout_matrix.json").read_text()
+    )
+    for case in cases:
+        page.locator("#graph-canvas").evaluate(
+            """(e,c)=>{
+          const g=LinexcelGraph.compressNeighborhood(c.nodes,c.edges,c.center);
+          e._flow.render(g.nodes.map(n=>({...n,original:n,title:n.label||n.id,
+            tone:n.id===c.center?'focus':''})),g.edges);
+        }""",
+            case,
+        )
+        page.wait_for_timeout(120)
+        page.locator("#graph-canvas").evaluate("e=>e._flow.fit()")
+        page.wait_for_timeout(80)
+        quality = page.locator("#graph-canvas").evaluate("""e=>{
+          const f=e._flow,boxes=f.getNodes().map(n=>(
+            {...f.getNodeBounds(n.id),id:n.id}));
+          const paths=[...e.querySelectorAll('.react-flow__edge-path')];
+          const crossings=paths.filter(path=>{
+            const length=path.getTotalLength();
+            for(let i=1;i<200;i++){const p=path.getPointAtLength(length*i/200);
+              const hit=boxes.find(b=>p.x>b.x1+2&&p.x<b.x2-2&&
+                p.y>b.y1+2&&p.y<b.y2-2);
+              if(hit){path._crossing={id:hit.id,x:p.x,y:p.y};return true;}}
+            return false;
+          }).map(p=>({edge:p.closest('[data-id]')?.dataset.id,hit:p._crossing}));
+          return {zoom:f.getViewport().zoom,crossings,nodes:f.getNodes().length};
+        }""")
+        floor = 0.45 if page.viewport_size["width"] >= 1000 else 0.10
+        assert quality["zoom"] >= floor, (case["name"], quality)
+        assert not quality["crossings"], (case["name"], quality)
+    assert not errors
+
+
+def test_copied_formula_chains_are_not_folded_into_siblings(graph_app):
+    page, _, _, errors, _ = graph_app
+    result = page.evaluate("""()=>{
+      const nodes=Array.from({length:12},(_,i)=>(
+        {id:'S!B'+(i+1),sheet:'S',cell:'B'+(i+1),kind:'cell',
+          patternId:'running-total'}));
+      const edges=nodes.slice(1).map((n,i)=>({source:nodes[i].id,target:n.id}));
+      return LinexcelGraph.compressNeighborhood(nodes,edges,nodes[0].id);
+    }""")
+    assert len(result["nodes"]) == 12
+    assert len(result["edges"]) == 11
     assert not errors
 
 

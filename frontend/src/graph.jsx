@@ -13,7 +13,6 @@ import {
   applyNodeChanges,
   Panel,
   BaseEdge,
-  getSmoothStepPath,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
@@ -53,18 +52,25 @@ function LayeredEdge({
       { x: targetX, y: targetY },
     ]
   ).map((p) => ({ ...p }));
-  points[0] = { x: sourceX, y: sourceY };
-  points[points.length - 1] = { x: targetX, y: targetY };
-  const packed=data?.packed?getSmoothStepPath({sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition}):null;
-  const path = packed?packed[0]:points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
-    center = points[Math.floor(points.length / 2)];
+  if (!data?.bundle) {
+    const boundary=(x,y,side)=>({x:x+(side==='right'?-3:side==='left'?3:0),y:y+(side==='bottom'?-3:side==='top'?3:0)});
+    const start=boundary(sourceX,sourceY,sourcePosition),end=boundary(targetX,targetY,targetPosition);
+    const first=points[0],last=points.at(-1);
+    // Dagre's terminal intersection need not be at the handle's midpoint.
+    // Join along the card border; replacing the intersection with the handle
+    // made a new diagonal that could cut through an unrelated card.
+    points.unshift(start,sourcePosition==='left'||sourcePosition==='right'?{x:first.x,y:start.y}:{x:start.x,y:first.y});
+    points.push(targetPosition==='left'||targetPosition==='right'?{x:last.x,y:end.y}:{x:end.x,y:last.y},end);
+  }
+  const path = points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
+    center = data?.bundle ? {x:(points[0].x+points.at(-1).x)/2,y:(points[0].y+points.at(-1).y)/2} : points[Math.floor(points.length / 2)];
   return (
     <>
       <BaseEdge
         id={id}
         path={path}
         markerEnd={markerEnd}
-        label={label}
+        label={data?.bundleLabel || label}
         labelX={center.x}
         labelY={center.y}
       />
@@ -91,7 +97,7 @@ function Dock({ elements = [] }) {
   return <div ref={ref} className="graph-docked-controls" />;
 }
 
-function layered(nodes, edges, portrait, aspect) {
+function layered(nodes, edges, portrait, aspect, availableWidth, availableHeight) {
   const owned=nodes.filter(n=>n.data.tone!=='outside'),outside=nodes.find(n=>n.data.tone==='outside');
   const ownedIds=new Set(owned.map(n=>n.id));
   const leaf=owned.length>1&&owned.every(n=>n.data.original.nodeId)&&!edges.some(e=>ownedIds.has(e.source)&&ownedIds.has(e.target));
@@ -100,21 +106,32 @@ function layered(nodes, edges, portrait, aspect) {
     owned.forEach((n,i)=>{n.position={x:(i%columns)*272,y:Math.floor(i/columns)*144};});
     const width=columns*272-40,height=Math.ceil(owned.length/columns)*144-40;
     if(outside)outside.position={x:width+110,y:Math.max(0,(height-104)/2)};
-    const lookup=new Map(nodes.map(n=>[n.id,n]));
-    for(const edge of edges){
-      const a=lookup.get(edge.source),b=lookup.get(edge.target),s={x:a.position.x+232,y:a.position.y+52},t={x:b.position.x,y:b.position.y+52};
-      let points;
-      if(a===outside){const busY=b.position.y-18;points=[s,{x:s.x+24,y:s.y},{x:s.x+24,y:a.position.y-20},{x:width+42,y:a.position.y-20},{x:width+42,y:busY},{x:b.position.x-18,y:busY},{x:b.position.x-18,y:t.y},t];}
-      else points=[s,{x:s.x+18,y:s.y},{x:s.x+18,y:a.position.y+122},{x:width+42,y:a.position.y+122},{x:width+42,y:t.y},t];
-      edge.data={...edge.data,points};edge.sourceHandle='source-right';edge.targetHandle='target-left';
+    // All exact cell relationships remain in the text list/model. Render only
+    // one weighted link per direction between the grid boundary and outside.
+    // Individual bidirectional buses used to draw a box around every card.
+    for (const incoming of [false, true]) {
+      const bundle = edges.filter(e => outside && (incoming ? e.source : e.target) === outside.id);
+      bundle.forEach(e => {e.hidden = true;});
+      if (!bundle.length) continue;
+      const edge = bundle[0], y = height/2 + (incoming ? -14 : 14);
+      const grid = {x:width+8,y}, rest = {x:outside.position.x,y:outside.position.y+52+(incoming?-14:14)};
+      edge.hidden = false;
+      edge.sourceHandle = incoming ? 'source-left' : 'source-right';
+      edge.targetHandle = incoming ? 'target-right' : 'target-left';
+      edge.data = {...edge.data,bundle:true,points:incoming?[rest,grid]:[grid,rest],
+        bundleLabel:String(bundle.reduce((sum,e)=>sum+(e.weight||1),0))};
     }
     return nodes;
   }
+  const build = (direction, align, ranker='network-simplex', nodesep=20) => {
   const graph = new dagre.graphlib.Graph({ multigraph: true });
   graph.setGraph({
-    rankdir: portrait ? "TB" : "LR",
-    ranksep: 100,
-    nodesep: 35,
+    rankdir: direction,
+    ranksep: 70,
+    nodesep,
+    edgesep: 8,
+    align,
+    ranker,
     marginx: 30,
     marginy: 30,
   });
@@ -129,39 +146,78 @@ function layered(nodes, edges, portrait, aspect) {
     ),
   );
   dagre.layout(graph);
+  return graph;
+  };
+  const fit = g => Math.min(availableWidth/(g.graph().width-60), availableHeight/(g.graph().height-60));
+  let graph = build("LR");
+  // Dagre offers several legal alignments. Choose a tighter layered variant
+  // for a small neighborhood before considering any oversized-rank fallback.
+  if(nodes.length<=40 && fit(graph)<.5){
+    for(const ranker of ['network-simplex','longest-path'])for(const align of ['UL','DL']){
+      const candidate=build('LR',align,ranker,8);
+      if(fit(candidate)>fit(graph))graph=candidate;
+    }
+  }
+  if (portrait) {
+    const vertical = build("TB");
+    portrait = fit(vertical)>fit(graph);
+    if (portrait) graph = vertical;
+  }
   // Pack unusually broad ranks after Dagre assigns their dependency layers.
   // The bounded overview remains useful even when siblings cannot be grouped.
   const ranks=new Map();
   for(const n of nodes){const p=graph.node(n.id),key=portrait?p.y:p.x;
     if(!ranks.has(key))ranks.set(key,[]);ranks.get(key).push(n);}
-  if([...ranks.values()].some(rank=>rank.length>8)){
+  const maxRank=Math.max(...[...ranks.values()].map(rank=>rank.length));
+  // Normal neighborhoods retain Dagre's dependency layers. A capped heterogeneous
+  // fanout can still exceed the viewport after semantic grouping; only wrap
+  // genuinely oversized ranks, inside their own dependency layer.
+  if(nodes.length>40 && maxRank>16 && availableHeight/(maxRank*124)<.35){
     let offset=30;
     for(const [,rank] of [...ranks].sort((a,b)=>a[0]-b[0])){
-      const columns=Math.min(6,Math.ceil(Math.sqrt(rank.length*aspect/2.23)));
-      const rows=Math.ceil(rank.length/columns);
-      rank.forEach((n,i)=>{const p=graph.node(n.id);
-        p.x=(portrait?30:offset)+(i%columns)*272+116;
-        p.y=(portrait?offset:30)+Math.floor(i/columns)*144+52;});
+      const wraps=rank.length>16?Math.min(4,Math.ceil(rank.length/Math.max(8,Math.floor(availableHeight/(144*.45))))):1;
+      const rows=portrait?wraps:Math.ceil(rank.length/wraps),columns=portrait?Math.ceil(rank.length/wraps):wraps;
+      rank.sort((a,b)=>(portrait?graph.node(a.id).x-graph.node(b.id).x:graph.node(a.id).y-graph.node(b.id).y));
+      rank.forEach((n,i)=>{const p=graph.node(n.id),col=portrait?i%columns:Math.floor(i/rows),row=portrait?Math.floor(i/columns):i%rows;
+        p.x=(portrait?30:offset)+col*272+116;
+        p.y=(portrait?offset:30)+row*144+52;});
       offset+=(portrait?rows*144:columns*272)+100;
     }
+    const top=Math.min(...nodes.map(n=>graph.node(n.id).y-52))-24;
+    const left=Math.min(...nodes.map(n=>graph.node(n.id).x-116))-24;
     for(const edge of edges){const a=graph.node(edge.source),b=graph.node(edge.target);
-      const horizontal=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
-      const side=horizontal?(a.x<b.x?'right':'left'):(a.y<b.y?'bottom':'top');
-      const reverse={left:'right',right:'left',top:'bottom',bottom:'top'}[side];
-      edge.sourceHandle='source-'+side;edge.targetHandle='target-'+reverse;
-      edge.data={...edge.data,packed:true};
+      const s=portrait?{x:a.x,y:a.y+52}:{x:a.x+116,y:a.y},t=portrait?{x:b.x,y:b.y-52}:{x:b.x-116,y:b.y};
+      // Corridors stay outside every packed column/row and above/left of the
+      // whole graph, so no link cuts through a sibling card.
+      const points=portrait?[s,{x:s.x,y:s.y+18},{x:left,y:s.y+18},{x:left,y:t.y-18},{x:t.x,y:t.y-18},t]
+        :[s,{x:s.x+18,y:s.y},{x:s.x+18,y:top},{x:t.x-18,y:top},{x:t.x-18,y:t.y},t];
+      edge.sourceHandle='source-'+(portrait?'bottom':'right');edge.targetHandle='target-'+(portrait?'top':'left');
+      edge.data={...edge.data,points};
     }
     return nodes.map(n=>({...n,position:{x:graph.node(n.id).x-116,y:graph.node(n.id).y-52}}));
   }
-  const side=(p,center)=>Math.abs((p.x-center.x)/116)>=Math.abs((p.y-center.y)/52)?p.x<center.x?'left':'right':p.y<center.y?'top':'bottom';
+  const top=Math.min(...nodes.map(n=>graph.node(n.id).y-52))-24;
+  const left=Math.min(...nodes.map(n=>graph.node(n.id).x-116))-24;
   edges.forEach((edge) => {
-    const points=graph.edge({v:edge.source,w:edge.target,name:edge.id}).points;
-    edge.sourceHandle='source-'+side(points[0],graph.node(edge.source));
-    edge.targetHandle='target-'+side(points[points.length-1],graph.node(edge.target));
-    edge.data = {
-      ...edge.data,
-      points,
-    };
+    const a=graph.node(edge.source),b=graph.node(edge.target);
+    let points,sourceSide,targetSide;
+    if(!portrait){
+      const direction=Math.sign(b.x-a.x);
+      sourceSide=direction>=0?'right':'left';targetSide=direction>0?'left':'right';
+      const s={x:a.x+(sourceSide==='right'?116:-116),y:a.y},t={x:b.x+(targetSide==='right'?116:-116),y:b.y};
+      if(direction&&Math.abs(b.x-a.x)<=312){const mid=(s.x+t.x)/2;points=[s,{x:mid,y:s.y},{x:mid,y:t.y},t];}
+      else if(!direction){sourceSide=targetSide='left';s.x=a.x-116;t.x=b.x-116;const x=Math.min(s.x,t.x)-24;points=[s,{x,y:s.y},{x,y:t.y},t];}
+      else points=[s,{x:s.x+direction*24,y:s.y},{x:s.x+direction*24,y:top},{x:t.x-direction*24,y:top},{x:t.x-direction*24,y:t.y},t];
+    }else{
+      const direction=Math.sign(b.y-a.y);
+      sourceSide=direction>=0?'bottom':'top';targetSide=direction>0?'top':'bottom';
+      const s={x:a.x,y:a.y+(sourceSide==='bottom'?52:-52)},t={x:b.x,y:b.y+(targetSide==='bottom'?52:-52)};
+      if(direction&&Math.abs(b.y-a.y)<=184){const mid=(s.y+t.y)/2;points=[s,{x:s.x,y:mid},{x:t.x,y:mid},t];}
+      else if(!direction){sourceSide=targetSide='top';s.y=a.y-52;t.y=b.y-52;const y=Math.min(s.y,t.y)-24;points=[s,{x:s.x,y},{x:t.x,y},t];}
+      else points=[s,{x:s.x,y:s.y+direction*24},{x:left,y:s.y+direction*24},{x:left,y:t.y-direction*24},{x:t.x,y:t.y-direction*24},t];
+    }
+    edge.sourceHandle='source-'+sourceSide;edge.targetHandle='target-'+targetSide;
+    edge.data = {...edge.data,points};
   });
   return nodes.map((node) => {
     const p = graph.node(node.id);
@@ -315,7 +371,9 @@ export function mount(element, options) {
         className: e.membership ? "membership" : "",
       }));
       const aspect=Math.max(.3,element.clientWidth/Math.max(1,element.clientHeight));
-      const placed = layered(mapped, links, aspect<.85,aspect);
+      const padding=api.fitOptions().padding;
+      const placed = layered(mapped, links, element.clientWidth<550,aspect,
+        element.clientWidth-96,Math.max(60,element.clientHeight-parseFloat(padding.top)-parseFloat(padding.bottom)));
       current = { nodes: placed, edges: links, language, fit, focus,portrait:element.clientWidth<550 };
       flushSync(() => update(current));
     },

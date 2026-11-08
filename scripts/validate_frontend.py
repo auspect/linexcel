@@ -141,8 +141,19 @@ def main():
                     page.evaluate("""()=>{const stage=document.querySelector('#graph-canvas'),box=stage.getBoundingClientRect(),flow=stage._flow;
                 const bounds=e=>{const b=e.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
                 const nodes=[...stage.querySelectorAll('.react-flow__node')].map(e=>({id:e.dataset.id,...bounds(e)}));
-                return {viewport:flow?.getViewport(),nodes,clipped:nodes.filter(n=>n.x<box.x-1||n.y<box.y-1||n.x+n.width>box.right+1||n.y+n.height>box.bottom+1).map(n=>n.id),panels:[...stage.querySelectorAll('.react-flow__panel')].filter(e=>e.checkVisibility()).map(e=>({class:e.className,...bounds(e)})),reader:document.querySelector('#graph-preview').checkVisibility()?bounds(document.querySelector('#graph-preview')):null,visibleSteps:[...document.querySelectorAll('#graph-calculation-steps .step-card')].filter(e=>{const b=e.getBoundingClientRect(),p=document.querySelector('#graph-panel-calculation').getBoundingClientRect();return e.checkVisibility()&&b.top>=p.top&&b.bottom<=p.bottom}).length}}""")
+                const boxes=flow?.getNodes().map(n=>flow.getNodeBounds(n.id))||[];const crossings=[...stage.querySelectorAll('.react-flow__edge-path')].filter(path=>{const length=path.getTotalLength();for(let i=1;i<200;i++){const p=path.getPointAtLength(length*i/200);if(boxes.some(b=>p.x>b.x1+2&&p.x<b.x2-2&&p.y>b.y1+2&&p.y<b.y2-2))return true;}return false;}).length;return {crossings,viewport:flow?.getViewport(),nodes,clipped:nodes.filter(n=>n.x<box.x-1||n.y<box.y-1||n.x+n.width>box.right+1||n.y+n.height>box.bottom+1).map(n=>n.id),panels:[...stage.querySelectorAll('.react-flow__panel')].filter(e=>e.checkVisibility()).map(e=>({class:e.className,...bounds(e)})),reader:document.querySelector('#graph-preview').checkVisibility()?bounds(document.querySelector('#graph-preview')):null,visibleSteps:[...document.querySelectorAll('#graph-calculation-steps .step-card')].filter(e=>{const b=e.getBoundingClientRect(),p=document.querySelector('#graph-panel-calculation').getBoundingClientRect();return e.checkVisibility()&&b.top>=p.top&&b.bottom<=p.bottom}).length}}""")
                 )
+            if name.startswith("neighborhood") and "group-cells" not in name:
+                assert metrics["geometry"]["crossings"] == 0, (
+                    name,
+                    width,
+                    metrics["geometry"],
+                )
+                if width == 1440:
+                    assert metrics["geometry"]["viewport"]["zoom"] >= 0.45, (
+                        name,
+                        metrics["geometry"],
+                    )
             if name == "auto-decomposition":
                 metrics["firstStep"] = page.locator(
                     "#calculation-steps .step-card"
@@ -265,6 +276,26 @@ def main():
                 assert page.locator("#graph-canvas").evaluate(
                     "e=>e._flow.getViewport().zoom>=.35"
                 ), "Large neighborhood cards are unreadable after fit"
+            page.locator("#graph-depth").evaluate(
+                "e=>{e.value=2;e.dispatchEvent(new Event('change'))}"
+            )
+            page.wait_for_timeout(500)
+            capture("neighborhood-depth2", width, height)
+            if "fpna-20mb" not in args.workbook.name:
+                page.locator("#graph-search").fill("Summary!C10")
+                page.locator('#graph-results [data-related="Summary!C10"]').click()
+                for d in [1, 2, 3]:
+                    page.locator("#graph-depth").evaluate(
+                        "(e,d)=>{e.value=d;e.dispatchEvent(new Event('change'))}", d
+                    )
+                    page.wait_for_timeout(500)
+                    capture(f"neighborhood-c10-depth{d}", width, height)
+                page.locator("#graph-search").fill(target)
+                page.locator(f'#graph-results [data-related="{target}"]').click()
+            page.locator("#graph-depth").evaluate(
+                "e=>{e.value=3;e.dispatchEvent(new Event('change'))}"
+            )
+            page.wait_for_timeout(500)
             aggregate = page.locator("#graph-canvas").evaluate(
                 "e=>e._flow.getNodes().find(n=>n.data.original.aggregate)?.id"
             )

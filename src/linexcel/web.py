@@ -584,6 +584,7 @@ class TaskStore:
                         view=view_id,
                         node_id=value("nodeId") or None,
                         sheet=value("sheet") or None,
+                        index_path=index,
                     )
                 except KeyError:
                     raise APIError(404, "Vue introuvable") from None

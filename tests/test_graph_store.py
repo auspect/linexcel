@@ -140,3 +140,38 @@ def test_small_pattern_opens_cells_without_a_single_partition(tmp_path):
     leaf = read_view(artifact, stamp, view=pattern["viewId"])
     assert len([n for n in leaf["nodes"] if n.get("nodeId")]) == 20
     assert not any(n["kind"] == "group" for n in leaf["nodes"])
+
+
+def test_mixed_pattern_partitions_have_true_bounds_and_bounded_cell_previews(tmp_path):
+    from openpyxl.utils.cell import coordinate_to_tuple
+
+    book = Workbook()
+    sheet = book.active
+    for row in range(1, 75):
+        sheet.cell(row, 1, row)
+        sheet.cell(row, 4, "=SUM($A$1:$A$74)")
+        sheet.cell(row, 16, f"={row}")
+    sheet["B1"] = "x" * 1000
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    view = read_view(artifact, generation(index), node_id="Sheet!D50", index_path=index)
+    cell = next(n for n in view["nodes"] if n.get("nodeId") == "Sheet!D50")
+    assert cell["formula"] == "=SUM($A$1:$A$74)"
+    for crumb in view["breadcrumbs"]:
+        if crumb["level"] == "partition":
+            start, end = map(coordinate_to_tuple, crumb["label"].split(" … "))
+            assert start[0] <= 50 <= end[0]
+            assert start[1] <= 4 <= end[1]
+    text = read_view(artifact, generation(index), node_id="Sheet!B1", index_path=index)
+    cell = next(n for n in text["nodes"] if n.get("nodeId") == "Sheet!B1")
+    assert cell["value"] == "x" * 256
+    assert cell["contentTruncated"]
+    with closing(sqlite3.connect(artifact)) as db:
+        assert not db.execute(
+            "SELECT g.id FROM groups g JOIN groups c ON c.parent=g.id "
+            "WHERE g.level='partition' GROUP BY g.id HAVING count(*)=1"
+        ).fetchall()

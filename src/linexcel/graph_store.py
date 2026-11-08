@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
+
+from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
 from linexcel.lazy_store import WorkbookIndex
 
-VERSION = 3
+VERSION = 4
 FANOUT = 32
 OUTSIDE = -1
 
@@ -61,6 +64,22 @@ def build_graph(index: Path, output: Path) -> dict:
         """)
         next_group = -2
 
+        def bounds(children):
+            cells = [
+                coordinate_to_tuple(cell)
+                for child in children
+                for cell in child[3:5]
+                if re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", cell)
+            ]
+            if not cells:
+                return (children[0][3], children[-1][4]) if children else ("", "")
+            return (
+                get_column_letter(min(c[1] for c in cells))
+                + str(min(c[0] for c in cells)),
+                get_column_letter(max(c[1] for c in cells))
+                + str(max(c[0] for c in cells)),
+            )
+
         def group(children, label, sheet=None, level="partition", signature=None):
             nonlocal next_group
             gid = next_group
@@ -73,26 +92,26 @@ def build_graph(index: Path, output: Path) -> dict:
             db.executemany(
                 "UPDATE groups SET parent=? WHERE id=?", [(gid, c[0]) for c in children]
             )
+            first, last = bounds(children) if children else (label, label)
             return (
                 gid,
                 count,
                 label[:256],
-                children[0][3] if children else label,
-                children[-1][4] if children else label,
+                first,
+                last,
             )
 
         def pack(children, sheet):
             while len(children) > FANOUT:
-                children = [
-                    group(
-                        children[i : i + FANOUT],
-                        children[i][3]
-                        + " … "
-                        + children[min(i + FANOUT, len(children)) - 1][4],
-                        sheet,
-                    )
-                    for i in range(0, len(children), FANOUT)
-                ]
+                packed = []
+                for i in range(0, len(children), FANOUT):
+                    chunk = children[i : i + FANOUT]
+                    if len(chunk) == 1:
+                        packed.append(chunk[0])
+                    else:
+                        first, last = bounds(chunk)
+                        packed.append(group(chunk, first + " … " + last, sheet))
+                children = packed
             return children
 
         sheets, leaves, batch, patterns = [], [], [], []
@@ -132,6 +151,16 @@ def build_graph(index: Path, output: Path) -> dict:
             flush_pattern()
             if not patterns:
                 return
+            # Pattern hashes are not spreadsheet positions. Sort their actual
+            # bounding coordinates and propagate bounds over every child, not
+            # merely the first/last hash bucket's (possibly unrelated) cells.
+            patterns.sort(
+                key=lambda c: (
+                    coordinate_to_tuple(c[3])[::-1]
+                    if re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", c[3])
+                    else (0, 0)
+                )
+            )
             children = pack(patterns, current_sheet)
             item = group(children, current_sheet or "∅", current_sheet, "sheet")
             title = current_sheet or "∅"
@@ -248,7 +277,9 @@ def build_graph(index: Path, output: Path) -> dict:
     return meta
 
 
-def read_view(path: Path, stamp: str, *, view=0, node_id=None, sheet=None) -> dict:
+def read_view(
+    path: Path, stamp: str, *, view=0, node_id=None, sheet=None, index_path=None
+) -> dict:
     """Indexed, bounded reads only; never aggregate the workbook in HTTP."""
     with WorkbookIndex(path) as store:
         db = store.db
@@ -306,6 +337,23 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None, sheet=None) -> di
                 "SELECT id,node_id,kind FROM nodes WHERE parent=? ORDER BY id", (view,)
             )
         ]
+        if index_path is not None:
+            with WorkbookIndex(index_path) as original:
+                for node in nodes:
+                    if "nodeId" not in node:
+                        continue
+                    source = original[node["nodeId"]]
+                    formula = source.get("sourceFormula") or source.get("formula") or ""
+                    value = source.get("cachedValue")
+                    if value is None:
+                        value = source.get("value")
+                    node.update(
+                        formula=str(formula)[:512],
+                        value=value[:256] if isinstance(value, str) else value,
+                        valueSource=source.get("valueSource", "unknown"),
+                        contentTruncated=len(str(formula)) > 512
+                        or (isinstance(value, str) and len(value) > 256),
+                    )
         if parent is not None:
             nodes.append(
                 {
@@ -337,15 +385,19 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None, sheet=None) -> di
         breadcrumbs = []
         ancestor = view
         while ancestor is not None:
-            p, title = db.execute(
-                "SELECT parent,label FROM groups WHERE id=?", (ancestor,)
+            p, title, level, size = db.execute(
+                "SELECT parent,label,level,node_count FROM groups WHERE id=?",
+                (ancestor,),
             ).fetchone()
-            breadcrumbs.append({"viewId": ancestor, "label": title})
+            breadcrumbs.append(
+                {"viewId": ancestor, "label": title, "level": level, "nodeCount": size}
+            )
             ancestor = p
         return {
             "viewId": view,
             "parent": parent,
             "label": label,
+            "focusedNodeId": node_id,
             "scopeNodeCount": count,
             "nodes": nodes,
             "edges": edges,
