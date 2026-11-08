@@ -965,12 +965,15 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         )
         page.locator("#capture-selected figure").evaluate("el => el.scrollTop = 250")
         page.locator(".capture-gallery").evaluate("el => el.scrollTop = 30")
+        assert page.locator(".capture-gallery").evaluate("el => el.scrollTop") == 30
         page.locator("#capture-ai [data-ai-start]").click()
         page.locator("#capture-ai .ai-result").wait_for()
         page.wait_for_function(
             "() => document.querySelector('#capture-selected figure').scrollTop >= 240"
         )
-        assert page.locator(".capture-gallery").evaluate("el => el.scrollTop") == 30
+        page.wait_for_function(
+            "() => document.querySelector('.capture-gallery').scrollTop === 30"
+        )
         described = [r for r in requests if r["operation"] == "describe_capture"]
         assert described[-1]["options"]["captureIndex"] == 1
         assert described[-1]["options"]["captureTaskId"] == "capture-one"
