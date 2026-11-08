@@ -216,6 +216,13 @@ class Traversal:
             self.boundary(key, "edge_budget")
             return
         pid = target["projectId"]
+        if pid not in self.workbooks:
+            if len(self.workbooks) >= self.workbook_limit:
+                self.boundary(key, "workbook_budget")
+                return
+            if len(self.nodes) >= self.limit:
+                self.boundary(key, "node_budget")
+                return
         index = self.index(pid)
         sheets = {s.lower(): s for s in index.meta.get("sheets", [])}
         sheet = sheets.get((fact["sheet"] or "").lower())
@@ -697,7 +704,7 @@ def directed_lineage(
             reasons = sorted({b["reason"] for b in result["boundaries"]})
             complete = exhaustive and not (set(reasons) - {"input_constant"})
             result["revisions"] = sorted(
-                {n["revision"]["id"]: n["revision"] for n in result["nodes"]}.values(),
+                [traversal.revisions[p]["revision"] for p in traversal.workbooks],
                 key=lambda r: r["id"],
             )
             result["coverage"] = {
@@ -746,6 +753,15 @@ def directed_lineage(
                     b for b in traversal.boundaries if b["node"] in ids
                 ]
                 result["stronglyConnectedComponents"] = components(ids, result["edges"])
+                for boundary in result["boundaries"]:
+                    if boundary["reason"] == "cycle":
+                        original = boundary["component"]
+                        boundary["component"] = [n for n in original if n in ids]
+                        boundary["componentNodesOmitted"] = (
+                            boundary.get("componentNodesOmitted", 0)
+                            + len(original)
+                            - len(boundary["component"])
+                        )
             elif result["edges"]:
                 result["edges"].pop()
             else:

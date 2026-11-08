@@ -398,6 +398,11 @@ def test_response_link_and_legacy_index_budgets(tmp_path):
         <= 4096
     )
     assert "response_bytes" in result["coverage"]["capsHit"]
+    assert {r["projectId"] for r in result["revisions"]} == {
+        s.project_id for s in sources
+    }
+    assert result["trace"]["revisions"] == result["revisions"]
+    assert result["trace"]["counts"]["workbooks"] == 3
     ids = {n["id"] for n in result["nodes"]}
     assert all(e["source"] in ids and e["target"] in ids for e in result["edges"])
     assert all(b["node"] in ids for b in result["boundaries"])

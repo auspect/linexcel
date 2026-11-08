@@ -149,7 +149,9 @@ that have never been loaded or prove the historical version saved against a link
 
 `trace.schemaVersion=linexcel.lineage.v1` records root, direction, generation,
 crossed revisions, limits, counts, peak source connections, completeness and
-duration. `preparationMs` separately reports synchronous catalog reconciliation;
+duration. Crossed revisions remain in the trace when response trimming removes
+graph nodes; an envelope that cannot retain that audit metadata fails explicitly.
+`preparationMs` separately reports synchronous catalog reconciliation;
 it is outside traversal's time allowance. Traversal defaults are 200 nodes,
 1,000 edges, 32 workbooks, depth 20 and 2,000 ms; the existing response budget is
 1 MiB. Request parameters `limit`, `edges`, `workbooks`, `depth`, `milliseconds`
