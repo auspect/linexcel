@@ -14,7 +14,7 @@ from pathlib import Path
 
 from linexcel.lazy_store import WorkbookIndex
 
-VERSION = 2
+VERSION = 3
 FANOUT = 32
 OUTSIDE = -1
 
@@ -150,13 +150,19 @@ def build_graph(index: Path, output: Path) -> dict:
                 if row:
                     signature = str(json.loads(row[0]).get("signature", ""))[:256]
             title = signature or ("◇ " + (current_sheet or "∅"))
-            item = group(
-                pack(leaves, current_sheet),
-                title,
-                current_sheet,
-                "pattern" if current_pattern else "sources",
-                signature,
-            )
+            level = "pattern" if current_pattern else "sources"
+            if len(leaves) == 1:
+                # A bounded leaf already owns its cells. Reuse it as the
+                # semantic group instead of introducing a one-child partition.
+                item = leaves[0]
+                db.execute(
+                    "UPDATE groups SET label=?,level=?,signature=? WHERE id=?",
+                    (title[:256], level, signature, item[0]),
+                )
+            else:
+                item = group(
+                    pack(leaves, current_sheet), title, current_sheet, level, signature
+                )
             expected = db.execute(
                 "SELECT size FROM pattern_counts WHERE sheet=? AND pattern_id=?",
                 (current_sheet or "", current_pattern or ""),

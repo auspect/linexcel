@@ -1862,6 +1862,7 @@ class WebApp:
                     if issue["owner"] == owner
                 ],
                 "ai": self.ai_config(),
+                "cacheVersion": self.store.cache_version,
                 "uploads": {
                     "chunkBytes": CHUNK_BYTES,
                     "localImport": self.config.allow_local_import

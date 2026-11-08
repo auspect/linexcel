@@ -50,7 +50,7 @@ previous results remain available after a task failure.
 The backend is Python (WSGI and isolated calculation workers). The browser
 interface is HTML, CSS and JavaScript, with a bundled React Flow graph and
 Dagre layered layout; it does not run Python in the browser or need Node on
-the user?s machine. The graph includes a minimap, fit controls and a focus mode.
+the user’s machine. The graph includes a minimap, fit controls and a focus mode.
 The workspace uses the full screen width; the desktop sidebar can be collapsed.
 The separate standalone HTML report retains its Cytoscape renderer. Choose English or French in the interface, or
 open `/?lang=en`. This choice is independent of the AI documentation language.
@@ -94,7 +94,7 @@ Captures are served as individual images with thumbnails, without embedding ever
 image in the project response. Rendering remains an explicit, budgeted operation.
 
 Opening **Graph** automatically starts a cancellable server task and saves a
-workbook ? sheets ? R1C1 formula groups ? cells hierarchy on disk.
+workbook → sheets → R1C1 formula groups → cells hierarchy on disk.
 **Explore the workbook graph** can also start this operation explicitly. It does not start Formualizer. Each view contains at most 32
 groups or cells, plus the rest of the workbook. Click a group to expand it, use
 the breadcrumb to go back, or search for an exact cell reference to jump to its

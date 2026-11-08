@@ -901,7 +901,7 @@
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  width: min(480px, calc(100vw - 48px));
+  width: min(480px, calc(var(--graph-stage-width, 100vw) - 46px));
   max-height: 260px;
   z-index: 30;
   background: white;
@@ -909,6 +909,56 @@
   border-radius: 8px;
   padding: 8px;
   box-shadow: 0 8px 24px #18333120;
+}
+
+body.workspace-active #view-graph.graph-focus-mode {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  z-index: 100;
+  padding: 0 !important;
+  border: 0;
+  border-radius: 0;
+}
+.graph-reader-heading { position: relative; }
+.graph-reader-heading #graph-recalculate { position: absolute; right: 10px; top: 8px; min-height: 36px; }
+.graph-reader-heading h3 { padding-right: 110px; }
+.graph-breadcrumb-panel #graph-breadcrumbs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; }
+.graph-breadcrumb-panel #graph-breadcrumbs button { flex-shrink: 0; }
+#welcome-projects { display: grid; gap: 6px; margin: 16px 0; text-align: left; }
+
+@media (max-width: 650px) {
+  .workspace > aside.workspace-picker:not(.is-open) { display: none !important; }
+  .graph-hud button, .graph-hud summary, .graph-hud .graph-toolbar input,
+  .graph-hud .graph-sheet-control select, .graph-breadcrumb-panel button,
+  .graph-reader-tabs button, .graph-reader-heading #graph-recalculate,
+  .workspace-active button, .workspace-active summary, .workspace-active select,
+  .step-card > summary { min-height: 44px; }
+  .graph-hud #graph-neighborhood { width: 44px; }
+  .graph-hud #graph-fullscreen { min-width: 44px; }
+  .react-flow__panel.graph-status-panel,
+  .hierarchy-view .react-flow__panel.graph-status-panel {
+    display: block; left: 150px; bottom: 7px; margin: 0;
+    max-width: calc(100% - 268px); font-size: 10px;
+  }
+  .flow-mobile-status { display: block; padding: 3px; border-radius: 4px; background: #ffffffeb; text-align: center; }
+  .graph-status-panel .graph-docked-controls > * { display: none !important; }
+  .graph-status-panel .graph-docked-controls > #graph-build-status:not(:empty) {
+    display: block !important; position: absolute; bottom: 45px; left: -140px;
+    width: calc(var(--graph-stage-width, 100vw) - 28px); max-height: 74px; overflow: auto;
+  }
+  .graph-reader-heading { padding: 6px 10px 0; min-height: 48px; }
+  .graph-reader-heading h3 { margin: 8px 0; padding-right: 105px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .graph-reader-heading .formula { display: none; }
+  .graph-reader-heading #graph-recalculate { top: 2px; }
+  .graph-reader-tabs { padding: 0 8px; }
+  .graph-reader-body { padding: 5px 10px 12px; }
+  .graph-reader-body .inspector-values { flex-wrap: nowrap; gap: 6px; margin: 0 0 4px; font-size: 10px; }
+  .graph-reader-body .inspector-values span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 5px; }
+  .graph-reader-body .inspector-decomposition > h3 { font-size: 12px; margin: 3px 0; }
+  .graph-reader-body .inspector-decomposition > .help { display: none; }
+  .graph-reader-body .step-columns { min-height: 22px; padding: 2px 0; }
 }
 
 @media (min-width: 1101px) {

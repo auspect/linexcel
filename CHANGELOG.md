@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add a reproducible frontend build/check and a three-viewport dashboard capture
   probe. Python installations use the committed assets without Node or a CDN.
 
+### Fixed
+
+- Keep graph cards clear of floating controls, route reverse arrows around
+  cards, pack disconnected cell groups, and skip redundant single partitions.
+- Expand focus mode over the entire viewport, dismiss search and action menus,
+  clear the return-to-sheet notice, and expose decomposition rows on mobile.
+
 ## [1.17.1] — 2026-11-07
 
 ### Fixed

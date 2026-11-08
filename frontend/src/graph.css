@@ -23,6 +23,12 @@
 .flow-card strong {
   font-size: 15px;
 }
+.flow-title-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.flow-title-row strong { flex: 1; min-width: 0; }
+.flow-count { flex-shrink: 0; border-radius: 4px; background: #1833310d; padding: 1px 5px; font: 11px/1.6 system-ui; }
+.flow-value { font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.react-flow__node-cellGroup .flow-card { background: #e9f3ec; border-color: #7fa087; }
+.flow-mobile-status { display: none; }
 .flow-kind {
   font-size: 10px;
   text-transform: uppercase;

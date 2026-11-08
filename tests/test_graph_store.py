@@ -120,3 +120,23 @@ def test_sheet_overview_weights_and_r1c1_drilldown(tmp_path):
     assert any(n.get("nodeId") == "Result!A80" for n in leaf["nodes"])
     assert len(leaf["nodes"]) <= 33
     assert len(json.dumps(overview)) < 20_000
+
+
+def test_small_pattern_opens_cells_without_a_single_partition(tmp_path):
+    book = Workbook()
+    for row in range(1, 21):
+        book.active.cell(row, 1, row)
+        book.active.cell(row, 2, f"=A{row}*2")
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    stamp = generation(index)
+    sheet = read_view(artifact, stamp)["nodes"][0]
+    groups = read_view(artifact, stamp, view=sheet["viewId"])["nodes"]
+    pattern = next(n for n in groups if n.get("level") == "pattern")
+    leaf = read_view(artifact, stamp, view=pattern["viewId"])
+    assert len([n for n in leaf["nodes"] if n.get("nodeId")]) == 20
+    assert not any(n["kind"] == "group" for n in leaf["nodes"])

@@ -25,22 +25,14 @@ const Card = memo(({ data, selected }) => (
     className={`flow-card ${data.tone || ""} ${selected ? "is-selected" : ""}`}
     title={data.title}
   >
-    <Handle
-      type="target"
-      position={data.portrait ? Position.Top : Position.Left}
-      isConnectable={false}
-    />
+    {Object.entries({left:Position.Left,right:Position.Right,top:Position.Top,bottom:Position.Bottom}).flatMap(([side,position])=>['source','target'].map(type=><Handle key={`${type}-${side}`} id={`${type}-${side}`} type={type} position={position} isConnectable={false} />))}
     <span className="flow-kind">{data.kindLabel}</span>
-    <strong>{data.title}</strong>
+    <div className="flow-title-row"><strong>{data.title}</strong>{data.count!==undefined&&<span className="flow-count">{data.count}</span>}</div>
     <span className="flow-subtitle">{data.subtitle}</span>
-    <Handle
-      type="source"
-      position={data.portrait ? Position.Bottom : Position.Right}
-      isConnectable={false}
-    />
+    {data.valueLabel&&<span className="flow-value">{data.valueLabel}</span>}
   </article>
 ));
-const nodeTypes = { cell: Card, formulaGroup: Card, sheet: Card };
+const nodeTypes = { cell: Card, formulaGroup: Card, sheet: Card, cellGroup: Card };
 function LayeredEdge({
   id,
   sourceX,
@@ -94,7 +86,25 @@ function Dock({ elements = [] }) {
   return <div ref={ref} className="graph-docked-controls" />;
 }
 
-function layered(nodes, edges, portrait) {
+function layered(nodes, edges, portrait, aspect) {
+  const owned=nodes.filter(n=>n.data.tone!=='outside'),outside=nodes.find(n=>n.data.tone==='outside');
+  const ownedIds=new Set(owned.map(n=>n.id));
+  const leaf=owned.length>1&&owned.every(n=>n.data.original.nodeId)&&!edges.some(e=>ownedIds.has(e.source)&&ownedIds.has(e.target));
+  if(leaf){
+    const columns=Math.max(1,Math.min(6,Math.ceil(Math.sqrt(owned.length*aspect/2.23))));
+    owned.forEach((n,i)=>{n.position={x:(i%columns)*272,y:Math.floor(i/columns)*144};});
+    const width=columns*272-40,height=Math.ceil(owned.length/columns)*144-40;
+    if(outside)outside.position={x:width+110,y:Math.max(0,(height-104)/2)};
+    const lookup=new Map(nodes.map(n=>[n.id,n]));
+    for(const edge of edges){
+      const a=lookup.get(edge.source),b=lookup.get(edge.target),s={x:a.position.x+232,y:a.position.y+52},t={x:b.position.x,y:b.position.y+52};
+      let points;
+      if(a===outside){const busY=b.position.y-18;points=[s,{x:s.x+24,y:s.y},{x:s.x+24,y:a.position.y-20},{x:width+42,y:a.position.y-20},{x:width+42,y:busY},{x:b.position.x-18,y:busY},{x:b.position.x-18,y:t.y},t];}
+      else points=[s,{x:s.x+18,y:s.y},{x:s.x+18,y:a.position.y+122},{x:width+42,y:a.position.y+122},{x:width+42,y:t.y},t];
+      edge.data={...edge.data,points};edge.sourceHandle='source-right';edge.targetHandle='target-left';
+    }
+    return nodes;
+  }
   const graph = new dagre.graphlib.Graph({ multigraph: true });
   graph.setGraph({
     rankdir: portrait ? "TB" : "LR",
@@ -104,7 +114,7 @@ function layered(nodes, edges, portrait) {
     marginy: 30,
   });
   graph.setDefaultEdgeLabel(() => ({}));
-  nodes.forEach((node) => graph.setNode(node.id, { width: 232, height: 104 }));
+  [...nodes].sort((a,b)=>a.id.localeCompare(b.id)).forEach((node) => graph.setNode(node.id, { width: 232, height: 104 }));
   edges.forEach((edge) =>
     graph.setEdge(
       edge.source,
@@ -114,11 +124,14 @@ function layered(nodes, edges, portrait) {
     ),
   );
   dagre.layout(graph);
+  const side=(p,center)=>Math.abs((p.x-center.x)/116)>=Math.abs((p.y-center.y)/52)?p.x<center.x?'left':'right':p.y<center.y?'top':'bottom';
   edges.forEach((edge) => {
+    const points=graph.edge({v:edge.source,w:edge.target,name:edge.id}).points;
+    edge.sourceHandle='source-'+side(points[0],graph.node(edge.source));
+    edge.targetHandle='target-'+side(points[points.length-1],graph.node(edge.target));
     edge.data = {
       ...edge.data,
-      points: graph.edge({ v: edge.source, w: edge.target, name: edge.id })
-        .points,
+      points,
     };
   });
   return nodes.map((node) => {
@@ -138,6 +151,10 @@ export function mount(element, options) {
     update = setModel;
     const en = model.language === "en";
     useEffect(() => {
+      const stageObserver = new ResizeObserver(() =>
+        element.style.setProperty('--graph-stage-width', `${element.clientWidth}px`),
+      );
+      stageObserver.observe(element);
       const observer = new ResizeObserver(([entry]) =>
         element.style.setProperty(
           "--graph-hud-height",
@@ -145,7 +162,7 @@ export function mount(element, options) {
         ),
       );
       if (hudRef.current) observer.observe(hudRef.current);
-      return () => observer.disconnect();
+      return () => { observer.disconnect(); stageObserver.disconnect(); };
     }, []);
     useEffect(() => {
       requestAnimationFrame(() => {
@@ -166,6 +183,7 @@ export function mount(element, options) {
         onNodesChange={(changes) => {
           current = {
             ...current,
+            fit: changes.some(c=>c.type==='position'||c.type==='select')?false:current.fit,
             nodes: applyNodeChanges(changes, current.nodes),
           };
           setModel(current);
@@ -215,7 +233,7 @@ export function mount(element, options) {
           }
           ariaLabel={en ? "Graph overview" : "Carte du graphe"}
         />
-        <Controls showInteractive={false} fitViewOptions={api.fitOptions()} />
+        <Controls orientation={model.portrait?'horizontal':'vertical'} showInteractive={false} fitViewOptions={api.fitOptions()} />
         <Background gap={22} size={1} color="#ccd9d4" />
         <Panel ref={hudRef} position="top-left" className="graph-hud">
           <Dock elements={options.toolbar} />
@@ -224,6 +242,7 @@ export function mount(element, options) {
           <Dock elements={options.breadcrumbs} />
         </Panel>
         <Panel position="bottom-left" className="graph-status-panel">
+          <span className="flow-mobile-status" role="status">{model.nodes.length} {en?'cards':'cartes'} · {model.edges.length} {en?'links':'liens'}</span>
           <Dock elements={options.status} />
         </Panel>
       </ReactFlow>
@@ -258,13 +277,9 @@ export function mount(element, options) {
         label: e.label ?? (e.weight ? String(e.weight) : undefined),
         className: e.membership ? "membership" : "",
       }));
-      const placed = layered(mapped, links, element.clientWidth < 550);
-      if (!fit)
-        for (const node of placed) {
-          const previous = current.nodes.find((n) => n.id === node.id);
-          if (previous) node.position = previous.position;
-        }
-      current = { nodes: placed, edges: links, language, fit, focus };
+      const aspect=Math.max(.3,element.clientWidth/Math.max(1,element.clientHeight));
+      const placed = layered(mapped, links, aspect<.85,aspect);
+      current = { nodes: placed, edges: links, language, fit, focus,portrait:element.clientWidth<550 };
       flushSync(() => update(current));
     },
     getNodes: () => current.nodes,
@@ -313,12 +328,14 @@ export function mount(element, options) {
         breadcrumbs && !breadcrumbs.hidden
           ? breadcrumbs.getBoundingClientRect().height
           : 0;
+      const overlays=['.graph-status-panel','.react-flow__minimap','.react-flow__controls'].map(s=>element.querySelector(s)?.getBoundingClientRect().height||0);
+      const top=Math.min(hud+trail+26,element.clientHeight*.5),bottom=Math.min(Math.max(...overlays)+16,element.clientHeight*.34);
       return {
         padding: {
-          top: `${Math.min(hud + trail + 26, element.clientHeight * 0.48)}px`,
-          right: "24px",
-          bottom: "34px",
-          left: "24px",
+          top: `${top}px`,
+          right: "48px",
+          bottom: `${bottom}px`,
+          left: "48px",
         },
         minZoom: 0.001,
         maxZoom: 1.2,
@@ -326,14 +343,7 @@ export function mount(element, options) {
       };
     },
     fit: () => instance?.fitView(api.fitOptions()),
-    focus: (id) => {
-      const n = current.nodes.find((n) => n.id === id || n.data.nodeId === id);
-      if (n)
-        instance?.setCenter(n.position.x + 116, n.position.y + 52, {
-          zoom: 1,
-          duration: 0,
-        });
-    },
+    focus: () => instance?.fitView(api.fitOptions()),
     select: (id) => {
       const n = api.getNode(id);
       if (n) options.onSelect(n.data.original);
