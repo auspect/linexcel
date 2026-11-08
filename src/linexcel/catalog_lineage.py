@@ -311,7 +311,7 @@ class Traversal:
         raw = self.raw[key]
         index = self.index(pid)
         kind = raw["kind"]
-        if raw.get("capabilityDiagnostics") or any(
+        if any(
             s["name"] == raw.get("sheet") and s["status"] != "complete"
             for s in index.meta.get("sheetDetails", [])
         ):
@@ -347,7 +347,7 @@ class Traversal:
         if kind == "unresolved":
             self.boundary(key, "unsupported_reference", reference=raw.get("reference"))
             return
-        if any(
+        if raw.get("capabilityDiagnostics") or any(
             "dynamic" in str(d).lower() or "tokenization failed" in str(d).lower()
             for d in raw.get("diagnostics", [])
         ):

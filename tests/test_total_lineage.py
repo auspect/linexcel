@@ -249,7 +249,7 @@ def test_unsupported_external_grammar(tmp_path, operand, subtype):
     )
     catalog = Catalog(tmp_path / "owner" / "catalog")
     result = catalog.lineage([reader], handle(reader), direction="upstream", depth=5)
-    assert "unsupported_reference" in result["coverage"]["boundaries"]
+    assert result["coverage"]["boundaries"] == ["unsupported_reference"]
     assert not result["edges"]
     fact = list_links(catalog, [reader])["links"][0]
     assert not fact["supported"] and fact["referenceType"] == subtype
@@ -702,3 +702,20 @@ def test_local_structured_column_is_never_an_external_book(tmp_path, column, dyn
     if not dynamic:
         assert result["coverage"]["complete"]
         assert len(result["nodes"]) == 4 and len(result["edges"]) == 3
+
+
+def test_incomplete_source_sheet_has_its_own_boundary(tmp_path):
+    source = fixture_source(tmp_path, 1, "partial.xlsx", {"A1": 1})
+    with sqlite3.connect(source.path) as db:
+        meta = json.loads(
+            db.execute("SELECT value FROM metadata WHERE key='meta'").fetchone()[0]
+        )
+        meta["sheetDetails"][0]["status"] = "partial"
+        db.execute("UPDATE metadata SET value=? WHERE key='meta'", (json.dumps(meta),))
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage([source], handle(source), direction="upstream", depth=10)
+    assert result["coverage"]["boundaries"] == [
+        "input_constant",
+        "source_index_incomplete",
+    ]
+    assert not result["coverage"]["exhaustive"] and not result["coverage"]["complete"]
