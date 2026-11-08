@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-08T02:53:24.410140+00:00",
+  "capturedAt": "2026-11-08T03:16:21.243865+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,7 +15,7 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "decb8e212f1cbfa004ae9230b1bb18390c542d58ae9b43fe60de9ccd76d5a723",
+    "src/linexcel/assets/app.html": "30a4efe28c121d51d133ef3a83a8b3f7a05a967cb5332e8a7ef69e5324527fdf",
     "src/linexcel/assets/app-graph.js": "fa0b40fd09ffc1ba8d2a86c9ea60e6a72ebcd10ed1581365d83ea33101d3a731",
     "src/linexcel/assets/app-graph.css": "e4591587681946c520c71282c32de5311ac38dec5bfd5f334f2237b83b350cdc",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
