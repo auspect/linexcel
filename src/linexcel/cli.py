@@ -72,6 +72,25 @@ def _build_parser() -> argparse.ArgumentParser:
     lineage.add_argument("handle")
     lineage.add_argument("--depth", type=int, default=1)
     lineage.add_argument("--limit", type=int, default=200)
+    lineage.add_argument("--direction", choices=("upstream", "downstream"))
+    lineage.add_argument("--edges", type=int)
+    lineage.add_argument("--workbooks", type=int)
+    lineage.add_argument("--milliseconds", type=int)
+    links = actions.add_parser(
+        "links", help="List external references and resolution status."
+    )
+    links.add_argument(
+        "--status", choices=("resolved_by_name", "pinned", "ambiguous", "unresolved")
+    )
+    links.add_argument("--project")
+    links.add_argument("--offset", type=int, default=0)
+    links.add_argument("--limit", type=int, default=50)
+    pin = actions.add_parser("pin", help="Pin an external link to an owner revision.")
+    pin.add_argument("link_id")
+    pin.add_argument("target_project")
+    pin.add_argument("target_sha256")
+    unpin = actions.add_parser("unpin", help="Remove an external revision pin.")
+    unpin.add_argument("link_id")
 
     session = sub.add_parser(
         "session-link", help="Open the running local workspace in another browser."

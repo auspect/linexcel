@@ -30,7 +30,7 @@ from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
 
 TRACE_VERSION = "linexcel.search.v1"
-CATALOG_VERSION = 3
+CATALOG_VERSION = 4
 KINDS = frozenset({"cell", "sheet", "name", "table", "column"})
 
 
@@ -83,6 +83,10 @@ class CatalogLimits:
     text_chars: int = 4096
     lineage_nodes: int = 200
     lineage_depth: int = 20
+    lineage_edges: int = 1000
+    lineage_workbooks: int = 32
+    lineage_ms: int = 2000
+    lineage_links: int = 100_000
 
     def __post_init__(self):
         validate_limits(**asdict(self))
@@ -322,7 +326,11 @@ class Catalog:
                 return result
             except Exception as error:
                 cap = (
-                    "catalog_bytes" if "catalog_bytes" in str(error) else "build_failed"
+                    "catalog_bytes"
+                    if "catalog_bytes" in str(error)
+                    or isinstance(error, sqlite3.Error)
+                    and "full" in str(error).lower()
+                    else "build_failed"
                 )
                 self.build_state = {
                     "status": "failed",
@@ -353,8 +361,18 @@ class Catalog:
                 raise
 
     def _signature(self, manifest):
+        from linexcel.catalog_links import pin_signature
+
         return hashlib.sha256(
-            _json([CATALOG_VERSION, self.fts5, asdict(self.limits), manifest]).encode()
+            _json(
+                [
+                    CATALOG_VERSION,
+                    self.fts5,
+                    asdict(self.limits),
+                    manifest,
+                    pin_signature(self),
+                ]
+            ).encode()
         ).hexdigest()
 
     def needs_refresh(self, sources):
@@ -451,6 +469,9 @@ class Catalog:
         source_map = {s.project_id: s for s in sources}
         try:
             schema(db, self.fts5)
+            from linexcel.catalog_links import build_links
+
+            link_summary = build_links(self, db, sources, manifest, pool, start)
             completed_nodes = 0
             for item in manifest:
                 if item["rebuildRequired"]:
@@ -496,6 +517,7 @@ class Catalog:
                 "signature": signature,
                 "backend": "fts5" if self.fts5 else "like",
                 "revisions": manifest,
+                "links": link_summary,
                 "capsHit": sorted(caps),
                 "limits": asdict(self.limits),
                 "bytes": scratch.stat().st_size,
@@ -941,8 +963,31 @@ class Catalog:
         )
 
     def lineage(
-        self, sources: Iterable[Source], handle: str, *, depth=1, limit=200
+        self,
+        sources: Iterable[Source],
+        handle: str,
+        *,
+        depth=1,
+        limit=200,
+        direction=None,
+        edges=None,
+        workbooks=None,
+        milliseconds=None,
     ) -> dict:
+        if direction is not None:
+            from linexcel.catalog_lineage import directed_lineage
+
+            return directed_lineage(
+                self,
+                list(sources),
+                handle,
+                direction=direction,
+                depth=depth,
+                limit=limit,
+                edges=edges,
+                workbooks=workbooks,
+                milliseconds=milliseconds,
+            )
         pid, sha, nid = parse_handle(handle)
         if not 0 <= depth <= min(
             20, self.limits.lineage_depth

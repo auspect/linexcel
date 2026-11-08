@@ -40,7 +40,7 @@ from linexcel.formula_source import cell_source_fields
 from linexcel.refs import a1, parse_ref, split_sheet_prefix
 from linexcel.structured_refs import formula_tokens
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_PAGE_SIZE = 200
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
@@ -1587,6 +1587,9 @@ def build_index(
             else:
                 metadata, names, links = _read_source(path, store)
                 _index_dependencies(store, metadata, names, links, refs_dir)
+            from linexcel.link_facts import index_facts
+
+            index_facts(path, store, metadata)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}

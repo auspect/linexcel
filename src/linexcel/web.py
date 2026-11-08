@@ -1893,6 +1893,14 @@ class WebApp:
         parts = path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
             return self.store.library.query(owner, parts[2], query or {})
+        if parts == ["api", "library", "pins"] and method == "POST":
+            return self.store.library.pin_link(owner, body)
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "library", "pins"]
+            and method == "DELETE"
+        ):
+            return self.store.library.pin_link(owner, {"linkId": parts[3]}, remove=True)
         if parts == ["api", "config"] and method == "GET":
             from linexcel.web_upload import CHUNK_BYTES
 

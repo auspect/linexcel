@@ -166,7 +166,16 @@ class Library:
                 "generation",
             },
             "status": set(),
-            "lineage": {"handle", "depth", "limit"},
+            "lineage": {
+                "handle",
+                "depth",
+                "limit",
+                "direction",
+                "edges",
+                "workbooks",
+                "milliseconds",
+            },
+            "links": {"status", "project", "offset", "limit"},
             "occurrences": {"group", "generation", "after", "limit"},
         }
         if operation not in allowed or set(params) - allowed[operation]:
@@ -212,6 +221,24 @@ class Library:
                         value("handle"),
                         depth=int(value("depth", "1")),
                         limit=int(value("limit", "200")),
+                        direction=value("direction") if "direction" in params else None,
+                        **{
+                            name: int(value(name))
+                            for name in ("edges", "workbooks", "milliseconds")
+                            if name in params
+                        },
+                    )
+                if operation == "links":
+                    from linexcel.catalog_links import list_links
+
+                    catalog.ensure(sources)
+                    return list_links(
+                        catalog,
+                        sources,
+                        status=value("status"),
+                        project=value("project"),
+                        offset=int(value("offset", "0")),
+                        limit=int(value("limit", "50")),
                     )
                 if operation == "search":
                     if "q" in params and "query" in params:
@@ -397,6 +424,29 @@ class Library:
             if "trace" in result:
                 result["trace"].update(complete=False, capsHit=coverage["capsHit"])
         return catalog._bound(result)
+
+    def pin_link(self, owner, body, *, remove=False):
+        from linexcel.catalog_links import set_pin
+        from linexcel.web import APIError
+
+        allowed = {"linkId"} if remove else {"linkId", "targetProject", "targetSha256"}
+        if not isinstance(body, dict) or set(body) != allowed:
+            raise APIError(400, "Invalid pin parameters")
+        try:
+            with self.mutation(owner), self.store.lock:
+                result = set_pin(
+                    self.catalog(owner),
+                    self.sources(owner),
+                    body["linkId"],
+                    body.get("targetProject"),
+                    body.get("targetSha256"),
+                    remove=remove,
+                )
+                return result
+        except KeyError:
+            raise APIError(404, "Library link or target revision not found") from None
+        except (ValueError, OSError, sqlite3.Error) as error:
+            raise APIError(400, str(error)) from None
 
 
 def project_revision(project: dict, path) -> dict:

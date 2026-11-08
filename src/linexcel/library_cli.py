@@ -43,7 +43,17 @@ def run(args) -> int:
             "limit",
         )
         if operation == "lineage":
-            names = ("handle", "depth", "limit")
+            names = (
+                "handle",
+                "depth",
+                "limit",
+                "direction",
+                "edges",
+                "workbooks",
+                "milliseconds",
+            )
+        elif operation == "links":
+            names = ("status", "project", "offset", "limit")
         elif operation == "occurrences":
             names = ("group", "generation", "after", "limit")
         params = {
@@ -51,7 +61,15 @@ def run(args) -> int:
             for name in names
             if getattr(args, name, None) is not None
         }
-        result = store.library.query(owner, operation, params, synchronous=True)
+        if operation in {"pin", "unpin"}:
+            body = {"linkId": args.link_id}
+            if operation == "pin":
+                body.update(
+                    targetProject=args.target_project, targetSha256=args.target_sha256
+                )
+            result = store.library.pin_link(owner, body, remove=operation == "unpin")
+        else:
+            result = store.library.query(owner, operation, params, synchronous=True)
         payload = json.dumps(
             result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
         )

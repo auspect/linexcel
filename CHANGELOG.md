@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add directed upstream/downstream library lineage across loaded revisions,
+  OOXML external link facts, range-aware reverse lookup, cycle detection and
+  explicit origin, unresolved, unsupported, cache-only and budget boundaries.
+  Resolve only by unique filename or durable owner-authorized project/hash pins;
+  cached values are diagnostics only. Expose link status/filtering and pins in
+  the API and CLI, preserving the existing undirected neighborhood route.
+
 - Page grouped library text occurrences through owner-authorized, generation-scoped
   source scans with bounded work, response size and reusable cell handles.
 - Require corroborated multi-column header bands, distinguish row keys from text

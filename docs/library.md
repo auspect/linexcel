@@ -17,6 +17,10 @@ path, URL, SQL expression or another owner's source index.
 - `GET /api/library/search?q=revenue&revision=PROJECT_ID:SHA256`
 - `GET /api/library/status`
 - `GET /api/library/lineage?handle=lx1.ENCODED_HANDLE&depth=2&limit=100`
+- `GET /api/library/lineage?handle=lx1.ENCODED_HANDLE&direction=upstream&depth=10`
+- `GET /api/library/links?status=ambiguous&project=PROJECT_ID&limit=50&offset=0`
+- `POST /api/library/pins` with `{linkId,targetProject,targetSha256}`
+- `DELETE /api/library/pins/LINK_ID`
 - `GET /api/library/occurrences?generation=GENERATION&group=ENTRY_ID&after=0&limit=50`
 
 `q` and `query` are aliases; supplying both is an error. Kinds are `cell`,
@@ -68,9 +72,114 @@ stored, so large groups do not add unbounded catalog disk usage.
 
 Handles are opaque locators, not authorization tokens. Each use rechecks owner,
 project, current content hash and node existence. A stale or foreign handle
-returns 404. The lineage route reuses the existing undirected neighborhood
-traversal. It identifies every node's revision and reports requested-depth and
-external-workbook boundaries. It makes no claim to total dependency lineage.
+returns 404. Without `direction`, the lineage route preserves M1's undirected
+same-workbook neighborhood envelope. With `direction=upstream|downstream`, it
+returns directed lineage across loaded owner revisions, as described below.
+
+## External links and directed lineage
+
+Index schema 4 retains external reference facts independently of calculation:
+the `[N]` workbook relationship position, relationship Target exactly as written
+(including URI escaping), decoded basename, target sheet/address/rectangle and
+any cached values. The immutable catalog generation derives its link table from
+those facts. Old indexes need reimporting: `external_facts_rebuild_required` in
+link status and `index_rebuild_required` in lineage disclose missing facts.
+External A1 cells and rectangular ranges are supported. External defined names,
+structured references, whole rows/columns, dynamic and 3-D references are typed
+`unsupported_reference` boundaries, with the original operand and subtype.
+Declared but unused external books remain in source index `externalBooks`
+metadata; `links` lists formula/name reference operands.
+
+Resolution uses a case-insensitive basename comparison (`lower()`, as in the
+existing external resolver), across all currently loaded revisions of the
+authenticated owner. Exactly one candidate is `resolved_by_name`, several are
+`ambiguous`, and none is `unresolved`. Every same-name project is a candidate,
+including projects with identical bytes. Import dates, loading order and cached
+values never select a target. `resolved_by_name` explicitly warns that this
+may not be the revision the link was saved against. A moved file with the same
+basename can resolve; a renamed file needs a pin.
+
+Pins are explicit user actions binding a stable link ID to a project and source
+content hash. Both source link and target revision are authorized against the
+current owner. Pins persist in the owner's `link-pins.sqlite`, outside the
+disposable catalog directory. Rebuilds and process restarts retain them. A
+replacement or deletion leaves `status=pinned`, `stalePin=true` and
+`targetRevision=null`; it never silently falls back to a same-name candidate.
+Unpinning returns to name resolution. Pins for deleted source revisions remain
+durable but do not appear as current links.
+
+Directed responses contain `nodes`, `edges`, `boundaries`, `revisions`,
+`stronglyConnectedComponents`, `coverage` and `trace`. Node IDs and handles are
+revision-qualified; `sourceNode` retains the source index ID. Each node includes
+sheet, address, kind, labels, saved value/provenance and formula. Range nodes
+describe stored members and implicit blank cells, without enumerating every
+blank. Their handles and verified blank-cell handles can be traversed again.
+This reads saved values and source formulas; it does not recalculate formulas.
+
+Edges always point from precedent to consumer, regardless of traversal direction.
+Kinds include `formula`, `range` and `external_link`; the latter includes
+`resolutionStatus`, original path and version caveat. Upstream resolves into the
+target revision and follows its own formulas. Downstream searches the generation's
+reverse link table, including range containment, plus local ranges. An ambiguous
+potential reader creates a boundary, never a fabricated consumer edge.
+
+Upstream external edges include `cacheDiagnostic` entries such as
+`{address:"A1",cached:500,current:600,agreement:false}`. Numeric comparisons reuse
+the existing relative/absolute tolerance of 1e-9. Missing current values yield
+unknown agreement. Diagnostics are bounded and report omissions; they never
+change resolution. An unresolved link with cache data reaches `cache_only`,
+labelled "cached value, source unavailable", with no target edge.
+
+Every boundary identifies its reached node and typed reason. Reasons include
+`input_constant` (a legitimate origin), `unresolved_external`,
+`ambiguous_external`, `unsupported_reference`, `source_unavailable`, `macro`,
+`power_query`, `cycle`, `cache_only`, `source_index_incomplete`, and budget stops.
+Power Query loaded table destinations are detected through the existing OOXML
+connection reader; their cells stop at `power_query`, not an input constant.
+VBA procedure nodes stop at `macro`; no macro or query is executed. Iterative
+strongly connected component detection identifies local and cross-workbook cycles.
+
+`coverage.exhaustive` says whether traversal exhausted its defined loaded-revision
+scope without a budget/missing-index stop. `coverage.boundaries` separately names
+what it reached. `coverage.complete` additionally requires all reached boundaries
+to be legitimate input origins: an exhaustive graph with an unresolved external
+link, macro, query or cycle is still incomplete. This makes a bounded or unresolved
+diagram unsuitable for claiming total lineage. The scope cannot identify files
+that have never been loaded or prove the historical version saved against a link.
+
+`trace.schemaVersion=linexcel.lineage.v1` records root, direction, generation,
+crossed revisions, limits, counts, peak source connections, completeness and
+duration. `preparationMs` separately reports synchronous catalog reconciliation;
+it is outside traversal's time allowance. Traversal defaults are 200 nodes,
+1,000 edges, 32 workbooks, depth 20 and 2,000 ms; the existing response budget is
+1 MiB. Request parameters `limit`, `edges`, `workbooks`, `depth`, `milliseconds`
+can lower the configured ceilings. Zero edges/time/depth are real limits; root
+node/workbook capacity must be at least one. Budget boundaries include `depth`,
+`node_budget`, `edge_budget`, `workbook_budget`, `time_budget`, `response_bytes`,
+`link_budget` and `link_build_time`. The generation link budget is 100,000 operands
+and shares catalog build time/disk limits. SQLite progress callbacks interrupt
+long scans; Python loops check deadlines. These are cooperative limits, not
+hard real-time guarantees. Oversized root evidence fails explicitly.
+
+Traversal reuses the operation-local bounded LRU and reserves a connection for
+background building. It never attaches indexes to SQLite. Immutable generations
+are pinned while read; builds/pin changes serialize with the existing owner
+mutation gate. Added, replaced or deleted revisions and changed pins invalidate
+the generation. `status.links` exposes counts by resolution status and separate
+link coverage. Search coverage continues to describe the search index policy.
+
+```powershell
+linexcel library --data-dir PATH links --status ambiguous
+linexcel library --data-dir PATH pin LINK_ID TARGET_PROJECT TARGET_SHA256
+linexcel library --data-dir PATH unpin LINK_ID
+linexcel library --data-dir PATH lineage HANDLE --direction upstream --depth 10
+linexcel library --data-dir PATH lineage HANDLE --direction downstream --workbooks 8
+```
+
+The external-link contract tests generate OOXML externalLink parts and
+relationships with openpyxl, with hand-computed graphs. No Excel-authored
+external-link file is claimed as validation; the existing Excel-authored VBA
+and Power Query fixtures exercise those distinct stop boundaries.
 
 Search order is stable `(projectId, kind, entryId)` within a generation. Supply
 the returned `generation` on later pages; a changed generation rejects the page

@@ -29,6 +29,7 @@ import struct
 import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
@@ -274,7 +275,7 @@ def scan_sources(m_source: str, other_queries: set[str]) -> list[QuerySource]:
     return unique
 
 
-def read_destinations(data: bytes) -> dict[str, list[Destination]]:
+def read_destinations(data: bytes | Path) -> dict[str, list[Destination]]:
     """``{query name, casefolded: [where it loads]}``.
 
     Follows the chain the format itself uses: worksheet → table part →
@@ -284,7 +285,9 @@ def read_destinations(data: bytes) -> dict[str, list[Destination]]:
     """
     out: dict[str, list[Destination]] = defaultdict(list)
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        with zipfile.ZipFile(
+            data if isinstance(data, Path) else io.BytesIO(data)
+        ) as zf:
             connections = _connection_queries(zf)
             if not connections:
                 return {}
