@@ -101,7 +101,9 @@ ambiguous candidates, named caps, and completeness of that inference scope.
 `index_rebuild_required` identifies missing/unreadable indexes or
 metadata without a SHA-256 digest. Reimport the project through the existing
 import operation to rebuild it; no workbook index schema migration is required.
-Older indexes without merge metadata still support the remaining label methods.
+Older indexes without merge metadata retain conservative labels; new bands are
+disabled with `header_merge_metadata_unavailable` until reimport restores that
+geometry. Missing metadata must not be interpreted as proof of no merges.
 
 ## Generations and budgets
 

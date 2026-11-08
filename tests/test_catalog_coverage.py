@@ -204,6 +204,23 @@ def test_overlapping_merged_header_is_reported_ambiguous(tmp_path):
         assert bands.coverage["ambiguousCandidates"] == 1
 
 
+def test_legacy_missing_merge_metadata_cannot_infer_unverified_headers(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Region", "Amount", None])
+    sheet.merge_cells("B1:C1")
+    for row in range(2, 15):
+        sheet.append([f"Place {row}", row, row * 2])
+    item = indexed(tmp_path, book)
+    with WorkbookIndex(item.path, writable=True) as index:
+        index.db.execute("DROP TABLE merge_definitions")
+        index.db.commit()
+        bands = HeaderBands(index, "Sheet", [], CatalogLimits(), lambda: False)
+        assert not bands.bands
+        assert bands.coverage["capsHit"] == ["header_merge_metadata_unavailable"]
+        assert not bands.coverage["complete"]
+
+
 def test_map_budget_never_extrapolates_and_is_stored_only_in_catalog(tmp_path):
     book = Workbook()
     sheet = book.active

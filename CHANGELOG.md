@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Decline new header-band inference when a legacy index lacks merge metadata,
+  exposing the missing geometry instead of assuming no merged boundaries.
+
 - Mark text-group occurrence counts incomplete when a sheet receives spare
   capacity after earlier occurrences may already have been omitted.
 

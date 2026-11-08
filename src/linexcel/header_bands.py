@@ -69,6 +69,16 @@ class HeaderBands:
             "scope": "outside declared tables with descriptive headers",
         }
         caps = set()
+        if not index.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='merge_definitions'"
+        ).fetchone():
+            # An older index cannot prove the absence of merged headers or
+            # section boundaries. Keep its conservative labels, infer no bands.
+            self.coverage.update(
+                capsHit=["header_merge_metadata_unavailable"], complete=False
+            )
+            return
         if len(tables) > limits.header_regions:
             self.coverage.update(capsHit=["header_regions"], complete=False)
             return
