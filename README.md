@@ -123,7 +123,7 @@ These are engine snapshots, not a trace of executed branches or subexpressions.
 The separate **AI documentation** tab shares the graph's wide, adjustable reader.
 Long documents scroll inside the panel; on narrow screens it sits below the graph.
 
-![Graph reader with optional AI documentation](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
+![Wide graph reader with dependency values](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph_documented.png)
 
 ![Selected node with source and calculation evidence](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_node_documented.png)
 
