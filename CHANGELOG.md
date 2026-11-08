@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic, source-attributed cell labels in batch and lazy node evidence:
+  nearby literal text, merged headers, declared table columns and exact-cell
+  defined names, with bounded searches independent of any model.
+
+### Fixed
+
+- Negotiate explicitly rejected sampling/token parameters on OpenAI-compatible
+  HTTP 400 responses for documentation and vision, remembering the accepted
+  shape per endpoint/model. Receipts retain actual parameters and attempts;
+  rejected requests count toward usage with conservative prompt estimates.
+
 ## [1.17.1] — 2026-11-07
 
 ### Fixed
