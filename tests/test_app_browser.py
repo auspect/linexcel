@@ -936,7 +936,8 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
             page.locator("#graph-options > summary").click()
         page.locator("#graph-sheet").select_option("Fuel")
         page.wait_for_function(
-            "document.querySelector('#graph-preview').textContent.includes('Fuel · B1')"
+            "() => document.querySelector('#graph-preview')"
+            ".textContent.includes('Fuel · B1')"
         )
         assert (
             page.locator("#graph-canvas").evaluate("el => el._flow.getViewport().zoom")
@@ -949,7 +950,8 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         assert page.locator(".capture-thumb").count() == 2
         assert page.locator("#capture-selected figure img").count() == 1
         page.wait_for_function(
-            "document.querySelector('#capture-selected figure img').naturalWidth > 0"
+            "() => document.querySelector('#capture-selected figure img')"
+            ".naturalWidth > 0"
         )
         page.locator("#capture-next").click()
         assert "Fuel" in page.locator("#capture-selected").inner_text()
@@ -966,7 +968,7 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         page.locator("#capture-ai [data-ai-start]").click()
         page.locator("#capture-ai .ai-result").wait_for()
         page.wait_for_function(
-            "document.querySelector('#capture-selected figure').scrollTop >= 240"
+            "() => document.querySelector('#capture-selected figure').scrollTop >= 240"
         )
         assert page.locator(".capture-gallery").evaluate("el => el.scrollTop") == 30
         described = [r for r in requests if r["operation"] == "describe_capture"]
