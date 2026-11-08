@@ -56,16 +56,32 @@ def open_app(
         route.fulfill(body=json.dumps(body), content_type="application/json")
 
     def handle(route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         path = urlsplit(route.request.url).path
         requests.append(path)
         if path == "/":
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
-        elif path.endswith("cytoscape.min.js"):
+        elif path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
         elif path == "/api/config":
             fulfill(route, {"limits": {"memoryMb": 2048, "uploadMb": 64}})
@@ -382,7 +398,10 @@ def test_main_tabs_support_keyboard_navigation_and_scoped_calculation_notice(bro
         assert page.locator("#calculation-policy").is_hidden()
         page.keyboard.press("ArrowRight")
         assert page.locator("#tab-nodes").get_attribute("aria-selected") == "true"
-        assert page.locator("#calculation-policy").is_visible()
+        assert (
+            page.locator("#calculation-policy").locator("xpath=..").get_attribute("id")
+            == "view-nodes"
+        )
         assert page.locator("[data-tab][tabindex='0']").count() == 1
         page.keyboard.press("ArrowLeft")
         assert page.locator("#tab-diagnostics").get_attribute("aria-selected") == "true"

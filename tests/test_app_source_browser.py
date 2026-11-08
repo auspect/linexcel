@@ -33,16 +33,32 @@ def open_graph(browser, viewport, node, *, macro_only=False):
     }
 
     def route(request):
+        if (
+            request.request.method == "POST"
+            and request.request.url.endswith("/tasks")
+            and request.request.post_data_json.get("operation") == "build_graph"
+        ):
+            request.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         path = request.request.url.split("http://localhost/", 1)[-1]
         if path == "":
             request.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
             return
-        if path.endswith("cytoscape.min.js"):
+        if path.endswith(("app-graph.js", "app-graph.css")):
             request.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / request.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if request.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         data = {}
@@ -61,7 +77,7 @@ def open_graph(browser, viewport, node, *, macro_only=False):
             assert not macro_only  # Static VBA access must never execute code.
             assert body["operation"] == "evaluate"
             assert body["nodeId"] == node["id"]
-            assert body["force"] is True
+            assert body["force"] is False
             data = {
                 "task": {
                     "id": "targeted-evaluation",
@@ -79,6 +95,9 @@ def open_graph(browser, viewport, node, *, macro_only=False):
     page.locator("[data-project='p']").click()
     page.locator("#node-list [data-node]").click()
     page.locator("#node-detail h2").wait_for()
+    evidence = page.locator(".inspector-evidence > summary")
+    if evidence.count():
+        evidence.click()
     return page, errors
 
 

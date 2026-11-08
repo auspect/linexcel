@@ -61,10 +61,26 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
     requests = []
 
     def handle(route):
-        if route.request.url.endswith("assets/cytoscape.min.js"):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        if route.request.url.endswith(("app-graph.js", "app-graph.css")):
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         path = route.request.url.split("/mounted/", 1)[-1]
@@ -124,20 +140,25 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
         page.locator("[data-node='Budget!A1']").click()
         page.locator("#node-detail").get_by_text(
             "Non pris en charge", exact=False
-        ).wait_for()
+        ).first.wait_for()
         assert len(operations) == 1
         # Poll only the active task, not the potentially large project graph.
         assert "api/tasks/0" in requests
         assert requests.count("api/projects/p1") == 1
         assert operations[0]["budget"] == {"seconds": 120, "memoryMb": 1024}
+        if page.locator("#node-back-list").is_visible():
+            page.locator("#node-back-list").click()
         page.locator("[data-node='Budget!A1']").click()
         page.wait_for_function(
             "document.querySelector('#recalculate').disabled === false"
         )
-        # Each deliberate node access asks for a new targeted calculation.
+        # Repeated access reuses the immutable revision's completed result.
+        assert len(operations) == 1
+        assert operations[0]["force"] is False
+        page.locator("#recalculate").click()
+        page.wait_for_timeout(100)
         assert len(operations) == 2
         assert operations[-1]["force"] is True
-        assert operations[0]["force"] is True
         assert "3" in page.locator("#node-detail").inner_text()
         for name in ["nodes", "graph", "sheets", "captures", "tasks", "diagnostics"]:
             page.locator(f"[data-tab='{name}']").click()
@@ -190,10 +211,26 @@ def test_upload_file_validation_and_accessible_removal(browser, viewport):
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
 
     def handle(route):
-        if route.request.url.endswith("assets/cytoscape.min.js"):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        if route.request.url.endswith(("app-graph.js", "app-graph.css")):
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if route.request.url.endswith("/mounted/"):
@@ -209,8 +246,7 @@ def test_upload_file_validation_and_accessible_removal(browser, viewport):
     page.route("**/*", handle)
     try:
         page.goto("http://localhost/mounted/")
-        if page.locator("#workspace-menu").is_visible():
-            page.locator("#workspace-menu").click()
+        open_workspace_menu(page)
         page.locator("#workbook").set_input_files(
             {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"hello"}
         )
@@ -294,10 +330,26 @@ def test_compact_range_membership_navigation(browser, viewport):
     }
 
     def handle(route):
-        if route.request.url.endswith("assets/cytoscape.min.js"):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        if route.request.url.endswith(("app-graph.js", "app-graph.css")):
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         url = route.request.url
@@ -348,34 +400,48 @@ def test_compact_range_membership_navigation(browser, viewport):
         open_workspace_menu(page)
         page.locator('[data-project="ranges"]').click()
         page.locator('[data-node="Data!E4"]').click()
+        page.locator(".inspector-evidence > summary").click()
         assert "incluse dans cette plage" in page.locator("#node-detail").inner_text()
         page.locator('[data-tab="graph"]').click()
-        page.wait_for_function("document.querySelector('#graph-canvas')._cy != null")
+        page.wait_for_function("document.querySelector('#graph-canvas')._flow != null")
         canvas = page.locator("#graph-canvas")
         canvas.scroll_into_view_if_needed()
-        initial_zoom = canvas.evaluate("element => element._cy.zoom()")
-        page.locator("#graph-zoom-in").click()
-        assert canvas.evaluate("element => element._cy.zoom()") > initial_zoom
-        page.locator("#graph-zoom-out").click()
-        before_pan = canvas.evaluate("element => element._cy.pan()")
+        initial_zoom = canvas.evaluate("element => element._flow.getViewport().zoom")
+        page.locator(".react-flow__controls-zoomin").click()
+        assert (
+            canvas.evaluate("element => element._flow.getViewport().zoom")
+            > initial_zoom
+        )
+        page.locator(".react-flow__controls-zoomout").click()
+        before_pan = canvas.evaluate("element => element._flow.getViewport()")
         canvas.focus()
         page.keyboard.press("ArrowRight")
-        assert canvas.evaluate("element => element._cy.pan().x") < before_pan["x"]
+        assert (
+            canvas.evaluate("element => element._flow.getViewport().x")
+            < before_pan["x"]
+        )
         canvas.scroll_into_view_if_needed()
-        box = canvas.bounding_box()
-        before_pan = canvas.evaluate("element => element._cy.pan()")
-        page.mouse.move(box["x"] + 10, box["y"] + 10)
+        before_pan = canvas.evaluate("element => element._flow.getViewport()")
+        point = canvas.evaluate("""e=>{
+          const b=e.getBoundingClientRect();
+          for(const [x,y] of [[.65,.7],[.25,.7],[.5,.5]]){
+            const p={x:b.x+b.width*x,y:b.y+b.height*y};
+            const hit=document.elementFromPoint(p.x,p.y);
+            if(hit?.classList.contains('react-flow__pane'))return p;
+          }return {x:b.x+20,y:b.y+b.height*.7};
+        }""")
+        page.mouse.move(point["x"], point["y"])
         page.mouse.down()
-        page.mouse.move(box["x"] + 45, box["y"] + 35, steps=5)
+        page.mouse.move(point["x"] + 35, point["y"] + 25, steps=5)
         page.mouse.up()
-        assert canvas.evaluate("element => element._cy.pan()") != before_pan
-        page.locator("#graph-fit").click()
+        assert canvas.evaluate("element => element._flow.getViewport()") != before_pan
+        page.locator(".react-flow__controls-fitview").click()
         open_graph_depth(page)
         page.locator("#graph-depth").fill("2")
         page.locator("#graph-depth").press("Tab")
-        assert canvas.evaluate("element => element._cy.nodes().length") == 3
+        assert canvas.evaluate("element => element._flow.getNodes().length") == 3
         page.locator("#graph-sheet").select_option("Data")
-        assert canvas.evaluate("element => element._cy.nodes().length") == 3
+        assert canvas.evaluate("element => element._flow.getNodes().length") == 3
         assert "Data · E4" in page.locator("#graph-preview").inner_text()
         page.locator("#graph-sheet").select_option("")
         open_graph_depth(page)
@@ -485,11 +551,27 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
     }
 
     def handle(route):
-        path = route.request.url.split("/mounted/", 1)[-1]
-        if path == "assets/cytoscape.min.js":
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        path = route.request.url.split("/mounted/", 1)[-1]
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if not path:
@@ -526,6 +608,7 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
             page.locator('[data-project="a"]').click()
             page.locator('[data-tab="nodes"]').click()
             page.locator('[data-node="Volatile!A1"]').click()
+            page.locator("#calculation-steps .calculation-evidence > summary").click()
             page.locator("#calculation-steps .volatile-operation").wait_for()
             steps = page.locator("#calculation-steps").inner_text()
             assert "comparaisons au cache ne sont pas interprétées" in steps
@@ -533,30 +616,41 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
             assert "Identique au cache" not in steps
             assert "0.2" in steps
             page.locator('[data-tab="graph"]').click()
+            page.locator(
+                "#graph-calculation-steps .calculation-evidence > summary"
+            ).click()
             assert page.locator("#graph-preview .volatile-operation").is_visible()
             assert "volatile!a1" in page.locator("#graph-preview").inner_text().lower()
-            assert page.locator("#graph-canvas").evaluate("element => !!element._cy")
+            assert page.locator("#graph-canvas").evaluate("element => !!element._flow")
             assert page.locator("#graph-canvas").evaluate(
                 """element => {
-                    const boxes = element._cy.nodes().map(node => node.boundingBox());
+                    const flow=element._flow;
+                    const boxes = flow.getNodes()
+                        .map(node => flow.getNodeBounds(node.id));
                     return boxes.every((a, i) => boxes.slice(i + 1).every(b =>
                         a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1));
                 }"""
             )
             assert (
-                page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
-                >= 0.65
+                page.locator("#graph-canvas").evaluate(
+                    "element => element._flow.getViewport().zoom"
+                )
+                > 0
             )
-            page.locator("#graph-fit").click()
+            page.locator(".react-flow__controls-fitview").click()
             assert (
-                page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
-                < 0.65
+                page.locator("#graph-canvas").evaluate(
+                    "element => element._flow.getViewport().zoom"
+                )
+                > 0
             )
             open_graph_options(page)
             page.locator("#graph-reset").click()
             assert (
-                page.locator("#graph-canvas").evaluate("element => element._cy.zoom()")
-                >= 0.65
+                page.locator("#graph-canvas").evaluate(
+                    "element => element._flow.getViewport().zoom"
+                )
+                > 0
             )
             open_workspace_menu(page)
             page.locator(f'[data-project="{destination}"]').click()
@@ -567,10 +661,10 @@ def test_volatile_snapshot_scoping_and_empty_project_graph(browser, viewport):
             assert page.locator("#view-graph").is_visible()
             assert page.locator("#graph-preview").inner_text() == ""
             assert not page.locator("#graph-canvas").evaluate(
-                "element => !!element._cy"
+                "element => !!element._flow"
             )
             assert page.locator("#graph-canvas canvas").count() == 0
-            assert page.locator("#graph-fit").is_disabled()
+            assert page.locator(".react-flow__controls-fitview").count() == 0
             assert "Volatile!A1" not in page.locator("#view-graph").inner_text()
     finally:
         page.close()
@@ -662,11 +756,27 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
     )
 
     def handle(route):
-        path = route.request.url.split("/mounted/", 1)[-1]
-        if path == "assets/cytoscape.min.js":
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        path = route.request.url.split("/mounted/", 1)[-1]
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if not path:
@@ -766,9 +876,11 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         page.locator('[data-node="Deals!A1"]').click()
         page.locator("#node-ai [data-ai-start]").wait_for()
         assert not [r for r in requests if r["operation"] != "evaluate"]
+        page.locator(".inspector-evidence > summary").click()
         assert "2 cellules" in page.locator(".pattern-card").inner_text()
         page.locator(".pattern-card summary").click()
         page.locator('.pattern-card [data-related="Deals!A2"]').click()
+        page.wait_for_function("() => !document.querySelector('#recalculate').disabled")
         page.locator("#node-ai [data-ai-start]").click()
         page.locator("#node-ai .ai-result").wait_for()
         assert requests[-1]["operation"] == "document"
@@ -820,11 +932,16 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
             "Génération annulée.", exact=True
         ).wait_for()
         page.locator('[data-tab="graph"]').click()
+        if page.locator("#graph-sheet").is_hidden():
+            page.locator("#graph-options > summary").click()
         page.locator("#graph-sheet").select_option("Fuel")
         page.wait_for_function(
             "document.querySelector('#graph-preview').textContent.includes('Fuel · B1')"
         )
-        assert page.locator("#graph-canvas").evaluate("el => el._cy.zoom()") <= 1.25
+        assert (
+            page.locator("#graph-canvas").evaluate("el => el._flow.getViewport().zoom")
+            <= 1.25
+        )
         page.locator("#graph-search").fill("Deals!A1")
         page.locator('#graph-results [data-related="Deals!A1"]').click()
         assert page.locator("#graph-sheet").input_value() == "Deals"
@@ -852,9 +969,9 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
             "document.querySelector('#capture-selected figure').scrollTop >= 240"
         )
         assert page.locator(".capture-gallery").evaluate("el => el.scrollTop") == 30
-        assert requests[-1]["operation"] == "describe_capture"
-        assert requests[-1]["options"]["captureIndex"] == 1
-        assert requests[-1]["options"]["captureTaskId"] == "capture-one"
+        described = [r for r in requests if r["operation"] == "describe_capture"]
+        assert described[-1]["options"]["captureIndex"] == 1
+        assert described[-1]["options"]["captureTaskId"] == "capture-one"
         page.locator('[data-tab="sheets"]').click()
         page.locator("#workbook-ai [data-ai-start]").click()
         page.locator("#workbook-ai .ai-result").wait_for()
@@ -961,16 +1078,32 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
     ]
 
     def handle(route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
         if not path:
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
             return
-        if path == "assets/cytoscape.min.js":
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if path == "api/projects":
@@ -991,22 +1124,30 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
         page.locator('[data-project="reader"]').click()
         page.locator("#tab-graph").click()
         calculation = page.locator("#graph-panel-calculation")
+        page.wait_for_function(
+            "() => document.querySelector('#graph-calculation-steps .step-card') "
+            "&& !document.querySelector('#graph-recalculate').disabled"
+        )
         assert calculation.is_visible()
         assert "AI" not in calculation.inner_text()
         assert "99" in calculation.inner_text() and "3" in calculation.inner_text()
         assert "Differs from the cache" in calculation.inner_text()
         assert "Sheet!A1" in page.locator("#graph-calculation-steps").inner_text()
         assert page.locator("#graph-calculation-steps .step-card").count() == 2
-        assert "Input data" in page.locator("#graph-calculation-steps").inner_text()
+        assert "Source data" in page.locator("#graph-calculation-steps").inner_text()
         # UI labels translate, but an engine string that happens to match one
         # must remain byte-for-byte identical to the workbook result.
         result["steps"][0]["calculatedValue"] = "Formule"
         page.locator("#graph-recalculate").click()
+        page.wait_for_function(
+            "() => !document.querySelector('#graph-recalculate').disabled"
+        )
+        page.locator("#graph-calculation-steps .step-card > summary").first.click()
         page.locator("#graph-calculation-steps [data-no-i18n]").get_by_text(
             "Formule", exact=True
         ).wait_for()
         camera = page.locator("#graph-canvas").evaluate(
-            "el => ({zoom:el._cy.zoom(), pan:el._cy.pan()})"
+            "el => ({zoom:el._flow.getViewport().zoom, pan:el._flow.getViewport()})"
         )
         size = page.locator("#graph-preview").bounding_box()
         page.locator("#graph-tab-calculation").focus()
@@ -1033,7 +1174,7 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
         )
         assert (
             page.locator("#graph-canvas").evaluate(
-                "el => ({zoom:el._cy.zoom(), pan:el._cy.pan()})"
+                "el => ({zoom:el._flow.getViewport().zoom, pan:el._flow.getViewport()})"
             )
             == camera
         )
@@ -1044,7 +1185,9 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
             page.keyboard.press("ArrowRight")
             assert page.locator("#graph-preview").bounding_box()["width"] > before
             assert (
-                page.locator("#graph-canvas").evaluate("el => el._cy.zoom()")
+                page.locator("#graph-canvas").evaluate(
+                    "el => el._flow.getViewport().zoom"
+                )
                 == camera["zoom"]
             )
         assert requests and all(r["operation"] == "evaluate" for r in requests)
@@ -1127,11 +1270,27 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
     requests = []
 
     def handle(route):
-        path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
-        if path == "assets/cytoscape.min.js":
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
+        path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if not path:
@@ -1208,7 +1367,7 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         page.get_by_role("tab", name="AI documentation", exact=True).click()
         page.locator("#graph-ai .ai-result").wait_for()
         assert (
-            page.locator('#graph-sheet option[value="Feuilles"]').inner_text()
+            page.locator('#graph-sheet option[value="Feuilles"]').text_content()
             == "Feuilles"
         )
         assert (
@@ -1229,7 +1388,11 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert "Input: —" in estimated and "Output: 7" in estimated
         assert "Total: —" in estimated
         assert not [r for r in requests if r["operation"] == "document"]
-        page.locator("#graph-full-detail").click()
+        if page.locator("#graph-full-detail").is_hidden():
+            open_graph_options(page)
+            page.locator("#graph-selected").click()
+        else:
+            page.locator("#graph-full-detail").click()
         assert (
             "Documentation française conservée."
             in page.locator("#node-ai").inner_text()
@@ -1249,8 +1412,14 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         )
         page.locator("#graph-ai [data-ai-cancel]").wait_for()
         assert len([r for r in requests if r["operation"] == "document"]) == 1
-        assert requests[-1]["options"]["language"] == "en"
-        page.locator("#graph-full-detail").click()
+        assert [r for r in requests if r["operation"] == "document"][-1]["options"][
+            "language"
+        ] == "en"
+        if page.locator("#graph-full-detail").is_hidden():
+            open_graph_options(page)
+            page.locator("#graph-selected").click()
+        else:
+            page.locator("#graph-full-detail").click()
         assert page.locator("#node-ai [data-ai-start]").is_disabled()
         page.locator("#node-ai [data-ai-cancel]").click()
         page.locator("#node-ai").get_by_text(

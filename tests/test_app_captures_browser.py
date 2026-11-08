@@ -41,16 +41,32 @@ def _route_app(page, projects, tasks_by_project, task_result, config=None):
     page.on("pageerror", lambda error: errors.append(str(error)))
 
     def handle(route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         url = urlsplit(route.request.url)
         if url.path == "/mounted/":
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
             return
-        if url.path.endswith("assets/cytoscape.min.js"):
+        if url.path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         if "/images/" in url.path:

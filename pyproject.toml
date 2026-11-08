@@ -97,8 +97,14 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "scripts/*" = ["E501"]
 
 [tool.ty]
-# openai is optional (linexcel[ai]), not installed in dev
-# unresolved-import ignored via CLI flag in CI / prek
+# Match the production-package scope used by CI. Optional extras (AI,
+# screenshots) are deliberately not required by a plain development sync.
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.ty.rules]
+unresolved-import = "ignore"
 
 [tool.pytest.ini_options]
 # src/ is collected so the doctests in refs.py actually run.

@@ -61,6 +61,16 @@ def graph_app(browser, request):
         route.fulfill(body=json.dumps(body), content_type="application/json")
 
     def handle(route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         path = urlsplit(route.request.url).path
         params = parse_qs(urlsplit(route.request.url).query)
         requests.append((path, params))
@@ -68,10 +78,16 @@ def graph_app(browser, request):
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
-        elif path.endswith("cytoscape.min.js"):
+        elif path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
         elif path == "/api/config":
             fulfill(route, {})
@@ -164,6 +180,7 @@ def test_sheet_picker_retains_complete_workbook_order_and_option_identity(graph_
     open_graph_options(page)
     page.locator("#graph-reset").click()
     assert option.evaluate("el=>el.isConnected")
+    open_graph_options(page)
     assert "31" in page.locator("#graph-sheet-inventory").inner_text()
     page.locator("#graph-sheet").select_option(sheets[-1])
     playwright.expect(
@@ -177,6 +194,42 @@ def test_sheet_picker_retains_complete_workbook_order_and_option_identity(graph_
     assert not errors
 
 
+def test_search_dismissal_focus_overlay_and_bidirectional_routes(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.locator("#graph-search").fill("A1")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    page.locator("#graph-search").press("Escape")
+    assert not page.locator("#graph-results").inner_text()
+    page.locator("#graph-search").fill("A2")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    page.locator("#project-title").click()
+    assert not page.locator("#graph-results").inner_text()
+    page.locator("#graph-fullscreen").click()
+    bounds = page.locator("#view-graph").bounding_box()
+    assert bounds["x"] == 0 and bounds["y"] == 0
+    assert bounds["width"] == page.viewport_size["width"]
+    assert bounds["height"] == page.viewport_size["height"]
+    page.keyboard.press("Escape")
+    assert page.locator("#view-graph").get_attribute("aria-modal") is None
+    page.locator("#graph-canvas").evaluate("""e=>e._flow.render(
+      [{id:'a',title:'A'},{id:'b',title:'B'}],
+      [{source:'a',target:'b'},{source:'b',target:'a'}])""")
+    page.wait_for_function(
+        "()=>document.querySelectorAll('.react-flow__edge-path').length===2"
+    )
+    page.wait_for_timeout(100)
+    crossed = page.locator("#graph-canvas").evaluate("""e=>{
+      const boxes=e._flow.getNodes().map(n=>({x:n.position.x,y:n.position.y}));
+      return [...e.querySelectorAll('.react-flow__edge-path')].some(path=>{
+        const length=path.getTotalLength();
+        for(let i=1;i<100;i++){const p=path.getPointAtLength(length*i/100);
+          if(boxes.some(b=>p.x>b.x+2&&p.x<b.x+230&&p.y>b.y+2&&p.y<b.y+102))return true;}
+        return false;});} """)
+    assert not crossed
+    assert not errors
+
+
 @pytest.mark.parametrize("lazy", [True, False])
 def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app, lazy):
     page, _, requests, errors, state = graph_app
@@ -185,30 +238,28 @@ def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app
     page.locator("[data-project='p']").click()
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
     open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===4"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===4"
     )
     canvas = page.locator("#graph-canvas")
-    assert canvas.evaluate("el=>el._cy.nodes().map(n=>n.id())") == [
+    assert canvas.evaluate("el=>el._flow.getNodes().map(n=>n.id)") == [
         f"Z first!A{i}" for i in range(1, 5)
     ]
-    assert canvas.evaluate(
-        "el=>el._cy.getElementById('Z first!A3').hasClass('context')"
-    )
+    assert canvas.evaluate("el=>el._flow.getNode('Z first!A3').data.tone==='context'")
     open_graph_options(page)
-    assert page.locator("#graph-neutral-key").is_visible()
+    assert page.locator("#graph-neutral-key").get_attribute("hidden") is None
     for depth, count in [(5, 6), (20, 21)]:
         open_graph_depth(page)
         page.locator("#graph-depth").fill(str(depth))
         page.locator("#graph-depth").press("Tab")
         page.wait_for_function(
-            "n=>document.querySelector('#graph-canvas')._cy?.nodes().length===n",
+            "n=>document.querySelector('#graph-canvas')._flow?.getNodes().length===n",
             arg=count,
         )
         assert f"profondeur {depth}" in page.locator("#graph-notice").inner_text()
@@ -239,7 +290,7 @@ def test_pending_depth_keeps_the_previous_view_truthfully_labelled(graph_app):
     page, _, _, errors, _ = graph_app
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     held = []
 
@@ -291,7 +342,7 @@ def test_depth_failure_stops_loading_and_retains_previous_graph(graph_app):
     page, _, _, errors, _ = graph_app
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
 
     def reject_third(route):
@@ -406,20 +457,25 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
     assert "usage(s)" not in pending_notice
     assert "Aucune relation indexée" not in pending_notice
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
 
     def assert_exact_neighborhood():
         # Selecting a new center keeps the previous canvas while its request loads.
         playwright.expect(page.locator("#graph-notice")).to_contain_text("2 nœuds")
-        assert set(canvas.evaluate("el=>el._cy.nodes().map(n=>n.id())")) == {
+        assert set(canvas.evaluate("el=>el._flow.getNodes().map(n=>n.id)")) == {
             "QRA!H2",
             "QRA!H3",
         }
         assert canvas.evaluate(
-            "el=>el._cy.edges().map(e=>({source:e.source().id(),target:e.target().id()}))"
+            "el=>el._flow.getEdges().map(e=>({source:e.source,target:e.target}))"
         ) == [link]
-        assert canvas.evaluate("el=>el._cy.elements('.membership').length") == 0
+        assert (
+            canvas.evaluate(
+                "el=>el._flow.getEdges().filter(e=>e.className==='membership').length"
+            )
+            == 0
+        )
         assert "2 nœuds" in page.locator("#graph-notice").inner_text()
         assert off_page_range["id"] not in page.locator("#graph").inner_text()
         assert foreign_input["id"] not in page.locator("#graph").inner_text()

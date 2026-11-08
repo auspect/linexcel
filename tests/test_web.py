@@ -421,11 +421,11 @@ def test_graph_asset_is_packaged_mounted_and_allowlisted(tmp_path):
     app = create_app(
         tmp_path, mount_path="/tools/linexcel", resolve_user=lambda env: env.get("user")
     )
-    expected = (Path(web.__file__).parent / "assets" / "cytoscape.min.js").read_bytes()
+    expected = (Path(web.__file__).parent / "assets" / "app-graph.js").read_bytes()
     try:
         for path, script_name in [
-            ("/tools/linexcel/assets/cytoscape.min.js", ""),
-            ("/assets/cytoscape.min.js", "/tools/linexcel"),
+            ("/tools/linexcel/assets/app-graph.js", ""),
+            ("/assets/app-graph.js", "/tools/linexcel"),
         ]:
             code, body, headers = request(app, "GET", path, SCRIPT_NAME=script_name)
             assert code == 200 and body == expected
@@ -438,17 +438,14 @@ def test_graph_asset_is_packaged_mounted_and_allowlisted(tmp_path):
             "/tools/linexcel/assets/../web.py",
             "/tools/linexcel/assets/app.html",
             "/tools/linexcel/assets/unknown.js",
-            "/assets/cytoscape.min.js",
+            "/assets/app-graph.js",
         ]:
             assert request(app, "GET", path)[0] == 404
         assert (
-            request(app, "GET", "/tools/linexcel/assets/cytoscape.min.js", user=None)[0]
+            request(app, "GET", "/tools/linexcel/assets/app-graph.js", user=None)[0]
             == 401
         )
-        assert (
-            request(app, "POST", "/tools/linexcel/assets/cytoscape.min.js", {})[0]
-            == 404
-        )
+        assert request(app, "POST", "/tools/linexcel/assets/app-graph.js", {})[0] == 404
     finally:
         app.close()
 
