@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-08T01:17:43.363640+00:00",
+  "capturedAt": "2026-11-08T02:53:24.410140+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,9 +15,9 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "d7cd963acc7a59897dcd6a6dfdc6732e1996eb13e892d5e0d6aad5fc1d74f8e8",
-    "src/linexcel/assets/app-graph.js": "14b4bef123505ac81f24531e2a8d7db12506bf4199eb9887811235bc8bf19820",
-    "src/linexcel/assets/app-graph.css": "ea6fc4f115989bee6d2a480acaa28a265e0ce88ffa1f4a16193fa2907647e82f",
+    "src/linexcel/assets/app.html": "decb8e212f1cbfa004ae9230b1bb18390c542d58ae9b43fe60de9ccd76d5a723",
+    "src/linexcel/assets/app-graph.js": "fa0b40fd09ffc1ba8d2a86c9ea60e6a72ebcd10ed1581365d83ea33101d3a731",
+    "src/linexcel/assets/app-graph.css": "e4591587681946c520c71282c32de5311ac38dec5bfd5f334f2237b83b350cdc",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "scripts/capture_app.py": "d9260788fd32b83367888897bc682be2dc07b3de6220732ac23f2d864609caa3"
   },
@@ -31,7 +31,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "d673b97f78e9440e53f629bc843372018387df16666f6166eafe8592c5f9997e",
+      "sha256": "c0296c74398db38d8d50581434fab3b598bb74344d0d66cba1b998f7218939c8",
       "pixels": [
         2880,
         1800
@@ -39,7 +39,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
-      "sha256": "cff0db4b94108932ceaa3326d98d15d1a66f0d1b4289ad2a6874b5eadcb8841d",
+      "sha256": "34b6df0b3204ca2901d82aaafa834d159fedc3f155503b94f72143be26fabbef",
       "pixels": [
         2880,
         1800
