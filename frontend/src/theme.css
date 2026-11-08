@@ -701,6 +701,9 @@ pre {
   .graph-hud #graph-options {
     margin-left: auto;
   }
+  .graph-hud .graph-toolbar {
+    min-width: 120px;
+  }
   .graph-hud .graph-toolbar input {
     width: 100%;
   }
@@ -1134,6 +1137,7 @@ pre {
   .graph-hud .graph-depth-control input,
   .graph-depth-control > input {
     min-height: var(--tap);
+    width: var(--tap);
   }
   .workspace-active header.top #connection {
     display: inline-flex;

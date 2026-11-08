@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with icons, underline view tabs, a segmented reader switch, sunken search
   fields, a single depth stepper, text breadcrumbs and state chips (cache match,
   server connection). Labels use sentence case, formulas a monospace face, and
-  graph cards quiet role tints without violet.
+  graph cards quiet role tints without violet. On phones, graph options open as
+  a dismissible bottom sheet with 44px controls.
 
 ### Fixed
 

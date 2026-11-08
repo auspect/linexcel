@@ -493,7 +493,14 @@ def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app
         "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     open_graph_depth(page)
+    if page.viewport_size["width"] <= 650:
+        for selector in ("#graph-depth-minus", "#graph-depth", "#graph-depth-plus"):
+            box = page.locator(selector).bounding_box()
+            assert box["width"] >= 44 and box["height"] >= 44
     page.locator("#graph-depth-plus").click()
+    if page.viewport_size["width"] <= 650:
+        # The phone sheet stays open so the depth can be stepped repeatedly.
+        assert page.locator("#graph-options").evaluate("element => element.open")
     open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
     page.wait_for_function(
