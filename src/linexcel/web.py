@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from linexcel.catalog import CatalogLimits
+
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
     "import",
@@ -79,6 +81,7 @@ class WebConfig:
     ai_reasoning_effort: str | None = None
     allow_local_import: bool = False
     local_profile: bool = False
+    catalog_limits: CatalogLimits = field(default_factory=CatalogLimits)
 
     def __post_init__(self):
         for key in (
@@ -223,6 +226,9 @@ class TaskStore:
         from linexcel.web_upload import UploadStore
 
         self.uploads = UploadStore(self)
+        from linexcel.web_library import Library
+
+        self.library = Library(self)
 
     def _recover(self):
         from linexcel.web_backup import clean_interrupted_archives
@@ -455,6 +461,11 @@ class TaskStore:
                 "references": [name for name, _ in files[1:]],
                 "createdAt": time.time(),
             }
+            from linexcel.catalog import revision as workbook_revision
+
+            project["workbookRevision"] = workbook_revision(
+                project_id, hashlib.sha256(workbook[1]).hexdigest()
+            )
             _write(path / "project.json", project)
             task = self.submit(owner, project_id, "import", None, budget)
             return {"project": project, "task": task}
@@ -480,13 +491,15 @@ class TaskStore:
         return revision
 
     def list_projects(self, owner: str) -> list:
+        from linexcel.web_library import project_revision
+
         with self.lock:
             projects = []
             for path in (self.root / owner).glob("projects/*/project.json"):
                 if (owner, path.parent.name) in self.unreadable_projects:
                     continue
                 try:
-                    projects.append(_read(path))
+                    projects.append(project_revision(_read(path), path.parent))
                 except (OSError, ValueError):
                     continue
             return sorted(
@@ -496,10 +509,12 @@ class TaskStore:
             )
 
     def snapshot(self, owner: str, project_id: str) -> dict:
+        from linexcel.web_library import project_revision
+
         with self.lock:
             path = self.project_path(owner, project_id)
             return {
-                "project": _read(path / "project.json"),
+                "project": project_revision(_read(path / "project.json"), path),
                 "graph": self._graph(path),
                 "tasks": [
                     self.public(t, include_result=False)
@@ -528,6 +543,17 @@ class TaskStore:
         )
 
     def graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
+        from linexcel.web_library import project_revision
+
+        with self.lock:
+            path = self.project_path(owner, project_id)
+            result = self._graph_query(owner, project_id, kind, query)
+            result["workbookRevision"] = project_revision(
+                _read(path / "project.json"), path
+            )["workbookRevision"]
+            return result
+
+    def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
         from linexcel.lazy_store import (
             MAX_NEIGHBORHOOD_DEPTH,
@@ -635,6 +661,10 @@ class TaskStore:
 
     @staticmethod
     def _save_result(root: Path, task: dict, result: dict) -> None:
+        if task.get("workbookRevision") is not None and (
+            "filename" in result or "filename" in (result.get("meta") or {})
+        ):
+            result = {**result, "workbookRevision": task["workbookRevision"]}
         _write(root / "result-data.json", result)
         preview = result.copy()
         if (
@@ -753,7 +783,9 @@ class TaskStore:
             raise APIError(400, "Opération indisponible")
         with self.lock:
             path = self.project_path(owner, project_id)
-            project = _read(path / "project.json")
+            from linexcel.web_library import project_revision
+
+            project = project_revision(_read(path / "project.json"), path)
             graph_generation = None
             if operation in {"import", "build_graph"}:
                 opposite = "build_graph" if operation == "import" else "import"
@@ -979,6 +1011,7 @@ class TaskStore:
                 "owner": owner,
                 "projectId": project_id,
                 "revision": project["revision"],
+                "workbookRevision": project.get("workbookRevision"),
                 "cacheVersion": self.cache_version,
                 "aiCacheKey": ai_cache_key,
                 "graphGeneration": graph_generation,
@@ -1062,6 +1095,7 @@ class TaskStore:
             for task in tasks:
                 self.tasks.pop(task["id"], None)
                 self.events.pop(task["id"], None)
+            self.library.refresh(owner)
 
     def _run(self, task: dict, root: Path):
         event = self.events[task["id"]]
@@ -1128,6 +1162,7 @@ class TaskStore:
                         else:
                             _write(project / "graph.json", payload)
                         (project / "hierarchy.sqlite").unlink(missing_ok=True)
+                        self.library.refresh(task["owner"])
                         payload = {
                             "nodeCount": payload.get("meta", {}).get(
                                 "nodeCount", len(payload.get("nodes", []))
@@ -1802,6 +1837,7 @@ class WebApp:
                     value,
                     ensure_ascii=False,
                     allow_nan=False,
+                    separators=(",", ":") if path.startswith("/api/library/") else None,
                 ).encode("utf-8")
         except APIError as exc:
             status = exc.status
@@ -1848,6 +1884,8 @@ class WebApp:
         query: dict | None = None,
     ) -> Any:
         parts = path.strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
+            return self.store.library.query(owner, parts[2], query or {})
         if parts == ["api", "config"] and method == "GET":
             from linexcel.web_upload import CHUNK_BYTES
 

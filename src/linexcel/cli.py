@@ -39,6 +39,33 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    library = sub.add_parser(
+        "library", help="Search the deterministic workbook library."
+    )
+    library.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
+    library.add_argument("--owner", help="Owner hash for an embedded workspace.")
+    library.add_argument("--entries-per-workbook", type=int, default=100_000)
+    library.add_argument("--catalog-mb", type=int, default=256)
+    library.add_argument("--build-seconds", type=int, default=120)
+    library.add_argument("--connections", type=int, default=4)
+    library.add_argument("--hits", type=int, default=500)
+    library.add_argument("--response-kb", type=int, default=1024)
+    actions = library.add_subparsers(dest="library_action", required=True)
+    actions.add_parser("status", help="Reconcile revisions and show coverage.")
+    actions.add_parser("rebuild", help="Publish a new catalog generation.")
+    search = actions.add_parser("search", help="Find candidate cells and objects.")
+    search.add_argument("query")
+    search.add_argument("--kinds", default="")
+    search.add_argument("--project")
+    search.add_argument("--revision")
+    search.add_argument("--generation")
+    search.add_argument("--offset", type=int, default=0)
+    search.add_argument("--limit", type=int, default=50)
+    lineage = actions.add_parser("lineage", help="Read a cell handle's neighborhood.")
+    lineage.add_argument("handle")
+    lineage.add_argument("--depth", type=int, default=1)
+    lineage.add_argument("--limit", type=int, default=200)
+
     session = sub.add_parser(
         "session-link", help="Open the running local workspace in another browser."
     )
@@ -599,6 +626,10 @@ def _run_analyze(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        if args.command == "library":
+            from linexcel.library_cli import run
+
+            return run(args)
         if args.command == "doctor":
             from linexcel.web import WebConfig
             from linexcel.web_health import directory_health

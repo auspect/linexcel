@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add deterministic owner-scoped library search and status APIs, offline
+  `linexcel library` commands, stable revision/cell handles and same-workbook
+  neighborhood evidence. Search uses bounded immutable catalog generations,
+  FTS5 with diacritic folding or a reported bounded LIKE fallback, explicit
+  coverage counts, named budgets and a versioned search trace. Numeric lookup
+  requires source-attributed heuristic labels; source indexes remain authoritative.
+- Expose workbook revision identity as project ID plus source content SHA-256,
+  preserving distinct candidates for same-name projects and existing task cache
+  revision semantics.
+
 - Bundle an offline React Flow dashboard graph with sheet, R1C1 formula-group
   and cell drill-down, weighted relationships, breadcrumbs, minimap, layered
   Dagre layout and an accessible relationship list. Cache bounded hierarchy

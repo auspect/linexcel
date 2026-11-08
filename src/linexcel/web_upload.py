@@ -371,6 +371,12 @@ class UploadStore:
                     "references": [item["name"] for item in session["files"][1:]],
                     "createdAt": time.time(),
                 }
+                from linexcel.catalog import revision as workbook_revision
+                from linexcel.lazy_store import file_sha256
+
+                project["workbookRevision"] = workbook_revision(
+                    project_id, file_sha256(path / "workbook.xlsx")
+                )
                 _write(path / "project.json", project)
                 path.rename(destination)
                 try:
