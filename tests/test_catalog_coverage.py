@@ -365,3 +365,25 @@ def test_pending_first_search_keeps_trace_and_rejects_invalid_parameters(tmp_pat
     finally:
         store.library.pending.clear()
         store.close()
+
+
+def test_new_authorized_scope_returns_pending_while_old_generation_is_served(
+    tmp_path, monkeypatch
+):
+    item = indexed(tmp_path, Workbook())
+    new = Source("2" * 32, item.filename, item.path)
+    owner = "a" * 64
+    store = TaskStore(WebConfig(tmp_path / "data", retention_days=None))
+    try:
+        catalog = store.library.catalog(owner)
+        catalog.ensure([item])
+        monkeypatch.setattr(store.library, "sources", lambda _: [item, new])
+        store.library.pending[owner] = object()
+        catalog.build_state = {"status": "building"}
+        result = store.library.query(owner, "search", {"project": [new.project_id]})
+        assert result["status"] == "building" and result["results"] == []
+        assert not result["coverage"]["complete"]
+        assert result["trace"]["scope"]["project"] == new.project_id
+    finally:
+        store.library.pending.clear()
+        store.close()

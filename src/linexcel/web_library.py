@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 
@@ -183,6 +184,10 @@ class Library:
                         valid = {r["revision"]["id"] for r in manifest if r["revision"]}
                         if value("revision") not in valid:
                             raise KeyError("Revision not found")
+                        if value("project") and not value("revision").startswith(
+                            value("project") + ":"
+                        ):
+                            raise KeyError("Revision not found")
                     catalog.validate_search(
                         value("q", value("query")),
                         kinds=value("kinds").split(",") if value("kinds") else (),
@@ -203,8 +208,31 @@ class Library:
                 ):
                     self.refresh(owner)
                 pending = owner in self.pending
+                missing_scope = False
+                if (
+                    pending
+                    and operation == "search"
+                    and (value("project") or value("revision"))
+                    and catalog._published(catalog._current())
+                ):
+                    with catalog.pin() as (_, current):
+                        snapshot = json.loads(
+                            (
+                                catalog.directory / f"{current['generation']}.json"
+                            ).read_text("utf-8")
+                        )
+                    missing_scope = not any(
+                        (not value("project") or r["projectId"] == value("project"))
+                        and (
+                            not value("revision")
+                            or r["revision"]
+                            and r["revision"]["id"] == value("revision")
+                        )
+                        for r in snapshot["revisions"]
+                    )
                 if (
                     not catalog._published(catalog._current())
+                    or missing_scope
                     or pending
                     and catalog.limits.connections == 1
                 ):
