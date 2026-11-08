@@ -332,6 +332,7 @@ class TaskStore:
                 event.set()
             self.capacity.notify_all()
         self.executor.shutdown(wait=True)
+        self.library.close()
         self._lock_file.close()
 
     def project_path(self, owner: str, project_id: str) -> Path:

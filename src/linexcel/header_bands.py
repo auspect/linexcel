@@ -43,6 +43,36 @@ def numeric(node):
     return type(value) in {int, float} and math.isfinite(value)
 
 
+def catalog_labels(index, sheet, row, column, inferred):
+    """Apply catalog evidence rules without changing dossier label semantics."""
+    original = index.cell_labels(sheet, row, column)
+    declared = any(label["method"] == "table_column" for label in original)
+    result = [
+        label
+        for label in original
+        if label["method"] != "above_text"
+        and not (inferred and label["method"] == "left_text")
+    ]
+    if declared:
+        result = [
+            {**label, "role": "row_context"}
+            if label["method"] == "left_text"
+            else label
+            for label in result
+        ]
+    sources = {(label["sheet"], label["cell"], label["role"]) for label in result}
+    for label in inferred:
+        if label["role"] == "column" and any(
+            existing["method"] == "table_column" for existing in result
+        ):
+            continue
+        key = (label["sheet"], label["cell"], label["role"])
+        if key not in sources:
+            result.append(label)
+            sources.add(key)
+    return result
+
+
 @dataclass
 class Band:
     header_row: int
@@ -179,10 +209,10 @@ class HeaderBands:
             ]
             if not data_columns:
                 return None
-            if len(columns) == 1:
-                further = self.rows.get(row + 2, {}).get(columns[0], {})
-                if not numeric(further) or further.get("formula"):
-                    return None
+            # Repeated numbers below a title do not prove a field header.
+            # Declared tables already use their authoritative column metadata.
+            if len(columns) < 2:
+                return None
             self.coverage["candidates"] += 1
             if any(
                 r1 <= row <= r2 and c1 <= columns[-1] and c2 >= columns[0]
@@ -191,6 +221,8 @@ class HeaderBands:
                 self.coverage["ambiguousCandidates"] += 1
                 return None
             headers = {c: t for c, t in headers.items() if c in below}
+            if len(headers) < 2:
+                return None
             row_columns = [c for c in words if c in headers and c < min(data_columns)]
             if len(row_columns) > limits.header_row_labels:
                 caps.add("header_row_labels")
@@ -259,7 +291,9 @@ class HeaderBands:
                     method="header_band",
                     role=role,
                     truncated=False,
-                    ambiguous=False,
+                    certainty="heuristic",
+                    field=band.headers[c],
+                    fieldCell=a1(band.header_row, c),
                     headerRow=band.header_row,
                     region=(
                         f"{a1(band.first_row, min(band.headers))}:"
@@ -272,7 +306,12 @@ class HeaderBands:
         for col in band.row_columns:
             text = literal(self.rows.get(row, {}).get(col, {}))
             if text is not None and col < column:
-                add(text, row, col, "row")
+                add(
+                    text,
+                    row,
+                    col,
+                    "row" if col == band.row_columns[0] else "row_context",
+                )
         return result
 
     def records(self):

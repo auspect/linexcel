@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Page grouped library text occurrences through owner-authorized, generation-scoped
+  source scans with bounded work, response size and reusable cell handles.
+- Require corroborated multi-column header bands, distinguish row keys from text
+  context, and expose heuristic label certainty. Reserve a separate catalog worker,
+  skip queued builds after closure, and report source-snapshot failures explicitly.
+
 - Build library catalogs across all sheets with structural entries first,
   fair sheet budgets, distinct text groups with bounded source occurrences,
   separate numeric records, and per-sheet/per-kind coverage. Add catalog-only

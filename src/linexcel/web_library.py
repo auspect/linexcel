@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from linexcel.catalog import (
     TRACE_VERSION,
@@ -25,6 +26,14 @@ class Library:
         self.pending = {}
         self.dirty = set()
         self.mutations = {}
+        # Catalog builds cannot consume workbook-import task slots.
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="catalog")
+
+    def close(self):
+        self.executor.shutdown(wait=True, cancel_futures=True)
+        with self.store.lock:
+            self.pending.clear()
+            self.dirty.clear()
 
     def catalog(self, owner: str) -> Catalog:
         if owner not in self.catalogs:
@@ -58,7 +67,7 @@ class Library:
             return self.mutations.setdefault(owner, threading.RLock())
 
     def refresh(self, owner: str):
-        """Coalesce rebuilds on the existing bounded task executor."""
+        """Coalesce rebuilds on a dedicated single-worker executor."""
         with self.store.lock:
             if self.store.closed:
                 return
@@ -67,20 +76,39 @@ class Library:
                 return
             catalog = self.catalog(owner)
             catalog.build_state = {"status": "queued", "phase": "catalog"}
-            self.pending[owner] = self.store.executor.submit(self._reconcile, owner)
+            self.pending[owner] = self.executor.submit(self._reconcile, owner)
 
     def _reconcile(self, owner):
         try:
             while True:
+                with self.store.lock:
+                    if self.store.closed:
+                        return
                 with self.mutation(owner):
                     with self.store.lock:
+                        if self.store.closed:
+                            return
                         self.dirty.discard(owner)
-                        sources = self.sources(owner)
                         catalog = self.catalog(owner)
+                        phase = "sources"
                     try:
+                        with self.store.lock:
+                            sources = self.sources(owner)
+                        phase = "catalog"
                         catalog.ensure(sources)
-                    except (OSError, ValueError, sqlite3.Error):
-                        pass  # Catalog records failed state; imports stay successful.
+                    except Exception as error:
+                        if catalog.build_state.get("status") != "failed":
+                            catalog.failed_manifest = []
+                            catalog.build_state = {
+                                "status": "failed",
+                                "phase": phase,
+                                "errorType": type(error).__name__,
+                                "capsHit": [
+                                    "catalog_source_snapshot_failed"
+                                    if phase == "sources"
+                                    else "catalog_build_failed"
+                                ],
+                            }
                 with self.store.lock:
                     if owner not in self.dirty or self.store.closed:
                         return
@@ -139,6 +167,7 @@ class Library:
             },
             "status": set(),
             "lineage": {"handle", "depth", "limit"},
+            "occurrences": {"group", "generation", "after", "limit"},
         }
         if operation not in allowed or set(params) - allowed[operation]:
             raise APIError(400, "Invalid library parameter")
@@ -156,11 +185,27 @@ class Library:
         try:
             with self.store.lock:
                 catalog = self.catalog(owner)
-                sources = self.sources(owner)
-                if operation == "lineage":
+                try:
+                    sources = self.sources(owner)
+                except Exception:
+                    if (
+                        operation == "status"
+                        and catalog.build_state.get("status") == "failed"
+                    ):
+                        return catalog.failed_status()
+                    raise
+                if operation in {"lineage", "occurrences"}:
                     if owner in self.pending and catalog.limits.connections == 1:
                         raise APIError(
-                            409, "Catalog building; retry lineage after completion"
+                            409, "Catalog building; retry lookup after completion"
+                        )
+                    if operation == "occurrences":
+                        return catalog.occurrences(
+                            sources,
+                            generation=value("generation"),
+                            group=int(value("group")),
+                            after=int(value("after", "0")),
+                            limit=int(value("limit", "50")),
                         )
                     return catalog.lineage(
                         sources,
@@ -342,6 +387,7 @@ class Library:
                 capsHit=sorted(
                     {
                         *coverage["capsHit"],
+                        *state.get("capsHit", []),
                         "catalog_refresh_pending"
                         if pending
                         else "catalog_build_failed",

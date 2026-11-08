@@ -61,6 +61,13 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("--generation")
     search.add_argument("--offset", type=int, default=0)
     search.add_argument("--limit", type=int, default=50)
+    occurrences = actions.add_parser(
+        "occurrences", help="Page a text group's source cells."
+    )
+    occurrences.add_argument("group", type=int)
+    occurrences.add_argument("--generation", required=True)
+    occurrences.add_argument("--after", type=int, default=0)
+    occurrences.add_argument("--limit", type=int, default=50)
     lineage = actions.add_parser("lineage", help="Read a cell handle's neighborhood.")
     lineage.add_argument("handle")
     lineage.add_argument("--depth", type=int, default=1)

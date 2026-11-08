@@ -7,7 +7,7 @@ import json
 from collections import deque
 from typing import Any
 
-from linexcel.header_bands import HeaderBands, numeric
+from linexcel.header_bands import HeaderBands, catalog_labels, numeric
 from linexcel.lazy_store import _unpack
 from linexcel.refs import a1
 
@@ -32,7 +32,8 @@ def schema(db, fts5):
     db.execute(
         "CREATE TABLE entries(id INTEGER PRIMARY KEY,project TEXT,kind TEXT,"
         "node TEXT,sheet TEXT,address TEXT,text TEXT,labels TEXT,name TEXT,"
-        "occurrence_count INTEGER,occurrences TEXT,count_complete INTEGER)"
+        "occurrence_count INTEGER,occurrences TEXT,count_complete INTEGER,"
+        "group_key BLOB)"
     )
     if fts5:
         db.execute(
@@ -161,8 +162,8 @@ class WorkbookBuilder:
         def write():
             cursor = self.db.execute(
                 "INSERT INTO entries(project,kind,node,sheet,address,text,labels,"
-                "name,occurrence_count,occurrences,count_complete) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "name,occurrence_count,occurrences,count_complete,group_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     self.item["projectId"],
                     kind,
@@ -175,6 +176,7 @@ class WorkbookBuilder:
                     1,
                     self.json(occurrences),
                     0 if body else 1,
+                    key if body else None,
                 ),
             )
             if self.fts5:
@@ -249,19 +251,8 @@ class WorkbookBuilder:
                     self.add("column", sheet, a1(band.header_row, column), text)
 
     def labels(self, sheet, row, column):
-        result = self.index.cell_labels(sheet, row, column)
         inferred = self.maps[sheet].labels(row, column) if sheet in self.maps else []
-        sources = {(label["sheet"], label["cell"], label["role"]) for label in result}
-        for label in inferred:
-            if label["role"] == "column" and any(
-                existing["method"] == "table_column" for existing in result
-            ):
-                continue
-            key = (label["sheet"], label["cell"], label["role"])
-            if key not in sources:
-                result.append(label)
-                sources.add(key)
-        return result
+        return catalog_labels(self.index, sheet, row, column, inferred)
 
     def body(self):
         capacity = {

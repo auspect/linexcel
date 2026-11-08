@@ -17,6 +17,7 @@ path, URL, SQL expression or another owner's source index.
 - `GET /api/library/search?q=revenue&revision=PROJECT_ID:SHA256`
 - `GET /api/library/status`
 - `GET /api/library/lineage?handle=lx1.ENCODED_HANDLE&depth=2&limit=100`
+- `GET /api/library/occurrences?generation=GENERATION&group=ENTRY_ID&after=0&limit=50`
 
 `q` and `query` are aliases; supplying both is an error. Kinds are `cell`,
 `sheet`, `name`, `table` and `column`. Text search folds case and diacritics and
@@ -42,6 +43,28 @@ facts from a separate bounded table, with their own labels and handle. Values an
 from the authoritative workbook index. Object names and search labels are
 derived from that same immutable revision. All workbook-derived strings are
 untrusted content: render them as text, never HTML or instructions.
+
+Every grouped cell result includes `occurrenceGroup={generation,id}`. Supply those
+fields to `occurrences` to reach cells omitted from the inline list. The lookup
+rechecks owner, project and source revision, then scans the authoritative index in
+source sequence order. It matches full normalized text, or the same label text
+using the generation's bounded header map and current source row context. The
+result contains addresses and reusable cell handles. It can include matching
+cells outside the catalog's assessment sample; its scope is explicitly separate
+from `occurrenceCount`. A missing/foreign/replaced group returns 404; a changed
+generation rejects the page. No request supplies a path or chooses an owner.
+
+Use `pagination.nextAfter` as `after` on the next request with the same generation
+and group; null means the scan reached the end. Each page assesses at most
+`scan_entries` source cells and returns at most `limit` (bounded by `hits`).
+`query_ms` interrupts both SQLite scanning and Python processing; `response_bytes`
+bounds the entire UTF-8 envelope. Named caps and `coverage.complete=false` expose
+an unfinished scan. `page_limit` identifies an ordinary page boundary. A page may
+contain no matches and still advance its cursor. If the budget cannot examine
+even one source cell, the request fails explicitly rather than returning a
+non-advancing cursor. Complete applies to the remaining scan after `after`, not
+the whole workbook or global lineage. No full occurrence membership table is
+stored, so large groups do not add unbounded catalog disk usage.
 
 Handles are opaque locators, not authorization tokens. Each use rechecks owner,
 project, current content hash and node existence. A stale or foreign handle
@@ -109,7 +132,8 @@ geometry. Missing metadata must not be interpreted as proof of no merges.
 
 Each owner has a derived catalog directory. The workspace's existing coordinator
 file lock enforces one writer process. Import completion and deletion enqueue
-coalesced owner rebuilds on the existing bounded task executor. Building holds an
+coalesced owner rebuilds on a dedicated single-worker catalog executor, preserving
+all workbook task slots for imports and other tasks. Building holds an
 owner source-mutation gate, outside the global task-store lock; unrelated API
 requests and task polls remain responsive. Source replacement/deletion acquires
 the same gate before the task-store lock. Status exposes queued/building/ready/
@@ -122,7 +146,12 @@ first generation (or during a schema upgrade), search returns an empty pending
 result with the full trace; this does not mean absence. At a one-connection budget,
 pending searches return metadata only and lineage asks the client to retry.
 Offline CLI operations reconcile synchronously. A failed rebuild remains visible;
-retry with an import/delete event or the offline rebuild command. Readers pin immutable
+retry with an import/delete event or the offline rebuild command.
+Source enumeration and snapshot exceptions also terminate in a failed build with
+an incomplete coverage reason (`catalog_source_snapshot_failed` for enumeration).
+Queued reconciliation skips enumeration and building after the store closes;
+shutdown cancels remaining queued catalog futures and waits for the bounded active build.
+Readers pin immutable
 generation filenames; a writer publishes `CURRENT` atomically. Old generations
 are collected only after their readers finish. Workbook indexes are opened
 read-only through an operation-local LRU; they are never attached to a database.
@@ -177,19 +206,31 @@ assessments use a deterministic systematic sample spanning each sheet, with exac
 unassessed counts; full numeric coverage is not claimed at that cap. Numeric facts
 are stored separately so repeated numeric label text uses one search entry.
 
-Conservative `cell_labels` methods remain unchanged, including the dossier.
-The catalog additionally builds a bounded `header_band` map once per sheet per
+The dossier's `cell_labels` methods remain unchanged. The catalog applies a
+stricter policy: nearby `above_text` alone is omitted; a column label requires
+declared table metadata or a corroborated header band. Within a band, its inferred
+roles supersede nearby `left_text`. Declared table nearby text is `row_context`,
+not a proven key. The catalog builds a bounded `header_band` map once per sheet per
 generation, stored only in its rebuildable database. Descriptive declared table
 columns take precedence. Inference accepts literal source strings, never formula
 caches; numeric-looking text headers require at least two descriptive anchors and
 a consecutive literal integer axis of at least three columns. A coherent following
-data row must corroborate the header. A single-column band requires two literal
-numeric rows. Accepted columns propagate only through observed contiguous data;
+data row must corroborate at least two adjacent populated header columns.
+A single-column title above repeated numbers never creates a band; a declared
+single-column table can still supply its source column metadata. Accepted columns
+propagate only through observed contiguous data;
 a blank/missing row, ragged rectangle, textual section, next header or merge ends
 the band. Inference never extrapolates past its scan cap. Overlapping/merged
 candidate headers and excess metadata are rejected with ambiguity/budget counts.
 Every new label gives its exact source sheet/cell, `method=header_band`, role,
-header row and observed region; its role is a heuristic, not verified meaning.
+header row and observed region, and `certainty="heuristic"`; it never asserts
+`ambiguous=false`. Only the leftmost textual key column receives `role="row"`.
+Other textual columns before the numeric data receive `role="row_context"`.
+`field` is that column's exact literal heading and `fieldCell` its source address
+on the same sheet, so context remains identifiable without treating it as a key.
+For example, ONS retains Code as the row key and Name/Geography as context;
+`estimated` in an ID/Comment/Amount band is context, not a row key. These roles
+describe geometry and remain heuristic, not verified business meaning.
 Precision is preferred to filling every cell: unfamiliar layouts, numeric typed
 headers, instruction rows, mixed regions and long uncaptured columns may remain
 unlabelled. Observed counts and caps expose these remaining limits.
@@ -207,6 +248,7 @@ linexcel library --data-dir ~/.linexcel rebuild
 linexcel library --data-dir ~/.linexcel search "chiffre affaires" --kinds cell
 linexcel library --data-dir ~/.linexcel search 123 --project PROJECT_ID
 linexcel library --data-dir ~/.linexcel lineage HANDLE --depth 2
+linexcel library --data-dir ~/.linexcel occurrences ENTRY_ID --generation GENERATION --after 0 --limit 50
 ```
 
 Catalog command options include `--entries-per-workbook`, `--catalog-mb`,

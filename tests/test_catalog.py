@@ -49,8 +49,9 @@ def test_search_diacritics_numbers_source_provenance_and_handles(tmp_path):
     assert [r["address"] for r in numeric["results"]] == ["B4"]
     hit = numeric["results"][0]
     assert hit["value"] == 4 and hit["valueProvenance"] == "saved_input"
-    assert hit["labels"][0]["method"] == "left_text"
-    assert hit["labels"][0]["cell"] == "A4"
+    row_label = next(label for label in hit["labels"] if label["role"] == "row")
+    assert row_label["method"] == "header_band"
+    assert row_label["cell"] == "A4"
     assert parse_handle(hit["handle"])[0] == item.project_id
     graph = catalog.lineage([item], hit["handle"])
     assert graph["revision"] == hit["revision"]
@@ -225,7 +226,7 @@ def test_objects_and_adversarial_text_remain_inert(tmp_path):
 
 def test_numeric_long_column_coverage_is_explicit(tmp_path):
     item = source(tmp_path)
-    # Remove row labels so only the eight-cell header search applies.
+    # A lone title above one numeric column is insufficient structural evidence.
     from openpyxl import load_workbook
 
     book = load_workbook(item.path.parent / "workbook.xlsx")
@@ -234,12 +235,9 @@ def test_numeric_long_column_coverage_is_explicit(tmp_path):
     book.save(item.path.parent / "workbook.xlsx")
     build_index(item.path.parent / "workbook.xlsx", item.path)
     result = Catalog(tmp_path / "catalog").search([item], "12")
-    assert [hit["address"] for hit in result["results"]] == ["B12"]
-    assert any(
-        label["method"] == "header_band" for label in result["results"][0]["labels"]
-    )
+    assert result["results"] == []
     assert result["coverage"]["numericObserved"] == 11
-    assert result["coverage"]["numericLabelled"] == 11
+    assert result["coverage"]["numericLabelled"] == 0
 
 
 def test_api_owner_isolation_including_other_owners_handles(tmp_path):

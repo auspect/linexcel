@@ -44,6 +44,8 @@ def run(args) -> int:
         )
         if operation == "lineage":
             names = ("handle", "depth", "limit")
+        elif operation == "occurrences":
+            names = ("group", "generation", "after", "limit")
         params = {
             name: [str(getattr(args, name))]
             for name in names

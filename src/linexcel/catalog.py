@@ -30,7 +30,7 @@ from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
 
 TRACE_VERSION = "linexcel.search.v1"
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 KINDS = frozenset({"cell", "sheet", "name", "table", "column"})
 
 
@@ -872,6 +872,11 @@ class Catalog:
                     hit["occurrencesOmitted"] = 0
                 if kind != "cell":
                     hit["occurrencesOmitted"] = 0
+                elif numeric is None:
+                    hit["occurrenceGroup"] = {
+                        "generation": current["generation"],
+                        "id": entry_id,
+                    }
                 if node and node.get("name"):
                     hit["name"] = node["name"]
                 size = len(_json(hit).encode())
@@ -927,6 +932,13 @@ class Catalog:
                 capsHit=sorted(caps), complete=result["coverage"]["complete"]
             )
             return self._bound(result)
+
+    def occurrences(self, sources, *, generation, group, after=0, limit=50):
+        from linexcel.catalog_occurrences import occurrences
+
+        return occurrences(
+            self, sources, generation=generation, group=group, after=after, limit=limit
+        )
 
     def lineage(
         self, sources: Iterable[Source], handle: str, *, depth=1, limit=200

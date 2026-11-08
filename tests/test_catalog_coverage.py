@@ -77,6 +77,20 @@ def test_fifty_thousand_repeats_are_one_entry_with_exact_bounded_occurrences(tmp
         item.project_id
     }
     assert catalog.status()["coverage"]["entries"] == 2
+    with WorkbookIndex(item.path) as index:
+        after = index.db.execute(
+            "SELECT seq FROM nodes WHERE row=49998 AND col=1"
+        ).fetchone()
+    page = catalog.occurrences(
+        [item],
+        generation=hit["occurrenceGroup"]["generation"],
+        group=hit["occurrenceGroup"]["id"],
+        after=after[0],
+        limit=5,
+    )
+    assert {ref["address"] for ref in page["results"]} == {"A49999", "A50000"}
+    assert page["coverage"]["complete"]
+    assert catalog.lineage([item], page["results"][-1]["handle"])["graph"]["nodes"]
 
 
 def test_numeric_sampling_spans_each_sheet_and_groups_repeated_labels(tmp_path):
@@ -149,7 +163,7 @@ def test_numeric_literal_axis_needs_corroboration_and_keeps_exact_sources(tmp_pa
     assert {(label["cell"], label["text"], label["role"]) for label in labels} == {
         ("G1", "3", "column"),
         ("A14", "E14", "row"),
-        ("B14", "Place 14", "row"),
+        ("B14", "Place 14", "row_context"),
     }
     with WorkbookIndex(item.path) as index:
         assert index.cell_labels("Sheet", 14, 7)  # Local row label, still conservative.
@@ -224,12 +238,13 @@ def test_legacy_missing_merge_metadata_cannot_infer_unverified_headers(tmp_path)
 def test_map_budget_never_extrapolates_and_is_stored_only_in_catalog(tmp_path):
     book = Workbook()
     sheet = book.active
-    sheet.append(["Amount"])
+    sheet.append(["Code", "Amount"])
     for row in range(2, 30):
-        sheet.append([row])
+        sheet.append([f"ID {row}", row])
     item = indexed(tmp_path, book)
     cat = Catalog(tmp_path / "catalog", CatalogLimits(header_scan_cells=5))
-    assert not cat.search([item], "29")["results"]
+    hit = cat.search([item], "29")["results"][0]
+    assert not any(label["method"] == "header_band" for label in hit["labels"])
     status = cat.status()
     assert "header_scan_cells" in status["coverage"]["capsHit"]
     with cat.pin() as (db, _):
