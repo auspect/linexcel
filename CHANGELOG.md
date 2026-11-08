@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cards, pack disconnected cell groups, and skip redundant single partitions.
 - Expand focus mode over the entire viewport, dismiss search and action menus,
   clear the return-to-sheet notice, and expose decomposition rows on mobile.
+- Avoid redundant text updates and whole-page translation rescans while panning
+  the React Flow graph; keep translation active for its docked legacy controls.
 
 ## [1.17.1] — 2026-11-07
 

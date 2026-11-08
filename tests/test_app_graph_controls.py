@@ -230,6 +230,42 @@ def test_search_dismissal_focus_overlay_and_bidirectional_routes(graph_app):
     assert not errors
 
 
+def test_pan_keeps_text_nodes_and_translation_ignores_flow_owned_mutations(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#ui-language").select_option("en")
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
+    )
+    page.wait_for_timeout(100)
+    result = page.evaluate("""async()=>{
+      const frame=()=>new Promise(r=>requestAnimationFrame(r));
+      const flow=document.querySelector('#graph-canvas')._flow;
+      await flow.setViewport({...flow.getViewport(),zoom:.2});
+      for(let i=0;i<3;i++)await frame();
+      const zoom=document.querySelector('#graph-zoom-level');
+      const hint=document.querySelector('#graph-readability');
+      const before=[zoom.firstChild,hint.firstChild];
+      for(let i=0;i<6;i++){flow.panBy({x:i%2?2:-2,y:0});await frame();}
+      const preserved=before[0]===zoom.firstChild&&before[1]===hint.firstChild;
+      const original=document.createTreeWalker;let walks=0;
+      document.createTreeWalker=function(...args){
+        walks++;return original.apply(this,args)};
+      const owned=document.createElement('span');owned.textContent='Recalculer';
+      document.querySelector('.react-flow__viewport').append(owned);
+      await frame();await frame();
+      const ignored=walks===0&&owned.textContent==='Recalculer';owned.remove();
+      const legacy=document.createElement('span');legacy.textContent='Recalculer';
+      document.querySelector('.graph-docked-controls').append(legacy);
+      await frame();await frame();
+      const translated=walks>0&&legacy.textContent==='Recalculate';
+      legacy.remove();document.createTreeWalker=original;
+      return {preserved,ignored,translated};
+    }""")
+    assert result == {"preserved": True, "ignored": True, "translated": True}
+    assert not errors
+
+
 @pytest.mark.parametrize("lazy", [True, False])
 def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app, lazy):
     page, _, requests, errors, state = graph_app
