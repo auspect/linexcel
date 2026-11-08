@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hashlib
 import json
 import re
 import subprocess
@@ -56,6 +57,13 @@ def main():
         "screenshots": [],
         "errors": [],
         "metrics": [],
+        "sources": {
+            str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in [
+                Path("src/linexcel/assets") / name
+                for name in ["app.html", "app-graph.js", "app-graph.css"]
+            ]
+        },
     }
     atexit.register(
         lambda: (output / "validation.json").write_text(
@@ -155,6 +163,13 @@ def main():
 
         for width, height in [(1440, 900), (2560, 1440), (390, 844)]:
             page.set_viewport_size({"width": width, "height": height})
+            page.goto(url.split("#")[0] + "?lang=en")
+            page.locator("#project-title").get_by_text(
+                state["project"]["name"]
+            ).wait_for()
+            page.evaluate(
+                "() => {document.querySelector('#seconds').value=1800;document.querySelector('#memory').value=2048}"
+            )
             page.wait_for_timeout(300)
             for tab in [
                 "nodes",
@@ -227,6 +242,9 @@ def main():
             capture("auto-decomposition", width, height)
             page.locator("#tab-graph").click()
             page.locator("#graph-neighborhood").click()
+            page.locator("#graph-depth").evaluate(
+                "e=>{e.value=1;e.dispatchEvent(new Event('change'))}"
+            )
             page.wait_for_function(
                 "()=>document.querySelector('#graph-canvas')._flow?.getNodes().some(n=>n.id===document.querySelector('#graph-search').value)||document.querySelector('#graph-preview').checkVisibility()"
             )
@@ -238,8 +256,26 @@ def main():
             page.locator("#graph-depth").dispatch_event("change")
             page.locator("#graph-options").evaluate("e=>e.open=false")
             page.wait_for_timeout(500)
+            page.wait_for_function(
+                "()=>!document.querySelector('#graph-depth-help').textContent.match(/Loading|Chargement/)"
+            )
             page.locator("#graph-focus").evaluate("e=>e.click()")
             capture("neighborhood-depth3", width, height)
+            if "fpna-20mb" in args.workbook.name:
+                assert page.locator("#graph-canvas").evaluate(
+                    "e=>e._flow.getViewport().zoom>=.35"
+                ), "Large neighborhood cards are unreadable after fit"
+            aggregate = page.locator("#graph-canvas").evaluate(
+                "e=>e._flow.getNodes().find(n=>n.data.original.aggregate)?.id"
+            )
+            if aggregate:
+                page.locator("#graph-canvas").evaluate(
+                    "(e,id)=>e._flow.select(id)", aggregate
+                )
+                page.wait_for_timeout(350)
+                capture("neighborhood-group-cells", width, height)
+                page.locator("#graph-neighborhood").click()
+                page.wait_for_timeout(350)
             page.locator("#graph-fullscreen").click()
             capture("focus", width, height)
             page.keyboard.press("Escape")

@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clear the return-to-sheet notice, and expose decomposition rows on mobile.
 - Avoid redundant text updates and whole-page translation rescans while panning
   the React Flow graph; keep translation active for its docked legacy controls.
+- Collapse high-fanout sibling cells into counted, expandable neighborhood
+  groups, refit after reader resizing, and keep search results above clipped
+  mobile canvases. Remove duplicate counts and repeated bus-edge labels.
 
 ## [1.17.1] — 2026-11-07
 

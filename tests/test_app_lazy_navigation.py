@@ -434,6 +434,7 @@ def test_known_node_opens_while_its_neighbors_wait_and_latest_click_wins(navigat
 def test_neighborhood_error_keeps_known_cell_and_navigation_available(navigation):
     app = navigation
     app.rejected_nodes.add("Calc!B2")
+    before_size = app.page.locator("#graph-canvas").bounding_box()
     remembered = app.remember_canvas()
     app.tap("Calc!B2")
     heading = app.page.locator("#graph-preview .graph-reader-heading h3")
@@ -444,7 +445,21 @@ def test_neighborhood_error_keeps_known_cell_and_navigation_available(navigation
         "Links unavailable"
     )
     assert "12" in app.page.locator("#graph-panel-calculation").inner_text()
-    app.assert_canvas(remembered)
+    after_size = app.page.locator("#graph-canvas").bounding_box()
+    if before_size["height"] != after_size["height"]:
+        # Opening the accessible fallback list consumes canvas height. The
+        # resize fit keeps cards visible while retaining the canvas and layout.
+        assert app.page.locator("#graph-canvas").evaluate(
+            "e=>e._flow===window.navigationCanvas"
+        )
+        assert (
+            app.page.locator("#graph-canvas").evaluate(
+                "e=>e._flow.getNodes().map(n=>({id:n.id,position:n.position}))"
+            )
+            == remembered["positions"]
+        )
+    else:
+        app.assert_canvas(remembered)
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")

@@ -13,17 +13,19 @@ import {
   applyNodeChanges,
   Panel,
   BaseEdge,
+  getSmoothStepPath,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import "./graph.css";
 import "./shell.css";
+export { compressNeighborhood } from './aggregation.js';
 
 const Card = memo(({ data, selected }) => (
   <article
     data-no-i18n=""
     className={`flow-card ${data.tone || ""} ${selected ? "is-selected" : ""}`}
-    title={data.title}
+    title={[data.title,data.subtitle].filter(Boolean).join('\n')}
   >
     {Object.entries({left:Position.Left,right:Position.Right,top:Position.Top,bottom:Position.Bottom}).flatMap(([side,position])=>['source','target'].map(type=><Handle key={`${type}-${side}`} id={`${type}-${side}`} type={type} position={position} isConnectable={false} />))}
     <span className="flow-kind">{data.kindLabel}</span>
@@ -39,6 +41,8 @@ function LayeredEdge({
   sourceY,
   targetX,
   targetY,
+  sourcePosition,
+  targetPosition,
   markerEnd,
   data,
   label,
@@ -51,7 +55,8 @@ function LayeredEdge({
   ).map((p) => ({ ...p }));
   points[0] = { x: sourceX, y: sourceY };
   points[points.length - 1] = { x: targetX, y: targetY };
-  const path = points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
+  const packed=data?.packed?getSmoothStepPath({sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition}):null;
+  const path = packed?packed[0]:points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
     center = points[Math.floor(points.length / 2)];
   return (
     <>
@@ -124,6 +129,30 @@ function layered(nodes, edges, portrait, aspect) {
     ),
   );
   dagre.layout(graph);
+  // Pack unusually broad ranks after Dagre assigns their dependency layers.
+  // The bounded overview remains useful even when siblings cannot be grouped.
+  const ranks=new Map();
+  for(const n of nodes){const p=graph.node(n.id),key=portrait?p.y:p.x;
+    if(!ranks.has(key))ranks.set(key,[]);ranks.get(key).push(n);}
+  if([...ranks.values()].some(rank=>rank.length>8)){
+    let offset=30;
+    for(const [,rank] of [...ranks].sort((a,b)=>a[0]-b[0])){
+      const columns=Math.min(6,Math.ceil(Math.sqrt(rank.length*aspect/2.23)));
+      const rows=Math.ceil(rank.length/columns);
+      rank.forEach((n,i)=>{const p=graph.node(n.id);
+        p.x=(portrait?30:offset)+(i%columns)*272+116;
+        p.y=(portrait?offset:30)+Math.floor(i/columns)*144+52;});
+      offset+=(portrait?rows*144:columns*272)+100;
+    }
+    for(const edge of edges){const a=graph.node(edge.source),b=graph.node(edge.target);
+      const horizontal=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
+      const side=horizontal?(a.x<b.x?'right':'left'):(a.y<b.y?'bottom':'top');
+      const reverse={left:'right',right:'left',top:'bottom',bottom:'top'}[side];
+      edge.sourceHandle='source-'+side;edge.targetHandle='target-'+reverse;
+      edge.data={...edge.data,packed:true};
+    }
+    return nodes.map(n=>({...n,position:{x:graph.node(n.id).x-116,y:graph.node(n.id).y-52}}));
+  }
   const side=(p,center)=>Math.abs((p.x-center.x)/116)>=Math.abs((p.y-center.y)/52)?p.x<center.x?'left':'right':p.y<center.y?'top':'bottom';
   edges.forEach((edge) => {
     const points=graph.edge({v:edge.source,w:edge.target,name:edge.id}).points;
@@ -151,9 +180,14 @@ export function mount(element, options) {
     update = setModel;
     const en = model.language === "en";
     useEffect(() => {
-      const stageObserver = new ResizeObserver(() =>
-        element.style.setProperty('--graph-stage-width', `${element.clientWidth}px`),
-      );
+      let previousSize=`${element.clientWidth}:${element.clientHeight}`;
+      const stageObserver = new ResizeObserver(() => {
+        element.style.setProperty('--graph-stage-width', `${element.clientWidth}px`);
+        const size=`${element.clientWidth}:${element.clientHeight}`;
+        if(size!==previousSize&&element.clientWidth&&element.clientHeight){
+          previousSize=size;requestAnimationFrame(()=>api.fit());
+        }
+      });
       stageObserver.observe(element);
       const observer = new ResizeObserver(([entry]) =>
         element.style.setProperty(
@@ -190,6 +224,7 @@ export function mount(element, options) {
         }}
         onNodeClick={(_, node) => options.onSelect(node.data.original)}
         onMove={(_, viewport) => options.onMove?.(viewport)}
+        onMoveStart={(event) => {if(event)current.fit=false;}}
         nodesConnectable={false}
         deleteKeyCode={null}
         minZoom={0.001}
@@ -269,12 +304,14 @@ export function mount(element, options) {
           portrait: element.clientWidth < 550,
         },
       }));
+      const frequencies=new Map();
+      for(const e of edges)frequencies.set(e.weight,(frequencies.get(e.weight)||0)+1);
       const links = edges.map((e, i) => ({
         ...e,
         id: e.id || `edge-${i}`,
         type: "layered",
         markerEnd: { type: MarkerType.ArrowClosed },
-        label: e.label ?? (e.weight ? String(e.weight) : undefined),
+        label: e.label ?? (e.weight>1&&frequencies.get(e.weight)<8 ? String(e.weight) : undefined),
         className: e.membership ? "membership" : "",
       }));
       const aspect=Math.max(.3,element.clientWidth/Math.max(1,element.clientHeight));
@@ -307,7 +344,7 @@ export function mount(element, options) {
       };
     },
     getViewport: () => instance?.getViewport() || { x: 0, y: 0, zoom: 1 },
-    setViewport: (viewport) => instance?.setViewport(viewport),
+    setViewport: (viewport) => {current.fit=false;return instance?.setViewport(viewport);},
     setPositions: (positions) => {
       current = {
         ...current,
@@ -324,12 +361,11 @@ export function mount(element, options) {
         element.querySelector(".graph-hud")?.getBoundingClientRect().height ||
         50;
       const breadcrumbs = element.querySelector("#graph-breadcrumbs");
-      const trail =
-        breadcrumbs && !breadcrumbs.hidden
-          ? breadcrumbs.getBoundingClientRect().height
-          : 0;
+      const panel=element.querySelector('.graph-breadcrumb-panel');
+      const trail=breadcrumbs&&!breadcrumbs.hidden&&panel
+        ? panel.getBoundingClientRect().bottom-element.getBoundingClientRect().top+12 : 0;
       const overlays=['.graph-status-panel','.react-flow__minimap','.react-flow__controls'].map(s=>element.querySelector(s)?.getBoundingClientRect().height||0);
-      const top=Math.min(hud+trail+26,element.clientHeight*.5),bottom=Math.min(Math.max(...overlays)+16,element.clientHeight*.34);
+      const top=Math.max(hud+26,trail),bottom=Math.min(Math.max(...overlays)+16,element.clientHeight*.34);
       return {
         padding: {
           top: `${top}px`,
@@ -348,8 +384,9 @@ export function mount(element, options) {
       const n = api.getNode(id);
       if (n) options.onSelect(n.data.original);
     },
-    zoom: (factor) => instance?.zoomTo((instance?.getZoom() || 1) * factor),
+    zoom: (factor) => {current.fit=false;return instance?.zoomTo((instance?.getZoom() || 1) * factor);},
     panBy: (delta) => {
+      current.fit=false;
       const v = api.getViewport();
       instance?.setViewport({ ...v, x: v.x + delta.x, y: v.y + delta.y });
     },

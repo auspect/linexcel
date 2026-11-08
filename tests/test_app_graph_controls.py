@@ -230,6 +230,109 @@ def test_search_dismissal_focus_overlay_and_bidirectional_routes(graph_app):
     assert not errors
 
 
+def test_large_fanout_stays_readable_and_opens_bounded_indexed_cells(graph_app):
+    page, _, _, errors, _ = graph_app
+    center = {
+        "id": "Z first!A1",
+        "kind": "cell",
+        "sheet": "Z first",
+        "cell": "A1",
+        "value": 1,
+        "formula": "=1",
+    }
+    source = {
+        "id": "Ledger!J2:J249676",
+        "kind": "range",
+        "sheet": "Ledger",
+        "cell_count": 249675,
+    }
+    members = [
+        {
+            "id": f"Forecast!D{i}",
+            "kind": "cell",
+            "sheet": "Forecast",
+            "cell": f"D{i}",
+            "formula": f"=SUM(Ledger!J2:J249676)+A{i}",
+            "patternId": "copied",
+            "patternMemberCount": 12483,
+        }
+        for i in range(2, 200)
+    ]
+    nodes = [center, source, *members]
+    edges = [{"source": source["id"], "target": n["id"]} for n in [center, *members]]
+    page.route(
+        "**/api/projects/p/neighborhood?*",
+        lambda route: route.fulfill(
+            json={
+                "nodes": nodes,
+                "edges": edges,
+                "depth": 3,
+                "pagination": {"returned": 200, "limit": 200, "truncated": True},
+            }
+        ),
+    )
+    page.route(
+        "**/api/projects/p/graph-view?*",
+        lambda route: route.fulfill(
+            json={
+                "viewId": -1,
+                "scopeNodeCount": 32,
+                "meta": {"nodeCount": 12483, "edgeCount": 198},
+                "breadcrumbs": [
+                    {"viewId": 0, "label": "Classeur"},
+                    {"viewId": -1, "label": "Forecast pattern"},
+                ],
+                "nodes": [
+                    {
+                        "id": str(i),
+                        "nodeId": n["id"],
+                        "kind": "cell",
+                        "label": n["id"],
+                        "internalEdges": 0,
+                        "nodeCount": 1,
+                    }
+                    for i, n in enumerate(members[:32])
+                ],
+                "edges": [],
+            }
+        ),
+    )
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length>0"
+    )
+    open_graph_depth(page)
+    page.locator("#graph-depth").fill("3")
+    page.locator("#graph-depth").dispatch_event("change")
+    page.locator("#graph-options").evaluate("e=>e.open=false")
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().some(n=>n.data.original.aggregate)"
+    )
+    page.locator(".react-flow__controls-fitview").click()
+    page.wait_for_timeout(150)
+    data = page.locator("#graph-canvas").evaluate("""e=>{
+      const flow=e._flow,group=flow.getNodes().find(n=>n.data.original.aggregate);
+      return {cards:flow.getNodes().length,zoom:flow.getViewport().zoom,
+        group:group.data.original,weights:flow.getEdges().map(e=>e.weight)};
+    }""")
+    assert data["cards"] == 3
+    assert data["zoom"] >= 0.35
+    assert len(data["group"]["members"]) == 198
+    assert data["group"]["patternTotal"] == 12483
+    assert sorted(data["weights"]) == [1, 198]
+    assert "200" in page.locator("#graph-notice").text_content()
+    page.locator("#graph-canvas").evaluate(
+        "(e,id)=>e._flow.select(id)", data["group"]["id"]
+    )
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length===32"
+    )
+    assert (
+        page.locator("#graph-breadcrumbs").text_content().endswith("Forecast pattern")
+    )
+    assert not errors
+
+
 def test_pan_keeps_text_nodes_and_translation_ignores_flow_owned_mutations(graph_app):
     page, _, _, errors, _ = graph_app
     page.locator("#ui-language").select_option("en")
@@ -263,6 +366,41 @@ def test_pan_keeps_text_nodes_and_translation_ignores_flow_owned_mutations(graph
       return {preserved,ignored,translated};
     }""")
     assert result == {"preserved": True, "ignored": True, "translated": True}
+    assert not errors
+
+
+def test_search_escapes_canvas_clip_and_uniform_bus_labels_are_hidden(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    matches = [
+        {"id": f"Other!A{i}", "cell": f"A{i}", "sheet": "Other", "kind": "input"}
+        for i in range(1, 21)
+    ]
+    page.route(
+        "**/api/projects/p/nodes?*",
+        lambda route: route.fulfill(
+            json={"nodes": matches, "pagination": {"total": 20}}
+        ),
+    )
+    page.locator("#graph-search").fill("Other")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    assert page.locator("#graph-results").evaluate("e=>e.matches(':popover-open')")
+    assert page.locator("#graph-results").evaluate("""e=>{
+      const b=e.getBoundingClientRect();
+      const hit=document.elementFromPoint(b.x+12,b.bottom-12);
+      return hit?.closest('#graph-results')===e;
+    }""")
+    page.locator("#graph-search").press("Escape")
+    assert not page.locator("#graph-results").evaluate("e=>e.matches(':popover-open')")
+    page.locator("#graph-canvas").evaluate("""e=>{
+      const cells=Array.from({length:32},(_,i)=>(
+        {id:'c'+i,nodeId:'c'+i,title:'Cell '+i}));
+      e._flow.render([...cells,{id:'rest',tone:'outside',title:'Rest'}],
+        cells.flatMap(n=>[{source:n.id,target:'rest',weight:5},
+          {source:'rest',target:n.id,weight:1}]));} """)
+    assert page.locator("#graph-canvas").evaluate(
+        "e=>e._flow.getEdges().every(edge=>[1,5].includes(edge.weight)&&!edge.label)"
+    )
     assert not errors
 
 

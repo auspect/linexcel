@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-08T00:55:32.177362+00:00",
+  "capturedAt": "2026-11-08T01:17:43.363640+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,9 +15,9 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "2a782b2e128c4a851b94a3df16bfe123f3b54b108b46cd0078f6b6e7fabad76f",
-    "src/linexcel/assets/app-graph.js": "0d8f1deb76b140a62b01c673d1557022a9364f94ef7afbb322e2b8af0749c3e4",
-    "src/linexcel/assets/app-graph.css": "caff01c3ed228a3f87f09000d5f22c6990ef071f73824d22712ba9a132f61395",
+    "src/linexcel/assets/app.html": "d7cd963acc7a59897dcd6a6dfdc6732e1996eb13e892d5e0d6aad5fc1d74f8e8",
+    "src/linexcel/assets/app-graph.js": "14b4bef123505ac81f24531e2a8d7db12506bf4199eb9887811235bc8bf19820",
+    "src/linexcel/assets/app-graph.css": "ea6fc4f115989bee6d2a480acaa28a265e0ce88ffa1f4a16193fa2907647e82f",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "scripts/capture_app.py": "d9260788fd32b83367888897bc682be2dc07b3de6220732ac23f2d864609caa3"
   },

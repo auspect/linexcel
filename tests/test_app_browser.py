@@ -1184,12 +1184,12 @@ def test_graph_reader_calculation_first_and_long_document_state(browser, viewpor
             page.locator("#graph-reader-width").focus()
             page.keyboard.press("ArrowRight")
             assert page.locator("#graph-preview").bounding_box()["width"] > before
-            assert (
-                page.locator("#graph-canvas").evaluate(
-                    "el => el._flow.getViewport().zoom"
-                )
-                == camera["zoom"]
-            )
+            page.wait_for_function("""()=>{
+                const e=document.querySelector('#graph-canvas');
+                return e._flow.getNodes().every(n=>{
+                    const b=e._flow.getNodeBounds(n.id,true);
+                    return b.x1>=0&&b.y1>=0&&b.x2<=e.clientWidth&&b.y2<=e.clientHeight;
+                });} """)
         assert requests and all(r["operation"] == "evaluate" for r in requests)
         page.locator("#graph-search").fill("Sheet!A1")
         page.locator('#graph-results [data-related="Sheet!A1"]').click()
