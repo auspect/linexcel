@@ -811,7 +811,8 @@ function renderStructureList(){
  const view=fullStructure,byId=new Map(view.nodes.map(n=>[n.id,n]));
  const trail=view.breadcrumbs,limit=$('graph-canvas').clientWidth<550?3:4;
  const crumbLabel=c=>{let label=c.label==='Classeur'?uiText('Classeur'):c.label;
-  if(c.level==='pattern')label=(/^=([A-Z0-9_.]+)\(/i.exec(c.label)?.[1]||(uiLanguage==='en'?'Formula group':'Groupe de formules'))+' · '+c.nodeCount.toLocaleString(uiLocale())+(uiLanguage==='en'?' cells':' cellules');
+  if(c.level==='pattern')label=(/^=([A-Z0-9_.]+)\(/i.exec(c.label)?.[1]||(uiLanguage==='en'?'Formula group':'Groupe de formules'))+' · '+c.nodeCount.toLocaleString(uiLocale())+(uiLanguage==='en'?(c.nodeCount===1?' cell':' cells'):(c.nodeCount===1?' cellule':' cellules'));
+  else if(c.level==='partition'&&c.nodeCount!==undefined)label+=' · '+c.nodeCount.toLocaleString(uiLocale());
   else if(c.level==='sources')label=uiLanguage==='en'?'Input group':'Groupe d’entrées';
   return label;};
  const button=c=>'<button title="'+esc(c.label)+'" data-graph-view="'+c.viewId+'" '+(c.viewId===view.viewId?'aria-current="page" disabled':'')+'>'+esc(crumbLabel(c))+'</button>';
