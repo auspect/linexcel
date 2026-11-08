@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Report bounded possible-reader boundaries in downstream library lineage when
+  unresolved links cannot be excluded by sheet/range evidence, without guessing
+  an edge. Expose the loaded-revision scope and preserve exact revision identities
+  in graph contract tests.
+
 - Add directed upstream/downstream library lineage across loaded revisions,
   OOXML external link facts, range-aware reverse lookup, cycle detection and
   explicit origin, unresolved, unsupported, cache-only and budget boundaries.

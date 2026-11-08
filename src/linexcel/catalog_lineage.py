@@ -13,6 +13,7 @@ from linexcel.refs import Rect, a1, parse_ref
 from linexcel.values import _values_differ
 
 TRACE_VERSION = "linexcel.lineage.v1"
+SCOPE = "loaded owner revisions only; never-loaded workbooks are not visible"
 BUDGETS = {
     "depth",
     "node_budget",
@@ -470,6 +471,7 @@ class Traversal:
         )
         if rect is None:
             return
+        self.possible_unresolved_readers(key, rect)
         uncertain = self.db.execute(
             "SELECT l.data FROM links l JOIN link_candidates c ON c.link=l.id "
             "WHERE c.project=? AND c.sha=? "
@@ -542,6 +544,43 @@ class Traversal:
                     relationshipPath=fact["relationshipPath"],
                     versionCaveat=fact["versionCaveat"],
                 )
+
+    def possible_unresolved_readers(self, key, rect):
+        # Filename mismatches cannot exclude a renamed/moved target. Only known
+        # sheet/rectangle disjointness can exclude an identity-unresolved link.
+        # Unsupported forms have no verified rectangle and remain possible.
+        predicate = (
+            "target_project IS NULL AND (r1 IS NULL OR (target_sheet=? "
+            "AND r1<=? AND r2>=? AND c1<=? AND c2>=?))"
+        )
+        params = (rect.sheet.lower(), rect.r2, rect.r1, rect.c2, rect.c1)
+        count = self.db.execute(
+            "SELECT count(*) FROM links WHERE " + predicate, params
+        ).fetchone()[0]
+        if not count:
+            return
+        samples = []
+        try:
+            sample_limit = self.catalog.limits.lineage_reader_samples
+            if sample_limit:
+                samples = [
+                    row[0]
+                    for row in self.db.execute(
+                        "SELECT id FROM links WHERE "
+                        + predicate
+                        + " ORDER BY id LIMIT ?",
+                        (*params, sample_limit),
+                    )
+                ]
+        finally:
+            # Preserve a completed count even if the sample scan times out.
+            self.boundary(
+                key,
+                "possible_unresolved_reader",
+                count=count,
+                linkIds=samples,
+                sampleOmitted=count - len(samples),
+            )
 
 
 def directed_lineage(
@@ -712,7 +751,7 @@ def directed_lineage(
             result["coverage"] = {
                 "complete": complete,
                 "exhaustive": exhaustive,
-                "scope": "owner revisions; stored range members; implicit blanks",
+                "scope": SCOPE,
                 "nodesReturned": len(result["nodes"]),
                 "edgesReturned": len(result["edges"]),
                 "depth": depth,
@@ -725,8 +764,12 @@ def directed_lineage(
                 "direction": direction,
                 "generation": current["generation"],
                 "root": handle,
+                "scope": SCOPE,
                 "revisions": result["revisions"],
-                "limits": budgets,
+                "limits": {
+                    **budgets,
+                    "unresolvedReaderSamples": catalog.limits.lineage_reader_samples,
+                },
                 "counts": {
                     "nodes": len(result["nodes"]),
                     "edges": len(result["edges"]),

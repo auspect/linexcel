@@ -64,7 +64,16 @@ def handle(source, address="A1", sheet="S"):
 
 
 def graph_signature(result):
-    nodes = {n["id"]: (n["filename"], n["address"]) for n in result["nodes"]}
+    nodes = {
+        n["id"]: (
+            n["filename"],
+            n["sheet"],
+            n["address"],
+            n["revision"]["projectId"],
+            n["revision"]["sha256"],
+        )
+        for n in result["nodes"]
+    }
     return {
         "nodes": sorted(nodes.values()),
         "edges": sorted(
@@ -74,6 +83,11 @@ def graph_signature(result):
             (nodes[b["node"]], b["reason"]) for b in result["boundaries"]
         ),
     }
+
+
+def node_signature(source, address, sheet="S"):
+    with WorkbookIndex(source.path) as index:
+        return source.filename, sheet, address, source.project_id, index.meta["sha256"]
 
 
 def chain(tmp_path):
@@ -99,27 +113,26 @@ def chain(tmp_path):
 
 def test_exact_three_workbook_graph_and_value(tmp_path):
     sources = chain(tmp_path)
+    i1 = node_signature(sources[0], "A1")
+    i2 = node_signature(sources[0], "A2")
+    ir = node_signature(sources[0], "A1:A2")
+    r1 = node_signature(sources[1], "B1")
+    c1 = node_signature(sources[2], "C1")
     catalog = Catalog(tmp_path / "owner" / "catalog")
     result = catalog.lineage(
         sources, handle(sources[2], "C1"), direction="upstream", depth=10
     )
     assert graph_signature(result) == {
-        "nodes": [
-            ("consolidated.xlsx", "C1"),
-            ("inputs.xlsx", "A1"),
-            ("inputs.xlsx", "A1:A2"),
-            ("inputs.xlsx", "A2"),
-            ("regional.xlsx", "B1"),
-        ],
+        "nodes": sorted([c1, i1, ir, i2, r1]),
         "edges": [
-            (("inputs.xlsx", "A1"), ("inputs.xlsx", "A1:A2"), "range"),
-            (("inputs.xlsx", "A1:A2"), ("regional.xlsx", "B1"), "external_link"),
-            (("inputs.xlsx", "A2"), ("inputs.xlsx", "A1:A2"), "range"),
-            (("regional.xlsx", "B1"), ("consolidated.xlsx", "C1"), "external_link"),
+            (i1, ir, "range"),
+            (ir, r1, "external_link"),
+            (i2, ir, "range"),
+            (r1, c1, "external_link"),
         ],
         "boundaries": [
-            (("inputs.xlsx", "A1"), "input_constant"),
-            (("inputs.xlsx", "A2"), "input_constant"),
+            (i1, "input_constant"),
+            (i2, "input_constant"),
         ],
     }
     assert result["coverage"]["complete"] and result["coverage"]["exhaustive"]
@@ -135,14 +148,10 @@ def test_exact_three_workbook_graph_and_value(tmp_path):
         sources, handle(sources[0], "A2"), direction="downstream", depth=10
     )
     assert graph_signature(downstream) == {
-        "nodes": [
-            ("consolidated.xlsx", "C1"),
-            ("inputs.xlsx", "A2"),
-            ("regional.xlsx", "B1"),
-        ],
+        "nodes": sorted([c1, i2, r1]),
         "edges": [
-            (("inputs.xlsx", "A2"), ("regional.xlsx", "B1"), "external_link"),
-            (("regional.xlsx", "B1"), ("consolidated.xlsx", "C1"), "external_link"),
+            (i2, r1, "external_link"),
+            (r1, c1, "external_link"),
         ],
         "boundaries": [],
     }
@@ -202,12 +211,14 @@ def test_ambiguity_pins_stale_deleted_and_durable(tmp_path):
     fact = list_links(catalog, sources)["links"][0]
     target = next(r for r in fact["candidates"] if r["projectId"] == a.project_id)
     set_pin(catalog, sources, fact["id"], target["projectId"], target["sha256"])
-    assert (
-        catalog.lineage(sources, handle(reader), direction="upstream", depth=5)[
-            "edges"
-        ][0]["resolutionStatus"]
-        == "pinned"
-    )
+    pinned = catalog.lineage(sources, handle(reader), direction="upstream", depth=5)
+    edge = pinned["edges"][0]
+    endpoint = next(n for n in pinned["nodes"] if n["id"] == edge["source"])
+    assert edge["resolutionStatus"] == "pinned"
+    assert edge["source"] == handle(a) and edge["target"] == handle(reader)
+    assert endpoint["revision"] == target
+    assert node_signature(a, "A1")[3:] == (target["projectId"], target["sha256"])
+    assert endpoint["value"] == 500
     for path in catalog.directory.iterdir():
         path.unlink()
     catalog = Catalog(catalog.directory)
@@ -221,6 +232,18 @@ def test_ambiguity_pins_stale_deleted_and_durable(tmp_path):
         stale["status"] == "pinned"
         and stale["stalePin"]
         and stale["targetRevision"] is None
+    )
+    downstream = catalog.lineage(
+        sources, handle(replaced), direction="downstream", depth=5
+    )
+    assert not downstream["edges"] and not downstream["coverage"]["complete"]
+    assert (
+        next(
+            b
+            for b in downstream["boundaries"]
+            if b["reason"] == "possible_unresolved_reader"
+        )["count"]
+        == 1
     )
     catalog.ensure([b, reader])
     assert list_links(catalog, [b, reader])["links"][0]["stalePin"]
@@ -351,7 +374,10 @@ def test_downstream_ambiguity_is_a_boundary_not_a_reader_edge(tmp_path):
     for sources in ([a, b, reader], [reader, b, a]):
         result = catalog.lineage(sources, handle(a), direction="downstream", depth=5)
         assert not result["edges"] and len(result["nodes"]) == 1
-        assert result["coverage"]["boundaries"] == ["ambiguous_external"]
+        assert result["coverage"]["boundaries"] == [
+            "ambiguous_external",
+            "possible_unresolved_reader",
+        ]
         assert result["coverage"]["exhaustive"] and not result["coverage"]["complete"]
 
 
@@ -366,17 +392,16 @@ def test_local_directed_range_and_cycle(tmp_path):
     result = catalog.lineage(
         [source], handle(source, "A2"), direction="downstream", depth=5
     )
+    span = node_signature(source, "A1:A2")
+    a2 = node_signature(source, "A2")
+    b1 = node_signature(source, "B1")
+    c1 = node_signature(source, "C1")
     assert graph_signature(result) == {
-        "nodes": [
-            ("local.xlsx", "A1:A2"),
-            ("local.xlsx", "A2"),
-            ("local.xlsx", "B1"),
-            ("local.xlsx", "C1"),
-        ],
+        "nodes": sorted([span, a2, b1, c1]),
         "edges": [
-            (("local.xlsx", "A1:A2"), ("local.xlsx", "B1"), "formula"),
-            (("local.xlsx", "A2"), ("local.xlsx", "A1:A2"), "range"),
-            (("local.xlsx", "B1"), ("local.xlsx", "C1"), "formula"),
+            (span, b1, "formula"),
+            (a2, span, "range"),
+            (b1, c1, "formula"),
         ],
         "boundaries": [],
     }
@@ -719,3 +744,116 @@ def test_incomplete_source_sheet_has_its_own_boundary(tmp_path):
         "source_index_incomplete",
     ]
     assert not result["coverage"]["exhaustive"] and not result["coverage"]["complete"]
+
+
+@pytest.mark.parametrize(
+    "sheet,address,possible",
+    [
+        ("S", "A1", True),
+        ("S", "A1:B2", True),
+        ("S", "B1:B3", False),
+        ("Missing Sheet", "A1", False),
+        ("Missing Sheet", "ExternalName", True),
+    ],
+)
+def test_downstream_renamed_target_never_guesses_or_overstates_scope(
+    tmp_path, sheet, address, possible
+):
+    target = fixture_source(tmp_path, 1, "renamed.xlsx", {"A1": 10})
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {"A1": f"='[1]{sheet}'!{address}"},
+        links=[_link("oldname.xlsx", sheet, {"A1": 10})],
+    )
+    sources = [target, reader]
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(sources, handle(target), direction="downstream", depth=10)
+    assert not result["edges"]
+    assert graph_signature(result)["nodes"] == [node_signature(target, "A1")]
+    assert result["coverage"]["complete"] is (not possible)
+    assert result["trace"]["complete"] is (not possible)
+    assert result["coverage"]["exhaustive"]
+    assert result["coverage"]["scope"] == (
+        "loaded owner revisions only; never-loaded workbooks are not visible"
+    )
+    assert result["trace"]["scope"] == result["coverage"]["scope"]
+    fact = list_links(catalog, sources)["links"][0]
+    assert fact["status"] == "unresolved" and fact["targetRevision"] is None
+    assert result["boundaries"] == (
+        [
+            {
+                "node": handle(target),
+                "reason": "possible_unresolved_reader",
+                "count": 1,
+                "linkIds": [fact["id"]],
+                "sampleOmitted": 0,
+            }
+        ]
+        if possible
+        else []
+    )
+
+
+@pytest.mark.parametrize("samples", [0, 3])
+def test_possible_unresolved_readers_count_all_links_with_bounded_samples(
+    tmp_path, samples
+):
+    target = fixture_source(tmp_path, 1, "renamed.xlsx", {"A1": 10})
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {f"B{r}": "='[1]S'!A1" for r in range(1, 42)},
+        links=[_link("oldname.xlsx", "S")],
+    )
+    sources = [target, reader]
+    catalog = Catalog(
+        tmp_path / "owner" / "catalog",
+        CatalogLimits(lineage_reader_samples=samples, response_bytes=4096),
+    )
+    result = catalog.lineage(sources, handle(target), direction="downstream", depth=10)
+    with catalog.pin() as (db, _):
+        expected_ids = [
+            row[0] for row in db.execute("SELECT id FROM links ORDER BY id")
+        ]
+    assert len(expected_ids) == 41
+    assert result["boundaries"] == [
+        {
+            "node": handle(target),
+            "reason": "possible_unresolved_reader",
+            "count": 41,
+            "linkIds": expected_ids[:samples],
+            "sampleOmitted": 41 - samples,
+        }
+    ]
+    assert not result["edges"] and not result["coverage"]["complete"]
+    assert result["coverage"]["exhaustive"] and result["coverage"]["capsHit"] == []
+    assert result["trace"]["limits"]["unresolvedReaderSamples"] == samples
+    assert (
+        len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode())
+        <= 4096
+    )
+    # Other owners' link facts do not enter the selected owner's generation.
+    other = Catalog(tmp_path / "other" / "catalog")
+    own_scope = other.lineage(
+        [target], handle(target), direction="downstream", depth=10
+    )
+    assert own_scope["coverage"]["complete"] and not own_scope["boundaries"]
+
+
+def test_graph_signatures_distinguish_same_filename_and_address_revisions(tmp_path):
+    a = fixture_source(tmp_path, 1, "same.xlsx", {"A1": 10})
+    b = fixture_source(tmp_path, 2, "same.xlsx", {"A1": 20})
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    baseline = graph_signature(catalog.lineage([a], handle(a), direction="upstream"))
+    for other in (
+        replace(a, project_id=b.project_id),
+        replace(b, project_id=a.project_id),
+    ):
+        observed = graph_signature(
+            catalog.lineage([other], handle(other), direction="upstream")
+        )
+        assert observed != baseline
+        assert observed["nodes"][0][:3] == baseline["nodes"][0][:3]

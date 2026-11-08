@@ -87,6 +87,7 @@ class CatalogLimits:
     lineage_workbooks: int = 32
     lineage_ms: int = 2000
     lineage_links: int = 100_000
+    lineage_reader_samples: int = 8
 
     def __post_init__(self):
         validate_limits(**asdict(self))

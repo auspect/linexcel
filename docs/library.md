@@ -125,6 +125,24 @@ target revision and follows its own formulas. Downstream searches the generation
 reverse link table, including range containment, plus local ranges. An ambiguous
 potential reader creates a boundary, never a fabricated consumer edge.
 
+Downstream also checks every identity-unresolved link in the loaded owner's
+generation, including missing targets, ambiguous targets and stale pins. A
+different filename cannot exclude a reader: the target may have been renamed.
+A verified A1 reference can be excluded when its sheet differs from the selected
+cell's sheet or its rectangle does not overlap the selected cell/range.
+Unsupported forms without verified bounds remain possible readers.
+
+Each reached cell/range aggregates the remaining possibilities in a
+`possible_unresolved_reader` boundary with an exact `count`, a deterministic
+`linkIds` sample, and `sampleOmitted`. The count describes link operands, not
+distinct workbooks. `lineage_reader_samples` bounds the sample (default 8);
+zero retains the count with an empty sample. Known ambiguous candidates can also
+have an `ambiguous_external` detail boundary. These possibilities never create
+edges or select a target revision, and always make `coverage.complete=false`.
+An exhaustive count can still have `coverage.exhaustive=true`; a time or other
+traversal cap makes it false. A time cap during sampling preserves any completed
+count and records omitted samples.
+
 Upstream external edges include `cacheDiagnostic` entries such as
 `{address:"A1",cached:500,current:600,agreement:false}`. Numeric comparisons reuse
 the existing relative/absolute tolerance of 1e-9. Missing current values yield
@@ -135,7 +153,8 @@ labelled "cached value, source unavailable", with no target edge.
 Every boundary identifies its reached node and typed reason. Reasons include
 `input_constant` (a legitimate origin), `unresolved_external`,
 `ambiguous_external`, `unsupported_reference`, `source_unavailable`, `macro`,
-`power_query`, `cycle`, `cache_only`, `source_index_incomplete`, and budget stops.
+`power_query`, `cycle`, `cache_only`, `source_index_incomplete`,
+`possible_unresolved_reader`, and budget stops.
 Power Query loaded table destinations are detected through the existing OOXML
 connection reader; their cells stop at `power_query`, not an input constant.
 VBA procedure nodes stop at `macro`; no macro or query is executed. Iterative
@@ -148,6 +167,9 @@ to be legitimate input origins: an exhaustive graph with an unresolved external
 link, macro, query or cycle is still incomplete. This makes a bounded or unresolved
 diagram unsuitable for claiming total lineage. The scope cannot identify files
 that have never been loaded or prove the historical version saved against a link.
+Both `coverage.scope` and `trace.scope` explicitly state: "loaded owner revisions
+only; never-loaded workbooks are not visible". Downstream completeness therefore
+does not establish that no never-loaded workbook reads the selected cell.
 
 `trace.schemaVersion=linexcel.lineage.v1` records root, direction, generation,
 crossed revisions, limits, counts, peak source connections, completeness and
@@ -297,6 +319,7 @@ the same nonnegative integer convention as analysis limits:
 | `query_chars` | 512 |
 | `text_chars` | 4,096 per entry |
 | `lineage_nodes` / `lineage_depth` | 200 / 20 |
+| `lineage_reader_samples` | 8 link IDs per possible-reader boundary |
 
 Connection budget must be at least one and response budget at least 4 KiB.
 Invalid requests reject excessive query/paging/depth bounds. Construction and
