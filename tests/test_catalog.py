@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
 from contextlib import closing
 
@@ -454,3 +456,48 @@ def test_fallback_retains_word_boundaries_and_underscore_separators(tmp_path):
             (h["kind"], h["address"]) for h in right["results"]
         ]
         assert right["coverage"]["complete"]
+
+
+@pytest.mark.parametrize("filename", ["café.xlsx", "review-中.xlsx"])
+def test_cli_redirected_bytes_are_utf8_under_a_cp1252_locale(tmp_path, filename):
+    item = source(tmp_path)
+    owner = "a" * 64
+    data = tmp_path / "data"
+    project = data / owner / "projects" / item.project_id
+    project.mkdir(parents=True)
+    (project / "references").mkdir()
+    (project / "index.sqlite").write_bytes(item.path.read_bytes())
+    (project / "project.json").write_text(
+        json.dumps(
+            {
+                "id": item.project_id,
+                "filename": filename,
+                "name": filename,
+                "createdAt": 9999999999,
+                "revision": "legacy",
+                "references": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    env = {**os.environ, "PYTHONUTF8": "0", "PYTHONIOENCODING": "cp1252:strict"}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "linexcel",
+            "library",
+            "--data-dir",
+            str(data),
+            "--owner",
+            owner,
+            "status",
+        ],
+        capture_output=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not result.stdout.endswith(b"\n")
+    payload = json.loads(result.stdout.decode("utf-8"))
+    assert payload["revisions"][0]["filename"] == filename

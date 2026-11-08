@@ -50,11 +50,14 @@ def run(args) -> int:
             if getattr(args, name, None) is not None
         }
         result = store.library.query(owner, operation, params)
-        sys.stdout.write(
-            json.dumps(
-                result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
-            )
+        payload = json.dumps(
+            result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
         )
+        binary = getattr(sys.stdout, "buffer", None)
+        if binary is None:  # In-process text capture/embedding, with no byte encoding.
+            sys.stdout.write(payload)
+        else:
+            binary.write(payload.encode("utf-8"))
         if result.get("buildState", {}).get("status") == "failed":
             return 2
         coverage = result.get("coverage", {})
