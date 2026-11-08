@@ -392,9 +392,9 @@ def test_numeric_cache_does_not_turn_formulas_into_labels(tmp_path):
         formula = index[parse_handle(ref["handle"])[2]]
         assert formula["formula"] == "=B2*2"
         assert formula["value"] is None
-        assert all(
-            label["cell"] != "B2" for label in index.cell_labels("Donn?es", 2, 3)
-        )
+        labels = index.cell_labels(formula["sheet"], 2, 3)
+        assert labels
+        assert all(label["cell"] != "B2" for label in labels)
 
 
 def test_large_scope_status_and_search_preserve_response_budget(tmp_path):
