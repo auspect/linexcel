@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph cards quiet role tints without violet. On phones, graph options open as
   a dismissible bottom sheet with 44px controls.
 
+- Deterministic, source-attributed cell labels in batch and lazy node evidence:
+  nearby literal text, merged headers, declared table columns and exact-cell
+  defined names, with bounded searches independent of any model.
+  Merged headings spanning other rows/columns are identified as sections;
+  geometric evidence records distance and blank gaps, and searches stop at
+  three consecutive blanks to avoid attaching a previous section's heading.
+
 ### Fixed
 
 - Preserve expanded inspector details and focus when automatic calculation
@@ -48,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Collapse high-fanout sibling cells into counted, expandable neighborhood
   groups, refit after reader resizing, and keep search results above clipped
   mobile canvases. Remove duplicate counts and repeated bus-edge labels.
+
+- Negotiate explicitly rejected sampling/token parameters on OpenAI-compatible
+  HTTP 400 responses for documentation and vision, remembering the accepted
+  shape per endpoint/model. Receipts retain actual parameters and attempts;
+  rejected requests count toward usage with conservative prompt estimates.
 
 ## [1.17.1] — 2026-11-07
 

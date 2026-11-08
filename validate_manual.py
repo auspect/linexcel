@@ -345,6 +345,7 @@ class AcceptanceProvider(OpenAICompatProvider):
                 "content_characters": len(text),
                 "raw_response": text,
                 "usage": None,
+                **self.request_parameters,
             }
             # Preserve received content before the completion gate can reject it.
             # Provider bodies, headers and credentials are never copied here.

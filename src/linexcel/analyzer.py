@@ -426,6 +426,9 @@ def analyze_workbook(
         warnings.append(external_warning)
 
     enrich_graph_sources(data, nodes.values(), warnings)
+    from linexcel.cell_labels import enrich_graph_labels
+
+    enrich_graph_labels(data, nodes.values())
     reporter.start_phase("graph assembly")
     graph = {
         "meta": {

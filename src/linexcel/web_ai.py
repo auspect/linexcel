@@ -14,6 +14,7 @@ from collections import Counter
 from typing import Any
 
 from linexcel.doc_evidence import (
+    cell_label_evidence,
     formula_evidence,
     formula_text_evidence,
     value_comparison_evidence,
@@ -96,6 +97,8 @@ def _node(node: dict) -> dict:
         for key in keys
         if key in node
     }
+    if node.get("cell"):
+        out["cell_labels"] = cell_label_evidence(node)
     if node.get("formula") or "formulaProvenance" in node:
         out["formula_text_evidence"] = formula_text_evidence(node)
         out["formula_facts"] = formula_evidence(

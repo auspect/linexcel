@@ -40,7 +40,7 @@ from linexcel.formula_source import cell_source_fields
 from linexcel.refs import a1, parse_ref, split_sheet_prefix
 from linexcel.structured_refs import formula_tokens
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_PAGE_SIZE = 200
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
@@ -211,7 +211,66 @@ class WorkbookIndex(Mapping):
         self.close()
 
     def close(self):
+        if hasattr(self, "_label_index"):
+            self._label_index.close()
         self.db.close()
+
+    def cell_labels(self, sheet, row, column):
+        from linexcel.cell_labels import NON_TEXT_CELL, CellLabelIndex
+
+        if not hasattr(self, "_label_index"):
+
+            def literal(s, r, c):
+                hit = self.db.execute(
+                    "SELECT data FROM nodes WHERE sheet=? AND row=? AND col=? "
+                    "AND kind IN ('input','cell','array_result') LIMIT 1",
+                    (s, r, c),
+                ).fetchone()
+                if hit:
+                    node = _unpack(hit[0])
+                    if not node.get("formula") and node.get("sourceDataType") in {
+                        "s",
+                        "str",
+                        "inlineStr",
+                    }:
+                        return node.get("value")
+                    if node.get("formula") or node.get("value") is not None:
+                        return NON_TEXT_CELL
+                return None
+
+            names = []
+            for (blob,) in self.db.execute("SELECT data FROM nodes WHERE kind='name'"):
+                node = _unpack(blob)
+                names.append(
+                    dict(
+                        name=node.get("name"),
+                        expression=node.get("formula"),
+                        scope="sheet" if node.get("sheet") else "workbook",
+                        scope_sheet=node.get("sheet"),
+                    )
+                )
+            self._label_index = CellLabelIndex(
+                literal,
+                tables=(
+                    json.loads(r[0])
+                    for r in self.db.execute("SELECT data FROM table_definitions")
+                ),
+                merges=(
+                    (
+                        (s, (r1, c1, r2, c2))
+                        for s, r1, c1, r2, c2 in self.db.execute(
+                            "SELECT * FROM merge_definitions"
+                        )
+                    )
+                    if self.db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='merge_definitions'"
+                    ).fetchone()
+                    else ()
+                ),
+                names=names,
+            )
+        return self._label_index.labels(sheet, row, column)
 
     @property
     def meta(self) -> dict[str, Any]:
@@ -257,36 +316,19 @@ class WorkbookIndex(Mapping):
             if count:
                 node["patternMemberCount"] = count[0]
         if context and node.get("cell") and not node.get("external"):
-            nearby = []
-            for position in ("left", "above"):
-                for distance in range(1, 5):
-                    r = node["row"] - (distance if position == "above" else 0)
-                    c = node["column"] - (distance if position == "left" else 0)
-                    hit = self.db.execute(
-                        (
-                            "SELECT data FROM nodes WHERE sheet=? "
-                            "AND row=? AND col=? AND "
-                            "kind='input'"
-                        ),
-                        (node["sheet"], r, c),
-                    ).fetchone()
-                    if hit:
-                        other = _unpack(hit[0])
-                        value = other.get("value")
-                        if (
-                            isinstance(value, str)
-                            and value.strip()
-                            and other.get("sourceDataType") in {"s", "str", "inlineStr"}
-                        ):
-                            nearby.append(
-                                {
-                                    "cell": other["cell"],
-                                    "text": value[:240],
-                                    "position": position,
-                                    "truncated": len(value) > 240,
-                                }
-                            )
-                            break
+            node["cellLabels"] = self.cell_labels(
+                node["sheet"], node["row"], node["column"]
+            )
+            nearby = [
+                dict(
+                    cell=label["cell"],
+                    text=label["text"],
+                    position="left" if label["method"] == "left_text" else "above",
+                    truncated=label["truncated"],
+                )
+                for label in node["cellLabels"]
+                if label["method"] in {"left_text", "above_text"}
+            ]
             node.setdefault("context", {})["nearbyLabels"] = nearby
         if context and node.get("formula"):
             try:
@@ -431,6 +473,8 @@ def _schema(db):
             part TEXT NOT NULL,data TEXT NOT NULL);
         CREATE INDEX tables_name ON table_definitions(name_key);
         CREATE INDEX tables_position ON table_definitions(sheet,r1,r2);
+        CREATE TABLE merge_definitions(sheet TEXT NOT NULL,r1 INTEGER,c1 INTEGER,
+            r2 INTEGER,c2 INTEGER);
     """)
 
 
@@ -1009,6 +1053,15 @@ def _read_source(path, store):
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
                                     db.commit()
+                            stack[-2].remove(element)
+                            element.clear()
+                        elif tag == "mergeCell":
+                            rect = parse_ref(element.get("ref", ""))
+                            if rect:
+                                db.execute(
+                                    "INSERT INTO merge_definitions VALUES (?,?,?,?,?)",
+                                    (sheet["name"], rect.r1, rect.c1, rect.r2, rect.c2),
+                                )
                             stack[-2].remove(element)
                             element.clear()
                         elif tag == "tablePart":
