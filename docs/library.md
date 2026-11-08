@@ -87,6 +87,8 @@ link status and `index_rebuild_required` in lineage disclose missing facts.
 External A1 cells and rectangular ranges are supported. External defined names,
 structured references, whole rows/columns, dynamic and 3-D references are typed
 `unsupported_reference` boundaries, with the original operand and subtype.
+Local structured columns such as `Sales[2020]` or `Sales[inputs.xlsx]` remain
+local: a bracketed column name alone is never an external workbook marker.
 Declared but unused external books remain in source index `externalBooks`
 metadata; `links` lists formula/name reference operands.
 

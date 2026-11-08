@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Resolve only by unique filename or durable owner-authorized project/hash pins;
   cached values are diagnostics only. Expose link status/filtering and pins in
   the API and CLI, preserving the existing undirected neighborhood route.
+  Retain crossed revisions under response trimming and distinguish external
+  qualifiers from numeric or filename-like local table column names.
 
 - Page grouped library text occurrences through owner-authorized, generation-scoped
   source scans with bounded work, response size and reusable cell handles.

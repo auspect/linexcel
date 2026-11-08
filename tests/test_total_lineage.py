@@ -663,3 +663,42 @@ def test_imported_reference_copy_is_replaced_by_authoritative_revision(tmp_path)
     assert result["edges"][0]["kind"] == "external_link"
     assert result["nodes"][1]["value"] == 123
     assert result["nodes"][1]["revision"]["projectId"] == target.project_id
+
+
+@pytest.mark.parametrize("column", ["2020", "inputs.xlsx"])
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_local_structured_column_is_never_an_external_book(tmp_path, column, dynamic):
+    from openpyxl import load_workbook
+    from openpyxl.worksheet.table import Table
+
+    expression = f"Sales[{column}]"
+    formula = f"=SUM(OFFSET({expression},0,0))" if dynamic else f"=SUM({expression})"
+    source = fixture_source(
+        tmp_path,
+        1,
+        "local.xlsx",
+        {
+            "A1": column,
+            "B1": "Value",
+            "A2": 1,
+            "A3": 2,
+            "B2": 3,
+            "B3": 4,
+            "C2": formula,
+        },
+    )
+    path = source.path.parent / "workbook.xlsx"
+    book = load_workbook(path)
+    book.active.add_table(Table(displayName="Sales", ref="A1:B3"))
+    book.save(path)
+    book.close()
+    build_index(path, source.path, filename=source.filename)
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(
+        [source], handle(source, "C2"), direction="upstream", depth=10
+    )
+    assert list_links(catalog, [source])["links"] == []
+    assert "unresolved_external" not in result["coverage"]["boundaries"]
+    if not dynamic:
+        assert result["coverage"]["complete"]
+        assert len(result["nodes"]) == 4 and len(result["edges"]) == 3

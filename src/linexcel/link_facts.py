@@ -22,19 +22,37 @@ def reference_facts(formula, books):
     from linexcel.lazy import _json
 
     try:
+        tokens = formula_tokens(formula)
         operands = [
-            t.value
-            for t in formula_tokens(formula)
-            if t.type == "OPERAND" and t.subtype == "RANGE"
+            t.value for t in tokens if t.type == "OPERAND" and t.subtype == "RANGE"
         ]
     except Exception:
         # A malformed formula still discloses external workbook markers.
+        tokens = []
         operands = [formula] if _BOOK.search(formula) else []
-    dynamic = bool(re.search(r"\b(?:INDIRECT|OFFSET)\s*\(", formula, re.I))
+    dynamic = any(
+        t.type == "FUNC"
+        and t.subtype == "OPEN"
+        and t.value[:-1].upper().removeprefix("_XLFN.") in {"INDIRECT", "OFFSET"}
+        for t in tokens
+    )
+    if dynamic:
+        # A quoted external operand in INDIRECT is evidence of an unsupported
+        # dynamic reference, never an executable static reference.
+        operands.extend(
+            t.value[1:-1].replace('""', '"')
+            for t in tokens
+            if t.type == "OPERAND" and t.subtype == "TEXT"
+        )
     facts = []
     for operand in operands:
         marker = _BOOK.search(operand)
         if not marker:
+            continue
+        prefix = operand[: marker.start()]
+        if "!" not in operand or not (
+            prefix in {"", "'"} or prefix.endswith(("/", "\\"))
+        ):
             continue
         key = marker[1]
         # A local Table[Column] is not an external reference.
@@ -99,27 +117,6 @@ def reference_facts(formula, books):
                 "supported": supported,
                 "referenceType": subtype,
                 "cached": cached,
-            }
-        )
-    # INDIRECT's quoted reference is deliberately not an executable operand.
-    # Still expose its external marker as an unsupported dynamic boundary.
-    if dynamic and not facts and _BOOK.search(formula):
-        marker = _BOOK.search(formula)
-        assert marker is not None
-        key = marker[1]
-        book = books.get(key)
-        facts.append(
-            {
-                "bookKey": key,
-                "relationshipPath": book.relationship_path if book else key,
-                "filename": book.name if book else key,
-                "reference": formula,
-                "sheet": None,
-                "address": None,
-                "bounds": None,
-                "supported": False,
-                "referenceType": "dynamic",
-                "cached": [],
             }
         )
     return facts

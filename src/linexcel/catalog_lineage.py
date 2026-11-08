@@ -311,7 +311,7 @@ class Traversal:
         raw = self.raw[key]
         index = self.index(pid)
         kind = raw["kind"]
-        if any(
+        if raw.get("capabilityDiagnostics") or any(
             s["name"] == raw.get("sheet") and s["status"] != "complete"
             for s in index.meta.get("sheetDetails", [])
         ):
@@ -352,7 +352,9 @@ class Traversal:
             for d in raw.get("diagnostics", [])
         ):
             self.boundary(
-                key, "unsupported_reference", referenceType="dynamic_or_unparsed"
+                key,
+                "unsupported_reference",
+                referenceType="index_capability_or_unparsed",
             )
         if self.direction == "upstream":
             facts = [
