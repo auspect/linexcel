@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve expanded inspector details and focus when automatic calculation
+  completes, while starting a newly selected cell at its decomposition.
 - Keep ordinary neighborhoods in Dagre dependency layers after grouping copied
   formula siblings; check fit and edge clearance across a fixed workbook matrix.
   Show bounded formulas and values on leaf cards, bundle their outside links,

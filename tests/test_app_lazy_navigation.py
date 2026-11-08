@@ -39,10 +39,12 @@ class Navigation:
     hold_saved_result: bool = False
     reject_saved_result: bool = False
     finish_calculations: bool = False
+    patterns: list[dict] = field(default_factory=list)
 
     def neighborhood(self, node_id):
         return {
             "nodes": self.nodes,
+            "formulaPatterns": self.patterns,
             "edges": [
                 {"source": "Source!A1", "target": "Calc!B1"},
                 {"source": "Source!A1", "target": "Calc!B2"},
@@ -97,7 +99,7 @@ class Navigation:
                     "lazy": True,
                     "nodes": self.nodes,
                     "edges": [],
-                    "formulaPatterns": [],
+                    "formulaPatterns": self.patterns,
                     "meta": {"sheets": ["Source", "Calc"], "nodeCount": 1000000},
                     "pagination": {"offset": 0, "limit": 200, "total": 1000000},
                 },
@@ -324,6 +326,38 @@ def navigation(browser, request):
         except playwright.Error:
             pass
     page.close()
+
+
+def test_completed_calculation_preserves_open_inspector_pattern(navigation):
+    app = navigation
+    page = app.page
+    app.patterns = [
+        {
+            "id": "copied",
+            "sheet": "Calc",
+            "signature": "=RC[-1]+1",
+            "memberCount": 2,
+            "memberIds": ["Calc!B1", "Calc!B2"],
+            "ranges": ["B1:B2"],
+        }
+    ]
+    for node in app.nodes[1:3]:
+        node["patternId"] = "copied"
+    page.locator("#tab-nodes").click()
+    open_workspace_menu(page)
+    page.locator("[data-project='p']").click()
+    page.locator('[data-node="Calc!B1"]').click()
+    page.wait_for_function("()=>document.querySelector('#recalculate').disabled")
+    page.locator(".inspector-evidence > summary").click()
+    page.locator(".pattern-card summary").click()
+    app.finish_calculations = True
+    page.wait_for_function("()=>!document.querySelector('#recalculate').disabled")
+    assert page.locator(".inspector-evidence").evaluate("e=>e.open")
+    assert page.locator(".pattern-card details").evaluate("e=>e.open")
+    page.locator('.pattern-card [data-related="Calc!B2"]').click()
+    playwright.expect(page.locator("#node-detail h2")).to_contain_text("B2")
+    assert not page.locator(".inspector-evidence").evaluate("e=>e.open")
+    app.assert_bounded()
 
 
 def test_old_manual_preference_cannot_block_calculation_behind_saved_reply(navigation):
