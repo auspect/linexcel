@@ -143,9 +143,12 @@ class WorkbookBuilder:
             return record["id"]
         if self.counts["entries"] >= self.limits.entries_per_workbook:
             self.cap(scope, "entries_per_workbook")
+            if body:
+                scope["entryAttemptsOmitted"] = scope.get("entryAttemptsOmitted", 0) + 1
             return None
         if body and scope["bodyEntries"] >= scope["entryBudget"]:
             self.cap(scope, "entries_per_sheet")
+            scope["entryAttemptsOmitted"] = scope.get("entryAttemptsOmitted", 0) + 1
             return None
         if self.expired():
             self.cap(scope, "build_seconds")
@@ -194,6 +197,7 @@ class WorkbookBuilder:
                 "count": 1,
                 "occurrences": occurrences,
                 "labels": False,
+                "priorOmissions": bool(scope.get("entryAttemptsOmitted")),
             }
         return entry
 
@@ -411,6 +415,7 @@ class WorkbookBuilder:
                             self.json(record["occurrences"]),
                             int(
                                 not scope["nodesUnscanned"]
+                                and not record["priorOmissions"]
                                 and not (
                                     record["labels"] and scope["numericUnassessed"]
                                 )
@@ -419,6 +424,7 @@ class WorkbookBuilder:
                         )
                         for record in self.groups[sheet].values()
                         if record["count"] > 1
+                        or record["priorOmissions"]
                         or record["labels"]
                         and scope["numericUnassessed"]
                     ),

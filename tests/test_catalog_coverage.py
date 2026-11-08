@@ -107,6 +107,25 @@ def test_numeric_sampling_spans_each_sheet_and_groups_repeated_labels(tmp_path):
     assert "numeric_cells_per_workbook" in cat.status()["coverage"]["capsHit"]
 
 
+def test_reallocated_budget_does_not_claim_full_counts_for_late_groups(tmp_path):
+    book = Workbook()
+    first = book.active
+    first.title = "A"
+    for row in range(1, 2001):
+        first.append(["Repeat" if row in {100, 1537} else f"Unique {row}"])
+    second = book.create_sheet("B")
+    for _ in range(1024):
+        second.append(["Other"])
+    item = indexed(tmp_path, book)
+    cat = Catalog(tmp_path / "cat", CatalogLimits(entries_per_workbook=50))
+    hit = cat.search([item], "repeat", kinds=["cell"])["results"][0]
+    # The first occurrence was omitted before B returned spare capacity. The
+    # indexed count is a true lower bound, never the full source population.
+    assert hit["address"] == "A1537"
+    assert hit["occurrenceCount"] == 1
+    assert not hit["occurrenceCountComplete"]
+
+
 def test_numeric_literal_axis_needs_corroboration_and_keeps_exact_sources(tmp_path):
     book = Workbook()
     sheet = book.active

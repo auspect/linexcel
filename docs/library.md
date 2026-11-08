@@ -33,7 +33,9 @@ source sheet/cell, and geometry), value, value provenance, cache status, formula
 and a stable cell handle where applicable. Text results group distinct normalized
 text within each sheet (including repeated inferred label text). `occurrenceCount`
 is the number observed in the indexed scope; `occurrenceCountComplete` says
-whether that count is exhaustive for the group. `occurrences` contains up to
+whether that count is exhaustive for the group. A group first retained after
+spare sheet capacity is reassigned can have earlier omitted occurrences; its
+count is explicitly a lower bound even when the source scan finishes. `occurrences` contains up to
 `text_occurrences` source addresses/handles; `occurrencesOmitted` counts the
 remaining observed occurrences. Numeric queries return individual saved numeric
 facts from a separate bounded table, with their own labels and handle. Values and formulas are read again

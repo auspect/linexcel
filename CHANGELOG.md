@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mark text-group occurrence counts incomplete when a sheet receives spare
+  capacity after earlier occurrences may already have been omitted.
+
 - Reconcile library catalogs on the bounded background executor outside the
   global task-store lock; expose progress, failures and explicitly stale search
   coverage while excluding deleted/replaced revision evidence.
