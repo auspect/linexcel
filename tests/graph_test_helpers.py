@@ -31,6 +31,14 @@ def open_graph_options(page):
     assert options.evaluate("element => element.open")
 
 
+def close_graph_options(page):
+    """Close the options; on phones they are a bottom sheet over the page."""
+    options = page.locator("#graph-options")
+    if options.evaluate("element => element.open"):
+        options.locator(":scope > summary").click()
+    assert not options.evaluate("element => element.open")
+
+
 def tap_graph_node(page, node_id):
     """Click the rendered HTML card, falling back to its accessible relation."""
     canvas = page.locator("#graph-canvas")

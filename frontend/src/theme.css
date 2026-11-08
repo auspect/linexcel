@@ -38,7 +38,6 @@
   --fs-meta: 12px;
   --fs-label: 13px;
   --fs-body: 14px;
-  --fs-title: 16px;
   --fs-h: 18px;
   /* Geometry: a sharp family for a data tool. */
   --r-xs: 4px;
@@ -46,9 +45,7 @@
   --r-md: 8px;
   --r-lg: 10px;
   --r-pill: 999px;
-  --h-sm: 28px;
   --h-md: 32px;
-  --h-lg: 36px;
   --tap: 44px;
   /* Depth and motion */
   --shadow-hud: 0 1px 2px rgb(20 36 31 / 0.06), 0 4px 14px rgb(20 36 31 / 0.07);
@@ -62,7 +59,6 @@
   --i-search: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2356685f' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.6'/%3E%3Cpath d='m10.4 10.4 3.4 3.4'/%3E%3C/svg%3E");
   --i-chevron-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2356685f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4.5 6.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
   --m-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 4 4 4-4 4'/%3E%3C/svg%3E");
-  --m-back: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 8H3.5M7.5 4 3.5 8l4 4'/%3E%3C/svg%3E");
   --m-expand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9'/%3E%3C/svg%3E");
   --m-fit: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3'/%3E%3Crect x='5.5' y='5.5' width='5' height='5' rx='1'/%3E%3C/svg%3E");
   --m-panel: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Crect x='2' y='3' width='12' height='10' rx='1.5'/%3E%3Cpath d='M10 3v10'/%3E%3C/svg%3E");
@@ -181,6 +177,25 @@ button.primary,
 }
 button.primary:active:not(:disabled) {
   background: var(--accent-press);
+  border-color: var(--accent-press);
+  transform: translateY(1px) scale(0.985);
+}
+
+/* One filled action per view: inside a workspace the view owns it, so the
+   sidebar import is secondary; on the welcome screen an open import form owns
+   it and the welcome shortcut steps back. */
+.workspace-active #import-button.primary,
+body:has(#import-panel[open]):not(.workspace-active) #begin-import.primary {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-active #import-button.primary:hover:not(:disabled),
+  body:has(#import-panel[open]):not(.workspace-active) #begin-import.primary:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: #a9b7b0;
+  }
 }
 
 /* Destructive stays text-coloured until hovered. */
@@ -218,14 +233,15 @@ textarea {
 }
 input::placeholder,
 textarea::placeholder {
-  color: #7d8c85;
+  color: var(--muted);
+  opacity: 1;
 }
 input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])):focus,
 select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring);
 }
 select {
   appearance: none;
@@ -562,6 +578,18 @@ header.top .workspace-menu {
   font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
+.ai-card {
+  border-color: var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.ai-card .badge {
+  background: var(--info-tint);
+  color: var(--info);
+}
+.file-pick {
+  border-color: var(--line-strong);
+}
 pre {
   background: var(--surface-2);
   border-radius: var(--r-sm);
@@ -648,6 +676,45 @@ pre {
 .graph-hud .graph-context-actions {
   gap: 2px;
 }
+/* A narrow canvas (reader open, long French labels) keeps one toolbar row:
+   view toggles become icon squares; their text stays the accessible name. */
+/* Desktop only: containment would make the canvas the containing block and
+   stacking context of the phone options sheet. */
+@media (min-width: 651px) {
+  #graph-canvas {
+    container-type: inline-size;
+  }
+}
+@container (min-width: 480px) and (max-width: 860px) {
+  /* Two stable rows: navigation (back, search, depth, sheet), then view actions. */
+  .graph-hud .graph-docked-controls::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .graph-hud .graph-actions,
+  .graph-hud .graph-context-actions,
+  .graph-hud #graph-options {
+    order: 2;
+  }
+  .graph-hud #graph-options {
+    margin-left: auto;
+  }
+  .graph-hud .graph-toolbar input {
+    width: 100%;
+  }
+}
+@container (max-width: 860px) {
+  .graph-hud #graph-fullscreen,
+  .graph-hud #graph-reader-toggle,
+  .graph-hud #graph-options > summary {
+    width: var(--h-md);
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+}
 
 /* Stepper: one control, not three buttons. */
 .graph-depth-control,
@@ -659,7 +726,6 @@ pre {
   border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
   background: var(--surface);
-  overflow: hidden;
 }
 .graph-depth-control > button,
 .graph-hud .graph-depth-control > button {
@@ -670,6 +736,25 @@ pre {
   border-radius: 0;
   color: var(--ink-2);
   font-size: 16px;
+}
+/* The stepper is named by its own aria-labels; its label would sit inside the frame. */
+.graph-depth-control > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.graph-depth-control > button:first-of-type {
+  border-radius: calc(var(--r-sm) - 1px) 0 0 calc(var(--r-sm) - 1px);
+}
+.graph-depth-control > button:last-of-type {
+  border-radius: 0 calc(var(--r-sm) - 1px) calc(var(--r-sm) - 1px) 0;
+}
+.graph-depth-control > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .graph-depth-control > input,
 .graph-hud .graph-depth-control input {
@@ -690,8 +775,11 @@ pre {
   -webkit-appearance: none;
   margin: 0;
 }
-.graph-depth-control > input:focus {
-  box-shadow: inset 0 0 0 2px var(--accent-ring) !important;
+.graph-depth-control > input:focus,
+.graph-hud .graph-depth-control input:focus {
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* Breadcrumbs: a path of text links, the current place in ink. */
@@ -991,15 +1079,6 @@ pre {
   select {
     min-height: var(--tap);
   }
-  .graph-depth-control > button,
-  .graph-hud .graph-depth-control > button {
-    min-height: calc(var(--tap) - 2px);
-    width: 40px;
-  }
-  .graph-depth-control > input,
-  .graph-hud .graph-depth-control input {
-    min-height: calc(var(--tap) - 2px);
-  }
   .react-flow__controls-button {
     width: 44px;
     height: 44px;
@@ -1008,6 +1087,64 @@ pre {
     width: 44px;
     padding: 0;
     font-size: 0;
+  }
+  /* Options open as a bottom sheet outside the clipped canvas; the graph's own
+     stacking context (.react-flow, z-index 0) rises so the reader stays below. */
+  .react-flow:has(#graph-options[open]) {
+    z-index: 96 !important; /* React Flow sets an inline z-index: 0 */
+  }
+  /* Options open as a bottom sheet outside the clipped canvas. */
+  .graph-hud #graph-options[open] {
+    position: fixed;
+    inset: auto 0 0 0;
+    top: auto;
+    right: 0;
+    width: 100%;
+    max-height: min(72dvh, 560px);
+    overflow: auto;
+    z-index: 95;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    box-shadow: 0 -8px 32px rgb(20 36 31 / 0.18);
+  }
+  .graph-hud #graph-options[open] > summary {
+    position: sticky;
+    top: -16px;
+    z-index: 1;
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 8px;
+    font-size: var(--fs-label);
+    background: var(--surface);
+  }
+  .graph-hud .graph-toolbar input,
+  .graph-hud .graph-sheet-control select,
+  .graph-hud .graph-context-actions button,
+  .graph-hud #graph-neighborhood,
+  #import-panel > summary,
+  .node-return,
+  .has-selection > .node-return {
+    min-height: var(--tap);
+  }
+  .graph-hud .graph-depth-control > button,
+  .graph-depth-control > button {
+    min-height: var(--tap);
+    width: var(--tap);
+  }
+  .graph-hud .graph-depth-control input,
+  .graph-depth-control > input {
+    min-height: var(--tap);
+  }
+  .workspace-active header.top #connection {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    overflow: visible;
+  }
+  .workspace-active header.top #connection::before {
+    display: block;
   }
   .graph-hud #graph-options > summary::after {
     content: none;

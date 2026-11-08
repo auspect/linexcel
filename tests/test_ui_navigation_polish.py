@@ -5,6 +5,7 @@ import test_app_captures_browser as capture_tests
 import test_app_viewer_regressions as serve_tests
 import test_viewer_browser as export_tests
 from graph_test_helpers import (
+    close_graph_options,
     open_graph_options,
     open_neighborhood,
     open_workspace_menu,
@@ -268,6 +269,7 @@ def test_macro_graph_dynamic_guidance_covers_literal_empty_and_hierarchy(app, la
         "relation indexée pour cette cellule"
         not in page.locator("#graph-notice").inner_text()
     )
+    close_graph_options(page)
     page.locator("#graph-list > summary").click()
     assert (
         "relations statiques" if language == "fr" else "static source relationships"
