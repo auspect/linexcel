@@ -234,9 +234,12 @@ def test_numeric_long_column_coverage_is_explicit(tmp_path):
     book.save(item.path.parent / "workbook.xlsx")
     build_index(item.path.parent / "workbook.xlsx", item.path)
     result = Catalog(tmp_path / "catalog").search([item], "12")
-    assert result["results"] == []
+    assert [hit["address"] for hit in result["results"]] == ["B12"]
+    assert any(
+        label["method"] == "header_band" for label in result["results"][0]["labels"]
+    )
     assert result["coverage"]["numericObserved"] == 11
-    assert result["coverage"]["numericLabelled"] == 8
+    assert result["coverage"]["numericLabelled"] == 11
 
 
 def test_api_owner_isolation_including_other_owners_handles(tmp_path):
@@ -266,6 +269,7 @@ def test_api_owner_isolation_including_other_owners_handles(tmp_path):
         resolve_user=lambda e: e.get("user"),
     )
     try:
+        app.store.library.query(owner, "status", {}, synchronous=True)
         code, found = call(app, "GET", "/api/library/search", query="q=4")
         assert code == 200
         handle = found["results"][0]["handle"]
@@ -304,6 +308,7 @@ def test_api_owner_isolation_including_other_owners_handles(tmp_path):
         from test_web import request
 
         app.store.library.catalog(owner).limits = CatalogLimits(response_bytes=4096)
+        app.store.library.query(owner, "status", {}, synchronous=True)
         code, payload, _ = request(app, "GET", "/api/library/search")
         assert code == 200 and len(payload) <= 4096
         assert "response_bytes" in json.loads(payload)["coverage"]["capsHit"]
@@ -375,10 +380,21 @@ def test_numeric_cache_does_not_turn_formulas_into_labels(tmp_path):
     item = source(tmp_path)
     catalog = Catalog(tmp_path / "catalog")
     result = catalog.search([item], "", kinds=["cell"])
-    formula = next(hit for hit in result["results"] if hit["address"] == "C2")
-    assert formula["formula"] == "=B2*2"
-    assert formula["value"] is None
-    assert all(label["cell"] != "B2" for label in formula["labels"])
+    from linexcel.lazy_store import WorkbookIndex
+
+    group = next(
+        hit
+        for hit in result["results"]
+        if any(ref["address"] == "C2" for ref in hit["occurrences"])
+    )
+    ref = next(ref for ref in group["occurrences"] if ref["address"] == "C2")
+    with WorkbookIndex(item.path) as index:
+        formula = index[parse_handle(ref["handle"])[2]]
+        assert formula["formula"] == "=B2*2"
+        assert formula["value"] is None
+        assert all(
+            label["cell"] != "B2" for label in index.cell_labels("Donn?es", 2, 3)
+        )
 
 
 def test_large_scope_status_and_search_preserve_response_budget(tmp_path):

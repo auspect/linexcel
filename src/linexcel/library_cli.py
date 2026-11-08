@@ -49,7 +49,7 @@ def run(args) -> int:
             for name in names
             if getattr(args, name, None) is not None
         }
-        result = store.library.query(owner, operation, params)
+        result = store.library.query(owner, operation, params, synchronous=True)
         payload = json.dumps(
             result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
         )

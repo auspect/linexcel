@@ -30,7 +30,13 @@ labelled cells. Decimal tolerance and computed values are outside this version.
 
 Results include revision, filename, kind, sheet, address, labels (text, method,
 source sheet/cell, and geometry), value, value provenance, cache status, formula,
-and a stable cell handle where applicable. Values and formulas are read again
+and a stable cell handle where applicable. Text results group distinct normalized
+text within each sheet (including repeated inferred label text). `occurrenceCount`
+is the number observed in the indexed scope; `occurrenceCountComplete` says
+whether that count is exhaustive for the group. `occurrences` contains up to
+`text_occurrences` source addresses/handles; `occurrencesOmitted` counts the
+remaining observed occurrences. Numeric queries return individual saved numeric
+facts from a separate bounded table, with their own labels and handle. Values and formulas are read again
 from the authoritative workbook index. Object names and search labels are
 derived from that same immutable revision. All workbook-derived strings are
 untrusted content: render them as text, never HTML or instructions.
@@ -78,11 +84,19 @@ without an explicit privacy decision. No trace is automatically retained or
 sent to any service. A later agent should reuse this contract and call the same
 owner-authorized tools.
 
-Status includes per-revision `coverage`, total/scanned/unscanned node counts,
+Status includes per-revision and per-sheet `coverage`, total/scanned/unscanned node counts,
 observed eligible entries, numeric/labelled numeric counts, truncation counts,
 source completeness, generation, backend, configured limits and build state.
 Counts observed before a build cap are lower bounds, not whole-workbook numeric
-counts. `index_rebuild_required` identifies missing/unreadable indexes or
+counts. Per-sheet `byKind` distinguishes structural eligible/retained entries,
+observed/omitted text cells, and numeric observed/assessed/labelled/indexed counts.
+`numericUnassessed` explicitly counts observed numerics not assessed for labels;
+it is separate from assessed cells lacking labels and labelled cells omitted by
+an entry cap. `nodesUnscanned` makes unknown populations explicit. Sheet scopes
+with `sourceSheet=false` are workbook-level or external graph scopes, not actual
+worksheet names. `headerBands` reports scan/candidate/band counts, rejected
+ambiguous candidates, named caps, and completeness of that inference scope.
+`index_rebuild_required` identifies missing/unreadable indexes or
 metadata without a SHA-256 digest. Reimport the project through the existing
 import operation to rebuild it; no workbook index schema migration is required.
 Older indexes without merge metadata still support the remaining label methods.
@@ -90,23 +104,43 @@ Older indexes without merge metadata still support the remaining label methods.
 ## Generations and budgets
 
 Each owner has a derived catalog directory. The workspace's existing coordinator
-file lock enforces one writer process. Import completion (including replacement)
-and deletion reconcile the catalog under the existing task-store lock. Searches
-and status also reconcile index metadata, so out-of-process replacements are
-detected by content hash rather than modification time. Readers pin immutable
+file lock enforces one writer process. Import completion and deletion enqueue
+coalesced owner rebuilds on the existing bounded task executor. Building holds an
+owner source-mutation gate, outside the global task-store lock; unrelated API
+requests and task polls remain responsive. Source replacement/deletion acquires
+the same gate before the task-store lock. Status exposes queued/building/ready/
+failed state, phase and observed scan progress. HTTP search/status detect changed
+content hashes and enqueue reconciliation; they never perform a large build
+under the global lock. Searches can use a previous compatible generation while
+building, marked `stale=true`, incomplete, with `catalog_refresh_pending`.
+Deleted/replaced revision evidence is excluded after reauthorization. Before the
+first generation (or during a schema upgrade), search returns an empty pending
+result with the full trace; this does not mean absence. At a one-connection budget,
+pending searches return metadata only and lineage asks the client to retry.
+Offline CLI operations reconcile synchronously. A failed rebuild remains visible;
+retry with an import/delete event or the offline rebuild command. Readers pin immutable
 generation filenames; a writer publishes `CURRENT` atomically. Old generations
 are collected only after their readers finish. Workbook indexes are opened
 read-only through an operation-local LRU; they are never attached to a database.
 Workbook reads are serialized per owner to share the configured connection
 budget. The service's task-store lock also prevents replacement during evidence
-reads. Interrupted builds leave the old published generation intact.
+reads. Interrupted builds leave the old published generation intact. Under the single
+writer lock, subsequent builds remove abandoned staging files and orphan
+generations before reserving space. Missing/unreadable published artifacts trigger
+a rebuild; failed database opens release their reader pin.
 
 `WebConfig(catalog_limits=CatalogLimits(...))` configures named limits, using
 the same nonnegative integer convention as analysis limits:
 
 | Limit | Default |
 | --- | ---: |
-| `entries_per_workbook` | 100,000 |
+| `entries_per_workbook` | 100,000 distinct text/structural entries |
+| `numeric_cells_per_workbook` | 100,000 candidate assessments; indexed numerics cannot exceed this |
+| `text_occurrences` | 8 source occurrences per text group |
+| `header_scan_cells` | 50,000 source cells per sheet |
+| `header_candidate_rows` / `header_columns` | 512 occupied rows / 256 columns per sheet |
+| `header_bands` / `header_regions` | 64 bands / 256 table or merge regions per sheet |
+| `header_row_labels` | 4 row-label columns per band |
 | `catalog_bytes` | 256 MiB |
 | `build_seconds` | 120 seconds |
 | `connections` | 4 workbook connections |
@@ -127,11 +161,34 @@ publication and reports a failed build. The owner workspace quota (by default
 workbooks, all indexes, tasks and captures. It is not a capacity promise for
 hundreds of large workbooks.
 
-Labels inherit `cell_labels`: nearby literal text within eight cells left/above,
-merged headings, declared table headers and exact-cell defined names. This is a
-heuristic with explicit source cells, not a verified business interpretation.
-Long numeric columns without declared tables or nearby row labels can lose
-numeric search coverage; observed numeric counts expose the loss.
+Construction reserves structural entries first: all sheet names, then tables,
+columns, defined names and accepted header bands. The remaining entry and numeric
+assessment budgets are water-filled across sheets; small sheets return unused
+entry shares. Body scans run in bounded round-robin batches, so a time cap does
+not consume one large sheet before visiting every other sheet. Literal text is
+deduplicated by full normalized identity within a sheet; truncation does not merge
+different long strings. Retained text groups continue counting repeats after an
+entry cap. `entries_per_sheet` reports a computed allocation cap. Numeric candidate
+assessments use a deterministic systematic sample spanning each sheet, with exact
+unassessed counts; full numeric coverage is not claimed at that cap. Numeric facts
+are stored separately so repeated numeric label text uses one search entry.
+
+Conservative `cell_labels` methods remain unchanged, including the dossier.
+The catalog additionally builds a bounded `header_band` map once per sheet per
+generation, stored only in its rebuildable database. Descriptive declared table
+columns take precedence. Inference accepts literal source strings, never formula
+caches; numeric-looking text headers require at least two descriptive anchors and
+a consecutive literal integer axis of at least three columns. A coherent following
+data row must corroborate the header. A single-column band requires two literal
+numeric rows. Accepted columns propagate only through observed contiguous data;
+a blank/missing row, ragged rectangle, textual section, next header or merge ends
+the band. Inference never extrapolates past its scan cap. Overlapping/merged
+candidate headers and excess metadata are rejected with ambiguity/budget counts.
+Every new label gives its exact source sheet/cell, `method=header_band`, role,
+header row and observed region; its role is a heuristic, not verified meaning.
+Precision is preferred to filling every cell: unfamiliar layouts, numeric typed
+headers, instruction rows, mixed regions and long uncaptured columns may remain
+unlabelled. Observed counts and caps expose these remaining limits.
 
 ## CLI
 

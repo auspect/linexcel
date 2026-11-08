@@ -19,18 +19,18 @@ import unicodedata
 import uuid
 from collections import OrderedDict
 from collections.abc import Iterable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from linexcel.lazy_store import WorkbookIndex, _unpack, graph_neighborhood
+from linexcel.catalog_build import WorkbookBuilder, schema
+from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
-from linexcel.refs import a1
 
 TRACE_VERSION = "linexcel.search.v1"
-CATALOG_VERSION = 1
+CATALOG_VERSION = 2
 KINDS = frozenset({"cell", "sheet", "name", "table", "column"})
 
 
@@ -64,6 +64,14 @@ def fts5_available() -> bool:
 @dataclass(frozen=True)
 class CatalogLimits:
     entries_per_workbook: int = 100_000
+    numeric_cells_per_workbook: int = 100_000
+    text_occurrences: int = 8
+    header_scan_cells: int = 50_000
+    header_candidate_rows: int = 512
+    header_columns: int = 256
+    header_bands: int = 64
+    header_row_labels: int = 4
+    header_regions: int = 256
     catalog_bytes: int = 256 * 1024 * 1024
     build_seconds: int = 120
     connections: int = 4
@@ -168,6 +176,7 @@ class Catalog:
         self.protected: set[str] = set()
         self.build_state: dict = {"status": "idle"}
         self.failed_manifest: list[dict] = []
+        self.active_manifest: list[dict] = []
 
     def _current(self) -> dict | None:
         try:
@@ -175,32 +184,61 @@ class Catalog:
             if not re.fullmatch(r"[a-f0-9]{32}", current["generation"]):
                 raise ValueError("Invalid catalog generation")
             return current
-        except FileNotFoundError:
+        except (OSError, ValueError, KeyError, TypeError):
             return None
 
     @contextmanager
     def pin(self):
+        db = None
         with self.readers:
             current = self._current()
             if current is None:
                 raise ValueError("Catalog has not been built")
             key = current["generation"]
             self.pins[key] = self.pins.get(key, 0) + 1
+        try:
             db = sqlite3.connect(
                 "file:"
                 + quote(str((self.directory / f"{key}.sqlite").resolve()), safe="/:")
                 + "?mode=ro",
                 uri=True,
             )
-        try:
             yield db, current
         finally:
-            db.close()
+            if db is not None:
+                db.close()
             with self.readers:
                 self.pins[key] -= 1
                 if not self.pins[key]:
                     del self.pins[key]
                 self._collect()
+
+    def _published(self, current):
+        """Check both artifacts before trusting a pointer's matching signature."""
+        if not current:
+            return False
+        key = current["generation"]
+        try:
+            manifest = json.loads((self.directory / f"{key}.json").read_text("utf-8"))
+            if (
+                manifest["signature"] != current["signature"]
+                or manifest["generation"] != key
+                or manifest["version"] != CATALOG_VERSION
+            ):
+                return False
+            with self.pin() as (db, _):
+                db.execute("SELECT id FROM entries LIMIT 1").fetchone()
+            return True
+        except (OSError, ValueError, KeyError, sqlite3.Error):
+            return False
+
+    def _sweep_staging(self):
+        # Only the single writer calls this, before creating its own staging
+        # file. Reader-side collection must never unlink an active build.
+        for path in self.directory.glob("*.building*"):
+            if re.fullmatch(r"[a-f0-9]{32}\.building(?:-journal)?", path.name):
+                path.unlink(missing_ok=True)
+        (self.directory / "CURRENT.tmp").unlink(missing_ok=True)
 
     def _collect(self):
         current = self._current()
@@ -256,19 +294,27 @@ class Catalog:
 
     def ensure(self, sources: Iterable[Source], *, force: bool = False) -> dict:
         sources = list(sources)
-        with self.writer, self.source_reads, IndexPool(self.limits.connections) as pool:
+        with (
+            self.writer,
+            self.source_reads if self.limits.connections == 1 else nullcontext(),
+            IndexPool(1) as pool,
+        ):
+            started = time.monotonic()
             manifest = self._manifest(sources, pool)
-            signature = hashlib.sha256(
-                _json(
-                    [CATALOG_VERSION, self.fts5, asdict(self.limits), manifest]
-                ).encode()
-            ).hexdigest()
+            self.active_manifest = manifest
+            signature = self._signature(manifest)
             current = self._current()
-            if not force and current and current["signature"] == signature:
+            if (
+                not force
+                and current
+                and current["signature"] == signature
+                and self._published(current)
+            ):
+                self.build_state = {"status": "ready", "phase": "complete"}
                 return current
             self.build_state = {"status": "building", "startedAt": time.time()}
             try:
-                result = self._build(sources, manifest, signature, pool)
+                result = self._build(sources, manifest, signature, pool, started)
                 self.build_state = {
                     "status": "ready",
                     "durationMs": result["buildDurationMs"],
@@ -306,6 +352,21 @@ class Catalog:
                     )
                 raise
 
+    def _signature(self, manifest):
+        return hashlib.sha256(
+            _json([CATALOG_VERSION, self.fts5, asdict(self.limits), manifest]).encode()
+        ).hexdigest()
+
+    def needs_refresh(self, sources):
+        with IndexPool(1) as pool:
+            current = self._current()
+            return not (
+                current
+                and current["signature"]
+                == self._signature(self._manifest(list(sources), pool))
+                and self._published(current)
+            )
+
     def failed_status(self, *, bounded=True) -> dict:
         coverage = self._coverage(self.failed_manifest)
         coverage.update(complete=False, capsHit=self.build_state["capsHit"])
@@ -333,6 +394,7 @@ class Catalog:
             trace.update(complete=False, capsHit=coverage["capsHit"])
         for key, target in (
             ("results", result),
+            ("sheets", coverage),
             ("revisions", trace),
             ("revisions", result),
         ):
@@ -346,6 +408,8 @@ class Catalog:
                 if key == "results":
                     trace["counts"]["returned"] = len(entries)
                     result["pagination"]["hasMore"] = True
+                elif key == "sheets":
+                    coverage["sheetsOmitted"] = coverage.get("sheetsOmitted", 0) + 1
                 else:
                     counts = trace["counts"] if target is trace else coverage
                     counts["revisionsOmitted"] = counts.get("revisionsOmitted", 0) + 1
@@ -354,18 +418,20 @@ class Catalog:
                 entries.pop()
                 if key == "results":
                     trace["counts"]["returned"] = len(entries)
+                elif key == "sheets":
+                    coverage["sheetsOmitted"] += 1
                 else:
                     counts["revisionsOmitted"] += 1
         if len(_json(result).encode()) > budget:
             raise ValueError("response_bytes: metadata exceeds budget; narrow scope")
         return result
 
-    def _build(self, sources, manifest, signature, pool):
-        start = time.monotonic()
+    def _build(self, sources, manifest, signature, pool, start):
         generation = uuid.uuid4().hex
         scratch = self.directory / f"{generation}.building"
         caps: set[str] = set()
         with self.readers:
+            self._sweep_staging()
             self._collect()
             used = sum(
                 p.stat().st_size for p in self.directory.iterdir() if p.is_file()
@@ -382,175 +448,47 @@ class Catalog:
         db.execute("PRAGMA journal_mode=MEMORY")
         db.execute("PRAGMA synchronous=OFF")
         db.execute("PRAGMA max_page_count=" + str(available // 4096))
-        db.execute(
-            "CREATE TABLE entries(id INTEGER PRIMARY KEY,project TEXT,kind TEXT,"
-            "node TEXT,sheet TEXT,address TEXT,text TEXT,number REAL,"
-            "labels TEXT,name TEXT)"
-        )
-        if self.fts5:
-            db.execute(
-                "CREATE VIRTUAL TABLE search USING fts5(text,content='entries',"
-                "content_rowid='id',tokenize='unicode61 remove_diacritics 2')"
-            )
-        db.execute("CREATE INDEX scope ON entries(project,kind,id)")
-        db.execute("CREATE INDEX numeric ON entries(number) WHERE number IS NOT NULL")
         source_map = {s.project_id: s for s in sources}
-        exhausted = False
         try:
+            schema(db, self.fts5)
+            completed_nodes = 0
             for item in manifest:
-                counts: dict[str, Any] = {
-                    "nodesTotal": item["nodes"],
-                    "nodesScanned": 0,
-                    "nodesUnscanned": item["nodes"],
-                    "entries": 0,
-                    "eligibleObserved": 0,
-                    "numericObserved": 0,
-                    "numericLabelled": 0,
-                    "textTruncated": 0,
-                    "capsHit": [],
-                }
-                item["coverage"] = counts
                 if item["rebuildRequired"]:
-                    counts["capsHit"].append("index_rebuild_required")
+                    item["coverage"] = {
+                        "nodesTotal": item["nodes"],
+                        "nodesScanned": 0,
+                        "nodesUnscanned": item["nodes"],
+                        "entries": 0,
+                        "numericObserved": 0,
+                        "numericLabelled": 0,
+                        "textTruncated": 0,
+                        "capsHit": ["index_rebuild_required"],
+                    }
+                    caps.add("index_rebuild_required")
                     continue
-                index = pool.get(source_map[item["projectId"]].path)
-
-                def add(kind, node, sheet, address, text, number=None, labels=()):
-                    nonlocal exhausted
-                    counts["eligibleObserved"] += 1
-                    if counts["entries"] >= self.limits.entries_per_workbook:
-                        counts["capsHit"].append("entries_per_workbook")
-                        return False
-                    if time.monotonic() - start >= self.limits.build_seconds:
-                        counts["capsHit"].append("build_seconds")
-                        exhausted = True
-                        return False
-                    if exhausted:
-                        return False
-                    if len(text) > self.limits.text_chars:
-                        counts["textTruncated"] += 1
-                        counts["capsHit"].append("text_chars")
-                    name = text if kind != "cell" else None
-                    text = normalize(text[: self.limits.text_chars])
-                    try:
-                        db.execute("SAVEPOINT entry")
-                        cursor = db.execute(
-                            "INSERT INTO entries(project,kind,node,sheet,address,"
-                            "text,number,labels,name) VALUES (?,?,?,?,?,?,?,?,?)",
-                            (
-                                item["projectId"],
-                                kind,
-                                node,
-                                sheet,
-                                address,
-                                text,
-                                number,
-                                _json(labels),
-                                name,
-                            ),
-                        )
-                        if self.fts5:
-                            db.execute(
-                                "INSERT INTO search(rowid,text) VALUES (?,?)",
-                                (cursor.lastrowid, text),
-                            )
-                        db.execute("RELEASE entry")
-                    except sqlite3.OperationalError as error:
-                        if "full" not in str(error):
-                            raise
-                        if db.in_transaction:
-                            db.rollback()
-                        counts["capsHit"].append("catalog_bytes")
-                        exhausted = True
-                        return False
-                    counts["entries"] += 1
-                    return True
-
-                for sheet in index.meta.get("sheets", []):
-                    name = sheet if isinstance(sheet, str) else sheet.get("name", "")
-                    if not add("sheet", None, name, None, name):
-                        break
-                for (blob,) in index.db.execute(
-                    "SELECT data FROM table_definitions ORDER BY name_key,sheet"
-                ):
-                    table = json.loads(blob)
-                    r1, c1, r2, c2 = table["bounds"]
-                    if not add(
-                        "table",
-                        None,
-                        table["sheet"],
-                        f"{a1(r1, c1)}:{a1(r2, c2)}",
-                        table["name"],
-                    ):
-                        break
-                    for number, header in enumerate(table.get("headers", [])):
-                        if not add(
-                            "column",
-                            None,
-                            table["sheet"],
-                            a1(r1, c1 + number),
-                            f"{table['name']} {header}",
-                        ):
-                            break
-                for node_id, kind, sheet, row, column, blob in index.db.execute(
-                    "SELECT id,kind,sheet,row,col,data FROM nodes ORDER BY seq"
-                ):
-                    if (
-                        exhausted
-                        or counts["entries"] >= self.limits.entries_per_workbook
-                    ):
-                        if not exhausted:
-                            counts["capsHit"].append("entries_per_workbook")
-                        break
-                    if time.monotonic() - start >= self.limits.build_seconds:
-                        counts["capsHit"].append("build_seconds")
-                        exhausted = True
-                        break
-                    counts["nodesScanned"] += 1
-                    node = _unpack(blob)
-                    if kind == "name":
-                        add(
-                            "name",
-                            node_id,
-                            sheet,
-                            node.get("cell"),
-                            node.get("name", node_id),
-                        )
-                        continue
-                    if (
-                        kind not in {"cell", "input", "array_result"}
-                        or not row
-                        or not column
-                    ):
-                        continue
-                    value = node.get("value")
-                    numeric = type(value) in {int, float} and math.isfinite(value)
-                    if numeric:
-                        counts["numericObserved"] += 1
-                    labels = index.cell_labels(sheet, row, column)
-                    if numeric and labels:
-                        counts["numericLabelled"] += 1
-                    text = " ".join(label["text"] for label in labels)
-                    if isinstance(value, str):
-                        text += " " + value
-                    if not text.strip():
-                        continue
-                    add(
-                        "cell",
-                        node_id,
-                        sheet,
-                        node.get("cell"),
-                        text,
-                        float(value) if numeric and labels else None,
-                        labels,
-                    )
-                counts["capsHit"] = sorted(set(counts["capsHit"]))
-                counts["nodesUnscanned"] = counts["nodesTotal"] - counts["nodesScanned"]
-                if exhausted and not counts["capsHit"]:
-                    counts["capsHit"] = [
-                        "catalog_bytes" if "catalog_bytes" in caps else "build_seconds"
-                    ]
-                caps.update(counts["capsHit"])
+                builder = WorkbookBuilder(
+                    db,
+                    pool.get(source_map[item["projectId"]].path),
+                    item,
+                    self.limits,
+                    self.fts5,
+                    lambda: time.monotonic() - start >= self.limits.build_seconds,
+                    lambda scanned: self.build_state.update(
+                        nodesScanned=completed_nodes + scanned
+                    ),
+                )
+                self.build_state.update(
+                    phase="headers", nodesTotal=sum(r["nodes"] for r in manifest)
+                )
+                builder.structural()
+                self.build_state.update(
+                    phase="cells",
+                    projectId=item["projectId"],
+                    sheetsTotal=len(builder.sheets),
+                )
+                builder.body()
+                completed_nodes += item["coverage"]["nodesScanned"]
+                caps.update(item["coverage"]["capsHit"])
             db.close()
             result: dict[str, Any] = {
                 "version": CATALOG_VERSION,
@@ -568,6 +506,14 @@ class Catalog:
                 self.protected.add(generation)
             manifest_path = self.directory / f"{generation}.json"
             manifest_path.write_text(_json(result), "utf-8")
+            if (
+                sum(p.stat().st_size for p in self.directory.iterdir() if p.is_file())
+                + 256
+                > self.limits.catalog_bytes
+            ):
+                raise ValueError(
+                    "catalog_bytes: generation metadata exceeds remaining budget"
+                )
             scratch.replace(self.directory / f"{generation}.sqlite")
             temporary = self.directory / "CURRENT.tmp"
             temporary.write_text(
@@ -584,7 +530,7 @@ class Catalog:
                 self.protected.discard(generation)
                 self._collect()
 
-    def status(self) -> dict:
+    def status(self, *, bounded=True) -> dict:
         with self.pin() as (_, current):
             result = json.loads(
                 (self.directory / f"{current['generation']}.json").read_text("utf-8")
@@ -598,7 +544,7 @@ class Catalog:
                 ),
                 "untrustedContent": True,
             }
-            return self._bound(result)
+            return self._bound(result) if bounded else result
 
     @staticmethod
     def _coverage(revisions: list[dict]) -> dict:
@@ -621,23 +567,17 @@ class Catalog:
                 "Labelled finite numeric cells only; labels are heuristics"
             ),
             "labelMethods": (
-                "cell_labels: at most eight cells left/above, tables and exact names"
+                "cell_labels: eight cells left/above, tables and exact names; "
+                "catalog-only bounded header_band inference"
             ),
+            "sheets": [
+                {"revision": r["revision"], **sheet}
+                for r in revisions
+                for sheet in r["coverage"].get("sheets", [])
+            ],
         }
 
-    def search(
-        self,
-        sources: Iterable[Source],
-        query: str,
-        *,
-        kinds=(),
-        project=None,
-        revision_id=None,
-        offset=0,
-        limit=50,
-        generation=None,
-    ) -> dict:
-        sources = list(sources)
+    def validate_search(self, query, *, kinds=(), offset=0, limit=50):
         if not isinstance(query, str) or len(query) > self.limits.query_chars:
             raise ValueError("Query exceeds query_chars")
         kinds = sorted(set(kinds))
@@ -654,8 +594,26 @@ class Catalog:
             or limit > self.limits.hits
         ):
             raise ValueError("Pagination exceeds hits budget")
+
+    def search(
+        self,
+        sources: Iterable[Source],
+        query: str,
+        *,
+        kinds=(),
+        project=None,
+        revision_id=None,
+        offset=0,
+        limit=50,
+        generation=None,
+        reconcile=True,
+    ) -> dict:
+        sources = list(sources)
+        self.validate_search(query, kinds=kinds, offset=offset, limit=limit)
+        kinds = sorted(set(kinds))
         try:
-            self.ensure(sources)
+            if reconcile:
+                self.ensure(sources)
         except (OSError, ValueError, sqlite3.Error):
             if self.build_state["status"] != "failed":
                 raise
@@ -725,16 +683,26 @@ class Catalog:
         with (
             self.source_reads,
             self.pin() as (db, current),
-            IndexPool(self.limits.connections) as pool,
+            IndexPool(max(1, self.limits.connections - 1)) as pool,
         ):
             if generation and generation != current["generation"]:
                 raise ValueError("Catalog generation changed; restart pagination")
             manifest = json.loads(
                 (self.directory / f"{current['generation']}.json").read_text("utf-8")
             )
+            authorized = {
+                r["revision"]["id"]
+                for r in self._manifest(sources, pool)
+                if r["revision"]
+            }
+            stale = sum(
+                bool(r["revision"]) and r["revision"]["id"] not in authorized
+                for r in manifest["revisions"]
+            )
             revisions = [
                 r
                 for r in manifest["revisions"]
+                if not r["revision"] or r["revision"]["id"] in authorized
                 if (project is None or r["projectId"] == project)
                 and (
                     revision_id is None
@@ -745,6 +713,9 @@ class Catalog:
                 raise KeyError("Revision not found")
             coverage = self._coverage(revisions)
             caps = set(coverage["capsHit"])
+            if stale:
+                caps.add("stale_generation")
+                coverage["staleRevisionsOmitted"] = stale
             source_map = {s.project_id: s for s in sources}
             rev_map = {r["projectId"]: r for r in revisions}
             clauses, args = [], []
@@ -760,7 +731,7 @@ class Catalog:
                 args.extend(kinds)
             backend = manifest["backend"]
             if numeric is not None:
-                clauses.append("e.number=?")
+                clauses.append("n.number=?")
                 args.append(numeric)
             elif backend == "fts5" and terms:
                 clauses.append(
@@ -805,13 +776,31 @@ class Catalog:
                     caps.add("scan_entries")
             rows = []
             try:
+                select = (
+                    "e.id,e.project,e.kind,n.node,e.sheet,n.address,n.labels,e.name,"
+                    "1,'[]',1"
+                    if numeric is not None
+                    else "e.id,e.project,e.kind,e.node,e.sheet,e.address,"
+                    "e.labels,e.name,"
+                    "e.occurrence_count,e.occurrences,e.count_complete"
+                )
+                join = (
+                    " JOIN numeric_cells n ON n.entry=e.id"
+                    if numeric is not None
+                    else ""
+                )
                 cursor = db.execute(
-                    "SELECT e.id,e.project,e.kind,e.node,e.sheet,e.address,"
-                    "e.labels,e.name FROM "
+                    "SELECT "
+                    + select
+                    + " FROM "
                     + base
-                    + " e WHERE "
+                    + " e"
+                    + join
+                    + " WHERE "
                     + " AND ".join(clauses)
-                    + " ORDER BY e.project,e.kind,e.id LIMIT ?",
+                    + " ORDER BY e.project,e.kind,e.id"
+                    + (",n.id" if join else "")
+                    + " LIMIT ?",
                     (*args, self.limits.hits + 1),
                 )
                 for row in cursor:
@@ -827,13 +816,39 @@ class Catalog:
             matched = min(len(rows), self.limits.hits)
             hits = []
             evidence_bytes = 0
-            for entry_id, pid, kind, nid, sheet, address, labels, name in rows[
-                offset : min(offset + limit, self.limits.hits)
-            ]:
+            for (
+                entry_id,
+                pid,
+                kind,
+                nid,
+                sheet,
+                address,
+                labels,
+                name,
+                occurrence_count,
+                occurrences,
+                count_complete,
+            ) in rows[offset : min(offset + limit, self.limits.hits)]:
                 item = rev_map[pid]
                 node = pool.get(source_map[pid].path)[nid] if nid else None
                 hit = {
                     "kind": kind,
+                    "occurrenceCount": occurrence_count,
+                    "occurrenceCountComplete": bool(count_complete),
+                    "occurrenceScope": (
+                        "indexed cells; unassessed/unscanned cells are excluded"
+                    ),
+                    "occurrences": [
+                        {
+                            "address": ref["address"],
+                            "handle": cell_handle(item["revision"], ref["node"]),
+                        }
+                        for ref in json.loads(occurrences)
+                        if ref.get("node")
+                    ],
+                    "occurrencesOmitted": max(
+                        0, occurrence_count - len(json.loads(occurrences))
+                    ),
                     "revision": item["revision"],
                     "filename": item["filename"],
                     "sheet": sheet,
@@ -852,6 +867,11 @@ class Catalog:
                     "formula": node.get("formula") if node else None,
                     "untrustedContent": True,
                 }
+                if numeric is not None and node:
+                    hit["occurrences"] = [{"address": address, "handle": hit["handle"]}]
+                    hit["occurrencesOmitted"] = 0
+                if kind != "cell":
+                    hit["occurrencesOmitted"] = 0
                 if node and node.get("name"):
                     hit["name"] = node["name"]
                 size = len(_json(hit).encode())
@@ -920,10 +940,11 @@ class Catalog:
         source = next((s for s in sources if s.project_id == pid), None)
         if source is None:
             raise KeyError("Cell not found")
-        with WorkbookIndex(source.path) as index:
-            if index.meta.get("sha256") != sha or nid not in index:
-                raise KeyError("Cell revision not found")
-        graph = graph_neighborhood(source.path, nid, limit=limit, depth=depth)
+        with self.source_reads:
+            with WorkbookIndex(source.path) as index:
+                if index.meta.get("sha256") != sha or nid not in index:
+                    raise KeyError("Cell revision not found")
+            graph = graph_neighborhood(source.path, nid, limit=limit, depth=depth)
         rev = revision(pid, sha)
         for node in graph["nodes"]:
             node["revision"] = rev

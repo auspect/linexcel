@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Build library catalogs across all sheets with structural entries first,
+  fair sheet budgets, distinct text groups with bounded source occurrences,
+  separate numeric records, and per-sheet/per-kind coverage. Add catalog-only
+  bounded header bands with exact source cells for corroborated numeric text
+  axes and contiguous data; keep dossier label inference unchanged.
+
 - Add deterministic owner-scoped library search and status APIs, offline
   `linexcel library` commands, stable revision/cell handles and same-workbook
   neighborhood evidence. Search uses bounded immutable catalog generations,
@@ -48,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   three consecutive blanks to avoid attaching a previous section's heading.
 
 ### Fixed
+
+- Reconcile library catalogs on the bounded background executor outside the
+  global task-store lock; expose progress, failures and explicitly stale search
+  coverage while excluding deleted/replaced revision evidence.
+- Recover abandoned catalog staging files and invalid published artifacts,
+  and release reader pins when opening a generation fails.
 
 - Preserve expanded inspector details and focus when automatic calculation
   completes, while starting a newly selected cell at its decomposition.

@@ -24,6 +24,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -1074,7 +1075,7 @@ class TaskStore:
             return path
 
     def delete(self, owner: str, project_id: str):
-        with self.lock:
+        with self.library.mutation(owner), self.lock:
             path = self.project_path(owner, project_id)
             if self._project_exports.get((owner, project_id)):
                 raise APIError(409, "Un export est en cours ; réessayez après sa fin")
@@ -1117,7 +1118,12 @@ class TaskStore:
                 task["progress"] = {"phase": task["operation"], "fraction": None}
                 _write(root / "task.json", task)
             result = self._worker(task, root, event)
-            with self.lock:
+            mutation = (
+                self.library.mutation(task["owner"])
+                if task["operation"] == "import"
+                else nullcontext()
+            )
+            with mutation, self.lock:
                 if event.is_set():
                     terminal_status = "cancelled"
                 elif result.get("error"):
