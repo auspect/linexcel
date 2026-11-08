@@ -39,6 +39,7 @@ def test_nearest_text_skips_blank_gaps_numbers_and_preserves_accents():
             ("Impôt différé", "A4", "left_text"),
             ("Exercice écoulé", "E1", "above_text"),
         ]
+        assert [(x["distance"], x["blank_gap"]) for x in labels] == [(4, 2), (3, 0)]
         cells[4, 4] = "Impôt courant"
         assert index.labels("Fiscalité", 4, 5)[0]["text"] == "Impôt courant"
     finally:
@@ -52,9 +53,16 @@ def test_merged_anchor_and_scan_boundary_and_missing_label():
         merges=[("S", (2, 1, 3, 3)), ("S", (1, 5, 1, 7))],
     )
     try:
-        assert index.labels("S", 3, 4)[0]["cell"] == "A2"
+        section = index.labels("S", 3, 4)[0]
+        assert (section["cell"], section["method"], section["role"]) == (
+            "A2",
+            "merged_heading",
+            "section",
+        )
         assert any(
-            x["cell"] == "E1" and x["method"] == "above_text"
+            x["cell"] == "E1"
+            and x["method"] == "merged_heading"
+            and x["role"] == "section"
             for x in index.labels("S", 3, 6)
         )
         assert index.labels("S", 50, SCAN_DISTANCE + 2) == []
@@ -97,7 +105,7 @@ def test_table_columns_and_exact_names_with_local_scope():
 def test_huge_sheet_uses_fixed_number_of_source_probes():
     probes = []
     index = CellLabelIndex(
-        lambda *position: probes.append(position),
+        lambda *position: probes.append(position) or 0,
         merges=(("S", (r, 1, r, 3)) for r in range(1, 100001)),
     )
     try:
@@ -143,7 +151,17 @@ def test_batch_and_immutable_index_share_labels_and_dossier_claims(tmp_path):
             lazy = index.node(_id(node["sheet"], node["addr"]))
             assert lazy["cellLabels"] == node["cellLabels"]
             assert _node(lazy)["cell_labels"] == cell_label_evidence(node)
-        assert any(x["text"] == "Résultat consolidé" for x in nodes[1]["cellLabels"])
+        section = next(
+            x for x in nodes[1]["cellLabels"] if x["text"] == "Résultat consolidé"
+        )
+        assert (section["method"], section["role"], section["merged_range"]) == (
+            "merged_heading",
+            "section",
+            "A4:D4",
+        )
+        assert (section["distance"], section["blank_gap"]) == (1, 0)
+        evidence = cell_label_evidence(nodes[1])
+        assert section in evidence["labels"]
     dossier = build_dossier(dict(nodes=nodes, edges=[]), nodes[0]["id"])
     text = "Le libellé du classeur est « Impôt différé »."
     claims = [
@@ -158,6 +176,94 @@ def test_batch_and_immutable_index_share_labels_and_dossier_claims(tmp_path):
     response = text + "\n```json_claims\n" + json.dumps(claims) + "\n```"
     report = validate_documentation(response, dossier)
     assert report["factual_review"]["counts"]["supported"] == 1
+
+
+@pytest.mark.parametrize("direction", ["left", "above"])
+def test_blank_run_stops_at_section_boundary_and_numbers_break_the_run(direction):
+    def point(distance):
+        return (8, 8 - distance) if direction == "left" else (8 - distance, 8)
+
+    cells = {point(4): "Old section"}
+    index = CellLabelIndex(lambda s, r, c: cells.get((r, c)))
+    try:
+        assert index.labels("S", 8, 8) == []  # Three consecutive blanks.
+        cells.clear()
+        cells.update({point(2): 0, point(4): " ", point(5): "Current label"})
+        label = index.labels("S", 8, 8)[0]
+        assert (label["distance"], label["blank_gap"]) == (5, 3)
+        assert label["method"] == ("left_text" if direction == "left" else "above_text")
+        assert label in cell_label_evidence(dict(cellLabels=[label]))["labels"]
+    finally:
+        index.close()
+
+
+def test_section_title_above_a_blank_row_stays_a_section():
+    index = CellLabelIndex(
+        lambda s, r, c: "Résultat consolidé" if (r, c) == (4, 1) else None,
+        merges=[("S", (4, 1, 4, 4))],
+    )
+    try:
+        label = index.labels("S", 6, 4)[0]
+        assert (
+            label["method"],
+            label["role"],
+            label["distance"],
+            label["blank_gap"],
+        ) == ("merged_heading", "section", 2, 1)
+        assert label["merged_range"] == "A4:D4"
+    finally:
+        index.close()
+
+
+@pytest.mark.parametrize("direction", ["left", "above", "above_merged_target"])
+def test_aligned_merged_heading_remains_a_row_or_column_header(direction):
+    if direction == "left":
+        anchor, bounds, target = (4, 1), (4, 1, 4, 2), (4, 4)
+    elif direction == "above":
+        anchor, bounds, target = (2, 2), (2, 2, 3, 2), (5, 2)
+    else:
+        anchor, bounds, target = (4, 3), (4, 3, 4, 4), (6, 3)
+    merges = [("S", bounds)]
+    if direction == "above_merged_target":
+        merges.append(("S", (6, 3, 6, 4)))
+    index = CellLabelIndex(
+        lambda s, r, c: "Aligned" if (r, c) == anchor else None, merges=merges
+    )
+    try:
+        label = index.labels("S", *target)[0]
+        assert (label["method"], label["role"]) == (
+            ("left_text", "row") if direction == "left" else ("above_text", "column")
+        )
+        assert (label["distance"], label["blank_gap"]) == (2, 1)
+    finally:
+        index.close()
+
+
+@pytest.mark.parametrize("occupied", [0, "=1", "#N/A"])
+def test_batch_and_lazy_preserve_occupied_cells_when_counting_blank_runs(
+    tmp_path, occupied
+):
+    book = Workbook()
+    sheet = book.active
+    sheet["A1"] = "Taxe"
+    sheet["A2"] = 0
+    sheet["A5"] = occupied
+    sheet["A7"] = "=A2+2"
+    path = tmp_path / "gaps.xlsx"
+    book.save(path)
+    node = dict(kind="cell", sheet="Sheet", addr="A7")
+    enrich_graph_labels(path.read_bytes(), [node])
+    label = node["cellLabels"][0]
+    assert (label["text"], label["method"], label["distance"], label["blank_gap"]) == (
+        "Taxe",
+        "above_text",
+        6,
+        3,
+    )
+    db = tmp_path / "gaps.sqlite"
+    build_index(path, db)
+    with WorkbookIndex(db) as index:
+        assert index.node("Sheet!A7")["cellLabels"] == node["cellLabels"]
 
 
 def test_bounded_untrusted_text_and_old_graphs():

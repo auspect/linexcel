@@ -17,8 +17,12 @@ from openpyxl.utils.cell import coordinate_to_tuple
 from linexcel.refs import a1, parse_ref
 
 SCAN_DISTANCE = 8
+MAX_BLANK_RUN = 2
 MAX_LABEL_CHARS = 240
 MAX_LABELS = 16
+# Occupied source cells which cannot provide literal text (formulas, errors,
+# numbers) break a blank run without becoming a candidate label.
+NON_TEXT_CELL = object()
 
 
 def _text(value: Any) -> str | None:
@@ -34,7 +38,8 @@ def _text(value: Any) -> str | None:
 class CellLabelIndex:
     """Index metadata once; probe at most eight cells in each direction.
 
-    ``cell`` returns literal source text only, excluding formulas and errors.
+    ``cell`` returns literal source text, None/whitespace for blanks, and
+    non-string values or NON_TEXT_CELL for occupied non-label cells.
     Tables use the declared OOXML schema (bounds, headers, headerRows).
     Names are exact single-cell references; formulas/ranges stay unresolved.
     """
@@ -102,15 +107,22 @@ class CellLabelIndex:
                     return []  # Ambiguous overlapping metadata.
         return hits
 
-    def anchor(self, sheet: str, row: int, column: int) -> tuple[int, int] | None:
+    def merge_bounds(
+        self, sheet: str, row: int, column: int
+    ) -> tuple[int, int, int, int] | None:
         merges = self.boxes(sheet, row, column, "merge")
         if len(merges) > 1:
             return None
-        return tuple(merges[0][1][:2]) if merges else (row, column)
+        return tuple(merges[0][1]) if merges else (row, column, row, column)
+
+    def anchor(self, sheet: str, row: int, column: int) -> tuple[int, int] | None:
+        bounds = self.merge_bounds(sheet, row, column)
+        return bounds[:2] if bounds else None
 
     def labels(self, sheet: str, row: int, column: int) -> list[dict]:
         result: list[dict] = []
-        target_anchor = self.anchor(sheet, row, column)
+        target_bounds = self.merge_bounds(sheet, row, column)
+        target_anchor = target_bounds[:2] if target_bounds else None
 
         def add(text, r, c, method, role, **extra):
             if (text := _text(text)) is not None and len(result) < MAX_LABELS:
@@ -147,12 +159,16 @@ class CellLabelIndex:
             ("left_text", "row", 0, -1),
             ("above_text", "column", -1, 0),
         ):
+            blank_gap = blank_run = 0
             for distance in range(1, SCAN_DISTANCE + 1):
                 r, c = row + dr * distance, column + dc * distance
                 if min(r, c) < 1:
                     break
-                anchor = self.anchor(sheet, r, c)
-                if anchor is None or anchor == target_anchor:
+                bounds = self.merge_bounds(sheet, r, c)
+                if bounds is None or target_bounds is None:
+                    break
+                anchor = bounds[:2]
+                if anchor == target_anchor:
                     continue
                 r, c = anchor
                 # Merges can move the anchor off the scan axis, but cannot
@@ -160,8 +176,29 @@ class CellLabelIndex:
                 if max(abs(row - r), abs(column - c)) > SCAN_DISTANCE:
                     continue
                 value = self.cell(sheet, r, c)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    blank_gap += 1
+                    blank_run += 1
+                    if blank_run > MAX_BLANK_RUN:
+                        break
+                    continue
+                blank_run = 0
                 if _text(value) is not None:
-                    add(value, r, c, method, role)
+                    extra: dict[str, Any] = {
+                        "distance": distance,
+                        "blank_gap": blank_gap,
+                    }
+                    if bounds != (r, c, r, c):
+                        extra["merged_range"] = f"{a1(*bounds[:2])}:{a1(*bounds[2:])}"
+                        # A cross-axis span is a section heading, not a
+                        # column/row header for this target's own extent.
+                        first, last = (1, 3) if dr else (0, 2)
+                        if (
+                            bounds[first] < target_bounds[first]
+                            or bounds[last] > target_bounds[last]
+                        ):
+                            method, role = "merged_heading", "section"
+                    add(value, r, c, method, role, **extra)
                     break
         return result
 
@@ -232,9 +269,12 @@ def enrich_graph_labels(data: bytes, nodes: Iterable[dict]) -> None:
                 if sheet not in parts:
                     continue
                 for element, address in _cells(archive, parts[sheet]):
-                    if address not in wanted or element.find("{*}f") is not None:
+                    if address not in wanted:
                         continue
                     key = (sheet, *coordinate_to_tuple(address))
+                    if element.find("{*}f") is not None:
+                        cells[key] = NON_TEXT_CELL
+                        continue
                     kind = element.get("t")
                     if kind == "s":
                         try:
@@ -253,6 +293,8 @@ def enrich_graph_labels(data: bytes, nodes: Iterable[dict]) -> None:
                             if kind == "inlineStr"
                             else element.findtext("{*}v", "")
                         )
+                    elif element.findtext("{*}v") not in {None, ""}:
+                        cells[key] = NON_TEXT_CELL
             if shared and "xl/sharedStrings.xml" in archive.namelist():
                 for number, element in enumerate(
                     _stream_elements(archive, "xl/sharedStrings.xml", "si")

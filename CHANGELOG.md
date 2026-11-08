@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deterministic, source-attributed cell labels in batch and lazy node evidence:
   nearby literal text, merged headers, declared table columns and exact-cell
   defined names, with bounded searches independent of any model.
+  Merged headings spanning other rows/columns are identified as sections;
+  geometric evidence records distance and blank gaps, and searches stop at
+  three consecutive blanks to avoid attaching a previous section's heading.
 
 ### Fixed
 

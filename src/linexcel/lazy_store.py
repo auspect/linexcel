@@ -216,20 +216,26 @@ class WorkbookIndex(Mapping):
         self.db.close()
 
     def cell_labels(self, sheet, row, column):
-        from linexcel.cell_labels import CellLabelIndex
+        from linexcel.cell_labels import NON_TEXT_CELL, CellLabelIndex
 
         if not hasattr(self, "_label_index"):
 
             def literal(s, r, c):
                 hit = self.db.execute(
                     "SELECT data FROM nodes WHERE sheet=? AND row=? AND col=? "
-                    "AND kind='input' LIMIT 1",
+                    "AND kind IN ('input','cell','array_result') LIMIT 1",
                     (s, r, c),
                 ).fetchone()
                 if hit:
                     node = _unpack(hit[0])
-                    if node.get("sourceDataType") in {"s", "str", "inlineStr"}:
+                    if not node.get("formula") and node.get("sourceDataType") in {
+                        "s",
+                        "str",
+                        "inlineStr",
+                    }:
                         return node.get("value")
+                    if node.get("formula") or node.get("value") is not None:
+                        return NON_TEXT_CELL
                 return None
 
             names = []
