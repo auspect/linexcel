@@ -963,9 +963,17 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
                 ".capture-gallery{max-height:80px}"
             )
         )
-        page.locator("#capture-selected figure").evaluate("el => el.scrollTop = 250")
-        page.locator(".capture-gallery").evaluate("el => el.scrollTop = 30")
-        assert page.locator(".capture-gallery").evaluate("el => el.scrollTop") == 30
+        # Initialize after asynchronous image/layout work has settled. Keep the
+        # preservation assertions below separate from this pre-generation setup.
+        page.wait_for_function(
+            """() => {
+                const figure = document.querySelector('#capture-selected figure');
+                const gallery = document.querySelector('.capture-gallery');
+                figure.scrollTop = 250;
+                gallery.scrollTop = 30;
+                return figure.scrollTop === 250 && gallery.scrollTop === 30;
+            }"""
+        )
         page.locator("#capture-ai [data-ai-start]").click()
         page.locator("#capture-ai .ai-result").wait_for()
         page.wait_for_function(
