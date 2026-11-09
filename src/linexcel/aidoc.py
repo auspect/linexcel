@@ -565,6 +565,14 @@ class OpenAICompatProvider:
             raise ValueError(
                 "http_client cannot be combined with proxy or http_client_kwargs"
             )
+        if http_client is None:
+            if http_options.get("follow_redirects"):
+                raise ValueError(
+                    "AI endpoint redirects are refused; configure the final URL"
+                )
+            http_options["follow_redirects"] = False
+        elif getattr(http_client, "follow_redirects", False):
+            raise ValueError("AI HTTP clients must disable follow_redirects")
         if proxy is not None:
             if "proxy" in http_options:
                 raise ValueError("Specify proxy only once")
@@ -782,6 +790,10 @@ class OpenAICompatProvider:
                 if vision
                 else ""
             )
+            if isinstance(getattr(exc, "status_code", None), int) and (
+                300 <= exc.status_code < 400
+            ):
+                hint = " Endpoint redirect refused; configure the final endpoint URL."
             self._failed_receipt(prompt, self._request_state.rejected_usage)
             raise AiDocError(
                 f"OpenAI-compatible {kind} call failed ({_api_error_name(exc)}).{hint}",

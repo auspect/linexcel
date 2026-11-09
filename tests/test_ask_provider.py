@@ -191,7 +191,12 @@ def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
         provider.close()
 
 
-def test_question_loopback_redirect_cannot_forward_to_remote(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "endpoint", ["http://127.0.0.1/v1", "https://approved.example/v1"]
+)
+def test_question_loopback_redirect_cannot_forward_to_remote(
+    monkeypatch, tmp_path, endpoint
+):
     httpx = sdk_http()
 
     from linexcel.ask_provider import EndpointRedirectRefusedError
@@ -205,7 +210,7 @@ def test_question_loopback_redirect_cannot_forward_to_remote(monkeypatch, tmp_pa
         received.append((str(request.url), request.content))
         return httpx.Response(307, headers={"Location": remote})
 
-    provider = sdk_provider(monkeypatch, tmp_path, respond)
+    provider = sdk_provider(monkeypatch, tmp_path, respond, endpoint=endpoint)
     try:
         assert provider.client._client._client.follow_redirects is False
         with pytest.raises(EndpointRedirectRefusedError):
@@ -215,8 +220,65 @@ def test_question_loopback_redirect_cannot_forward_to_remote(monkeypatch, tmp_pa
                 tokens=128,
                 seconds=2,
             )
-        assert len(received) == 1 and received[0][0].startswith("http://127.0.0.1/")
+        assert len(received) == 1 and received[0][0].startswith(
+            endpoint.removesuffix("v1")
+        )
         assert b"SECRET_CELL_VALUE" in received[0][1]
         assert all(url != remote for url, _ in received)
     finally:
         provider.close()
+
+
+@pytest.mark.parametrize("vision", [False, True])
+@pytest.mark.parametrize(
+    "endpoint", ["http://127.0.0.1/v1", "https://approved.example/v1"]
+)
+def test_shared_provider_refuses_documentation_and_vision_redirects(
+    monkeypatch, endpoint, vision
+):
+    import openai
+
+    from linexcel.aidoc import AiDocError, OpenAICompatProvider
+
+    httpx = sdk_http()
+    received = []
+
+    def respond(request):
+        received.append((str(request.url), request.content))
+        return httpx.Response(
+            307, headers={"Location": "https://unapproved.example/v1/chat/completions"}
+        )
+
+    default = openai.DefaultHttpxClient
+    monkeypatch.setattr(
+        openai,
+        "DefaultHttpxClient",
+        lambda **kw: default(transport=httpx.MockTransport(respond), **kw),
+    )
+    with OpenAICompatProvider(base_url=endpoint, model="offline") as provider:
+        with pytest.raises(AiDocError, match="Endpoint redirect refused"):
+            provider._complete(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "SECRET_CELL_VALUE"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:image/png;base64,SECRET_IMAGE"
+                                },
+                            },
+                        ]
+                        if vision
+                        else "SECRET_CELL_VALUE",
+                    }
+                ],
+                "SECRET_CELL_VALUE",
+                {"max_tokens": 128},
+                vision=vision,
+            )
+    assert len(received) == 1
+    assert received[0][0].startswith(endpoint)
+    assert b"SECRET_CELL_VALUE" in received[0][1]
+    assert (b"SECRET_IMAGE" in received[0][1]) == vision
