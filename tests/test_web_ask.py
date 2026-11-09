@@ -318,7 +318,7 @@ def test_question_uses_approved_snapshot_and_rechecks_before_request(
     assert (approved["endpoint"], approved["model"]) == constructed[0]
 
 
-@pytest.mark.parametrize("mutation", ["pin", "catalog"])
+@pytest.mark.parametrize("mutation", ["pin", "catalog", "unrelated_pin"])
 def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutation):
     import base64
 
@@ -356,6 +356,7 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
 
     target = add("target.xlsx", {"A1": 7})
     reader = add("reader.xlsx", {"B1": "='[1]S'!A1"}, [_link("target.xlsx", "S")])
+    add("unrelated.xlsx", {"C1": "='[1]S'!A1"}, [_link("target.xlsx", "S")])
     app.store.ask.provider_factory = lambda _: FakeProvider(
         [
             [
@@ -387,12 +388,18 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
         catalog.ensure(sources)
         from linexcel.catalog_links import list_links
 
-        link = list_links(catalog, sources)["links"][0]
+        links = list_links(catalog, sources)["links"]
+        link = next(
+            link
+            for link in links
+            if (link["sourceRevision"]["projectId"] == reader["id"])
+            == (mutation != "unrelated_pin")
+        )
         with WorkbookIndex(
             app.store.project_path(owner, target["id"]) / "index.sqlite"
         ) as index:
             sha = index.meta["sha256"]
-        if mutation == "pin":
+        if mutation in {"pin", "unrelated_pin"}:
             set_pin(catalog, sources, link["id"], target["id"], sha)
         else:
             directory = app.store.ask.directory(owner, task["id"]) / "catalog"
@@ -400,6 +407,11 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
                 sources, force=True
             )
     changed = finished(app, task)["run"]
+    if mutation != "pin":
+        assert changed["status"] == "answer_proposed"
+        assert changed["answer"]["lineages"][0]["coverage"]["complete"]
+        return
     assert changed["status"] == "failed" and changed["answer"] is None
     assert changed["trace"]["reason"] == "lineage_state_changed"
     assert not changed["trace"]["steps"][-1]["summary"]["searchCompleted"]
+

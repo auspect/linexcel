@@ -387,13 +387,14 @@ class AskService:
         # expiry. Persisted run logs never extend source authorization.
         try:
             tools = QuestionTools(
-                self.store, owner, trace["scope"], root, time.monotonic() + 1
+                self.store, owner, trace["scope"], root, time.monotonic() + 5
             )
-            with tools.authorize():
+            with tools.authorize() as sources:
                 answer = result.get("answer")
                 if result.get("status") == "answer_proposed" and (
                     not isinstance(answer, dict)
-                    or answer.get("evidenceState") != tools.evidence_state()
+                    or answer.get("evidenceState")
+                    != tools.current_evidence_state(sources, answer)
                 ):
                     return {
                         "status": "failed",
@@ -416,7 +417,7 @@ class AskService:
                             ],
                         },
                     }
-        except (KeyError, ValueError, OSError, sqlite3.Error):
+        except (KeyError, ValueError, OSError, sqlite3.Error, TimeoutError):
             return {
                 "status": "failed",
                 "answer": None,

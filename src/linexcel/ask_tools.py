@@ -438,23 +438,40 @@ class QuestionTools:
                 "relevance": "to_confirm",
                 "rationale": "" if dropped else rationale,
                 "rationaleDropped": dropped,
-                "evidenceState": self.evidence_state(),
+                "evidenceState": self.evidence_state(cells, lineages),
             },
         }
 
-    def evidence_state(self):
-        """Bind terminal evidence to its derived generation and durable owner pins."""
-        from linexcel.catalog_links import pin_signature
+    @staticmethod
+    def evidence_state(cells, lineages):
+        """Stable authoritative content, including only the traversed link state.
 
-        current = self.catalog._current()
-        if current is None or not self.catalog._published(current):
-            raise KeyError("Question catalog no longer available")
-        return {
-            "generation": current["generation"],
-            "pinsSha256": hashlib.sha256(
-                json.dumps(pin_signature(self.catalog), separators=(",", ":")).encode()
-            ).hexdigest(),
+        Lineage is recomputed on read. Generation IDs, timings and unrelated
+        links never participate. Coverage and boundaries do: a stale complete
+        verdict cannot survive a relevant resolution or pin change.
+        """
+        content = {
+            "cells": cells,
+            "lineages": [
+                {k: v for k, v in item.items() if k != "trace"} for item in lineages
+            ],
         }
+        return {
+            "contentSha256": hashlib.sha256(
+                json.dumps(
+                    content, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+        }
+
+    def current_evidence_state(self, sources, answer):
+        self.catalog.ensure(sources)
+        handles = [cell["handle"] for cell in answer["cells"]]
+        self.issued.update(handles)
+        return self.evidence_state(
+            [self.cell(sources, h) for h in handles],
+            [self.lineage(sources, h) for h in handles],
+        )
 
 
 def calculate(op, operands):
