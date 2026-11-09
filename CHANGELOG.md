@@ -19,25 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URLs, preserving its original Target. Cover drive-less, accented, OneDrive,
   SharePoint and UNC targets with generated OOXML tests and no network access.
 - Run fake-provider question browser tests with or without the optional OpenAI SDK.
+- Make the workspace menu usable from the search view: it opened hidden and left
+  the page inert at mobile width.
+- Correct search-view sizing beneath the actual header, keep trace summaries from
+  covering mobile filters, and separate workbook-picker labels from filenames.
+  Improve singular/plural count labels, search-cap explanations, and graph
+  summaries; keep collapsed overview cards unselected and fit mobile minimaps and
+  stacked-edge labels inside their graph.
 
 ### Documentation
 
-- Record the local trial with Excel-authored external-link workbooks, its private
-  absolute paths and the remaining shared-formula, legacy-array and cloud limits.
+- Record the local trials with Excel-authored external-link workbooks, their private
+  absolute paths and the remaining shared-formula and live cloud-link limits.
 
 ### Security
 
 - Update the build-only Vite dependency to 7.3.8, clearing `npm audit`. The fixed
   advisories concern Vite's development server, which is not part of a Python
   installation. The offline React Flow bundle is rebuilt with this version.
-
-### Fixed
-
-- Correct search-view sizing beneath the actual header, keep trace summaries from
-  covering mobile filters, and separate workbook-picker labels from filenames.
-  Improve singular/plural count labels, search-cap explanations, and graph
-  summaries; keep collapsed overview cards unselected and fit mobile minimaps and
-  stacked-edge labels inside their graph.
 
 ## [1.18.0] — 2026-11-09
 
