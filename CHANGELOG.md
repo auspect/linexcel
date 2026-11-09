@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve saved values for overlapping array declarations while reporting their
+  ownership as unresolved, upstream and downstream, instead of choosing an anchor.
 - Follow blank declared-array members through their anchor without expanding huge
   output rectangles; keep capped downstream traversal explicitly incomplete.
 - Match HTTP(S) external links by URL path, retaining original query/fragment

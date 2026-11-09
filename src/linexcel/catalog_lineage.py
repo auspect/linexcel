@@ -427,6 +427,10 @@ class Traversal:
             ]
             if bounds := raw.get("arrayBounds"):
                 extent = Rect(raw["sheet"], *bounds)
+                if len(index.array_anchors(raw["sheet"], bounds, limit=2)) > 1:
+                    self.boundary(
+                        key, "unsupported_reference", reference=extent.to_a1()
+                    )
                 if extent.ncells <= self.limit:
                     for r in range(extent.r1, extent.r2 + 1):
                         for c in range(extent.c1, extent.c2 + 1):
@@ -486,6 +490,13 @@ class Traversal:
                 self.boundary(key, "edge_budget")
                 break
             candidate = self.index(pid).get(neighbor)
+            if (
+                self.direction == "downstream"
+                and candidate
+                and candidate.get("arrayOwnershipUnknown")
+            ):
+                self.boundary(key, "unsupported_reference", reference=neighbor)
+                continue
             if candidate and candidate.get("external"):
                 # Legacy indexes and capped link generations may retain copied
                 # external cache nodes. They are never source-revision edges.
