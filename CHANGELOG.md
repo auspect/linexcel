@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Normalize SDK tool calls, including Ollama's extra metadata, before strict
+  validation and assistant-message echoing. Question clients refuse redirects
+  and use the approved endpoint/model snapshot with a check before each request.
+- Invalidate completed question evidence after owner-pin or private catalog
+  changes, redact argument values and call IDs from retained traces, and make
+  the limits of unverified model rationale explicit.
 - Add an optional question mode beside deterministic library search, with a
   separate tool-capable provider, bounded read-only tools and owner/revision
   authorization inside every execution. Reuse the OpenAI-compatible client and
@@ -16,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Render proposed cells and typed saved-value calculations from server-reread
   evidence and M2 lineage, preserve boundaries and operand provenance, and record
   relevance confirmations/rejections. The model never supplies an answer sentence;
-  its optional rationale is explicitly unverified and subject to number hygiene.
+  its optional rationale is explicitly unverified; digit-containing text is omitted
+  without validating digit-free claims or word-numbers.
 - Distinguish unavailable saved formula caches from blank arithmetic operands
   and name the exact operand cells on synthetic calculation cards.
 - Honor the owner's durable external-link pins inside private question catalogs,

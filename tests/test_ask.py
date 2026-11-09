@@ -156,6 +156,7 @@ def test_server_rereads_cells_and_lineage_without_model_answer(tools):
         ],
         [call("list_workbooks", {}, "same"), call("list_workbooks", {}, "same")],
         [call("list_workbooks", {"owner": "bob"})],
+        [{**call("list_workbooks"), "index": 0}],
         [
             call(
                 "read_range",
@@ -349,11 +350,19 @@ def test_missing_formula_cache_is_not_an_arithmetic_blank():
     "rationale,retained",
     [
         ("The amount is 999999.", False),
-        ("The amount is 7.", True),
+        ("The amount is 7.", False),
+        ("1e6", False),
+        ("100%", False),
+        ("1 234,56 EUR", False),
+        ("١٢٫٥ kg", False),
+        ("七千 units", True),
+        ("seven thousand EUR", True),
         ("<script>inert</script>", True),
     ],
 )
-def test_rationale_number_hygiene_is_not_a_relevance_proof(tools, rationale, retained):
+def test_rationale_with_digits_is_omitted_without_validating_prose(
+    tools, rationale, retained
+):
     engine, source = tools
     result, _ = run(
         engine,
@@ -375,6 +384,36 @@ def test_rationale_number_hygiene_is_not_a_relevance_proof(tools, rationale, ret
     assert result["status"] == "answer_proposed"
     assert bool(result["answer"]["rationale"]) is retained
     assert result["answer"]["rationaleDropped"] is not retained
+
+
+def test_trace_arguments_never_retain_repeated_workbook_content(tools):
+    engine, source = tools
+    secret = "Amount"  # Actual saved value of S!A1 in this workbook fixture.
+    root = engine.store.root / engine.owner / "ask" / "trace-test.json"
+    root.parent.mkdir(parents=True, exist_ok=True)
+    provider = FakeProvider(
+        [
+            read(source),
+            [call("search_catalog", {"query": secret}, secret)],
+            [call("submit_answer", {"status": "not_found"}, "end")],
+        ]
+    )
+    result = QuestionRun(
+        provider,
+        engine,
+        "Find the source",
+        AskLimits(),
+        publish=lambda trace: _write(root, trace),
+    ).run()
+    assert result["status"] == "not_found"
+    exposed = json.loads(provider.messages[1][-1]["content"])["data"]["cells"]
+    assert any(cell["value"] == secret for cell in exposed)
+    retained = root.read_text("utf-8")
+    assert secret not in retained
+    step = next(s for s in result["trace"]["steps"] if s["tool"] == "search_catalog")
+    assert step["arguments"]["redacted"] and step["arguments"]["fields"] == ["query"]
+    assert len(step["arguments"]["sha256"]) == 64
+    assert "callId" not in step and "callIdSha256" in step
 
 
 @pytest.mark.parametrize(

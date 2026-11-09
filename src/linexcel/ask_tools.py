@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import time
@@ -423,11 +425,9 @@ class QuestionTools:
             by_handle = {c["handle"]: c for c in cells}
             computed = calculate(spec["op"], [by_handle[h] for h in spec["operands"]])
         rationale = args.get("rationale", "")
-        # Conservative hygiene only: even a retained rationale is unverified.
-        cited_numbers = set(
-            re.findall(r"\d+(?:[.,]\d+)?", " ".join(str(c["value"]) for c in cells))
-        )
-        dropped = not set(re.findall(r"\d+(?:[.,]\d+)?", rationale)) <= cited_numbers
+        # Presentation policy only. Digit-free prose (including word-numbers)
+        # remains unverified; omission does not validate any claim or unit.
+        dropped = any(character.isdigit() for character in rationale)
         return {
             "status": "answer_proposed",
             "answer": {
@@ -438,7 +438,22 @@ class QuestionTools:
                 "relevance": "to_confirm",
                 "rationale": "" if dropped else rationale,
                 "rationaleDropped": dropped,
+                "evidenceState": self.evidence_state(),
             },
+        }
+
+    def evidence_state(self):
+        """Bind terminal evidence to its derived generation and durable owner pins."""
+        from linexcel.catalog_links import pin_signature
+
+        current = self.catalog._current()
+        if current is None or not self.catalog._published(current):
+            raise KeyError("Question catalog no longer available")
+        return {
+            "generation": current["generation"],
+            "pinsSha256": hashlib.sha256(
+                json.dumps(pin_signature(self.catalog), separators=(",", ":")).encode()
+            ).hexdigest(),
         }
 
 

@@ -30,6 +30,14 @@ class ToolCapabilityError(RuntimeError):
     usage: TokenUsage | None = None
 
 
+class QuestionConfigurationChangedError(RuntimeError):
+    """The live configuration no longer matches this question's approval."""
+
+
+class EndpointRedirectRefusedError(RuntimeError):
+    usage: TokenUsage | None = None
+
+
 class OpenAIToolProvider:
     """Non-streaming structured calls, using M0's client/parameter negotiation."""
 
@@ -45,6 +53,7 @@ class OpenAIToolProvider:
             base_url=config.ai_base_url,
             model=config.ai_model,
             api_key=config.ai_api_key or "not-needed",
+            http_client_kwargs={"follow_redirects": False},
             request_kwargs={
                 **({"extra_body": extra} if extra else {}),
                 **(
@@ -60,6 +69,13 @@ class OpenAIToolProvider:
             return self._request(messages, tools, tokens=tokens, seconds=seconds)
         except Exception as exc:
             cause = exc.__cause__
+            status = getattr(cause, "status_code", None)
+            if isinstance(status, int) and 300 <= status < 400:
+                error = EndpointRedirectRefusedError(
+                    "Question endpoint redirect refused"
+                )
+                error.usage = getattr(exc, "usage", None)
+                raise error from exc
             if getattr(cause, "status_code", None) in {400, 422} and any(
                 word in str(cause).lower()
                 for word in ("tools", "tool_choice", "function calling")
@@ -87,7 +103,19 @@ class OpenAIToolProvider:
             raise ValueError("Expected one tool-calling choice")
         choice = response.choices[0]
         return ToolResponse(
-            [call.model_dump() for call in (choice.message.tool_calls or [])],
+            [
+                {
+                    "id": call.id,
+                    "type": call.type,
+                    "function": {
+                        "name": getattr(getattr(call, "function", None), "name", None),
+                        "arguments": getattr(
+                            getattr(call, "function", None), "arguments", None
+                        ),
+                    },
+                }
+                for call in (choice.message.tool_calls or [])
+            ],
             choice.finish_reason,
             usage,
         )

@@ -32,6 +32,11 @@ Only literal loopback IPs and `localhost` count as local. A changed endpoint,
 expired token or reused token requires fresh preparation. No model request is
 made before required consent. An empty/unimported scope fails clearly; scopes
 above 32 revisions or 64 KiB of revision metadata require narrower selection.
+Question HTTP clients never follow redirects, including from loopback to remote
+destinations. The approved endpoint and model are frozen in task input; the
+provider uses that snapshot and rechecks live configuration before each request.
+A queue-time or later configuration change fails closed without sending to the
+new destination or silently choosing a different model.
 
 `GET /api/library/ask/config` exposes availability and retention. A started run
 is an ordinary `ask` task on the existing executor, capacity queue and cancel
@@ -42,6 +47,10 @@ up to the smaller of 30 seconds and the remaining run time to settle. Queued
 cancellation and interrupted-server recovery also persist terminal traces.
 Question results are intentionally available only from the ask route, where
 source authorization is rechecked; generic task polling exposes task metadata.
+Completed proposals also retain the private catalog generation and a digest of
+the owner pin signature. Result reads recheck both under the owner mutation gate;
+changed pins or a replaced/missing catalog suppress the old answer and complete
+verdict and ask the reader to rerun the question.
 
 The explicit state machine validates tool names, strict argument objects,
 finite numbers, call IDs (unique across the run), response finish reasons and
@@ -82,9 +91,11 @@ The **Réponse proposée** card marks source facts as verified while keeping
 relevance **à confirmer**, shows source revision/coordinates, heuristic label
 provenance, saved values/formulas and source lineage with its boundaries. No
 formula is recalculated. A short rationale is shown only as **le raisonnement du
-modèle, non vérifié**. Numbers absent from cited saved values cause its removal;
-this conservative hygiene rule cannot validate meaning. Rationale text is never
-retained in trace arguments, including `not_found`. Confirm/reject calls to
+modèle, non vérifié**. Any rationale containing a digit is omitted. Digit-free
+text can still contain false claims, including numbers written as words. This
+presentation rule does not validate numbers, units, meaning or relevance and is
+not a defense against laundering claims. Rationale text is never retained in
+trace arguments, including `not_found`. Confirm/reject calls to
 `POST /api/library/ask/RUN_ID/feedback` with `{decision:"confirm"|"reject"}`
 record up to 20 timestamped decisions without blocking initial display.
 
@@ -108,11 +119,14 @@ argument/handle-detail omissions disclosed if necessary. Provider prose and
 reasoning streams are neither answers nor trace content.
 
 Runs persist under the private owner's `ask/RUN_ID/`, separately from source
-indexes. `linexcel.ask.v1` records scope/revisions, tool and arguments, bounded
+indexes. `linexcel.ask.v1` records scope/revisions, tool and argument metadata, bounded
 result counts/handles, duration, tokens, budget use and verdict. Cell values,
-formulas and labels are excluded from default step summaries; input questions
-and authorized factual answers have separate local artifacts. Do not export
-these private artifacts by default. Retention defaults to seven days and 100
+formulas and labels are excluded from default step summaries.
+Tool argument values are never retained: the trace stores their SHA-256 digest,
+byte count and schema field names. Call IDs are digested too, so a model repeating
+a source value as a search term or call ID does not copy it into the log.
+Input questions and authorized factual answers remain separate private artifacts.
+Do not export these private artifacts by default. Retention defaults to seven days and 100
 settled runs per owner; preparation and reads sweep expired/excess runs, excluding
 active tasks. `AskLimits.retention_days` and `retained_runs` configure it. Reading
 a run after source replacement/deletion or attachment expiry suppresses its

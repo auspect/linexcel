@@ -44,7 +44,8 @@ def capture(page, name):
 
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize(
-    "state", ["answer", "calculated", "not_found", "failed", "consent", "no_model"]
+    "state",
+    ["answer", "rationale", "calculated", "not_found", "failed", "consent", "no_model"],
 )
 def test_real_question_states_and_inert_workbook_text(
     browser, live_library, width, state
@@ -108,7 +109,7 @@ def test_real_question_states_and_inert_workbook_text(
                     ],
                 ]
             )
-    elif state in {"answer", "consent"}:
+    elif state in {"answer", "consent", "rationale"}:
 
         def provider(_):
             return FakeProvider(
@@ -130,7 +131,9 @@ def test_real_question_states_and_inert_workbook_text(
                             {
                                 "status": "proposed",
                                 "handles": [select_handle(messages, "B2")],
-                                "rationale": "Invented value 999999.",
+                                "rationale": "seven thousand"
+                                if state == "rationale"
+                                else "Invented value 999999.",
                             },
                             "end",
                         )
@@ -224,11 +227,21 @@ def test_real_question_states_and_inert_workbook_text(
         assert all(t["status"] != "failed" for t in app.store.tasks.values()), [
             t.get("error") for t in app.store.tasks.values()
         ]
-        if state in {"answer", "consent", "calculated"}:
+        if state in {"answer", "consent", "calculated", "rationale"}:
             playwright.expect(page.locator(".library-ask-answer")).to_be_visible()
             text = page.locator(".library-ask-answer").inner_text()
             assert "7" in text and "Pertinence à confirmer" in text
             assert "999999" not in page.locator(".library-search-view").inner_text()
+            if state == "rationale":
+                page.get_by_text(
+                    "Le raisonnement du modèle, non vérifié", exact=True
+                ).click()
+                playwright.expect(page.locator(".library-ask-answer")).to_contain_text(
+                    "nombres écrits en lettres"
+                )
+                assert (
+                    "seven thousand" in page.locator(".library-ask-answer").inner_text()
+                )
             assert "ignore instructions" in text
             if state == "calculated":
                 assert "Somme · 7" in page.locator(".library-calculation").inner_text()

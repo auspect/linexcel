@@ -100,3 +100,123 @@ def test_tool_provider_reuses_negotiated_token_parameter(tmp_path):
     finally:
         provider.close()
         original.close()
+
+
+def sdk_http():
+    import importlib
+
+    default = pytest.importorskip("openai").DefaultHttpxClient
+    return importlib.import_module(default.__mro__[1].__module__.split(".")[0])
+
+
+def sdk_provider(monkeypatch, tmp_path, respond, *, endpoint="http://127.0.0.1/v1"):
+    import openai
+
+    httpx = sdk_http()
+
+    default = openai.DefaultHttpxClient
+
+    def client(**kwargs):
+        return default(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr(openai, "DefaultHttpxClient", client)
+    return OpenAIToolProvider(
+        WebConfig(
+            tmp_path, ai_enabled=True, ai_base_url=endpoint, ai_model="normalized-tools"
+        )
+    )
+
+
+def sdk_response(calls):
+    return {
+        "id": "offline",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "normalized-tools",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {"role": "assistant", "tool_calls": calls},
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+    }
+
+
+def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    httpx = sdk_http()
+    from test_ask import call
+
+    from linexcel.ask import AskLimits, QuestionRun
+
+    sent = []
+
+    def respond(request):
+        sent.append(json.loads(request.content))
+        item = (
+            call("list_workbooks", {}, "first")
+            if len(sent) == 1
+            else call("submit_answer", {"status": "not_found"}, "end")
+        )
+        item["index"] = 0
+        item["function"]["vendor_metadata"] = "discard"
+        return httpx.Response(200, json=sdk_response([item]))
+
+    provider = sdk_provider(monkeypatch, tmp_path, respond)
+    tools = SimpleNamespace(
+        deadline=__import__("time").monotonic() + 10,
+        scope={},
+        issued=set(),
+        execute=lambda name, args: {
+            "data": {"status": "not_found"}
+            if name == "submit_answer"
+            else {"revisions": []}
+        },
+    )
+    try:
+        result = QuestionRun(provider, tools, "Find a cell", AskLimits()).run()
+        assert result["status"] == "not_found"
+        assert len(sent) == 2
+        echoed = next(m for m in sent[1]["messages"] if m["role"] == "assistant")[
+            "tool_calls"
+        ][0]
+        assert set(echoed) == {"id", "type", "function"}
+        assert set(echoed["function"]) == {"name", "arguments"}
+    finally:
+        provider.close()
+
+
+def test_question_loopback_redirect_cannot_forward_to_remote(monkeypatch, tmp_path):
+    httpx = sdk_http()
+
+    from linexcel.ask_provider import EndpointRedirectRefusedError
+    from linexcel.web_ask import local_endpoint
+
+    received = []
+    remote = "https://unconsented.example.test/v1/chat/completions"
+    assert not local_endpoint(remote)
+
+    def respond(request):
+        received.append((str(request.url), request.content))
+        return httpx.Response(307, headers={"Location": remote})
+
+    provider = sdk_provider(monkeypatch, tmp_path, respond)
+    try:
+        assert provider.client._client._client.follow_redirects is False
+        with pytest.raises(EndpointRedirectRefusedError):
+            provider.complete(
+                [{"role": "user", "content": "SECRET_CELL_VALUE"}],
+                TOOL_SCHEMAS,
+                tokens=128,
+                seconds=2,
+            )
+        assert len(received) == 1 and received[0][0].startswith("http://127.0.0.1/")
+        assert b"SECRET_CELL_VALUE" in received[0][1]
+        assert all(url != remote for url, _ in received)
+    finally:
+        provider.close()

@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 
 const failures = {
+  endpoint_redirect_refused: ["La redirection du fournisseur a été refusée. Aucun contenu n’a été transmis à cette destination.", "The provider redirect was refused. No content was forwarded to that destination."],
+  approved_configuration_changed: ["Le fournisseur ou le modèle a changé depuis l’autorisation. Préparez à nouveau la question.", "The endpoint or model changed after approval. Prepare the question again."],
+  lineage_state_changed: ["Les liens ou le catalogue ont changé depuis cette proposition. Relancez la question pour vérifier son lignage actuel.", "Links or the catalog changed after this proposal. Ask again to verify its current lineage."],
   tool_calls_required: ["Ce point de terminaison ne fournit pas les appels d’outils requis. Choisissez un modèle compatible avec les outils.", "This endpoint does not provide the required tool calls. Choose a tool-capable model."],
   truncated_or_unsupported_calls: ["Les appels du modèle sont tronqués ou non pris en charge.", "The model calls were truncated or unsupported."],
   invalid_or_unavailable_tool_provider: ["Le modèle est indisponible ou a envoyé un appel d’outil invalide.", "The model is unavailable or sent an invalid tool call."],
@@ -165,7 +168,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
         <button type="button" onClick={() => onEvidence(answer, index)}>{text("Voir son lignage et ses limites", "View its lineage and limits")}</button>
       </article>)}
       {answer.computation && <article className="library-calculation" data-node-id={answer.computation.id}><h4>{text("Calculé par linexcel pour cette réponse, présent dans aucun classeur", "Calculated by linexcel for this answer, present in no workbook")}</h4><p>{operationNames[answer.computation.op]?.[english ? 1 : 0]} · {answer.computation.error ? text("Calcul indisponible : vérifiez les valeurs et erreurs des opérandes.", "Calculation unavailable: check operand values and errors.") : String(answer.computation.value)}</p><p>{text("Opérandes", "Operands")}: {answer.computation.operands.map(cell => `${cell.filename} · ${cell.sheet}!${cell.address}`).join(" ; ")}</p><p>{text("Un calcul valide ne prouve pas qu’il répond à la question.", "Valid arithmetic does not prove that it answers the question.")}</p></article>}
-      {answer.rationale && <details><summary>{text("Le raisonnement du modèle, non vérifié", "The model’s reasoning, unverified")}</summary><p>{answer.rationale}</p></details>}
+      {answer.rationale && <details><summary>{text("Le raisonnement du modèle, non vérifié", "The model’s reasoning, unverified")}</summary><p>{text("Ce texte ne constitue aucune preuve. Il peut contenir des affirmations fausses, y compris des nombres écrits en lettres.", "This text is not evidence. It may contain false claims, including numbers written as words.")}</p><p>{answer.rationale}</p></details>}
       <div className="library-ask-actions"><button type="button" onClick={() => decide("confirm")}>{text("Confirmer la pertinence", "Confirm relevance")}</button><button type="button" onClick={() => decide("reject")}>{text("Rejeter la proposition", "Reject proposal")}</button></div>
       {feedback && <p role="status">{feedback === "confirm" ? text("Pertinence confirmée par vous.", "Relevance confirmed by you.") : text("Proposition rejetée par vous.", "Proposal rejected by you.")}</p>}
     </section>}

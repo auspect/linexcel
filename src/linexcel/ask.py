@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -10,7 +11,11 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from linexcel.aidoc import estimate_tokens
-from linexcel.ask_provider import ToolCapabilityError
+from linexcel.ask_provider import (
+    EndpointRedirectRefusedError,
+    QuestionConfigurationChangedError,
+    ToolCapabilityError,
+)
 from linexcel.ask_tools import TOOL_SCHEMAS, TOOLS, issued_handles, validate
 
 TRACE_VERSION = "linexcel.ask.v1"
@@ -89,7 +94,16 @@ def summary(result):
 
 
 class QuestionRun:
-    def __init__(self, provider, tools, question, limits, cancel=None, publish=None):
+    def __init__(
+        self,
+        provider,
+        tools,
+        question,
+        limits,
+        cancel=None,
+        publish=None,
+        before_request=None,
+    ):
         self.provider, self.tools, self.question, self.limits = (
             provider,
             tools,
@@ -98,6 +112,7 @@ class QuestionRun:
         )
         self.cancel = cancel if cancel is not None else threading.Event()
         self.publish = publish or (lambda _: None)
+        self.before_request = before_request or (lambda: None)
         self.started = time.monotonic()
         self.deadline = min(tools.deadline, self.started + limits.seconds)
         self.ids: set[str] = set()
@@ -116,10 +131,21 @@ class QuestionRun:
 
     def emit(self, tool, args, result_summary, started, verdict="completed", **extra):
         args = {key: value for key, value in args.items() if key != "rationale"}
+        blob = encoded(args).encode("utf-8")
+        arguments = {
+            "sha256": hashlib.sha256(blob).hexdigest(),
+            "bytes": len(blob),
+            "fields": sorted(args),
+            "redacted": True,
+        }
+        if "callId" in extra:
+            extra["callIdSha256"] = hashlib.sha256(
+                extra.pop("callId").encode()
+            ).hexdigest()
         self.trace["steps"].append(
             {
                 "tool": tool,
-                "arguments": args,
+                "arguments": arguments,
                 "summary": result_summary,
                 "durationMs": round((time.monotonic() - started) * 1000, 3),
                 "budgetUse": dict(self.used),
@@ -201,6 +227,7 @@ class QuestionRun:
                 self.trace["state"] = "requesting"
                 self.publish(self.trace)
                 started = time.monotonic()
+                self.before_request()
                 response = self.provider.complete(
                     messages,
                     TOOL_SCHEMAS,
@@ -337,6 +364,10 @@ class QuestionRun:
                 "failed",
                 reason="tool_calls_required"
                 if isinstance(exc, ToolCapabilityError)
+                else "endpoint_redirect_refused"
+                if isinstance(exc, EndpointRedirectRefusedError)
+                else "approved_configuration_changed"
+                if isinstance(exc, QuestionConfigurationChangedError)
                 else "scope_or_source_changed"
                 if isinstance(exc, KeyError)
                 else "invalid_or_unavailable_tool_provider",

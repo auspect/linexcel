@@ -268,3 +268,138 @@ def test_queued_cancellation_keeps_terminal_trace(app):
     assert result["task"]["status"] == "cancelled"
     assert result["run"]["trace"]["state"] == "terminal"
     assert result["run"]["trace"]["steps"][-1]["tool"] == "finish"
+
+
+@pytest.mark.parametrize("change_at", ["queued", "construction"])
+def test_question_uses_approved_snapshot_and_rechecks_before_request(
+    app, monkeypatch, change_at
+):
+    imported(app)
+    app.store.config = replace(
+        app.store.config,
+        ai_base_url="https://approved.example/v1",
+        ai_model="approved-model",
+    )
+    jobs, constructed = [], []
+    provider = FakeProvider([[call("submit_answer", {"status": "not_found"})]])
+
+    def factory(config):
+        constructed.append((config.ai_base_url, config.ai_model))
+        if change_at == "construction":
+            app.store.config = replace(
+                app.store.config,
+                ai_base_url="https://unapproved.example/v1",
+                ai_model="unapproved-model",
+            )
+        return provider
+
+    app.store.ask.provider_factory = factory
+    monkeypatch.setattr(
+        app.store.executor,
+        "submit",
+        lambda function, *args: jobs.append((function, args)),
+    )
+    task = start(app, prepare(app), remoteConsent=True)
+    if change_at == "queued":
+        app.store.config = replace(
+            app.store.config,
+            ai_base_url="https://unapproved.example/v1",
+            ai_model="unapproved-model",
+        )
+    function, arguments = jobs[0]
+    function(*arguments)
+    result = finished(app, task)["run"]
+    assert constructed == [("https://approved.example/v1", "approved-model")]
+    assert provider.messages == []
+    assert result["status"] == "failed" and result["answer"] is None
+    assert result["trace"]["reason"] == "approved_configuration_changed"
+    root = app.store.ask.directory(hashlib.sha256(b"alice").hexdigest(), task["id"])
+    approved = _read(root / "input.json")
+    assert (approved["endpoint"], approved["model"]) == constructed[0]
+
+
+@pytest.mark.parametrize("mutation", ["pin", "catalog"])
+def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutation):
+    import base64
+
+    from test_external import _link, linked_workbook
+
+    from linexcel.catalog import Catalog
+    from linexcel.catalog_links import set_pin
+    from linexcel.lazy_store import WorkbookIndex
+
+    def add(name, cells, links=()):
+        code, raw, _ = request(
+            app,
+            "POST",
+            "/api/projects",
+            {
+                "workbook": {
+                    "name": name,
+                    "data": base64.b64encode(
+                        linked_workbook(cells, links, "S")
+                    ).decode(),
+                }
+            },
+        )
+        assert code == 200, raw
+        project = json.loads(raw)["project"]
+        owner = hashlib.sha256(b"alice").hexdigest()
+        assert (
+            wait(
+                app.store,
+                app.store.submit(owner, project["id"], "import", None, {})["id"],
+            )["status"]
+            == "succeeded"
+        )
+        return project
+
+    target = add("target.xlsx", {"A1": 7})
+    reader = add("reader.xlsx", {"B1": "='[1]S'!A1"}, [_link("target.xlsx", "S")])
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            [
+                call(
+                    "read_range",
+                    {"project": reader["id"], "sheet": "S", "range": "B1"},
+                    "read",
+                )
+            ],
+            lambda messages: [
+                call(
+                    "submit_answer",
+                    {"status": "proposed", "handles": [select_handle(messages, "B1")]},
+                    "end",
+                )
+            ],
+        ]
+    )
+    task = start(app, prepare(app))
+    result = finished(app, task)["run"]
+    assert (
+        result["status"] == "answer_proposed"
+        and result["answer"]["lineages"][0]["coverage"]["complete"]
+    )
+    owner = hashlib.sha256(b"alice").hexdigest()
+    with app.store.library.mutation(owner), app.store.lock:
+        catalog = app.store.library.catalog(owner)
+        sources = app.store.library.sources(owner)
+        catalog.ensure(sources)
+        from linexcel.catalog_links import list_links
+
+        link = list_links(catalog, sources)["links"][0]
+        with WorkbookIndex(
+            app.store.project_path(owner, target["id"]) / "index.sqlite"
+        ) as index:
+            sha = index.meta["sha256"]
+        if mutation == "pin":
+            set_pin(catalog, sources, link["id"], target["id"], sha)
+        else:
+            directory = app.store.ask.directory(owner, task["id"]) / "catalog"
+            Catalog(directory, pin_directory=app.store.root / owner).ensure(
+                sources, force=True
+            )
+    changed = finished(app, task)["run"]
+    assert changed["status"] == "failed" and changed["answer"] is None
+    assert changed["trace"]["reason"] == "lineage_state_changed"
+    assert not changed["trace"]["steps"][-1]["summary"]["searchCompleted"]

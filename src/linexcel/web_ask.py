@@ -16,7 +16,7 @@ from dataclasses import replace
 from urllib.parse import urlsplit
 
 from linexcel.ask import QuestionRun, encoded
-from linexcel.ask_provider import OpenAIToolProvider
+from linexcel.ask_provider import OpenAIToolProvider, QuestionConfigurationChangedError
 from linexcel.ask_tools import QuestionTools
 from linexcel.catalog import revision
 from linexcel.lazy_store import WorkbookIndex
@@ -288,6 +288,12 @@ class AskService:
 
         root = self.directory(task["owner"], task["id"])
         prepared = _read(root / "input.json")
+        with self.store.lock:
+            approved_config = replace(
+                self.store.config,
+                ai_base_url=prepared["endpoint"],
+                ai_model=prepared["model"],
+            )
         limits = replace(
             self.store.config.ask_limits,
             tokens=min(self.store.config.ask_limits.tokens, task["budget"]["tokens"]),
@@ -311,11 +317,23 @@ class AskService:
                 }
 
         provider = None
+
+        def before_request():
+            with self.store.lock:
+                current = self.store.config
+                if (
+                    not current.ai_enabled
+                    or current.ai_base_url != prepared["endpoint"]
+                    or current.ai_model != prepared["model"]
+                    or (not prepared["local"] and prepared["remoteConsent"] is not True)
+                ):
+                    raise QuestionConfigurationChangedError()
+
         try:
             # Construction is also outside TaskStore.lock. Failures still have
             # an application-owned terminal trace.
             try:
-                provider = self.provider_factory(self.store.config)
+                provider = self.provider_factory(approved_config)
             except Exception:
                 from linexcel.aidoc import TokenUsage
                 from linexcel.ask_provider import ToolResponse
@@ -329,7 +347,13 @@ class AskService:
 
                 provider = Unavailable()
             result = QuestionRun(
-                provider, tools, prepared["question"], limits, event, publish
+                provider,
+                tools,
+                prepared["question"],
+                limits,
+                event,
+                publish,
+                before_request=before_request,
             ).run()
             result["disclosure"] = {
                 k: prepared[k]
@@ -366,7 +390,32 @@ class AskService:
                 self.store, owner, trace["scope"], root, time.monotonic() + 1
             )
             with tools.authorize():
-                pass
+                answer = result.get("answer")
+                if result.get("status") == "answer_proposed" and (
+                    not isinstance(answer, dict)
+                    or answer.get("evidenceState") != tools.evidence_state()
+                ):
+                    return {
+                        "status": "failed",
+                        "answer": None,
+                        "trace": {
+                            **trace,
+                            "state": "terminal",
+                            "verdict": "failed",
+                            "reason": "lineage_state_changed",
+                            "steps": [
+                                {
+                                    "tool": "finish",
+                                    "verdict": "failed",
+                                    "summary": {
+                                        "searchCompleted": False,
+                                        "truncated": True,
+                                        "doesNotProveAbsence": True,
+                                    },
+                                }
+                            ],
+                        },
+                    }
         except (KeyError, ValueError, OSError, sqlite3.Error):
             return {
                 "status": "failed",
