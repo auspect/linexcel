@@ -342,6 +342,7 @@ def test_missing_formula_cache_is_not_an_arithmetic_blank():
         ],
     )
     assert result["value"] is None and result["error"] == "saved_value_unavailable"
+    assert result["blanks"] == 0 and result["missingSavedValues"] == 1
 
 
 @pytest.mark.parametrize(

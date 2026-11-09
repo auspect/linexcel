@@ -10,6 +10,7 @@ import pytest
 from test_ask import FakeProvider, call, select_handle
 from test_web import request, wait, workbook
 
+from linexcel.ask import encoded
 from linexcel.web import APIError, _read, _write, create_app
 
 
@@ -207,3 +208,63 @@ def test_expiry_and_count_retention_are_owner_local(app):
     app.store.ask.cleanup(owner)
     assert not root.exists()
     assert task["id"] not in app.store.tasks
+
+
+def test_actual_foreign_owner_handle_cannot_enter_question_scope(app):
+    imported(app)
+    foreign = imported(app, user="bob")
+    from linexcel.catalog import cell_handle, revision
+    from linexcel.lazy_store import WorkbookIndex
+
+    bob = hashlib.sha256(b"bob").hexdigest()
+    with WorkbookIndex(
+        app.store.project_path(bob, foreign["id"]) / "index.sqlite"
+    ) as index:
+        foreign_handle = cell_handle(
+            revision(foreign["id"], index.meta["sha256"]), "Sheet!A1"
+        )
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [[call("submit_answer", {"status": "proposed", "handles": [foreign_handle]})]]
+    )
+    run = finished(app, start(app, prepare(app)))["run"]
+    assert run["status"] == "not_found" and run["answer"] is None
+    assert foreign["id"] not in encoded(run["trace"]["scope"])
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            [
+                call(
+                    "read_range",
+                    {"project": foreign["id"], "sheet": "Sheet", "range": "A1"},
+                )
+            ]
+        ]
+    )
+    run = finished(app, start(app, prepare(app)))["run"]
+    assert run["status"] == "failed" and run["answer"] is None
+
+
+def test_queued_cancellation_keeps_terminal_trace(app):
+    imported(app)
+    gate = threading.Event()
+    entered = threading.Barrier(3)
+
+    def blocked(_):
+        entered.wait(timeout=5)
+        assert gate.wait(5)
+        return [call("submit_answer", {"status": "not_found"})]
+
+    app.store.ask.provider_factory = lambda _: FakeProvider([blocked])
+    first = start(app, prepare(app))
+    second = start(app, prepare(app))
+    try:
+        entered.wait(timeout=5)
+        third = start(app, prepare(app))
+        request(app, "POST", f"/api/tasks/{third['id']}/cancel", {})
+    finally:
+        gate.set()
+    finished(app, first)
+    finished(app, second)
+    result = finished(app, third)
+    assert result["task"]["status"] == "cancelled"
+    assert result["run"]["trace"]["state"] == "terminal"
+    assert result["run"]["trace"]["steps"][-1]["tool"] == "finish"

@@ -44,7 +44,7 @@ def capture(page, name):
 
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize(
-    "state", ["answer", "not_found", "failed", "consent", "no_model"]
+    "state", ["answer", "calculated", "not_found", "failed", "consent", "no_model"]
 )
 def test_real_question_states_and_inert_workbook_text(
     browser, live_library, width, state
@@ -65,7 +65,50 @@ def test_real_question_states_and_inert_workbook_text(
         if state == "consent"
         else "http://localhost:11434/v1",
     )
-    if state in {"answer", "consent"}:
+    if state == "calculated":
+
+        def provider(_):
+            return FakeProvider(
+                [
+                    [
+                        call(
+                            "read_range",
+                            {
+                                "project": project["id"],
+                                "sheet": "Sheet",
+                                "range": "A1:B3",
+                            },
+                            "read",
+                        )
+                    ],
+                    lambda messages: [
+                        call(
+                            "compute",
+                            {
+                                "op": "sum",
+                                "operands": [
+                                    select_handle(messages, "B2"),
+                                    select_handle(messages, "B3"),
+                                ],
+                            },
+                            "compute",
+                        )
+                    ],
+                    lambda messages: [
+                        call(
+                            "submit_answer",
+                            {
+                                "status": "proposed",
+                                "compute": json.loads(messages[-1]["content"])["data"][
+                                    "computeHandle"
+                                ],
+                            },
+                            "end",
+                        )
+                    ],
+                ]
+            )
+    elif state in {"answer", "consent"}:
 
         def provider(_):
             return FakeProvider(
@@ -180,12 +223,18 @@ def test_real_question_states_and_inert_workbook_text(
         assert all(t["status"] != "failed" for t in app.store.tasks.values()), [
             t.get("error") for t in app.store.tasks.values()
         ]
-        if state in {"answer", "consent"}:
+        if state in {"answer", "consent", "calculated"}:
             playwright.expect(page.locator(".library-ask-answer")).to_be_visible()
             text = page.locator(".library-ask-answer").inner_text()
             assert "7" in text and "Pertinence à confirmer" in text
             assert "999999" not in page.locator(".library-search-view").inner_text()
             assert "ignore instructions" in text
+            if state == "calculated":
+                assert "Somme · 7" in page.locator(".library-calculation").inner_text()
+                assert (
+                    "présent dans aucun classeur"
+                    in page.locator(".library-calculation").inner_text()
+                )
             assert page.locator(".library-ask-answer img").count() == 0
             assert not page.evaluate("window.injected || false")
             page.locator(".library-ask-answer").scroll_into_view_if_needed()

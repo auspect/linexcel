@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence and M2 lineage, preserve boundaries and operand provenance, and record
   relevance confirmations/rejections. The model never supplies an answer sentence;
   its optional rationale is explicitly unverified and subject to number hygiene.
+- Distinguish unavailable saved formula caches from blank arithmetic operands
+  and name the exact operand cells on synthetic calculation cards.
 - Require single-use remote consent per question with endpoint, revision and
   content-category disclosure. Persist bounded owner-local `linexcel.ask.v1`
   traces with configurable retention, progress and cancellation using existing

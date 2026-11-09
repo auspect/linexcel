@@ -492,6 +492,19 @@ def calculate(op, operands):
         "value": value,
         "error": error,
         "operands": operands,
-        "blanks": sum(v is None for v in values),
+        "blanks": sum(
+            c["value"] is None
+            and not c.get("formula")
+            and c.get("valueProvenance") not in {"saved_cache", "unknown"}
+            for c in operands
+        ),
+        "missingSavedValues": sum(
+            c["value"] is None
+            and bool(
+                c.get("formula")
+                or c.get("valueProvenance") in {"saved_cache", "unknown"}
+            )
+            for c in operands
+        ),
         "relevance": "to_confirm",
     }
