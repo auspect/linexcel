@@ -195,6 +195,7 @@ def test_real_question_states_and_inert_workbook_text(
         page.get_by_role("button", name="Chercher une réponse", exact=True).click()
         if state == "consent":
             playwright.expect(page.locator(".library-ask-consent")).to_be_visible()
+            assert page.locator(".library-ask-state .primary:visible").count() == 1
             consent = page.locator(".library-ask-consent").inner_text()
             assert all(
                 text in consent

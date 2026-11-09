@@ -142,7 +142,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
     <form onSubmit={prepare}>
       <label htmlFor="library-ask-question">{text("Votre question", "Your question")}</label>
       <textarea id="library-ask-question" rows={2} maxLength={2000} value={question} disabled={!config?.available} onChange={event => { clear(); setQuestion(event.target.value); }} />
-      <div className="library-ask-actions"><button type="submit" className="primary" disabled={!config?.available || busy || !question.trim()}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
+      <div className="library-ask-actions"><button type="submit" className={disclosure ? "" : "primary"} disabled={!config?.available || busy || !question.trim() || Boolean(disclosure)}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
     </form>
     {busy && <p role="status">{text("Recherche en cours", "Searching")} · {run?.trace?.budgetUse?.steps || 0} {text("étapes effectuées. La trace est disponible ci-dessus.", "steps completed. The trace is accessible above.")}</p>}
     {error && <p role="alert">{error}</p>}
