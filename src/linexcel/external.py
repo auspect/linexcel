@@ -30,7 +30,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
 
 from linexcel.limits import limit_or_default
@@ -303,33 +303,57 @@ def _read_link_part(zf: zipfile.ZipFile, part: str, key: str) -> ExternalBook | 
     root = _xml(zf, part)
     if root is None:
         return None
-    target = ""
-    for rid, (rel_type, resolved) in _rels(zf, part).items():
-        if rel_type.endswith("/externalLinkPath"):
-            target = resolved
-            break
+    book = next((element for element in root if _tag(element) == "externalBook"), None)
+    rid = (
+        next((v for k, v in book.attrib.items() if _tag_of(k) == "id"), None)
+        if book is not None
+        else None
+    )
+    # Excel may emit absolute/relative alternateUrls before the primary path.
+    # Relationship order does not identify which Target the book declares.
+    rels = _rels(zf, part)
+    if rid is None and ("", "") not in rels.values():
+        # Some producers omit r:id while emitting exactly one external path.
+        # Retain that unambiguous form, never guess among alternate paths.
+        paths = [
+            key for key, (kind, _) in rels.items() if kind.endswith("/externalLinkPath")
+        ]
+        if len(paths) == 1:
+            rid = paths[0]
+    rel_type, target = rels.get(rid or "", ("", ""))
+    if not rel_type.endswith("/externalLinkPath"):
+        target = ""
     sheets = [
         element.get("val") or ""
         for element in root.iter()
         if _tag(element) == "sheetName"
     ]
-    entry = ExternalBook(
-        key=key,
-        target=target,
-        name=target.replace("\\", "/").rsplit("/", 1)[-1] or target,
-        sheets=sheets,
-    )
+    relationship_path = ""
     base, _, name = part.rpartition("/")
     relationships = _xml(zf, f"{base}/_rels/{name}.rels")
-    if relationships is not None:
-        entry.relationship_path = next(
+    if relationships is not None and rel_type.endswith("/externalLinkPath"):
+        relationship_path = next(
             (
                 r.get("Target", "")
                 for r in relationships
-                if r.get("Type", "").endswith("/externalLinkPath")
+                if r.get("Id") == rid
+                and r.get("Type", "").endswith("/externalLinkPath")
             ),
             "",
         )
+    name_path = target
+    if relationship_path.lower().startswith(("http://", "https://")):
+        try:
+            name_path = unquote(urlsplit(relationship_path).path)
+        except ValueError:
+            name_path = ""
+    entry = ExternalBook(
+        key=key,
+        target=target,
+        name=name_path.replace("\\", "/").rsplit("/", 1)[-1] or name_path,
+        sheets=sheets,
+        relationship_path=relationship_path,
+    )
     _read_cached_cells(root, sheets, entry.cached)
     return entry
 
@@ -417,9 +441,20 @@ def _rels(zf: zipfile.ZipFile, part: str) -> dict[str, tuple[str, str]]:
     if root is None:
         return {}
     out: dict[str, tuple[str, str]] = {}
+    identities = {}
     for rel in root:
         rid, target = rel.get("Id"), rel.get("Target")
-        if not rid or not target:
+        if not rid:
+            continue
+        identity = (rel.get("Type", ""), target, rel.get("TargetMode"))
+        if rid in identities:
+            if identities[rid] != identity:
+                # A poisoned ID stays unknown even if a later duplicate repeats
+                # the first declaration. Identical type/Target/mode is harmless.
+                out[rid] = ("", "")
+            continue
+        identities[rid] = identity
+        if not target:
             continue
         target = unquote(target)
         if rel.get("TargetMode") != "External":

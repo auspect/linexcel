@@ -82,6 +82,10 @@
   border-radius: 8px;
   overflow: hidden;
 }
+.react-flow__minimap svg {
+  width: 100%;
+  height: 100%;
+}
 .react-flow__controls {
   box-shadow: 0 2px 8px #18333120;
   border-radius: 8px;

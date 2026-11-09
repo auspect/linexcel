@@ -1,7 +1,9 @@
 """Question states on the real WSGI app; fake providers test UI plumbing only."""
 
+import importlib.util
 import json
 import os
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,6 +21,18 @@ playwright = pytest.importorskip("playwright.sync_api")
 CAPTURES = (
     Path(os.environ["M4_CAPTURE_DIR"]) if os.environ.get("M4_CAPTURE_DIR") else None
 )
+
+
+@pytest.fixture(autouse=True)
+def fake_provider_sdk_available(monkeypatch):
+    # The fake provider exercises browser states without the optional SDK,
+    # just as the API tests do. Keep the real no-model configuration test.
+    find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *args: object() if name == "openai" else find_spec(name, *args),
+    )
 
 
 def capture(page, name):
@@ -287,4 +301,54 @@ def test_real_question_states_and_inert_workbook_text(
         )
         assert not errors
     finally:
+        page.close()
+
+
+def test_zero_step_busy_status_uses_french_singular(browser, live_library):
+    app, url, upload = live_library
+    project = upload("zero-steps.xlsx", book_bytes(), scoped=True)
+    app.store.config = replace(app.store.config, ai_enabled=True)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_search(_):
+        started.set()
+        assert release.wait(5)
+        return [call("search_catalog", {"query": "unanswerable needle"}, "search")]
+
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            blocked_search,
+            [call("submit_answer", {"status": "not_found"}, "end")],
+        ]
+    )
+    page = open_search(browser, url, 1440)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        scope_ready(page, url, project["searchScopeId"])
+        page.get_by_role("button", name="Poser une question", exact=True).click()
+        page.locator("#library-ask-question").fill("What is not in this workbook?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        assert started.wait(5)
+        status = page.locator(".library-ask-state [role=status]").filter(
+            has_text="Recherche en cours"
+        )
+        status.wait_for()
+        assert "0 étape effectuée" in status.inner_text()
+        page.locator("#ui-language").select_option("en")
+        english_status = page.locator(".library-ask-state [role=status]").filter(
+            has_text="Searching"
+        )
+        playwright.expect(english_status).to_contain_text("0 steps completed")
+        page.locator("#ui-language").select_option("fr")
+        release.set()
+        page.wait_for_function(
+            """() => document.querySelector(
+              '.library-ask-trace li:last-child strong'
+            )?.textContent.includes('Fin de la recherche')"""
+        )
+        assert not errors
+    finally:
+        release.set()
         page.close()

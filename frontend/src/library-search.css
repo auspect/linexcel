@@ -24,15 +24,38 @@
 body.library-search-active {
   height: 100dvh;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.library-search-active > header.top {
+  flex: 0 0 auto;
 }
 body.library-search-active .workspace {
   display: block;
-  height: calc(100dvh - 48px);
+  flex: 1 1 0;
+  height: auto;
   min-height: 0;
   max-width: none;
 }
 body.library-search-active .workspace > aside {
   display: none !important;
+}
+body.library-search-active .workspace > aside.is-open {
+  display: block !important;
+}
+@media (min-width: 1101px) {
+  body.library-search-active .workspace.menu-open {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+  body.library-search-active .workspace > aside.is-open {
+    min-height: 0;
+    max-height: 100%;
+    overflow: auto;
+  }
+  body.library-search-active .workspace > aside.is-open .workspace-close {
+    display: inline-block;
+  }
 }
 body.library-search-active .workspace > main {
   height: 100%;
@@ -96,9 +119,6 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
   background: var(--surface);
 }
 .library-trace-summary {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -172,6 +192,13 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
 .library-file-picker span:first-child {
   color: var(--accent);
   font-weight: 600;
+}
+.library-file-picker span:first-child::after {
+  content: "·";
+  display: inline-block;
+  margin-inline: 0.35em;
+  color: var(--muted);
+  font-weight: 400;
 }
 .library-recoverable-attachments {
   display: grid;

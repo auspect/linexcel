@@ -405,7 +405,7 @@ def sheet_presentation(
         for size, packed in source.db.execute(
             "SELECT length(data), CASE WHEN length(data)<=? THEN data END "
             "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
-            "AND col BETWEEN ? AND ? AND kind IN ('cell','input')",
+            "AND col BETWEEN ? AND ? AND kind IN ('cell','input','array_result')",
             (MAX_PRESENTATION_BYTES + 65536, sheet, row, last_row, column, last_column),
         ):
             if packed is None:
@@ -413,6 +413,7 @@ def sheet_presentation(
             node, decoded_bytes = _bounded_node(
                 packed, MAX_PRESENTATION_BYTES - node_bytes
             )
+            node = source.resolve_array_ownership(node)
             node_bytes += decoded_bytes
             if (node.get("sourceValueProvenance") or {}).get("workbookSha256") == sha:
                 nodes[(node["row"], node["column"])] = node
@@ -624,6 +625,8 @@ def sheet_presentation(
                 if node.get("sourceFormula")
                 else ("canonical" if node.get("canonicalFormula") else "unavailable"),
                 "valueStatus": provenance.get("status", "blank"),
+                "sourceValueProvenance": provenance or None,
+                "arrayAnchor": node.get("arrayAnchor"),
             }
             record_bytes += len(json.dumps(record, ensure_ascii=False).encode("utf-8"))
             if record_bytes > MAX_PRESENTATION_BYTES:

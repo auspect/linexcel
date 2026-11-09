@@ -38,6 +38,11 @@ const Card = memo(({ data, selected }) => (
   </article>
 ));
 const nodeTypes = { cell: Card, formulaGroup: Card, sheet: Card, cellGroup: Card };
+function countLabel(count, english, french, en) {
+  const forms = english ? en : french;
+  const singular = Number(count) === 1 || (!english && Number(count) === 0);
+  return `${count} ${forms[singular ? 0 : 1]}`;
+}
 function LayeredEdge({
   id,
   sourceX,
@@ -111,7 +116,7 @@ function layered(nodes, edges, portrait, aspect, availableWidth, availableHeight
       edge.targetHandle = 'target-left';
       // The narrow left corridor holds the path; keep its label in the gap
       // above the lower card so the viewport never clips the relationship.
-      edge.data = { ...edge.data, labelPoint: { x: a.x + 116, y: Math.max(a.y, b.y) - 20 }, points: [{ x: a.x, y: a.y + 52 }, { x: lane, y: a.y + 52 }, { x: lane, y: b.y + 52 }, { x: b.x, y: b.y + 52 }] };
+      edge.data = { ...edge.data, labelPoint: { x: lane + 42, y: Math.max(a.y, b.y) - 20 }, points: [{ x: a.x, y: a.y + 52 }, { x: lane, y: a.y + 52 }, { x: lane, y: b.y + 52 }, { x: b.x, y: b.y + 52 }] };
     }
     return nodes.map(node => ({ ...node, position: positions.get(node.id) }));
   }
@@ -250,8 +255,24 @@ export function mount(element, options) {
   function Graph() {
     const hudRef = useRef(null);
     const [model, setModel] = useState(current);
+    const [minimapSize, setMinimapSize] = useState(() =>
+      window.matchMedia("(max-width: 650px)").matches
+        ? { width: 100, height: 74 }
+        : { width: 200, height: 150 },
+    );
     update = setModel;
     const en = model.language === "en";
+    useEffect(() => {
+      const mobile = window.matchMedia("(max-width: 650px)");
+      const updateSize = () =>
+        setMinimapSize(
+          mobile.matches
+            ? { width: 100, height: 74 }
+            : { width: 200, height: 150 },
+        );
+      mobile.addEventListener("change", updateSize);
+      return () => mobile.removeEventListener("change", updateSize);
+    }, []);
     useEffect(() => {
       let previousSize=`${element.clientWidth}:${element.clientHeight}`;
       const stageObserver = new ResizeObserver(() => {
@@ -332,6 +353,7 @@ export function mount(element, options) {
         }
       >
         <MiniMap
+          style={{ width: minimapSize.width, height: minimapSize.height }}
           pannable
           zoomable
           nodeColor={(node) =>
@@ -354,7 +376,7 @@ export function mount(element, options) {
         <Panel position="bottom-left" className="graph-status-panel">
           <span className="flow-mobile-status" role="status">{options.relationshipStatus
             ? options.relationshipStatus(model)
-            : `${model.nodes.length} ${en?'cards':'cartes'} · ${model.edges.filter(e => !e.hidden).length} ${en?'links':'liens'}`}</span>
+            : `${countLabel(model.nodes.length, en, ["carte", "cartes"], ["card", "cards"])} · ${countLabel(model.edges.filter(e => !e.hidden).length, en, ["liaison", "liaisons"], ["link", "links"])}`}</span>
           <Dock elements={options.status} />
         </Panel>
       </ReactFlow>
@@ -370,7 +392,7 @@ export function mount(element, options) {
         id: n.id,
         type: n.type || "cell",
         position: n.position || { x: 0, y: 0 },
-        selected: n.nodeId === selected || n.id === selected,
+        selected: selected != null && (n.nodeId === selected || n.id === selected),
         data: {
           ...n,
           original: n.original || n,
@@ -534,12 +556,38 @@ const SEARCH_STATUS_LABELS = {
 const SEARCH_CAP_LABELS = {
   hits: ["limite de résultats atteinte", "result limit reached"],
   header_candidate_rows: ["analyse des en-têtes limitée", "header scan limited"],
+  header_scan_cells: ["analyse des cellules d’en-tête limitée", "header-cell scan limited"],
+  header_columns: ["analyse des colonnes d’en-tête limitée", "header-column scan limited"],
+  header_row_labels: ["analyse des étiquettes de ligne limitée", "header row-label scan limited"],
+  header_bands: ["détection des zones d’en-tête limitée", "header-band detection limited"],
+  header_regions: ["zones d’en-tête incomplètes", "header regions incomplete"],
+  header_merge_metadata_unavailable: ["métadonnées des cellules fusionnées indisponibles", "merged-cell metadata unavailable"],
   catalog_refresh_pending: ["index en cours de mise à jour", "index is updating"],
+  catalog_build_failed: ["la construction du catalogue a échoué", "catalog build failed"],
+  catalog_source_snapshot_failed: ["capture des classeurs source échouée", "source-workbook snapshot failed"],
   entries_per_workbook: ["limite d’entrées du classeur", "workbook entry limit"],
+  entries_per_sheet: ["limite d’entrées de la feuille", "worksheet entry limit"],
+  scan_entries: ["limite de balayage des entrées", "catalog scan limit"],
+  numeric_cells_per_workbook: ["limite de cellules numériques du classeur", "workbook numeric-cell limit"],
+  text_chars: ["texte indexé tronqué", "indexed text truncated"],
+  build_seconds: ["durée de construction du catalogue atteinte", "catalog build time limit reached"],
+  catalog_bytes: ["capacité de stockage du catalogue atteinte", "catalog storage limit reached"],
+  stale_generation: ["catalogue modifié pendant la recherche", "catalog changed during search"],
+  index_rebuild_required: ["réindexation requise", "index rebuild required"],
+  page_limit: ["limite de page d’occurrences atteinte", "occurrence page limit reached"],
   query_ms: ["durée maximale de recherche atteinte", "search time limit reached"],
   response_bytes: ["taille maximale de réponse atteinte", "response size limit reached"],
   lineage_nodes: ["limite de cellules atteinte", "cell limit reached"],
   lineage_depth: ["profondeur maximale atteinte", "maximum depth reached"],
+  depth: ["limite de profondeur atteinte", "depth limit reached"],
+  node_budget: ["limite de nœuds de lignage atteinte", "lineage node limit reached"],
+  edge_budget: ["limite de relations de lignage atteinte", "lineage relationship limit reached"],
+  workbook_budget: ["limite de classeurs de lignage atteinte", "lineage workbook limit reached"],
+  time_budget: ["durée maximale du lignage atteinte", "lineage time limit reached"],
+  link_budget: ["limite de liens atteinte", "link limit reached"],
+  link_build_time: ["durée de construction des liens atteinte", "link build time limit reached"],
+  source_index_incomplete: ["index source incomplet", "source index incomplete"],
+  external_facts_rebuild_required: ["reconstruction des liens externes requise", "external-link rebuild required"],
 };
 const SEARCH_BUDGET_LABELS = {
   limit: ["cellules", "cells"],
@@ -930,10 +978,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       relationshipStatus: (model) => {
         const drawn = model.edges.filter(edge => !edge.hidden);
         const represented = drawn.reduce((count, edge) => count + (edge.weight || 1), 0);
-        return text(
-          `${drawn.length} liaisons affichées · ${represented} dépendances · 0 lien synthétique`,
-          `${drawn.length} links drawn · ${represented} dependencies · 0 synthetic links`,
-        );
+        return `${countLabel(drawn.length, english, ["liaison affichée", "liaisons affichées"], ["link drawn", "links drawn"])} · ${countLabel(represented, english, ["dépendance", "dépendances"], ["dependency", "dependencies"])} · ${countLabel(0, english, ["lien synthétique", "liens synthétiques"], ["synthetic link", "synthetic links"])}`;
       },
     });
     flow.current = instance;
@@ -944,7 +989,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       if (node.collapsed) return {
         ...node, type: "sheet", kindLabel: `${text("Révision", "Revision")} ${revision.projectId?.slice(0, 8) || ""} · ${revision.sha256?.slice(0, 8) || ""}`,
         title: node.filename || revision.projectId,
-        subtitle: `${node.members.length} ${node.members.length === 1 ? text("cellule", "cell") : text("cellules", "cells")} · ${node.internalEdges} ${text("relations internes", "internal relationships")}`,
+        subtitle: `${countLabel(node.members.length, english, ["cellule", "cellules"], ["cell", "cells"])} · ${countLabel(node.internalEdges, english, ["relation interne", "relations internes"], ["internal relationship", "internal relationships"])}`,
         valueLabel: stops || text("Développer pour suivre les cellules", "Expand to follow cells"),
         count: node.members.length, tone: stopped ? "boundary" : "", original: node,
       };
@@ -1357,7 +1402,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             {lineageBoundaries.some((boundary) => boundary.stalePin) && ` ${text("Une épingle périmée empêche de confirmer la cible.", "A stale pin prevents confirmation of the target.")}`}
           </p>}
           {lineage && <div className="library-diagnostics">
-            {(lineage.edges || []).filter((edge) => edge.resolutionStatus === "resolved_by_name").length > 0 && <p>{text("Résolution par nom : ", "Matched by name: ")}{(lineage.edges || []).filter((edge) => edge.resolutionStatus === "resolved_by_name").length} {text("relations ; la révision peut différer de celle visée lors de l’enregistrement du lien.", "links; the revision may differ from the one the link was saved against.")}</p>}
+            {(lineage.edges || []).filter((edge) => edge.resolutionStatus === "resolved_by_name").length > 0 && <p>{text("Résolution par nom : ", "Matched by name: ")}{countLabel((lineage.edges || []).filter((edge) => edge.resolutionStatus === "resolved_by_name").length, english, ["relation", "relations"], ["link", "links"])}{text(" ; la révision peut différer de celle visée lors de l’enregistrement du lien.", "; the revision may differ from the one the link was saved against.")}</p>}
             {(lineage.edges || []).flatMap((edge, index) => (edge.cacheDiagnostic || []).map((diagnostic, diagnosticIndex) => <p key={`cache:${index}:${diagnosticIndex}`}>{text("Valeur mise en cache comparée à la cible actuelle", "Saved cache compared with current target")} · {diagnostic.address}: {searchText(diagnostic.cached, english)} → {searchText(diagnostic.current, english)} · {diagnostic.agreement === false ? text("différent", "different") : diagnostic.agreement === true ? text("identique", "same") : text("comparaison inconnue", "comparison unknown")}</p>))}
           </div>}
           {lineage ? <div className="library-graph-layout">
@@ -1369,7 +1414,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
                 {!!group.boundaries.length && <span className="library-boundary-summary">{boundaryText(group.boundaries)}</span>}
               </div>)}
             </nav>
-            <p className="help library-graph-counts" role="status">{graphView.edges.length} {text("liaisons affichées représentant", "links drawn representing")} {graphView.edges.reduce((sum, edge) => sum + (edge.weight || 1), 0)} {text("dépendances · 0 lien synthétique.", "dependencies · 0 synthetic links.")} {graphView.internalEdgesGrouped} {text("relations internes regroupées. Développez un classeur pour suivre ses cellules. Les arrêts sont indiqués sur les cartes et dans les preuves.", "internal relationships grouped. Expand a workbook to follow its cells. Stops appear on cards and in evidence.")}</p>
+            <p className="help library-graph-counts" role="status">{countLabel(graphView.edges.length, english, ["liaison affichée représentant", "liaisons affichées représentant"], ["link drawn representing", "links drawn representing"])} {countLabel(graphView.edges.reduce((sum, edge) => sum + (edge.weight || 1), 0), english, ["dépendance", "dépendances"], ["dependency", "dependencies"])} · {countLabel(0, english, ["lien synthétique", "liens synthétiques"], ["synthetic link", "synthetic links"])}. {countLabel(graphView.internalEdgesGrouped, english, ["relation interne regroupée", "relations internes regroupées"], ["internal relationship grouped", "internal relationships grouped"])}{text(". Développez un classeur pour suivre ses cellules. Les arrêts sont indiqués sur les cartes et dans les preuves.", ". Expand a workbook to follow its cells. Stops appear on cards and in evidence.")}</p>
             <div className="library-graph-canvas" ref={canvas} role="application" aria-label={text("Graphe de lignage. Une alternative en liste suit.", "Lineage graph. A list alternative follows.")} />
             <details className="library-accessible-graph" open>
               <summary>{text("Preuves détaillées par classeur et révision", "Evidence grouped by workbook revision")}</summary>
@@ -1436,7 +1481,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           const operation = event.type === "search" ? text("Recherche", "Search") : event.type === "lineage" ? text("Lignage", "Lineage") : event.type === "occurrences" ? text("Occurrences", "Occurrences") : text("Import", "Import");
           const eventStatus = { pending: text("en cours", "pending"), completed: text("terminé", "completed"), failed: text("échec", "failed"), superseded: text("remplacé", "superseded") }[event.status];
           const directionName = event.detail === "upstream" ? text("En amont", "Upstream") : event.detail === "downstream" ? text("En aval", "Downstream") : event.detail;
-          const revisionsInTrace = (trace.revisions || []).map((item) => revisionLabel({
+          const revisionsInTrace = (trace.revisions || []).filter(Boolean).map((item) => revisionLabel({
             filename: revisions.find((revision) => revision.projectId === item.projectId)?.filename,
             projectId: item.projectId,
             sha256: item.sha256,

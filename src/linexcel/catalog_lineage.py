@@ -9,6 +9,7 @@ from collections import deque
 
 from linexcel.catalog import IndexPool, _json, cell_handle, parse_handle, revision
 from linexcel.limits import validate_limits
+from linexcel.link_facts import FACTS_VERSION
 from linexcel.refs import Rect, a1, parse_ref
 from linexcel.values import _values_differ
 
@@ -123,7 +124,7 @@ class Traversal:
             self.boundary(parent, "workbook_budget")
             return None
         index = self.index(pid)
-        raw = synthetic or index.get(nid)
+        raw = synthetic or index.get(nid) or index.implicit_array_member(nid)
         if raw is None:
             self.boundary(parent, "source_unavailable", revision=rev, address=nid)
             return None
@@ -279,7 +280,7 @@ class Traversal:
                 ):
                     self.boundary(key, "source_unavailable", linkId=fact["id"])
                     return
-                raw = {
+                raw = index.implicit_array_member(nid) or {
                     "id": nid,
                     "kind": "input",
                     "sheet": sheet,
@@ -385,6 +386,9 @@ class Traversal:
                 )
                 if row[0] not in placeholders
             ]
+            if kind == "array_result" and raw.get("arrayAnchor"):
+                if raw["arrayAnchor"] not in {n for n, _ in neighbors}:
+                    neighbors.append((raw["arrayAnchor"], "formula"))
             if kind == "range" and raw.get("bounds"):
                 neighbors += [
                     (row[0], "range")
@@ -403,6 +407,14 @@ class Traversal:
                         ),
                     )
                 ]
+                known = {n for n, _ in neighbors}
+                neighbors += [
+                    (anchor, "formula")
+                    for anchor in index.array_anchors(
+                        raw["sheet"], raw["bounds"], limit=self.edge_limit + 1
+                    )
+                    if anchor not in known
+                ]
             if kind == "input" and not neighbors and not facts:
                 self.boundary(key, "input_constant")
         else:
@@ -413,10 +425,40 @@ class Traversal:
                     (nid, self.edge_limit + 1),
                 )
             ]
-            if (
-                raw.get("row") is not None
-                and index.meta.get("externalFactsVersion") == 1
-            ):
+            if bounds := raw.get("arrayBounds"):
+                extent = Rect(raw["sheet"], *bounds)
+                if len(index.array_anchors(raw["sheet"], bounds, limit=2)) > 1:
+                    self.boundary(
+                        key, "unsupported_reference", reference=extent.to_a1()
+                    )
+                if extent.ncells <= self.limit:
+                    for r in range(extent.r1, extent.r2 + 1):
+                        for c in range(extent.c1, extent.c2 + 1):
+                            member = Rect(raw["sheet"], r, c, r, c).to_a1()
+                            if member not in index:
+                                candidate = index.implicit_array_member(member)
+                                if candidate and candidate.get("arrayAnchor") == nid:
+                                    neighbors.append((member, "formula"))
+                                elif candidate:
+                                    self.boundary(
+                                        key, "unsupported_reference", reference=member
+                                    )
+                else:
+                    stored = index.db.execute(
+                        "SELECT count(*) FROM nodes WHERE sheet=? "
+                        "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
+                        "AND kind IN ('cell','input','array_result')",
+                        (extent.sheet, extent.r1, extent.r2, extent.c1, extent.c2),
+                    ).fetchone()[0]
+                    if stored < extent.ncells:
+                        # Never enumerate an enormous implicit output rectangle
+                        # or certify its unvisited downstream members as complete.
+                        self.boundary(
+                            key, "depth" if level >= self.depth else "node_budget"
+                        )
+            if raw.get("row") is not None and index.meta.get(
+                "externalFactsVersion"
+            ) in {1, FACTS_VERSION}:
                 neighbors += [
                     (row[0], "range")
                     for row in index.db.execute(
@@ -431,7 +473,12 @@ class Traversal:
                         ),
                     )
                 ]
-            self.reverse_external(key, pid, raw, level)
+            # Membership propagates the selected cell's influence only to this
+            # range's exact local consumers. Its other members have not been
+            # reached. Cell lookups already include every overlapping external
+            # operand and uncertainty; only a range root selects its whole span.
+            if kind != "range" or level == 0:
+                self.reverse_external(key, pid, raw, level)
         for neighbor, edge_kind in neighbors:
             if time.monotonic() >= self.deadline:
                 self.boundary(key, "time_budget")
@@ -443,6 +490,13 @@ class Traversal:
                 self.boundary(key, "edge_budget")
                 break
             candidate = self.index(pid).get(neighbor)
+            if (
+                self.direction == "downstream"
+                and candidate
+                and candidate.get("arrayOwnershipUnknown")
+            ):
+                self.boundary(key, "unsupported_reference", reference=neighbor)
+                continue
             if candidate and candidate.get("external"):
                 # Legacy indexes and capped link generations may retain copied
                 # external cache nodes. They are never source-revision edges.
@@ -670,7 +724,7 @@ def directed_lineage(
                 for s in index.meta.get("sheetDetails", [])
                 if s["name"] == rect.sheet
             ):
-                root = {
+                root = index.implicit_array_member(nid) or {
                     "id": nid,
                     "kind": "input",
                     "sheet": rect.sheet,

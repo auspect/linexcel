@@ -11,7 +11,7 @@ from dataclasses import replace
 from xml.etree import ElementTree as ET
 
 import pytest
-from test_external import _link, linked_workbook
+from test_external import EXCEL_TARGETS, _link, alternate_urls_workbook, linked_workbook
 
 from linexcel.catalog import Catalog, CatalogLimits, Source, cell_handle, revision
 from linexcel.catalog_links import list_links, set_pin
@@ -19,11 +19,11 @@ from linexcel.lazy_store import WorkbookIndex, build_index
 
 
 def fixture_source(
-    tmp_path, number, filename, cells, *, links=(), sheet="S", caches=None
+    tmp_path, number, filename, cells, *, links=(), sheet="S", caches=None, content=None
 ):
     directory = tmp_path / str(number)
     directory.mkdir(exist_ok=True)
-    content = linked_workbook(cells, links, sheet)
+    content = content if content is not None else linked_workbook(cells, links, sheet)
     if caches:
         output = io.BytesIO()
         with (
@@ -109,6 +109,42 @@ def chain(tmp_path):
         caches={"C1": 60},
     )
     return [inputs, regional, consolidated]
+
+
+@pytest.mark.parametrize("target_path,filename", EXCEL_TARGETS)
+def test_alternate_url_targets_resolve_by_basename_without_fetching(
+    tmp_path, monkeypatch, target_path, filename
+):
+    import socket
+
+    def no_network(*args, **kwargs):
+        pytest.fail("External relationship targets must never be fetched")
+
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    target = fixture_source(tmp_path, 1, filename, {"B2": 10})
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {},
+        content=alternate_urls_workbook(target_path, filename),
+    )
+    sources = [target, reader]
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(sources, handle(reader), direction="upstream", depth=10)
+    b2, a1 = node_signature(target, "B2"), node_signature(reader, "A1")
+    assert graph_signature(result) == {
+        "nodes": sorted([b2, a1]),
+        "edges": [(b2, a1, "external_link")],
+        "boundaries": [(b2, "input_constant")],
+    }
+    assert result["coverage"]["complete"]
+    assert result["edges"][0]["relationshipPath"] == target_path
+    fact = list_links(catalog, sources)["links"][0]
+    assert fact["status"] == "resolved_by_name"
+    assert fact["filename"] == filename
+    assert fact["relationshipPath"] == target_path
 
 
 def test_exact_three_workbook_graph_and_value(tmp_path):
@@ -631,6 +667,198 @@ def test_range_and_blank_handles_can_be_traversed_again(tmp_path):
     blank = next(n for n in graph["nodes"] if n["valueProvenance"] == "saved_blank")
     result = catalog.lineage(sources, blank["handle"], direction="downstream", depth=10)
     assert len(result["edges"]) == 1
+
+
+@pytest.mark.parametrize("blank", [False, True])
+@pytest.mark.parametrize(
+    "root,readers",
+    [
+        ("B2", ["A1", "A3", "A4"]),
+        ("B3", ["A2", "A3"]),
+        ("B2:B3", ["A1", "A2", "A3", "A4"]),
+    ],
+)
+def test_downstream_member_does_not_inherit_other_range_readers(
+    tmp_path, blank, root, readers
+):
+    cells = {"B2": 10, "B4": "=SUM(B2:B3)", "C4": "=B4*2"}
+    if not blank:
+        cells["B3"] = 20
+    target = fixture_source(tmp_path, 1, "budget.xlsx", cells)
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {
+            "A1": "='[1]S'!$B$2",
+            "A2": "='[1]S'!$B$3",
+            "A3": "=SUM('[1]S'!B2:B3)",
+            "A4": "=SUM('[1]S'!B1:B2)",
+            "A5": "='[1]S'!C4",
+            "D5": "=A5+1",
+        },
+        links=[_link("budget.xlsx", "S")],
+    )
+    sources = [target, reader]
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(
+        sources, handle(target, root), direction="downstream", depth=10
+    )
+    selected, span, b4, c4 = (
+        node_signature(target, address) for address in (root, "B2:B3", "B4", "C4")
+    )
+    a5, d5 = (node_signature(reader, address) for address in ("A5", "D5"))
+    direct = [node_signature(reader, address) for address in readers]
+    expected_edges = [
+        (span, b4, "formula"),
+        (b4, c4, "formula"),
+        (c4, a5, "external_link"),
+        (a5, d5, "formula"),
+        *((selected, node, "external_link") for node in direct),
+    ]
+    if root != "B2:B3":
+        expected_edges.append((selected, span, "range"))
+    assert graph_signature(result) == {
+        "nodes": sorted({selected, span, b4, c4, a5, d5, *direct}),
+        "edges": sorted(expected_edges),
+        "boundaries": [],
+    }
+    assert result["coverage"]["complete"] and result["coverage"]["exhaustive"]
+    if blank and root == "B3":
+        assert result["nodes"][0]["valueProvenance"] == "saved_blank"
+
+
+@pytest.mark.parametrize("identity", ["unresolved", "ambiguous"])
+@pytest.mark.parametrize(
+    "root,readers",
+    [
+        ("B2", ["A1", "A3", "A4"]),
+        ("B3", ["A2", "A3"]),
+        ("B2:B3", ["A1", "A2", "A3", "A4"]),
+    ],
+)
+def test_downstream_range_member_keeps_exact_uncertain_reader_scope(
+    tmp_path, identity, root, readers
+):
+    target = fixture_source(
+        tmp_path,
+        1,
+        "budget.xlsx",
+        {"B2": 10, "B3": 20, "B4": "=SUM(B2:B3)"},
+    )
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {
+            "A1": "='[1]S'!B2",
+            "A2": "='[1]S'!B3",
+            "A3": "=SUM('[1]S'!B2:B3)",
+            "A4": "=SUM('[1]S'!B1:B2)",
+        },
+        links=[
+            _link("oldname.xlsx" if identity == "unresolved" else "budget.xlsx", "S")
+        ],
+    )
+    sources = [target, reader]
+    if identity == "ambiguous":
+        sources.append(fixture_source(tmp_path, 3, "budget.xlsx", {"B2": 99}))
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(
+        sources, handle(target, root), direction="downstream", depth=10
+    )
+    facts = list_links(catalog, sources)["links"]
+    expected_ids = sorted(
+        fact["id"] for fact in facts if fact["sourceNode"].rsplit("!", 1)[-1] in readers
+    )
+    selected, span, b4 = (
+        node_signature(target, address) for address in (root, "B2:B3", "B4")
+    )
+    expected_edges = [(span, b4, "formula")]
+    if root != "B2:B3":
+        expected_edges.append((selected, span, "range"))
+    expected_boundaries = [(selected, "possible_unresolved_reader")]
+    if identity == "ambiguous":
+        expected_boundaries.extend(
+            (selected, "ambiguous_external") for _ in expected_ids
+        )
+    assert graph_signature(result) == {
+        "nodes": sorted({selected, span, b4}),
+        "edges": sorted(expected_edges),
+        "boundaries": sorted(expected_boundaries),
+    }
+    possible = [
+        boundary
+        for boundary in result["boundaries"]
+        if boundary["reason"] == "possible_unresolved_reader"
+    ]
+    assert possible == [
+        {
+            "node": handle(target, root),
+            "reason": "possible_unresolved_reader",
+            "count": len(readers),
+            "linkIds": expected_ids,
+            "sampleOmitted": 0,
+        }
+    ]
+    assert not result["coverage"]["complete"] and result["coverage"]["exhaustive"]
+
+
+@pytest.mark.parametrize("identity", ["resolved", "unresolved", "ambiguous"])
+@pytest.mark.parametrize("root", ["B2", "B3", "B2:B3"])
+def test_downstream_unsupported_reader_stays_possible_without_widening(
+    tmp_path, root, identity
+):
+    target = fixture_source(
+        tmp_path,
+        1,
+        "budget.xlsx",
+        {"B2": 10, "B3": 20, "B4": "=SUM(B2:B3)"},
+    )
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {"A1": "='[1]S'!ExternalName"},
+        links=[
+            _link("oldname.xlsx" if identity == "unresolved" else "budget.xlsx", "S")
+        ],
+    )
+    sources = [target, reader]
+    if identity == "ambiguous":
+        sources.append(fixture_source(tmp_path, 3, "budget.xlsx", {"B2": 99}))
+    catalog = Catalog(tmp_path / "owner" / "catalog")
+    result = catalog.lineage(
+        sources, handle(target, root), direction="downstream", depth=10
+    )
+    selected, span, b4 = (
+        node_signature(target, address) for address in (root, "B2:B3", "B4")
+    )
+    expected_edges = [(span, b4, "formula")]
+    if root != "B2:B3":
+        expected_edges.append((selected, span, "range"))
+    # No verified bounds: the selected cell and its genuine local consumer may
+    # both be read. A range reached only as a membership step adds no new scope.
+    reasons = []
+    if identity != "resolved":
+        reasons.append("possible_unresolved_reader")
+    if identity != "unresolved":
+        reasons.append("unsupported_reference")
+    assert graph_signature(result) == {
+        "nodes": sorted({selected, span, b4}),
+        "edges": sorted(expected_edges),
+        "boundaries": sorted(
+            (node, reason) for node in (selected, b4) for reason in reasons
+        ),
+    }
+    if identity != "resolved":
+        possible = [
+            b
+            for b in result["boundaries"]
+            if b["reason"] == "possible_unresolved_reader"
+        ]
+        assert len(possible) == 2 and all(b["count"] == 1 for b in possible)
+    assert not result["coverage"]["complete"] and result["coverage"]["exhaustive"]
 
 
 def test_power_query_and_macro_are_typed_boundaries(tmp_path):

@@ -22,6 +22,7 @@ from xml.etree import ElementTree
 from openpyxl import load_workbook
 from openpyxl.styles.numbers import is_date_format, is_datetime
 from openpyxl.utils.cell import range_boundaries
+from openpyxl.worksheet.formula import ArrayFormula
 
 from linexcel.refs import num_to_col
 
@@ -810,6 +811,8 @@ def _missing_renderer_message(office: str | None, converter: str | None) -> str:
 
 
 def _safe_value(value: Any, number_format: Any = None) -> Any:
+    if isinstance(value, ArrayFormula):
+        return value.text
     # A date cell reads back as a midnight datetime, and "2026-01-03T00:00:00"
     # is a timestamp nobody typed: the preview and the AI dossier both show what
     # the cell holds, which is a day.

@@ -532,7 +532,7 @@ def _evaluate_index(
                 count = nodes.db.execute(
                     "SELECT count(*) FROM nodes WHERE sheet=? "
                     "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input')",
+                    "AND kind IN ('cell','input','array_result')",
                     (node["sheet"], r1, r2, c1, c2),
                 ).fetchone()[0]
                 omitted = count - len(dependencies)

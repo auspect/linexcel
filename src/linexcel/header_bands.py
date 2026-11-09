@@ -29,7 +29,8 @@ def descriptive(text):
 def literal(node):
     value = node.get("value")
     if (
-        not node.get("formula")
+        node.get("kind") != "array_result"
+        and not node.get("formula")
         and node.get("sourceDataType") in {"s", "str", "inlineStr"}
         and isinstance(value, str)
         and value.strip()
