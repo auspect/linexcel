@@ -148,6 +148,9 @@ class UploadStore:
         from linexcel.web import APIError, _write
 
         budget = self.store.budget(body.get("budget", {}), default_seconds=600)
+        search_scoped = body.get("searchScoped", False)
+        if not isinstance(search_scoped, bool):
+            raise APIError(400, "Invalid search scope")
         refs = body.get("references", [])
         if not isinstance(refs, list) or len(refs) > 32:
             raise APIError(400, "Au plus 32 classeurs de référence")
@@ -184,6 +187,7 @@ class UploadStore:
                 "owner": owner,
                 "name": name,
                 "files": files,
+                "searchScoped": search_scoped,
                 "budget": budget,
                 "createdAt": time.time(),
                 "updatedAt": time.time(),
@@ -371,6 +375,8 @@ class UploadStore:
                     "references": [item["name"] for item in session["files"][1:]],
                     "createdAt": time.time(),
                 }
+                if session.get("searchScoped"):
+                    project["searchScopeId"] = session["id"]
                 from linexcel.catalog import revision as workbook_revision
                 from linexcel.lazy_store import file_sha256
 

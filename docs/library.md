@@ -22,6 +22,19 @@ path, URL, SQL expression or another owner's source index.
 - `POST /api/library/pins` with `{linkId,targetProject,targetSha256}`
 - `DELETE /api/library/pins/LINK_ID`
 - `GET /api/library/occurrences?generation=GENERATION&group=ENTRY_ID&after=0&limit=50`
+- `POST /api/library/attachments/SCOPE_ID/keep`
+- `DELETE /api/library/attachments/SCOPE_ID`
+
+Upload requests may set `searchScoped: true` when starting an existing
+`/api/uploads` transfer. The returned project remains absent from the normal
+project list and catalog until the user calls the keep route. Its opaque upload
+ID is the scope ID. Supply `scope=SCOPE_ID` to search, status, lineage, links
+and occurrence requests; this authorizes that one attachment alongside the
+owner's ordinary loaded revisions, so external links can still be resolved
+without exposing the attachment to library-wide searches. Scope pin requests
+include `scope` in the JSON body; scope unpin requests include it in the query.
+Deleting the scope removes the temporary project. A kept project becomes an
+ordinary library member and no longer needs `scope`.
 
 `q` and `query` are aliases; supplying both is an error. Kinds are `cell`,
 `sheet`, `name`, `table` and `column`. Text search folds case and diacritics and

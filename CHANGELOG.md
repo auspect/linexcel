@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a French-first, no-AI library search view with workbook/revision scopes,
+  kind filters, paged text occurrences, source-attributed result cards, directed
+  lineage on the shared React Flow graph, explicit boundary and coverage
+  verdicts, a content-free trace, external-link pin controls, and search-scoped
+  uploads that become library members only after an explicit keep action.
+
 - Report bounded possible-reader boundaries in downstream library lineage when
   unresolved links cannot be excluded by sheet/range evidence, without guessing
   an edge. Expose the loaded-revision scope and preserve exact revision identities

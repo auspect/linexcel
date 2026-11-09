@@ -84,6 +84,104 @@ def test_upload_chunks_complete_idempotently_and_evaluate(app):
     assert not app.store.uploads.sessions
 
 
+def test_search_scoped_upload_stays_out_of_library_until_kept(app):
+    from openpyxl import load_workbook
+
+    book = load_workbook(io.BytesIO(base64.b64decode(workbook()["data"])))
+    book.active["A1"] = "SearchScopedNeedle"
+    stream = io.BytesIO()
+    book.save(stream)
+    raw = stream.getvalue()
+    _, body, _ = request(
+        app,
+        "POST",
+        "/api/uploads",
+        {
+            "workbook": {"name": "scoped.xlsx", "size": len(raw)},
+            "searchScoped": True,
+        },
+    )
+    upload = json.loads(body)["upload"]
+    assert put(app, upload, raw)[0] == 200
+    code, body, _ = request(app, "POST", f"/api/uploads/{upload['id']}/complete", {})
+    assert code == 200, body
+    imported = json.loads(body)
+    assert imported["project"]["searchScopeId"] == upload["id"]
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project_id = imported["project"]["id"]
+
+    projects = json.loads(request(app, "GET", "/api/projects")[1])["projects"]
+    assert project_id not in {project["id"] for project in projects}
+    assert (
+        request(
+            app,
+            "GET",
+            "/api/library/search",
+            QUERY_STRING="q=SearchScopedNeedle&kinds=cell",
+        )[0]
+        == 200
+    )
+    default_search = json.loads(
+        request(
+            app,
+            "GET",
+            "/api/library/search",
+            QUERY_STRING="q=SearchScopedNeedle&kinds=cell",
+        )[1]
+    )
+    assert all(
+        hit["revision"]["projectId"] != project_id for hit in default_search["results"]
+    )
+
+    scoped = json.loads(
+        request(
+            app,
+            "GET",
+            "/api/library/search",
+            QUERY_STRING=f"scope={upload['id']}&project={project_id}&q=SearchScopedNeedle&kinds=cell",
+        )[1]
+    )
+    assert scoped["results"], scoped
+    assert scoped["results"][0]["revision"]["projectId"] == project_id
+    scoped_status = json.loads(
+        request(
+            app,
+            "GET",
+            "/api/library/status",
+            QUERY_STRING=f"scope={upload['id']}",
+        )[1]
+    )
+    assert any(item["projectId"] == project_id for item in scoped_status["revisions"])
+    assert (
+        request(
+            app,
+            "POST",
+            f"/api/library/attachments/{upload['id']}/keep",
+            {},
+        )[0]
+        == 200
+    )
+    projects = json.loads(request(app, "GET", "/api/projects")[1])["projects"]
+    assert project_id in {project["id"] for project in projects}
+
+    second, second_raw = begin(app, searchScoped=True)
+    assert put(app, second, second_raw)[0] == 200
+    second_import = json.loads(
+        request(app, "POST", f"/api/uploads/{second['id']}/complete", {})[1]
+    )
+    assert wait(app.store, second_import["task"]["id"])["status"] == "succeeded"
+    assert request(app, "DELETE", f"/api/library/attachments/{second['id']}")[0] == 200
+    assert (
+        request(
+            app,
+            "GET",
+            "/api/library/status",
+            QUERY_STRING=f"scope={second['id']}",
+        )[0]
+        == 404
+    )
+
+
 def test_failed_chunk_rolls_back_and_resumes_without_duplicate_bytes(app):
     upload, raw = begin(app)
     assert put(app, upload, raw[:100])[0] == 200

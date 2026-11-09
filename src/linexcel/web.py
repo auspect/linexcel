@@ -501,7 +501,10 @@ class TaskStore:
                 if (owner, path.parent.name) in self.unreadable_projects:
                     continue
                 try:
-                    projects.append(project_revision(_read(path), path.parent))
+                    project = _read(path)
+                    if project.get("searchScopeId"):
+                        continue
+                    projects.append(project_revision(project, path.parent))
                 except (OSError, ValueError):
                     continue
             return sorted(
@@ -1893,6 +1896,19 @@ class WebApp:
         parts = path.strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
             return self.store.library.query(owner, parts[2], query or {})
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "library", "attachments"]
+            and parts[4] == "keep"
+            and method == "POST"
+        ):
+            return self.store.library.keep_attachment(owner, parts[3])
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "library", "attachments"]
+            and method == "DELETE"
+        ):
+            return self.store.library.discard_attachment(owner, parts[3])
         if parts == ["api", "library", "pins"] and method == "POST":
             return self.store.library.pin_link(owner, body)
         if (
@@ -1900,7 +1916,15 @@ class WebApp:
             and parts[:3] == ["api", "library", "pins"]
             and method == "DELETE"
         ):
-            return self.store.library.pin_link(owner, {"linkId": parts[3]}, remove=True)
+            scope = (query or {}).get("scope", [""])
+            if len(scope) != 1:
+                raise APIError(400, "Invalid library parameter")
+            return self.store.library.pin_link(
+                owner,
+                {"linkId": parts[3]},
+                remove=True,
+                search_scope=scope[0] or None,
+            )
         if parts == ["api", "config"] and method == "GET":
             from linexcel.web_upload import CHUNK_BYTES
 

@@ -1313,4 +1313,50 @@ async function initializeApplication(){
 }
 initializeApplication().then(async()=>{const params=new URLSearchParams(location.search);if(params.get('project'))await openProject(params.get('project'));if(current&&params.get('node')){await selectNode(params.get('node'));switchTab(params.get('tab')==='graph'?'graph':'nodes')}});window.addEventListener('hashchange',()=>{if(new URLSearchParams(location.hash.slice(1)).has('session'))initializeApplication()});setInterval(poll,2000);
 })();
+</script><script>
+(() => {
+  const header = document.querySelector("header.top");
+  const controls = header?.querySelector(":scope > .row");
+  const main = document.querySelector(".workspace > main");
+  if (!header || !controls || !main || !window.LinexcelGraph?.mountLibrarySearch) return;
+  const nav = document.createElement("nav");
+  nav.className = "library-navigation";
+  nav.setAttribute("aria-label", "Navigation principale");
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "library-search-trigger";
+  open.textContent = document.documentElement.lang === "en" ? "Search" : "Rechercher";
+  nav.append(open);
+  header.insertBefore(nav, controls);
+  const view = document.createElement("section");
+  view.id = "library-search-view";
+  view.tabIndex = -1;
+  view.hidden = true;
+  view.setAttribute("aria-label", "Recherche dans la bibliothèque");
+  const root = document.createElement("div");
+  root.dataset.noI18n = "";
+  view.append(root);
+  main.insertBefore(view, main.firstChild);
+  let search = null;
+  const toggle = (active) => {
+    view.hidden = !active;
+    document.body.classList.toggle("library-search-active", active);
+    open.setAttribute("aria-current", active ? "page" : "false");
+    if (active && !search) {
+      search = window.LinexcelGraph.mountLibrarySearch(root, {
+        apiBase: "api/",
+        language: document.getElementById("ui-language").value,
+      });
+    }
+    if (active) view.focus();
+  };
+  open.addEventListener("click", () => toggle(view.hidden));
+  document.getElementById("ui-language").addEventListener("change", (event) => {
+    const english = event.target.value === "en";
+    open.textContent = english ? "Search" : "Rechercher";
+    nav.setAttribute("aria-label", english ? "Main navigation" : "Navigation principale");
+    view.setAttribute("aria-label", english ? "Search the library" : "Recherche dans la bibliothèque");
+    search?.setLanguage(event.target.value);
+  });
+})();
 </script></body></html>

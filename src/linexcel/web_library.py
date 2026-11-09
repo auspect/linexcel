@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -42,14 +43,22 @@ class Library:
             )
         return self.catalogs[owner]
 
-    def sources(self, owner: str) -> list[Source]:
+    def sources(self, owner: str, search_scope: str | None = None) -> list[Source]:
         from linexcel.web import _read
 
+        if search_scope is not None and not re.fullmatch(r"[a-f0-9]{32}", search_scope):
+            raise ValueError("Invalid search scope")
         sources = []
+        scoped_source_found = False
         for manifest in (self.store.root / owner / "projects").glob("*/project.json"):
             if (owner, manifest.parent.name) in self.store.unreadable_projects:
                 continue
             project = _read(manifest)
+            project_scope = project.get("searchScopeId")
+            if project_scope:
+                if project_scope != search_scope:
+                    continue
+                scoped_source_found = True
             path = self.store.project_path(owner, project["id"])
             sources.append(
                 Source(
@@ -59,6 +68,8 @@ class Library:
                     project["createdAt"],
                 )
             )
+        if search_scope is not None and not scoped_source_found:
+            raise KeyError("Search-scoped attachment not found")
         return sources
 
     def mutation(self, owner):
@@ -164,8 +175,9 @@ class Library:
                 "offset",
                 "limit",
                 "generation",
+                "scope",
             },
-            "status": set(),
+            "status": {"scope"},
             "lineage": {
                 "handle",
                 "depth",
@@ -174,9 +186,10 @@ class Library:
                 "edges",
                 "workbooks",
                 "milliseconds",
+                "scope",
             },
-            "links": {"status", "project", "offset", "limit"},
-            "occurrences": {"group", "generation", "after", "limit"},
+            "links": {"status", "project", "offset", "limit", "scope"},
+            "occurrences": {"group", "generation", "after", "limit", "scope"},
         }
         if operation not in allowed or set(params) - allowed[operation]:
             raise APIError(400, "Invalid library parameter")
@@ -195,7 +208,8 @@ class Library:
             with self.store.lock:
                 catalog = self.catalog(owner)
                 try:
-                    sources = self.sources(owner)
+                    search_scope = value("scope") or None
+                    sources = self.sources(owner, search_scope)
                 except Exception:
                     if (
                         operation == "status"
@@ -203,6 +217,7 @@ class Library:
                     ):
                         return catalog.failed_status()
                     raise
+                synchronous = synchronous or search_scope is not None
                 if operation in {"lineage", "occurrences"}:
                     if owner in self.pending and catalog.limits.connections == 1:
                         raise APIError(
@@ -425,18 +440,22 @@ class Library:
                 result["trace"].update(complete=False, capsHit=coverage["capsHit"])
         return catalog._bound(result)
 
-    def pin_link(self, owner, body, *, remove=False):
+    def pin_link(self, owner, body, *, remove=False, search_scope=None):
         from linexcel.catalog_links import set_pin
         from linexcel.web import APIError
 
         allowed = {"linkId"} if remove else {"linkId", "targetProject", "targetSha256"}
+        if not remove and isinstance(body, dict) and "scope" in body:
+            allowed.add("scope")
         if not isinstance(body, dict) or set(body) != allowed:
             raise APIError(400, "Invalid pin parameters")
         try:
+            if not remove:
+                search_scope = body.get("scope") or None
             with self.mutation(owner), self.store.lock:
                 result = set_pin(
                     self.catalog(owner),
-                    self.sources(owner),
+                    self.sources(owner, search_scope),
                     body["linkId"],
                     body.get("targetProject"),
                     body.get("targetSha256"),
@@ -447,6 +466,43 @@ class Library:
             raise APIError(404, "Library link or target revision not found") from None
         except (ValueError, OSError, sqlite3.Error) as error:
             raise APIError(400, str(error)) from None
+
+    def keep_attachment(self, owner: str, search_scope: str) -> dict:
+        from linexcel.web import APIError, _read, _write
+
+        try:
+            with self.mutation(owner), self.store.lock:
+                for manifest in (self.store.root / owner / "projects").glob(
+                    "*/project.json"
+                ):
+                    project = _read(manifest)
+                    if project.get("searchScopeId") != search_scope:
+                        continue
+                    project.pop("searchScopeId")
+                    _write(manifest, project)
+                    self.refresh(owner)
+                    return {
+                        "project": project_revision(project, manifest.parent),
+                    }
+        except (OSError, ValueError, sqlite3.Error) as error:
+            raise APIError(400, str(error)) from None
+        raise APIError(404, "Search-scoped attachment not found")
+
+    def discard_attachment(self, owner: str, search_scope: str) -> dict:
+        from linexcel.web import APIError, _read
+
+        try:
+            with self.mutation(owner), self.store.lock:
+                for manifest in (self.store.root / owner / "projects").glob(
+                    "*/project.json"
+                ):
+                    project = _read(manifest)
+                    if project.get("searchScopeId") == search_scope:
+                        self.store.delete(owner, project["id"])
+                        return {}
+        except (OSError, ValueError, sqlite3.Error) as error:
+            raise APIError(400, str(error)) from None
+        raise APIError(404, "Search-scoped attachment not found")
 
 
 def project_revision(project: dict, path) -> dict:
