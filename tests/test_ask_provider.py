@@ -174,6 +174,169 @@ def test_provider_diagnostics_count_content_without_retaining_it(monkeypatch, tm
         with_provider.close()
 
 
+def test_official_reasoning_tools_use_stateless_responses_with_encrypted_history(
+    monkeypatch, tmp_path
+):
+    import openai
+
+    httpx = sdk_http()
+    sent = []
+
+    def respond(request):
+        sent.append(json.loads(request.content))
+        assert str(request.url) == "https://api.openai.com/v1/responses"
+        n = len(sent)
+        return httpx.Response(
+            200,
+            json={
+                "id": f"resp_{n}",
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "gpt-6-luna",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "id": f"rs_{n}",
+                        "summary": [],
+                        "encrypted_content": "PRIVATE_REASONING",
+                    },
+                    {
+                        "type": "function_call",
+                        "id": f"fc_{n}",
+                        "call_id": f"call_{n}",
+                        "name": "list_workbooks" if n == 1 else "submit_answer",
+                        "arguments": "{}" if n == 1 else '{"status":"not_found"}',
+                        "status": "completed",
+                    },
+                ],
+                "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
+                "error": None,
+                "incomplete_details": None,
+                "parallel_tool_calls": False,
+                "tools": [],
+                "tool_choice": "required",
+            },
+        )
+
+    default = openai.DefaultHttpxClient
+    monkeypatch.setattr(
+        openai,
+        "DefaultHttpxClient",
+        lambda **kw: default(transport=httpx.MockTransport(respond), **kw),
+    )
+    provider = OpenAIToolProvider(
+        WebConfig(
+            tmp_path,
+            ai_base_url="https://api.openai.com/v1",
+            ai_model="gpt-6-luna",
+            ai_reasoning_effort="medium",
+        )
+    )
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "question"},
+    ]
+    try:
+        first = provider.complete(messages, TOOL_SCHEMAS, tokens=200, seconds=2)
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": first.calls},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"revisions":[]}'},
+        ]
+        second = provider.complete(messages, TOOL_SCHEMAS, tokens=200, seconds=2)
+        assert second.calls[0]["function"]["name"] == "submit_answer"
+        assert second.usage.total == 20 and second.finish_reason == "tool_calls"
+        assert all(
+            s["store"] is False
+            and s["truncation"] == "disabled"
+            and s["reasoning"] == {"effort": "medium"}
+            and s["include"] == ["reasoning.encrypted_content"]
+            for s in sent
+        )
+        assert not any("previous_response_id" in s for s in sent)
+        assert sent[1]["input"][2]["encrypted_content"] == "PRIVATE_REASONING"
+        assert sent[1]["input"][-1]["call_id"] == "call_1"
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("status", [307, 200])
+def test_responses_redirect_and_incomplete_call_fail_closed(
+    monkeypatch, tmp_path, status
+):
+    import openai
+
+    from linexcel.ask_provider import EndpointRedirectRefusedError
+
+    httpx = sdk_http()
+    received = []
+
+    def respond(request):
+        received.append(str(request.url))
+        if status == 307:
+            return httpx.Response(
+                307, headers={"Location": "https://unapproved.example/v1/responses"}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_1",
+                "object": "response",
+                "created_at": 0,
+                "status": "incomplete",
+                "model": "gpt-6-luna",
+                "output": [],
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 200,
+                    "total_tokens": 210,
+                },
+                "error": None,
+                "parallel_tool_calls": False,
+                "tools": [],
+                "tool_choice": "required",
+            },
+        )
+
+    default = openai.DefaultHttpxClient
+    monkeypatch.setattr(
+        openai,
+        "DefaultHttpxClient",
+        lambda **kw: default(transport=httpx.MockTransport(respond), **kw),
+    )
+    provider = OpenAIToolProvider(
+        WebConfig(
+            tmp_path,
+            ai_base_url="https://api.openai.com/v1",
+            ai_model="gpt-6-luna",
+            ai_reasoning_effort="medium",
+        )
+    )
+    try:
+        if status == 307:
+            with pytest.raises(EndpointRedirectRefusedError):
+                provider.complete(
+                    [{"role": "user", "content": "secret"}],
+                    TOOL_SCHEMAS,
+                    tokens=200,
+                    seconds=2,
+                )
+        else:
+            assert (
+                provider.complete(
+                    [{"role": "user", "content": "secret"}],
+                    TOOL_SCHEMAS,
+                    tokens=200,
+                    seconds=2,
+                ).finish_reason
+                == "length"
+            )
+        assert len(received) == 1
+    finally:
+        provider.close()
+
+
 def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
     monkeypatch, tmp_path
 ):

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use stateless Responses tool calling for official OpenAI GPT-6 models with
+  configured reasoning, preserving the selected effort and encrypted reasoning
+  history in run memory. Local compatible endpoints keep Chat Completions.
+
 - Shared documentation, vision and question clients refuse redirects, including
   redirects from an explicitly configured remote endpoint.
 - Completed answers use stable source/lineage content and recompute lineage on

@@ -37,3 +37,12 @@ New diagnostics preserve content-free failure distinctions for future runs.
 These diagnostics do not establish model reliability. Compare a frozen question
 set against a deterministic catalog baseline, keep failures in denominators,
 and distinguish correct source facts from selection of the right cell.
+
+For the official OpenAI endpoint, GPT-6 tool models configured with reasoning
+use the Responses API. Medium reasoning with Luna is not supported for function
+calling in Chat Completions; the adapter preserves the selected effort rather
+than reducing it. It uses `store=false`, disabled truncation, and encrypted
+reasoning history retained only in the provider's run memory. Compatible local
+endpoints continue to use Chat Completions. See the
+[official Luna model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
+and [function calling guide](https://developers.openai.com/api/docs/guides/function-calling).
