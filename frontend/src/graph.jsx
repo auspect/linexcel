@@ -938,7 +938,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       if (node.collapsed) return {
         ...node, type: "sheet", kindLabel: `${text("Révision", "Revision")} ${revision.projectId?.slice(0, 8) || ""} · ${revision.sha256?.slice(0, 8) || ""}`,
         title: node.filename || revision.projectId,
-        subtitle: `${node.members.length} ${text("cellules", "cells")} · ${node.internalEdges} ${text("relations internes", "internal relationships")}`,
+        subtitle: `${node.members.length} ${node.members.length === 1 ? text("cellule", "cell") : text("cellules", "cells")} · ${node.internalEdges} ${text("relations internes", "internal relationships")}`,
         valueLabel: stops || text("Développer pour suivre les cellules", "Expand to follow cells"),
         count: node.members.length, tone: stopped ? "boundary" : "", original: node,
       };
@@ -1253,7 +1253,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           queued: text("Mise à jour en attente", "Update queued"),
           building: text("Mise à jour en cours", "Update in progress"),
           failed: text("Mise à jour échouée", "Update failed"),
-          ready: text("À jour", "Up to date"),
+          ready: status?.stale || status?.pending ? text("Mise à jour en attente", "Update pending") : text("À jour", "Up to date"),
         })[status?.buildState?.status] || text("État inconnu", "Unknown state")}</span>
         {status?.stale && <span>{text("Les résultats peuvent être incomplets pendant la mise à jour.", "Results may be incomplete while the index updates.")}</span>}
         {status?.buildState?.status === "failed" && <span>{catalogFailureReason} {text("Vérifiez l’espace disponible.", "Check available storage.")}</span>}

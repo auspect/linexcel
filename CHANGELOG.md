@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reserve the library's up-to-date badge for settled fresh catalog responses;
+  show pending while ready responses remain stale and use singular cell copy
+  for one-member revision cards.
 - Settle and abort superseded library requests, clear evidence when recovering
   another temporary file, and keep the trace accessible in the initial mobile
   viewport. Show missing saved values with their provenance and use plain

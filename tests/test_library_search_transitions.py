@@ -383,6 +383,12 @@ def test_initial_trace_access_keyboard_anchors_and_ready_fresh_poll(
         page.route("**/api/library/status", status_sequence)
         page.reload()
         page.locator(".library-search-trigger").click()
+        playwright.expect(page.locator(".library-catalog-state")).to_contain_text(
+            "Mise à jour en attente"
+        )
+        playwright.expect(page.locator(".library-catalog-state")).not_to_contain_text(
+            "À jour"
+        )
         page.wait_for_function(
             """() => {
               const text=document.querySelector('.library-catalog-state').innerText;
@@ -390,6 +396,9 @@ def test_initial_trace_access_keyboard_anchors_and_ready_fresh_poll(
             }"""
         )
         assert len(calls) >= 3
+        playwright.expect(page.locator(".library-catalog-state")).not_to_contain_text(
+            "Mise à jour en attente"
+        )
         settled = len(calls)
         page.wait_for_timeout(1100)
         assert len(calls) == settled
