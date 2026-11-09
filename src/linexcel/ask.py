@@ -102,6 +102,7 @@ class QuestionRun:
         cancel=None,
         publish=None,
         before_request=None,
+        observation=None,
     ):
         self.provider, self.tools, self.question, self.limits = (
             provider,
@@ -112,6 +113,7 @@ class QuestionRun:
         self.cancel = cancel if cancel is not None else threading.Event()
         self.publish = publish or (lambda _: None)
         self.before_request = before_request or (lambda: None)
+        self.observation = observation
         self.started = time.monotonic()
         self.deadline = min(tools.deadline, self.started + limits.seconds)
         self.ids: set[str] = set()
@@ -127,6 +129,15 @@ class QuestionRun:
         }
         self.incomplete = False
         self.searched = False
+        import uuid
+
+        self.trace["traceId"] = observation.id if observation else uuid.uuid4().hex
+        if observation:
+            self.trace["exportState"] = observation.owner.state
+            if observation.owner.link:
+                self.trace["traceUrl"] = observation.owner.link.replace(
+                    "{trace_id}", observation.id
+                )
 
     def emit(self, tool, args, result_summary, started, verdict="completed", **extra):
         args = {key: value for key, value in args.items() if key != "rationale"}
@@ -161,6 +172,16 @@ class QuestionRun:
             self.trace["detailsOmitted"] = True
         self.publish(self.trace)
 
+        if self.observation:
+            step = self.trace["steps"][-1]
+            self.observation.step(
+                tool,
+                step["durationMs"],
+                verdict,
+                extra.get("tokens"),
+                result_summary.get("counts"),
+            )
+
     def terminal(self, status, *, answer=None, reason=None):
         self.trace.update(
             state="terminal",
@@ -180,6 +201,8 @@ class QuestionRun:
             time.monotonic(),
             status,
         )
+        if self.observation:
+            self.observation.end(status)
         return {
             "status": status,
             "answer": answer if status == "answer_proposed" else None,
@@ -235,7 +258,22 @@ class QuestionRun:
                 self.emit(
                     "model",
                     {},
-                    {"calls": len(response.calls)},
+                    {
+                        "calls": len(response.calls),
+                        "finishReason": response.finish_reason
+                        if response.finish_reason
+                        in {"stop", "tool_calls", "length", "content_filter"}
+                        else "unsupported",
+                        **{
+                            k: v
+                            for k, v in (
+                                getattr(response, "diagnostics", None) or {}
+                            ).items()
+                            if k in {"contentBytes", "reasoningBytes", "httpStatus"}
+                            and type(v) is int
+                            and v >= 0
+                        },
+                    },
                     started,
                     tokens=vars(response.usage).copy(),
                 )
@@ -352,9 +390,18 @@ class QuestionRun:
             usage = getattr(exc, "usage", None)
             if usage is not None:
                 self.used["tokens"] += usage.total
-            self.emit(
-                "failure", {}, {"kind": type(exc).__name__}, time.monotonic(), "failed"
-            )
+            cause = exc
+            diagnostic = {"kind": type(exc).__name__}
+            for _ in range(5):
+                status = getattr(cause, "status_code", None)
+                if type(status) is int and 100 <= status <= 599:
+                    diagnostic["httpStatus"] = status
+                if "timeout" in type(cause).__name__.lower():
+                    diagnostic["timeout"] = True
+                cause = cause.__cause__
+                if cause is None:
+                    break
+            self.emit("failure", {}, diagnostic, time.monotonic(), "failed")
             return self.terminal(
                 "failed",
                 reason="tool_calls_required"

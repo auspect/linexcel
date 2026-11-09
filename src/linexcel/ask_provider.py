@@ -14,6 +14,7 @@ class ToolResponse:
     calls: list[dict]
     finish_reason: str
     usage: TokenUsage
+    diagnostics: dict | None = None
 
 
 class ToolProvider(Protocol):
@@ -118,6 +119,17 @@ class OpenAIToolProvider:
             ],
             choice.finish_reason,
             usage,
+            {
+                "contentBytes": len((choice.message.content or "").encode()),
+                "reasoningBytes": len(
+                    str(
+                        getattr(choice.message, "reasoning", "")
+                        or getattr(choice.message, "reasoning_content", "")
+                        or ""
+                    ).encode()
+                ),
+                "httpStatus": 200,
+            },
         )
 
     def close(self):

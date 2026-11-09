@@ -532,6 +532,8 @@ class OpenAICompatProvider:
                 raise ValueError("Documentation requires a single choice (n=1)")
         self._owns_client = client is None and http_client is None
         if client is not None:
+            if getattr(getattr(client, "_client", None), "follow_redirects", False):
+                raise ValueError("AI SDK clients must disable follow_redirects")
             if any(
                 (
                     base_url,
@@ -790,9 +792,8 @@ class OpenAICompatProvider:
                 if vision
                 else ""
             )
-            if isinstance(getattr(exc, "status_code", None), int) and (
-                300 <= exc.status_code < 400
-            ):
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 300 <= status < 400:
                 hint = " Endpoint redirect refused; configure the final endpoint URL."
             self._failed_receipt(prompt, self._request_state.rejected_usage)
             raise AiDocError(

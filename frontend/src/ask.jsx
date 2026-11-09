@@ -62,6 +62,7 @@ export function AskTrace({ run, english }) {
       <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ tool: step.tool, arguments: step.arguments, summary: step.summary, budgetUse: step.budgetUse, verdict: step.verdict }, null, 2)}</pre></details>
     </li>)}</ol>
     {trace?.budgetUse && <p>{trace.budgetUse.steps} {text("étapes", "steps")} · {trace.budgetUse.tokens} tokens · {trace.budgetUse.resultBytes} {text("octets de résultats", "result bytes")}</p>}
+    {trace?.traceId && <p>{text("Identifiant de trace", "Trace ID")} · <code>{trace.traceId}</code>{trace.traceUrl && /^https?:\/\//.test(trace.traceUrl) && <> · <a href={trace.traceUrl} target="_blank" rel="noreferrer">Phoenix</a></>}</p>}
     {trace?.scope?.revisions && <details><summary>{text("Révisions autorisées pour cette question", "Revisions authorized for this question")}</summary><ul>{trace.scope.revisions.map(rev => <li key={rev.id}>{rev.filename} · {rev.projectId.slice(0, 8)} · {rev.sha256.slice(0, 8)}</li>)}</ul></details>}
   </div>;
 }

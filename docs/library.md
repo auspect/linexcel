@@ -47,10 +47,10 @@ up to the smaller of 30 seconds and the remaining run time to settle. Queued
 cancellation and interrupted-server recovery also persist terminal traces.
 Question results are intentionally available only from the ask route, where
 source authorization is rechecked; generic task polling exposes task metadata.
-Completed proposals also retain the private catalog generation and a digest of
-the owner pin signature. Result reads recheck both under the owner mutation gate;
-changed pins or a replaced/missing catalog suppress the old answer and complete
-verdict and ask the reader to rerun the question.
+Completed proposals retain a stable content signature of their source cells and
+traversed lineage. Result reads recompute that lineage under the owner mutation
+gate. Relevant link changes suppress stale completeness verdicts; unrelated pins
+and equivalent catalog rebuilds preserve valid proposals.
 
 The explicit state machine validates tool names, strict argument objects,
 finite numbers, call IDs (unique across the run), response finish reasons and
@@ -122,17 +122,16 @@ Runs persist under the private owner's `ask/RUN_ID/`, separately from source
 indexes. `linexcel.ask.v1` records scope/revisions, tool and argument metadata, bounded
 result counts/handles, duration, tokens, budget use and verdict. Cell values,
 formulas and labels are excluded from default step summaries.
-Tool argument values are never retained: the trace stores their SHA-256 digest,
-byte count and schema field names. Call IDs are digested too, so a model repeating
-a source value as a search term or call ID does not copy it into the log.
+Tool argument values and call IDs are never retained in the question trace.
+Only argument byte counts and schema field names remain; no value-bearing digest
+is stored. Metadata is not anonymization.
 Input questions and authorized factual answers remain separate private artifacts.
 Do not export these private artifacts by default. Retention defaults to seven days and 100
 settled runs per owner; preparation and reads sweep expired/excess runs, excluding
 active tasks. `AskLimits.retention_days` and `retained_runs` configure it. Reading
 a run after source replacement/deletion or attachment expiry suppresses its
 evidence and old scope details. Trace publication is application-owned, with no
-global tracer or network exporter; an optional content-free export can subscribe
-at the run's publish boundary later.
+global tracer. See [optional content-free Phoenix export](phoenix.md).
 
 ## Deterministic library routes
 

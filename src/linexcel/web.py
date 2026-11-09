@@ -338,6 +338,7 @@ class TaskStore:
                 event.set()
             self.capacity.notify_all()
         self.executor.shutdown(wait=True)
+        self.ask.tracing.close()
         self.library.close()
         self._lock_file.close()
 

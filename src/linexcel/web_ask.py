@@ -36,6 +36,9 @@ def local_endpoint(endpoint):
 
 class AskService:
     def __init__(self, store):
+        from linexcel.observability import QuestionTracing
+
+        self.tracing = QuestionTracing()
         self.store = store
         self.prepared = {}
         self.provider_factory = OpenAIToolProvider
@@ -354,6 +357,7 @@ class AskService:
                 event,
                 publish,
                 before_request=before_request,
+                observation=self.tracing.start(),
             ).run()
             result["disclosure"] = {
                 k: prepared[k]

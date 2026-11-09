@@ -10,6 +10,12 @@
 
 Data lineage analysis for Excel workbooks.
 
+Search across loaded workbooks and follow external links without AI. Optional
+questions propose source cells with verified saved facts and explicit lineage
+boundaries; the reader still needs to confirm relevance. See the
+[search, lineage and questions guide](docs/guide/library-questions.md) and
+[optional local Phoenix export](docs/phoenix.md).
+
 Extracts every formula, groups stretched patterns (R1C1 canonicalization), builds a dependency graph (cells, ranges, defined names, VBA), decomposes composite functions with step-by-step evaluation, and optionally documents calculations via the AI provider of your choice.
 
 ![Interactive dependency graph](https://raw.githubusercontent.com/auspect/linexcel/main/imgs/app_graph.png)

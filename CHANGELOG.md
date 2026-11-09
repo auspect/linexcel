@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `tracing` extra for content-free, application-owned OpenInference OTLP
+  export to a user-run local Phoenix, with a bounded queue, refused redirects,
+  explicit remote opt-in and per-run trace IDs/optional links. Export failure
+  cannot fail a question; the app's own trace remains authoritative.
+- User guide for deterministic library search, cross-workbook lineage and
+  optional questions, with source correctness separated from answer relevance.
+- Content-free provider finish-reason and output-size diagnostics for local
+  model failures; truncation and missing tool calls remain explicit failures.
+
+### Fixed
+
+- Shared documentation, vision and question clients refuse redirects, including
+  redirects from an explicitly configured remote endpoint.
+- Completed answers use stable source/lineage content and recompute lineage on
+  read; equivalent rebuilds and unrelated pins preserve valid proposals while
+  relevant resolution changes suppress stale completeness verdicts.
+- Retained question traces omit argument and call-ID digests as well as values;
+  low-entropy input is not protected by an unkeyed digest.
+
+### Added
+
 - Normalize SDK tool calls, including Ollama's extra metadata, before strict
   validation and assistant-message echoing. Question clients refuse redirects
   and use the approved endpoint/model snapshot with a check before each request.

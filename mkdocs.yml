@@ -57,6 +57,9 @@ nav:
       - Calculation investigation: guide/calculation-investigation.md
       - Browsing worksheet data: guide/datasette.md
       - Workbook library search: library.md
+      - Search, lineage and questions: guide/library-questions.md
+      - Optional Phoenix tracing: phoenix.md
+      - Local question model limits: local-question-models.md
       - Agent workflow proposals: guide/agent-workflows.md
       - Acceptance evidence: guide/acceptance.md
       - Command line: guide/cli.md

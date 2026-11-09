@@ -144,6 +144,36 @@ def sdk_response(calls):
     }
 
 
+def test_provider_diagnostics_count_content_without_retaining_it(monkeypatch, tmp_path):
+    httpx = sdk_http()
+
+    def respond(request):
+        data = sdk_response([])
+        data["choices"][0]["finish_reason"] = "length"
+        data["choices"][0]["message"].update(
+            content="SECRET_REPLY", reasoning="SECRET_THOUGHT"
+        )
+        return httpx.Response(200, json=data)
+
+    with_provider = sdk_provider(monkeypatch, tmp_path, respond)
+    try:
+        response = with_provider.complete(
+            [{"role": "user", "content": "question"}],
+            TOOL_SCHEMAS,
+            tokens=128,
+            seconds=2,
+        )
+        assert response.finish_reason == "length"
+        assert response.diagnostics == {
+            "contentBytes": 12,
+            "reasoningBytes": 14,
+            "httpStatus": 200,
+        }
+        assert "SECRET" not in json.dumps(response.diagnostics)
+    finally:
+        with_provider.close()
+
+
 def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
     monkeypatch, tmp_path
 ):
