@@ -57,7 +57,7 @@ const COUNT_UNITS = {
 };
 function countText(value, key, english) {
   const words = COUNT_UNITS[key] || [key, key, key, key];
-  const singular = Number(value) === 1;
+  const singular = Number(value) === 1 || (!english && Number(value) === 0);
   return `${value} ${words[(english ? 2 : 0) + (singular ? 0 : 1)]}`;
 }
 
@@ -165,7 +165,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       <textarea id="library-ask-question" rows={2} maxLength={2000} value={question} disabled={!config?.available} onChange={event => { clear(); setQuestion(event.target.value); }} />
       <div className="library-ask-actions"><button type="submit" className={disclosure ? "" : "primary"} disabled={!config?.available || busy || !question.trim() || Boolean(disclosure)}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
     </form>
-    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 1 ? "effectuée. La trace est disponible ci-dessus." : "effectuées. La trace est disponible ci-dessus.", "completed. The trace is accessible above.")}</p>}
+    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 0 || busySteps === 1 ? "effectuée. La trace est disponible ci-dessus." : "effectuées. La trace est disponible ci-dessus.", "completed. The trace is accessible above.")}</p>}
     {error && <p role="alert">{error}</p>}
     {disclosure && <section className="library-ask-consent" aria-label={text("Autorisation distante", "Remote consent")}>
       <h3>{text("Autoriser cette question à distance", "Allow this question remotely")}</h3>

@@ -362,7 +362,13 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             ).wait_for()
             graph_counts = page.locator(".library-graph-counts").inner_text()
             assert "1 liaison affichée représentant 1 dépendance" in graph_counts
-            assert "0 relations internes regroupées" in graph_counts
+            assert "0 relation interne regroupée" in graph_counts
+            assert "0 lien synthétique" in graph_counts
+            page.locator("#ui-language").select_option("en")
+            english_counts = page.locator(".library-graph-counts").inner_text()
+            assert "0 internal relationships grouped" in english_counts
+            assert "0 synthetic links" in english_counts
+            page.locator("#ui-language").select_option("fr")
             assert (
                 page.locator(".library-graph-canvas .flow-card.is-selected").count()
                 == 0
@@ -376,6 +382,46 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                     assert node_box["x"] + node_box["width"] <= (
                         minimap_box["x"] + minimap_box["width"] + 1
                     )
+                    assert node_box["y"] >= minimap_box["y"]
+                    assert node_box["y"] + node_box["height"] <= (
+                        minimap_box["y"] + minimap_box["height"] + 1
+                    )
+                    zoom = page.locator(
+                        ".library-graph-canvas .react-flow__controls"
+                    ).get_by_role("button", name="Agrandir")
+                    for _ in range(3):
+                        zoom.click()
+                svg = minimap.locator("svg")
+                drag_state = svg.evaluate(
+                    """element => {
+                      const path = element.querySelector('.react-flow__minimap-mask');
+                      const match = [...path.getAttribute('d').matchAll(
+                        /M([-\\d.]+),([-\\d.]+)h([-\\d.]+)v([-\\d.]+)/g
+                      )][1];
+                      const point = element.createSVGPoint();
+                      point.x = Number(match[1]) + Number(match[3]) / 2;
+                      point.y = Number(match[2]) + Number(match[4]) / 2;
+                      const center = point.matrixTransform(element.getScreenCTM());
+                      return { x: center.x, y: center.y, maskX: Number(match[1]),
+                        svgWidth: element.getBoundingClientRect().width,
+                        viewBoxWidth: element.viewBox.baseVal.width };
+                    }"""
+                )
+                page.mouse.move(drag_state["x"], drag_state["y"])
+                page.mouse.down()
+                page.mouse.move(drag_state["x"] + 20, drag_state["y"], steps=4)
+                page.mouse.up()
+                after_mask_x = svg.evaluate(
+                    """element => Number([...element.querySelector(
+                      '.react-flow__minimap-mask'
+                    ).getAttribute('d').matchAll(/M([-\\d.]+),([-\\d.]+)h/g)][1][1])"""
+                )
+                moved_pixels = (
+                    (after_mask_x - drag_state["maskX"])
+                    * drag_state["svgWidth"]
+                    / drag_state["viewBoxWidth"]
+                )
+                assert 15 <= moved_pixels <= 25
                 label = page.locator(
                     ".library-graph-canvas .react-flow__edge-text"
                 ).first.bounding_box()
@@ -545,6 +591,41 @@ def test_workspace_menu_recovers_from_library_search(browser, live_library, widt
         playwright.expect(menu).to_be_focused()
     finally:
         page.close()
+
+
+def test_collapsed_desktop_sidebar_state_resets_when_leaving_search(
+    browser, live_library
+):
+    _, url, _ = live_library
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.add_init_script("localStorage.setItem('linexcel-sidebar-collapsed', 'true')")
+    page.goto(url)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.locator("#connection[data-state=ok]").wait_for(state="attached")
+    page.locator(".library-search-trigger").click()
+    menu = page.locator("#workspace-menu")
+    sidebar = page.locator("#workspace-sidebar")
+    assert sidebar.is_hidden()
+    menu.click()
+    playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+    assert sidebar.is_visible()
+    assert "menu-open" in page.locator(".workspace").get_attribute("class")
+    page.locator(".library-search-trigger").click()
+    assert not errors, errors
+    playwright.expect(menu).to_have_attribute("aria-expanded", "false")
+    assert sidebar.is_hidden()
+    assert not sidebar.evaluate("element => element.classList.contains('is-open')")
+    assert not page.locator(".workspace").evaluate(
+        "element => element.classList.contains('menu-open')"
+    )
+    menu.click()
+    playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+    assert sidebar.is_visible()
+    bounds = sidebar.bounding_box()
+    assert bounds and bounds["width"] > 0 and bounds["height"] > 0
+    assert not errors
+    page.close()
 
 
 def test_pin_unpin_and_direction_changes_replace_the_lineage_verdict(browser):

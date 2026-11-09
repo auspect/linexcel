@@ -582,6 +582,7 @@ function setWorkspaceMenu(open,returnFocus=true){
  else{$('workspace-menu').setAttribute('aria-expanded',String(!document.body.classList.contains('sidebar-collapsed')));document.querySelector('main').inert=false;document.querySelector('.top').inert=false;sidebar.removeAttribute('role');sidebar.removeAttribute('aria-modal')}
 }
 $('workspace-menu').onclick=()=>{if(mobileWorkspace())setWorkspaceMenu(true);else if(document.body.classList.contains('library-search-active'))setWorkspaceMenu(!$('workspace-sidebar').classList.contains('is-open'));else{document.body.classList.toggle('sidebar-collapsed');const collapsed=document.body.classList.contains('sidebar-collapsed');$('workspace-menu').setAttribute('aria-expanded',String(!collapsed));try{localStorage.setItem('linexcel-sidebar-collapsed',String(collapsed))}catch{}}};try{document.body.classList.toggle('sidebar-collapsed',localStorage.getItem('linexcel-sidebar-collapsed')==='true')}catch{}$('workspace-close').onclick=()=>setWorkspaceMenu(false);if(!mobileWorkspace())$('workspace-menu').setAttribute('aria-expanded',String(!document.body.classList.contains('sidebar-collapsed')));
+$('workspace-sidebar').ownerDocument.addEventListener('linexcel:close-workspace-menu',()=>setWorkspaceMenu(false,false));
 $('workspace-sidebar').addEventListener('keydown',event=>{if(!$('workspace-sidebar').classList.contains('is-open'))return;if(event.key==='Escape'){event.preventDefault();setWorkspaceMenu(false)}else if(mobileWorkspace()&&event.key==='Tab'){const items=[...$('workspace-sidebar').querySelectorAll('button,input,select,textarea,summary,a[href]')].filter(e=>!e.disabled&&e.checkVisibility());if(!items.length)return;const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}}});
 function openMobileReader(){$('graph-panel-calculation')?.focus({preventScroll:true})}
 function closeMobileReader(){const reading=$('view-graph').classList.contains('mobile-reading');$('view-graph').classList.remove('mobile-reading');$('graph-reader-return').hidden=true;scheduleGraphGeometry();if(reading){window.scrollTo(0,mobileReaderScroll);$('graph-read-cell').focus({preventScroll:true})}}
@@ -1340,6 +1341,9 @@ initializeApplication().then(async()=>{const params=new URLSearchParams(location
   main.insertBefore(view, main.firstChild);
   let search = null;
   const toggle = (active) => {
+    if (!active && document.body.classList.contains("library-search-active")) {
+      document.dispatchEvent(new Event("linexcel:close-workspace-menu"));
+    }
     view.hidden = !active;
     document.body.classList.toggle("library-search-active", active);
     open.setAttribute("aria-current", active ? "page" : "false");
@@ -1351,7 +1355,7 @@ initializeApplication().then(async()=>{const params=new URLSearchParams(location
     }
     if (active) view.focus();
   };
-  open.addEventListener("click", () => toggle(view.hidden));
+  open.onclick = () => toggle(open.getAttribute("aria-current") !== "page");
   document.getElementById("ui-language").addEventListener("change", (event) => {
     const english = event.target.value === "en";
     open.textContent = english ? "Search" : "Rechercher";
