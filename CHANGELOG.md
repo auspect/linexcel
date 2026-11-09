@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Recover temporary search attachments after reload, discard failed imports
+  through the attachment route, and expire temporary projects after 24 hours.
+  Reconcile scoped catalogs on the catalog executor outside the global task
+  lock, with pending/incomplete responses while a scope is building.
+- Bind search and lineage UI state to current requests, clear stale answers on
+  failed searches and scope mutations, and send the selected lineage direction.
+  Show coverage and accessible workbook/revision evidence near the decision,
+  keep technical trace fields secondary, and improve link, occurrence and
+  attachment recovery controls.
+
 - Add a French-first, no-AI library search view with workbook/revision scopes,
   kind filters, paged text occurrences, source-attributed result cards, directed
   lineage on the shared React Flow graph, explicit boundary and coverage

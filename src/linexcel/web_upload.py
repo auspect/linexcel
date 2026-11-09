@@ -377,6 +377,11 @@ class UploadStore:
                 }
                 if session.get("searchScoped"):
                     project["searchScopeId"] = session["id"]
+                    from linexcel.web_library import SEARCH_ATTACHMENT_TTL
+
+                    project["searchScopeExpiresAt"] = (
+                        time.time() + SEARCH_ATTACHMENT_TTL
+                    )
                 from linexcel.catalog import revision as workbook_revision
                 from linexcel.lazy_store import file_sha256
 

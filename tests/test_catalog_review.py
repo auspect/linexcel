@@ -247,7 +247,7 @@ def test_occurrence_api_is_owner_scoped_and_strict(tmp_path, monkeypatch):
         monkeypatch.setattr(
             store.library,
             "sources",
-            lambda requested: [item] if requested == owner else [],
+            lambda requested, search_scope=None: [item] if requested == owner else [],
         )
         params = {
             "generation": [hit["occurrenceGroup"]["generation"]],

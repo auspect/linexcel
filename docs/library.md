@@ -22,6 +22,7 @@ path, URL, SQL expression or another owner's source index.
 - `POST /api/library/pins` with `{linkId,targetProject,targetSha256}`
 - `DELETE /api/library/pins/LINK_ID`
 - `GET /api/library/occurrences?generation=GENERATION&group=ENTRY_ID&after=0&limit=50`
+- `GET /api/library/attachments`
 - `POST /api/library/attachments/SCOPE_ID/keep`
 - `DELETE /api/library/attachments/SCOPE_ID`
 
@@ -33,8 +34,12 @@ and occurrence requests; this authorizes that one attachment alongside the
 owner's ordinary loaded revisions, so external links can still be resolved
 without exposing the attachment to library-wide searches. Scope pin requests
 include `scope` in the JSON body; scope unpin requests include it in the query.
-Deleting the scope removes the temporary project. A kept project becomes an
-ordinary library member and no longer needs `scope`.
+`GET /api/library/attachments` lists recoverable temporary projects after a
+reload. Each has an opaque scope ID and an expiry time. Temporary projects
+expire after 24 hours; listing attachments removes expired projects and their
+files. Deleting a scope removes the temporary project, including after an
+import task failed. A kept project becomes an ordinary library member and no
+longer needs `scope`.
 
 `q` and `query` are aliases; supplying both is an error. Kinds are `cell`,
 `sheet`, `name`, `table` and `column`. Text search folds case and diacritics and
@@ -289,6 +294,11 @@ failed state, phase and observed scan progress. HTTP search/status detect change
 content hashes and enqueue reconciliation; they never perform a large build
 under the global lock. Searches can use a previous compatible generation while
 building, marked `stale=true`, incomplete, with `catalog_refresh_pending`.
+Search-scoped builds use the same owner mutation gate and catalog executor and
+never reconcile synchronously while holding the task-store lock. The first
+scoped search/status response is explicitly pending and incomplete; retry after
+the build reaches a terminal state. Scope reconciliation serializes with normal
+owner builds because both publish into the owner's immutable catalog.
 Deleted/replaced revision evidence is excluded after reauthorization. Before the
 first generation (or during a schema upgrade), search returns an empty pending
 result with the full trace; this does not mean absence. At a one-connection budget,

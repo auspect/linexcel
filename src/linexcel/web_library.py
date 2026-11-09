@@ -6,6 +6,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from linexcel.catalog import (
@@ -18,6 +19,8 @@ from linexcel.catalog import (
     terms_for,
 )
 
+SEARCH_ATTACHMENT_TTL = 24 * 60 * 60
+
 
 class Library:
     def __init__(self, store):
@@ -25,6 +28,7 @@ class Library:
         self.catalogs: dict[str, Catalog] = {}
         self.fts5 = fts5_available()
         self.pending = {}
+        self.scoped_pending = {}
         self.dirty = set()
         self.mutations = {}
         # Catalog builds cannot consume workbook-import task slots.
@@ -34,6 +38,7 @@ class Library:
         self.executor.shutdown(wait=True, cancel_futures=True)
         with self.store.lock:
             self.pending.clear()
+            self.scoped_pending.clear()
             self.dirty.clear()
 
     def catalog(self, owner: str) -> Catalog:
@@ -56,6 +61,12 @@ class Library:
             project = _read(manifest)
             project_scope = project.get("searchScopeId")
             if project_scope:
+                expires_at = project.get(
+                    "searchScopeExpiresAt",
+                    project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
+                )
+                if expires_at <= time.time():
+                    continue
                 if project_scope != search_scope:
                     continue
                 scoped_source_found = True
@@ -71,6 +82,54 @@ class Library:
         if search_scope is not None and not scoped_source_found:
             raise KeyError("Search-scoped attachment not found")
         return sources
+
+    def cleanup_expired_attachments(self, owner: str) -> None:
+        from linexcel.web import _read
+
+        with self.mutation(owner), self.store.lock:
+            for manifest in (self.store.root / owner / "projects").glob(
+                "*/project.json"
+            ):
+                try:
+                    project = _read(manifest)
+                except (OSError, ValueError, TypeError):
+                    continue
+                if not project.get("searchScopeId"):
+                    continue
+                expires_at = project.get(
+                    "searchScopeExpiresAt",
+                    project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
+                )
+                if expires_at <= time.time():
+                    self.store.delete(owner, project["id"])
+
+    def list_attachments(self, owner: str) -> dict:
+        from linexcel.web import _read
+
+        self.cleanup_expired_attachments(owner)
+        attachments = []
+        with self.store.lock:
+            for manifest in (self.store.root / owner / "projects").glob(
+                "*/project.json"
+            ):
+                try:
+                    project = _read(manifest)
+                except (OSError, ValueError, TypeError):
+                    continue
+                scope_id = project.get("searchScopeId")
+                if not scope_id:
+                    continue
+                attachments.append(
+                    {
+                        "scopeId": scope_id,
+                        "expiresAt": project.get(
+                            "searchScopeExpiresAt",
+                            project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
+                        ),
+                        "project": project_revision(project, manifest.parent),
+                    }
+                )
+        return {"attachments": attachments}
 
     def mutation(self, owner):
         """Acquire before store.lock, never wait for a build under that lock."""
@@ -88,6 +147,44 @@ class Library:
             catalog = self.catalog(owner)
             catalog.build_state = {"status": "queued", "phase": "catalog"}
             self.pending[owner] = self.executor.submit(self._reconcile, owner)
+
+    def refresh_scoped(self, owner: str, search_scope: str):
+        key = (owner, search_scope)
+        with self.store.lock:
+            if self.store.closed or key in self.scoped_pending:
+                return
+            catalog = self.catalog(owner)
+            catalog.build_state = {
+                "status": "queued",
+                "phase": "catalog",
+                "scope": search_scope,
+            }
+            self.scoped_pending[key] = self.executor.submit(
+                self._reconcile_scoped, owner, search_scope
+            )
+
+    def _reconcile_scoped(self, owner: str, search_scope: str):
+        key = (owner, search_scope)
+        catalog = self.catalog(owner)
+        try:
+            with self.mutation(owner):
+                with self.store.lock:
+                    if self.store.closed:
+                        return
+                    sources = self.sources(owner, search_scope)
+                catalog.ensure(sources)
+        except Exception as error:
+            if catalog.build_state.get("status") != "failed":
+                catalog.failed_manifest = []
+                catalog.build_state = {
+                    "status": "failed",
+                    "phase": "catalog",
+                    "errorType": type(error).__name__,
+                    "capsHit": ["catalog_build_failed"],
+                }
+        finally:
+            with self.store.lock:
+                self.scoped_pending.pop(key, None)
 
     def _reconcile(self, owner):
         try:
@@ -217,7 +314,87 @@ class Library:
                     ):
                         return catalog.failed_status()
                     raise
-                synchronous = synchronous or search_scope is not None
+                scoped_key = (owner, search_scope) if search_scope else None
+                scoped_build_pending = bool(
+                    scoped_key and scoped_key in self.scoped_pending
+                )
+                if (
+                    search_scope
+                    and not scoped_build_pending
+                    and (
+                        not catalog._published(catalog._current())
+                        or catalog.needs_refresh(sources)
+                    )
+                    and catalog.build_state.get("status") != "failed"
+                ):
+                    self.refresh_scoped(owner, search_scope)
+                    scoped_build_pending = scoped_key in self.scoped_pending
+                if scoped_build_pending:
+                    if operation not in {"search", "status"}:
+                        raise APIError(
+                            409, "Catalog building; retry lookup after completion"
+                        )
+                    result = self._pending_status(catalog, sources)
+                    result["buildState"] = {
+                        **result.get("buildState", {}),
+                        "status": catalog.build_state.get("status", "queued"),
+                        "scope": search_scope,
+                    }
+                    if operation == "status":
+                        return catalog._bound(result)
+                    if "q" in params and "query" in params:
+                        raise ValueError("Supply q or query, not both")
+                    query = value("q", value("query"))
+                    catalog.validate_search(
+                        query,
+                        kinds=value("kinds").split(",") if value("kinds") else (),
+                        offset=int(value("offset", "0")),
+                        limit=int(value("limit", "50")),
+                    )
+                    result.update(
+                        results=[],
+                        status="building",
+                        pagination={
+                            "offset": int(value("offset", "0")),
+                            "limit": int(value("limit", "50")),
+                            "matched": 0,
+                            "hasMore": False,
+                        },
+                        trace={
+                            "schemaVersion": TRACE_VERSION,
+                            "tool": "search_catalog",
+                            "terms": terms_for(query),
+                            "normalization": (
+                                "NFD, casefold, remove combining marks; "
+                                "word tokens; AND"
+                            ),
+                            "scope": {
+                                "project": value("project") or None,
+                                "revision": value("revision") or None,
+                                "kinds": value("kinds").split(",")
+                                if value("kinds")
+                                else [],
+                            },
+                            "revisions": [
+                                revision
+                                for item in result.get("revisions", [])
+                                if (revision := item.get("revision"))
+                            ],
+                            "generation": result["generation"],
+                            "backend": "fts5" if catalog.fts5 else "like",
+                            "counts": {
+                                "eligibleEntries": 0,
+                                "matched": 0,
+                                "returned": 0,
+                                "sqliteVmStepsApprox": 0,
+                                "indexConnectionsPeak": 0,
+                            },
+                            "durationMs": 0,
+                            "complete": False,
+                            "capsHit": result["coverage"]["capsHit"],
+                        },
+                    )
+                    return catalog._bound(result)
                 if operation in {"lineage", "occurrences"}:
                     if owner in self.pending and catalog.limits.connections == 1:
                         raise APIError(
@@ -479,6 +656,7 @@ class Library:
                     if project.get("searchScopeId") != search_scope:
                         continue
                     project.pop("searchScopeId")
+                    project.pop("searchScopeExpiresAt", None)
                     _write(manifest, project)
                     self.refresh(owner)
                     return {

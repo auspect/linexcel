@@ -347,7 +347,7 @@ def test_background_rebuild_does_not_hold_store_lock_or_block_old_search(
         monkeypatch.setattr(
             store.library,
             "sources",
-            lambda requested: [item] if requested == owner else [],
+            lambda requested, search_scope=None: [item] if requested == owner else [],
         )
         original = catalog.ensure
 
@@ -370,6 +370,47 @@ def test_background_rebuild_does_not_hold_store_lock_or_block_old_search(
         assert result["stale"] and not result["coverage"]["complete"]
         assert result["generation"] == status["generation"]
         assert status["buildState"]["status"] == "building"
+    finally:
+        release.set()
+        store.close()
+
+
+def test_scoped_background_rebuild_is_pending_without_holding_store_lock(
+    tmp_path, monkeypatch
+):
+    item = indexed(tmp_path, Workbook())
+    owner, scope = "a" * 64, "b" * 32
+    store = TaskStore(WebConfig(tmp_path / "data", retention_days=None))
+    started, release = threading.Event(), threading.Event()
+    try:
+        catalog = store.library.catalog(owner)
+        monkeypatch.setattr(
+            store.library,
+            "sources",
+            lambda requested, search_scope=None: (
+                [item] if requested == owner and search_scope == scope else []
+            ),
+        )
+        original = catalog.ensure
+
+        def slow(sources, **kwargs):
+            catalog.build_state = {"status": "building", "phase": "test_gate"}
+            started.set()
+            assert release.wait(10)
+            return original(sources, **kwargs)
+
+        monkeypatch.setattr(catalog, "ensure", slow)
+        with store.lock:
+            store.library.refresh_scoped(owner, scope)
+        assert started.wait(5)
+        before = time.monotonic()
+        with store.lock:
+            assert not store.closed
+        result = store.library.query(owner, "status", {"scope": [scope]})
+        assert time.monotonic() - before < 2
+        assert result["buildState"]["scope"] == scope
+        assert result["buildState"]["status"] == "building"
+        assert not result["coverage"]["complete"]
     finally:
         release.set()
         store.close()
@@ -409,7 +450,11 @@ def test_new_authorized_scope_returns_pending_while_old_generation_is_served(
     try:
         catalog = store.library.catalog(owner)
         catalog.ensure([item])
-        monkeypatch.setattr(store.library, "sources", lambda _: [item, new])
+        monkeypatch.setattr(
+            store.library,
+            "sources",
+            lambda _, search_scope=None: [item, new],
+        )
         store.library.pending[owner] = object()
         catalog.build_state = {"status": "building"}
         result = store.library.query(owner, "search", {"project": [new.project_id]})

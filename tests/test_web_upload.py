@@ -133,16 +133,24 @@ def test_search_scoped_upload_stays_out_of_library_until_kept(app):
         hit["revision"]["projectId"] != project_id for hit in default_search["results"]
     )
 
-    scoped = json.loads(
-        request(
+    scoped = {}
+    for _ in range(100):
+        code, body, _ = request(
             app,
             "GET",
             "/api/library/search",
             QUERY_STRING=f"scope={upload['id']}&project={project_id}&q=SearchScopedNeedle&kinds=cell",
-        )[1]
-    )
+        )
+        assert code == 200, body
+        scoped = json.loads(body)
+        if scoped["results"]:
+            break
+        time.sleep(0.05)
     assert scoped["results"], scoped
     assert scoped["results"][0]["revision"]["projectId"] == project_id
+    recovered = json.loads(request(app, "GET", "/api/library/attachments")[1])
+    assert recovered["attachments"][0]["scopeId"] == upload["id"]
+    assert recovered["attachments"][0]["expiresAt"] > time.time()
     scoped_status = json.loads(
         request(
             app,
@@ -180,6 +188,46 @@ def test_search_scoped_upload_stays_out_of_library_until_kept(app):
         )[0]
         == 404
     )
+
+
+def test_failed_search_scoped_import_can_be_removed_from_attachment_route(app):
+    broken = b"PK\x03\x04not-a-zip"
+    upload, _ = begin(app, size=len(broken), searchScoped=True)
+    assert put(app, upload, broken)[0] == 200
+    code, body, _ = request(app, "POST", f"/api/uploads/{upload['id']}/complete", {})
+    assert code == 200, body
+    imported = json.loads(body)
+    task = wait(app.store, imported["task"]["id"])
+    assert task["status"] == "failed"
+    project_id = imported["project"]["id"]
+    owner = app.store.tasks[imported["task"]["id"]]["owner"]
+    project_path = app.store.root / owner / "projects" / project_id
+    assert (project_path / "project.json").exists()
+    assert request(app, "DELETE", f"/api/library/attachments/{upload['id']}")[0] == 200
+    assert not project_path.exists()
+    assert (
+        json.loads(request(app, "GET", "/api/library/attachments")[1])["attachments"]
+        == []
+    )
+
+
+def test_expired_search_attachment_is_listed_for_cleanup_and_freed(app):
+    upload, raw = begin(app, searchScoped=True)
+    assert put(app, upload, raw)[0] == 200
+    imported = json.loads(
+        request(app, "POST", f"/api/uploads/{upload['id']}/complete", {})[1]
+    )
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    project_id = imported["project"]["id"]
+    owner = app.store.tasks[imported["task"]["id"]]["owner"]
+    project_path = app.store.root / owner / "projects" / project_id
+    manifest_path = project_path / "project.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["searchScopeExpiresAt"] = time.time() - 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    listed = json.loads(request(app, "GET", "/api/library/attachments")[1])
+    assert listed["attachments"] == []
+    assert not project_path.exists()
 
 
 def test_failed_chunk_rolls_back_and_resumes_without_duplicate_bytes(app):

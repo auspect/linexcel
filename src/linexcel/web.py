@@ -1894,6 +1894,8 @@ class WebApp:
         query: dict | None = None,
     ) -> Any:
         parts = path.strip("/").split("/")
+        if parts == ["api", "library", "attachments"] and method == "GET":
+            return self.store.library.list_attachments(owner)
         if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
             return self.store.library.query(owner, parts[2], query or {})
         if (
