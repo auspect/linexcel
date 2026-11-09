@@ -1481,7 +1481,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           const operation = event.type === "search" ? text("Recherche", "Search") : event.type === "lineage" ? text("Lignage", "Lineage") : event.type === "occurrences" ? text("Occurrences", "Occurrences") : text("Import", "Import");
           const eventStatus = { pending: text("en cours", "pending"), completed: text("terminé", "completed"), failed: text("échec", "failed"), superseded: text("remplacé", "superseded") }[event.status];
           const directionName = event.detail === "upstream" ? text("En amont", "Upstream") : event.detail === "downstream" ? text("En aval", "Downstream") : event.detail;
-          const revisionsInTrace = (trace.revisions || []).map((item) => revisionLabel({
+          const revisionsInTrace = (trace.revisions || []).filter(Boolean).map((item) => revisionLabel({
             filename: revisions.find((revision) => revision.projectId === item.projectId)?.filename,
             projectId: item.projectId,
             sha256: item.sha256,

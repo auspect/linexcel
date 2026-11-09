@@ -112,7 +112,7 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
         "terms": ["cafe"],
         "normalization": "NFD fold; word tokens; AND",
         "scope": {"project": None, "revision": None, "kinds": ["cell"]},
-        "revisions": [revision],
+        "revisions": [revision, None],
         "generation": "generation-1",
         "backend": "fts5",
         "counts": {"eligibleEntries": 10, "matched": len(hits), "returned": len(hits)},
