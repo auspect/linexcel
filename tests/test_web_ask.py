@@ -1,6 +1,7 @@
 """Real task infrastructure and HTTP consent, with an offline fake provider."""
 
 import hashlib
+import importlib.util
 import json
 import threading
 import time
@@ -78,7 +79,15 @@ def proposal(project, rationale="Selected saved source."):
 
 
 @pytest.fixture
-def app(tmp_path):
+def app(tmp_path, monkeypatch):
+    # These tests inject a fake provider, so they stay in the required CI, which
+    # deliberately runs without the optional OpenAI SDK.
+    find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *args: object() if name == "openai" else find_spec(name, *args),
+    )
     instance = create_app(
         tmp_path / "data", resolve_user=lambda env: env.get("user"), ai_enabled=True
     )
