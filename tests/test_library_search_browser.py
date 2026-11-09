@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 from test_app_browser import APP
+from test_library_search_transitions import live_library as live_library
+from test_library_search_transitions import open_search as open_live_search
 
 playwright = pytest.importorskip("playwright.sync_api")
 CAPTURE_DIR = (
@@ -501,6 +503,44 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                         / f"{prefix}-{section.removeprefix('.library-')}.png"
                     )
                 )
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_workspace_menu_recovers_from_library_search(browser, live_library, width):
+    _, url, _ = live_library
+    page = open_live_search(browser, url, width)
+    menu = page.locator("#workspace-menu")
+    sidebar = page.locator("#workspace-sidebar")
+    main = page.locator(".workspace > main")
+    header = page.locator("header.top")
+    try:
+        menu.click()
+        playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+        playwright.expect(sidebar).to_be_visible()
+        bounds = sidebar.bounding_box()
+        assert bounds and bounds["width"] > 0 and bounds["height"] > 0
+        assert sidebar.get_by_text("Espaces de travail", exact=True).is_visible()
+        if CAPTURE_DIR:
+            CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(CAPTURE_DIR / f"workspace-menu-{width}.png"))
+        close = page.locator("#workspace-close")
+        playwright.expect(close).to_be_visible()
+        close.click()
+        playwright.expect(menu).to_have_attribute("aria-expanded", "false")
+        assert sidebar.is_hidden()
+        assert not main.evaluate("element => element.inert")
+        assert not header.evaluate("element => element.inert")
+        playwright.expect(menu).to_be_focused()
+
+        menu.click()
+        page.keyboard.press("Escape")
+        playwright.expect(menu).to_have_attribute("aria-expanded", "false")
+        assert sidebar.is_hidden()
+        assert not main.evaluate("element => element.inert")
+        assert not header.evaluate("element => element.inert")
+        playwright.expect(menu).to_be_focused()
     finally:
         page.close()
 

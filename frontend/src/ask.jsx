@@ -66,7 +66,6 @@ export function AskTrace({ run, english }) {
   if (!run) return <p>{text("Aucune question exécutée.", "No question run yet.")}</p>;
   const trace = run.trace;
   const reason = trace?.reason;
-  const busySteps = run?.trace?.budgetUse?.steps || 0;
   return <div className="library-ask-trace" aria-live="polite">
     {failures[reason] && <p role="status">{failures[reason][english ? 1 : 0]}</p>}
     <ol>{(trace?.steps || []).map((step, index) => <li key={index}>
@@ -156,6 +155,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
   };
   const runId = useRef(null);
   const answer = run?.status === "answer_proposed" ? run.answer : null;
+  const busySteps = run?.trace?.budgetUse?.steps || 0;
   return <section className="library-ask-state" aria-label={text("Poser une question", "Ask a question")}>
     <p className="help">{text("Le modèle cherche et propose des cellules. Les valeurs et le lignage sont relus par linexcel ; leur pertinence reste à confirmer.", "The model searches and proposes cells. Linexcel rereads values and lineage; relevance still needs confirmation.")}</p>
     {config?.endpoint && <p className="library-ask-endpoint">{config.local ? text("Modèle local", "Local model") : text("Modèle distant, autorisation par question", "Remote model, consent per question")} · {config.model} · {config.endpoint}</p>}
