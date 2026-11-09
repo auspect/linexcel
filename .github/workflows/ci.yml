@@ -48,7 +48,7 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked
-      - run: uv run ty check --ignore unresolved-import src/
+      - run: uv run ty check --ignore import-not-found src/
 
   test:
     runs-on: ${{ matrix.os }}
