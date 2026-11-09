@@ -20,7 +20,8 @@ import "./graph.css";
 import "./shell.css";
 import "./theme.css";
 import "./library-search.css";
-export { compressNeighborhood } from './aggregation.js';
+import { revisionLineageView } from './aggregation.js';
+export { compressNeighborhood, revisionLineageView } from './aggregation.js';
 
 const Card = memo(({ data, selected }) => (
   <article
@@ -65,7 +66,7 @@ function LayeredEdge({
     points.push(targetPosition==='left'||targetPosition==='right'?{x:last.x,y:end.y}:{x:end.x,y:last.y},end);
   }
   const path = points.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" "),
-    center = data?.bundle ? {x:(points[0].x+points.at(-1).x)/2,y:(points[0].y+points.at(-1).y)/2} : points[Math.floor(points.length / 2)];
+    center = data?.labelPoint || (data?.bundle ? {x:(points[0].x+points.at(-1).x)/2,y:(points[0].y+points.at(-1).y)/2} : points[Math.floor(points.length / 2)]);
   return (
     <>
       <BaseEdge
@@ -99,7 +100,20 @@ function Dock({ elements = [] }) {
   return <div ref={ref} className="graph-docked-controls" />;
 }
 
-function layered(nodes, edges, portrait, aspect, availableWidth, availableHeight) {
+function layered(nodes, edges, portrait, aspect, availableWidth, availableHeight, stack = false) {
+  if (stack) {
+    const positions = new Map(nodes.map((node, index) => [node.id, { x: 30, y: 30 + index * 144 }]));
+    for (const [index, edge] of edges.entries()) {
+      const a = positions.get(edge.source), b = positions.get(edge.target);
+      const lane = 12 - (index % 3) * 5;
+      edge.sourceHandle = 'source-left';
+      edge.targetHandle = 'target-left';
+      // The narrow left corridor holds the path; keep its label in the gap
+      // above the lower card so the viewport never clips the relationship.
+      edge.data = { ...edge.data, labelPoint: { x: a.x + 116, y: Math.max(a.y, b.y) - 20 }, points: [{ x: a.x, y: a.y + 52 }, { x: lane, y: a.y + 52 }, { x: lane, y: b.y + 52 }, { x: b.x, y: b.y + 52 }] };
+    }
+    return nodes.map(node => ({ ...node, position: positions.get(node.id) }));
+  }
   const owned=nodes.filter(n=>n.data.tone!=='outside'),outside=nodes.find(n=>n.data.tone==='outside');
   const ownedIds=new Set(owned.map(n=>n.id));
   const leaf=owned.length>1&&owned.every(n=>n.data.original.nodeId)&&!edges.some(e=>ownedIds.has(e.source)&&ownedIds.has(e.target));
@@ -337,7 +351,9 @@ export function mount(element, options) {
           <Dock elements={options.breadcrumbs} />
         </Panel>
         <Panel position="bottom-left" className="graph-status-panel">
-          <span className="flow-mobile-status" role="status">{model.nodes.length} {en?'cards':'cartes'} · {model.edges.length} {en?'links':'liens'}</span>
+          <span className="flow-mobile-status" role="status">{options.relationshipStatus
+            ? options.relationshipStatus(model)
+            : `${model.nodes.length} ${en?'cards':'cartes'} · ${model.edges.filter(e => !e.hidden).length} ${en?'links':'liens'}`}</span>
           <Dock elements={options.status} />
         </Panel>
       </ReactFlow>
@@ -377,7 +393,7 @@ export function mount(element, options) {
       const aspect=Math.max(.3,element.clientWidth/Math.max(1,element.clientHeight));
       const padding=api.fitOptions().padding;
       const placed = layered(mapped, links, element.clientWidth<550,aspect,
-        element.clientWidth-96,Math.max(60,element.clientHeight-parseFloat(padding.top)-parseFloat(padding.bottom)));
+        element.clientWidth-96,Math.max(60,element.clientHeight-parseFloat(padding.top)-parseFloat(padding.bottom)), options.stack && element.clientWidth < 550);
       current = { nodes: placed, edges: links, language, fit, focus,portrait:element.clientWidth<550 };
       flushSync(() => update(current));
     },
@@ -427,13 +443,13 @@ export function mount(element, options) {
       const trail=breadcrumbs&&!breadcrumbs.hidden&&panel
         ? panel.getBoundingClientRect().bottom-element.getBoundingClientRect().top+12 : 0;
       const overlays=['.graph-status-panel','.react-flow__minimap','.react-flow__controls'].map(s=>element.querySelector(s)?.getBoundingClientRect().height||0);
-      const top=Math.max(hud+26,trail),bottom=Math.min(Math.max(...overlays)+16,element.clientHeight*.34);
+      const top=options.compact?12:Math.max(hud+26,trail),bottom=Math.min(Math.max(...overlays)+16,element.clientHeight*.34);
       return {
         padding: {
           top: `${top}px`,
-          right: "48px",
+          right: options.compact ? "16px" : "48px",
           bottom: `${bottom}px`,
-          left: "48px",
+          left: options.compact ? "16px" : "48px",
         },
         minZoom: 0.001,
         maxZoom: 1.2,
@@ -525,12 +541,16 @@ const SEARCH_CAP_LABELS = {
   lineage_depth: ["profondeur maximale atteinte", "maximum depth reached"],
 };
 const SEARCH_BUDGET_LABELS = {
+  limit: ["cellules", "cells"],
   nodes: ["cellules", "cells"],
   edges: ["relations", "relationships"],
   workbooks: ["classeurs", "workbooks"],
   depth: ["profondeur", "depth"],
   milliseconds: ["millisecondes", "milliseconds"],
   responseBytes: ["octets de réponse", "response bytes"],
+  readerSamples: ["liens lecteurs détaillés", "reader links detailed"],
+  unresolvedReaderSamples: ["liens lecteurs non résolus détaillés", "unresolved reader links detailed"],
+  connections: ["classeurs ouverts simultanément", "workbooks open at once"],
 };
 
 function searchText(value, english) {
@@ -572,13 +592,17 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
   const [linkStatus, setLinkStatus] = useState("");
   const [pinTargets, setPinTargets] = useState({});
   const [traceEvents, setTraceEvents] = useState([]);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState({ search: null, lineage: null, upload: false });
+  const busy = Object.values(pending).some(Boolean);
   const [error, setError] = useState("");
   const [attachment, setAttachment] = useState(null);
   const [recoverableAttachments, setRecoverableAttachments] = useState([]);
   const [uploadProgress, setUploadProgress] = useState("");
   const [occurrences, setOccurrences] = useState({});
   const [visibleResultCount, setVisibleResultCount] = useState(10);
+  const [expandedRevision, setExpandedRevision] = useState(null);
+  const traceSummary = useRef(null);
+  const controllers = useRef({ search: null, lineage: null });
   const canvas = useRef(null);
   const flow = useRef(null);
   const searchRequestId = useRef(0);
@@ -591,6 +615,20 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
   currentStatusScope.current = attachment?.scopeId || null;
   const currentLinkScope = useRef(attachment?.scopeId || null);
   currentLinkScope.current = attachment?.scopeId || null;
+
+  useEffect(() => {
+    const summary = traceSummary.current, main = summary.closest("main");
+    const observer = new ResizeObserver(() => {
+      const height = summary.getBoundingClientRect().height;
+      if (height) main.style.setProperty("--library-trace-height", `${height}px`);
+    });
+    observer.observe(summary);
+    return () => {
+      observer.disconnect();
+      main.style.removeProperty("--library-trace-height");
+      Object.values(controllers.current).forEach(controller => controller?.abort());
+    };
+  }, []);
 
   const request = async (path, options = {}) => {
     const response = await fetch(`${apiBase}${path}`, {
@@ -697,7 +735,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
 
   useEffect(() => {
     const state = status?.buildState?.status;
-    if (state !== "queued" && state !== "building") {
+    if (state !== "queued" && state !== "building" && !(state === "ready" && status?.stale)) {
       setCatalogPollTimedOut(false);
       return undefined;
     }
@@ -724,15 +762,26 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       active = false;
       clearTimeout(timer);
     };
-  }, [status?.buildState?.status, attachment?.scopeId]);
+  }, [status?.buildState?.status, status?.stale, attachment?.scopeId]);
 
   const addTrace = (type, trace, detail = "") => {
-    setTraceEvents((events) => [...events, { type, trace, detail, at: new Date().toISOString() }]);
+    setTraceEvents((events) => [...events, { type, trace, detail, status: "completed", at: new Date().toISOString() }]);
+  };
+  const supersedeRequests = (types) => {
+    for (const type of types) {
+      if (type === "search") ++searchRequestId.current;
+      if (type === "lineage") ++lineageRequestId.current;
+      controllers.current[type]?.abort();
+      controllers.current[type] = null;
+    }
+    setPending((current) => ({ ...current, ...Object.fromEntries(types.map(type => [type, null])) }));
+    setTraceEvents(events => events.map(event => types.includes(event.type) && event.status === "pending"
+      ? { ...event, status: "superseded" } : event));
   };
   const invalidateAnswer = (clearSearch = true) => {
-    ++searchRequestId.current;
-    ++lineageRequestId.current;
+    supersedeRequests(["search", "lineage"]);
     setLineage(null);
+    setExpandedRevision(null);
     if (clearSearch) {
       setSearch(null);
       setSelected(null);
@@ -751,20 +800,24 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
     return params;
   };
   const performSearch = async (offset = 0, generation = "") => {
-    const requestId = ++searchRequestId.current;
     const appendResults = offset > 0 && search?.generation === generation;
-    if (!appendResults) ++lineageRequestId.current;
-    setBusy(true);
+    supersedeRequests(appendResults ? ["search"] : ["search", "lineage"]);
+    const requestId = ++searchRequestId.current;
+    const controller = new AbortController();
+    controllers.current.search = controller;
+    setPending(current => ({ ...current, search: requestId }));
     setError("");
     if (!appendResults) {
       setSearch(null);
       setLineage(null);
       setSelected(null);
       setVisibleResultCount(10);
+      setExpandedRevision(null);
     }
     const traceRequestId = ++traceId.current;
     setTraceEvents((events) => [...events, {
       type: "search",
+      status: "pending",
       trace: null,
       detail: query,
       queryText: query,
@@ -785,7 +838,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       params.set("limit", "50");
       params.set("offset", String(offset));
       if (generation) params.set("generation", generation);
-      const result = await request(`library/search?${params}`);
+      const result = await request(`library/search?${params}`, { signal: controller.signal });
       if (requestId !== searchRequestId.current) return;
       setSearch((previous) => appendResults && previous?.generation === generation
         ? { ...result, results: [...previous.results, ...(result.results || [])] }
@@ -793,7 +846,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       if (!appendResults) setOccurrences({});
       setTraceEvents((events) => events.map((event) =>
         event.requestId === traceRequestId
-          ? { ...event, trace: result.trace, detail: `${result.results?.length || 0}`, complete: result.coverage?.complete }
+          ? { ...event, status: "completed", trace: result.trace, detail: `${result.results?.length || 0}`, complete: result.coverage?.complete }
           : event,
       ));
     } catch (cause) {
@@ -802,23 +855,26 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         setSearch(null);
         setError(message);
         setTraceEvents((events) => events.map((event) =>
-          event.requestId === traceRequestId ? { ...event, error: message, technicalError: cause.message } : event,
+          event.requestId === traceRequestId ? { ...event, status: "failed", error: message, technicalError: cause.message } : event,
         ));
       }
     } finally {
-      if (requestId === searchRequestId.current) setBusy(false);
+      setPending(current => current.search === requestId ? { ...current, search: null } : current);
     }
   };
   const selectResult = async (hit, requestedDirection = direction, scope = attachment?.scopeId) => {
+    supersedeRequests(["lineage"]);
     const requestId = ++lineageRequestId.current;
     setSelected(hit);
     setLineage(null);
     if (!hit.handle) return;
-    setBusy(true);
+    const controller = new AbortController();
+    controllers.current.lineage = controller;
+    setPending(current => ({ ...current, lineage: requestId }));
     setError("");
     const traceRequestId = ++traceId.current;
     setTraceEvents((events) => [...events, {
-      type: "lineage", trace: null, detail: requestedDirection,
+      type: "lineage", status: "pending", trace: null, detail: requestedDirection,
       requestId: traceRequestId, at: new Date().toISOString(),
     }]);
     try {
@@ -827,12 +883,12 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       params.set("direction", requestedDirection);
       params.set("depth", "20");
       params.set("limit", "200");
-      const result = await request(`library/lineage?${params}`);
+      const result = await request(`library/lineage?${params}`, { signal: controller.signal });
       if (requestId !== lineageRequestId.current) return;
       setLineage(result);
       setTraceEvents((events) => events.map((event) =>
         event.requestId === traceRequestId
-          ? { ...event, trace: result.trace, complete: result.coverage?.complete }
+          ? { ...event, status: "completed", trace: result.trace, complete: result.coverage?.complete }
           : event,
       ));
     } catch (cause) {
@@ -841,116 +897,68 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         setLineage(null);
         setError(message);
         setTraceEvents((events) => events.map((event) =>
-          event.requestId === traceRequestId ? { ...event, error: message, technicalError: cause.message } : event,
+          event.requestId === traceRequestId ? { ...event, status: "failed", error: message, technicalError: cause.message } : event,
         ));
       }
     } finally {
-      if (requestId === lineageRequestId.current) setBusy(false);
+      setPending(current => current.lineage === requestId ? { ...current, lineage: null } : current);
     }
   };
+  const graphView = lineage ? revisionLineageView(lineage, expandedRevision) : null;
+  const boundaryText = (boundaries) => [...new Set(boundaries.map(boundary => boundary.stalePin
+    ? text("Épingle périmée : choisissez à nouveau la cible", "Stale pin: choose the target again")
+    : searchText(SEARCH_BOUNDARY_LABELS[boundary.reason] || ["Source à vérifier", "Source to verify"], english)))].join(" · ");
   useEffect(() => {
     if (!canvas.current || !lineage) return undefined;
+    const view = revisionLineageView(lineage, expandedRevision);
     const instance = mount(canvas.current, {
+      compact: true,
+      stack: !view.expandedRevision,
       onSelect: (node) => {
-        const found = (lineage.nodes || []).find((item) => item.id === node.id);
-        if (found) selectResult(found, direction);
+        if (node.collapsed) setExpandedRevision(node.id);
+        else {
+          const found = (lineage.nodes || []).find(item => item.id === node.id);
+          if (found) selectResult(found, direction);
+        }
+      },
+      relationshipStatus: (model) => {
+        const drawn = model.edges.filter(edge => !edge.hidden);
+        const represented = drawn.reduce((count, edge) => count + (edge.weight || 1), 0);
+        return text(
+          `${drawn.length} liaisons affichées · ${represented} dépendances · 0 lien synthétique`,
+          `${drawn.length} links drawn · ${represented} dependencies · 0 synthetic links`,
+        );
       },
     });
     flow.current = instance;
-    const nodes = (lineage.nodes || []).map((node, index) => {
-      const rev = node.revision || node.workbookRevision || {};
-      const file = node.filename || node.projectName || rev.projectId || node.projectId || text("Classeur", "Workbook");
-      const hash = rev.sha256 || node.sha256 || "";
-      const place = [node.sheet, node.address || node.cell].filter(Boolean).join(" · ");
-      const kind = searchText(SEARCH_KIND_LABELS[node.kind] || node.kind || "", english);
-      const value = node.value === null || node.value === undefined ? "" : searchText(node.value, english);
-      const provenance = provenanceLabel(node.valueProvenance, english);
+    const nodes = view.nodes.map(node => {
+      const revision = node.revision || node.workbookRevision || {};
+      const stops = boundaryText(node.boundaries || []);
+      const stopped = (node.boundaries || []).some(boundary => boundary.reason !== "input_constant");
+      if (node.collapsed) return {
+        ...node, type: "sheet", kindLabel: `${text("Révision", "Revision")} ${revision.projectId?.slice(0, 8) || ""} · ${revision.sha256?.slice(0, 8) || ""}`,
+        title: node.filename || revision.projectId,
+        subtitle: `${node.members.length} ${text("cellules", "cells")} · ${node.internalEdges} ${text("relations internes", "internal relationships")}`,
+        valueLabel: stops || text("Développer pour suivre les cellules", "Expand to follow cells"),
+        count: node.members.length, tone: stopped ? "boundary" : "", original: node,
+      };
       return {
-        id: node.id,
-        nodeId: node.id,
-        kind: node.kind,
-        kindLabel: `${file} · ${hash.slice(0, 8)} · ${kind}`,
-        title: node.address || node.label || node.id,
-        subtitle: [place, node.sheet && file, provenance].filter(Boolean).join(" · "),
-        valueLabel: value,
-        tone: index === 0 ? "focus" : "",
+        ...node, nodeId: node.id,
+        kindLabel: kindLabel(node.kind), title: `${node.sheet}!${node.address || node.cell || ""}`,
+        subtitle: stops || provenanceLabel(node.valueProvenance, english),
+        valueLabel: node.value == null ? text("Aucune valeur enregistrée", "No saved value") : searchText(node.value, english),
+        tone: stopped ? "boundary" : node.boundaries.length ? "origin" : "",
         original: node,
       };
     });
-    const visibleBoundaries = (lineage.boundaries || []).map((boundary, index) => {
-      const reason = boundary.reason || boundary.type || "source_unavailable";
-      const label = SEARCH_BOUNDARY_LABELS[reason] || [
-        `Arrêt · ${reason.replaceAll("_", " ")}`,
-        `Stop · ${reason.replaceAll("_", " ")}`,
-      ];
-      const stalePin = boundary.stalePin
-        ? text("Épingle périmée · choisissez une cible ou retirez l’épingle.", "Stale pin · choose a target or remove the pin.")
-        : "";
-      return {
-        id: `boundary:${index}`,
-        kind: "boundary",
-        kindLabel: text("Limite de la piste", "Lineage boundary"),
-        title: `${boundary.stalePin ? text("Épingle périmée · ", "Stale pin · ") : ""}${searchText(label, english)}`,
-        subtitle: [boundary.sheet, boundary.address, boundary.relationshipPath, boundary.detail, stalePin].filter(Boolean).join(" · "),
-        tone: reason === "input_constant" ? "outside" : "boundary",
-        original: boundary,
-      };
+    const edges = view.edges.map(edge => ({ ...edge, label: edge.kind === "external_link"
+      ? text("lien externe", "external link") : edge.kind === "range"
+        ? text("plage", "range") : text("formule", "formula") }));
+    const frame = requestAnimationFrame(() => {
+      if (flow.current === instance) instance.render(nodes, edges, { language: english ? "en" : "fr" });
     });
-    const revisionGroups = new Map();
-    for (const node of lineage.nodes || []) {
-      const revision = node.revision || node.workbookRevision || {};
-      const key = revision.id || `${node.projectId || ""}:${revision.sha256 || ""}`;
-      if (!revisionGroups.has(key)) {
-        const file = node.filename || node.projectName || revision.projectId || node.projectId || text("Classeur", "Workbook");
-        revisionGroups.set(key, {
-          id: `revision:${key}`,
-          kind: "sheet",
-          type: "sheet",
-          kindLabel: text("Groupe de révision", "Workbook revision group"),
-          title: file,
-          subtitle: `${text("Projet", "Project")} ${revision.projectId?.slice(0, 8) || node.projectId?.slice(0, 8) || ""} · ${text("révision", "revision")} ${(revision.sha256 || node.sha256 || "").slice(0, 8)}`,
-          members: [],
-          original: null,
-        });
-      }
-      revisionGroups.get(key).members.push(node.id);
-    }
-    const groupNodes = [...revisionGroups.values()].map(({ members, ...group }) => group);
-    const graphNodes = [...groupNodes, ...nodes, ...visibleBoundaries];
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    const edges = [...(lineage.edges || []).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map((edge) => ({
-      ...edge,
-      label: edge.kind === "external_link" ? text("lien externe", "external link") : edge.kind,
-    })), ...[...revisionGroups.values()].flatMap((group) => group.members.map((member, index) => ({
-      id: `${group.id}:member:${index}`,
-      source: group.id,
-      target: member,
-      membership: true,
-      hidden: true,
-    })))];
-    visibleBoundaries.forEach((boundary, index) => {
-      const fact = (lineage.boundaries || [])[index];
-      const reached = fact.nodeId || fact.node || fact.sourceNode || fact.at;
-      if (!nodeIds.has(reached)) return;
-      edges.push({
-        id: `boundary-edge:${index}`,
-        source: boundary.tone === "outside" ? reached : boundary.id,
-        target: boundary.tone === "outside" ? boundary.id : reached,
-        boundary: true,
-        label: text("limite", "boundary"),
-      });
-    });
-    const renderFrame = requestAnimationFrame(() => {
-      if (flow.current === instance) {
-        instance.render(graphNodes, edges, { language: english ? "en" : "fr" });
-      }
-    });
-    return () => {
-      cancelAnimationFrame(renderFrame);
-      instance.destroy();
-      flow.current = null;
-    };
-  }, [lineage, english]);
+    return () => { cancelAnimationFrame(frame); instance.destroy(); flow.current = null; };
+  }, [lineage, expandedRevision, english]);
 
   const toggleKind = (kind) => {
     invalidateAnswer();
@@ -993,13 +1001,13 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
   const attachFile = async (file) => {
     const previous = attachment;
     invalidateAnswer();
-    setBusy(true);
+    setPending(current => ({ ...current, upload: true }));
     setError("");
     let uploadId = "";
     let scopeId = "";
     const traceRequestId = ++traceId.current;
     setTraceEvents((events) => [...events, {
-      type: "upload", trace: null, detail: text("Import en préparation", "Preparing import"),
+      type: "upload", status: "pending", trace: null, detail: text("Import en préparation", "Preparing import"),
       requestId: traceRequestId, at: new Date().toISOString(),
     }]);
     try {
@@ -1055,7 +1063,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       setRecoverableAttachments((items) => [{ project: imported.project, scopeId, expiresAt: imported.project.searchScopeExpiresAt }, ...items.filter((item) => item.scopeId !== scopeId)]);
       setTraceEvents((events) => events.map((event) =>
         event.requestId === traceRequestId
-          ? { ...event, detail: text("Import terminé · fichier temporaire récupérable pendant 24 h", "Import complete · temporary file recoverable for 24 hours") }
+          ? { ...event, status: "completed", detail: text("Import terminé · fichier temporaire récupérable pendant 24 h", "Import complete · temporary file recoverable for 24 hours") }
           : event,
       ));
       await refreshStatus(scopeId);
@@ -1077,11 +1085,11 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         try { await request(`uploads/${uploadId}`, { method: "DELETE", body: "{}" }); } catch { /* Preserve the original import failure. */ }
       }
       setTraceEvents((events) => events.map((event) =>
-        event.requestId === traceRequestId ? { ...event, error: friendlyError(cause), technicalError: cause.message } : event,
+        event.requestId === traceRequestId ? { ...event, status: "failed", error: friendlyError(cause), technicalError: cause.message } : event,
       ));
       setError([friendlyError(cause), cleanupError].filter(Boolean).join(" · "));
     } finally {
-      setBusy(false);
+      setPending(current => ({ ...current, upload: false }));
     }
   };
   const keepAttachment = async () => {
@@ -1132,7 +1140,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       if (remove) {
         await request(`library/pins/${encodeURIComponent(link.id)}${params.size ? `?${params}` : ""}`, { method: "DELETE", body: "{}" });
       } else {
-        const [targetProject, targetSha256] = (pinTargets[link.id] || "").split(":");
+        const currentPin = link.pin && `${link.pin.projectId}:${link.pin.sha256}`;
+        const [targetProject, targetSha256] = (pinTargets[link.id] || currentPin || "").split(":");
         if (!targetProject || !targetSha256) throw new Error(text("Choisissez une révision cible.", "Choose a target revision."));
         await request("library/pins", {
           method: "POST",
@@ -1188,6 +1197,10 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
   const latestTraceEvent = traceEvents[traceEvents.length - 1];
   const latestTraceSummary = !latestTraceEvent
     ? text("Aucune requête effectuée. La trace apparaîtra ici, même sans résultat.", "No request yet. The trace will appear here, including when no results are found.")
+    : latestTraceEvent.status === "pending"
+      ? (latestTraceEvent.type === "search" ? text("Recherche en cours…", "Searching…") : latestTraceEvent.type === "lineage" ? text("Lignage en cours…", "Tracing lineage…") : latestTraceEvent.detail)
+    : latestTraceEvent.status === "superseded"
+      ? text("Requête remplacée · lancez la recherche dans le périmètre choisi.", "Request superseded · search the selected scope.")
     : latestTraceEvent.error
       ? `${latestTraceEvent.type === "search" ? text("Échec de la recherche", "Search failed") : latestTraceEvent.type === "lineage" ? text("Échec du lignage", "Lineage failed") : text("Échec de l’import", "Import failed")} · ${friendlyError(latestTraceEvent.error)}`
         : latestTraceEvent.type === "lineage"
@@ -1210,7 +1223,26 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
     return groups;
   }, new Map()).values()];
   return (
-    <div className="library-search-view">
+    <div className="library-search-view" onFocusCapture={(event) => {
+      const bar = traceSummary.current, target = event.target;
+      if (!bar || bar.contains(target)) return;
+      const bottom = bar.getBoundingClientRect().bottom + 8;
+      const top = target.getBoundingClientRect().top;
+      if (top < bottom) bar.closest("main").scrollBy({ top: top - bottom });
+    }}>
+      <section ref={traceSummary} className="library-trace-summary" aria-live="polite">
+        <strong>{text("Dernière opération", "Latest operation")}</strong>
+        <span>{latestTraceSummary}</span>
+        <a href="#library-trace-heading" onClick={(event) => {
+          event.preventDefault();
+          document.getElementById("library-trace")?.setAttribute("open", "");
+          requestAnimationFrame(() => {
+            const heading = document.getElementById("library-trace-heading");
+            heading?.focus({ preventScroll: true });
+            heading?.scrollIntoView({ block: "start" });
+          });
+        }}>{text("Trace détaillée", "Detailed trace")}</a>
+      </section>
       <header className="library-search-heading">
         <div><p className="section-label">{text("Bibliothèque de classeurs", "Workbook library")}</p><h2>{text("Rechercher", "Search")}</h2></div>
         <p>{text("La valeur et la piste proviennent des index chargés. Leur pertinence reste à confirmer.", "Values and trails come from loaded indexes. Relevance still needs confirmation.")}</p>
@@ -1260,17 +1292,11 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           <label className="library-file-picker" htmlFor="library-attach-file"><span>{text("Choisir un fichier Excel", "Choose an Excel file")}</span><span>{attachment?.project?.filename || text("Aucun fichier sélectionné", "No file selected")}</span></label>
           {uploadProgress && <p role="status">{uploadProgress}</p>}
           {attachment && <div className="library-attachment-actions"><button type="button" onClick={keepAttachment}>{text("Conserver dans la bibliothèque", "Keep in library")}</button><button type="button" onClick={removeAttachment}>{text("Retirer le fichier joint", "Remove attached file")}</button></div>}
-          {recoverableAttachments.length > 0 && <div className="library-recoverable-attachments"><strong>{text("Fichiers temporaires récupérables (expiration après 24 h)", "Recoverable temporary files (expire after 24 h)")}</strong>{recoverableAttachments.map((item) => <div key={item.scopeId}><button type="button" onClick={() => { setAttachment({ project: item.project, scopeId: item.scopeId }); setProjectId(item.project.id); setMode("attachment"); }}>{text("Récupérer", "Recover")} · {item.project.filename} · {item.project.id.slice(0, 8)}</button>{attachment?.scopeId !== item.scopeId && <button type="button" onClick={async () => { try { await request(`library/attachments/${item.scopeId}`, { method: "DELETE", body: "{}" }); setRecoverableAttachments((items) => items.filter((entry) => entry.scopeId !== item.scopeId)); } catch (cause) { setError(cause.message); } }}>{text("Supprimer", "Remove")}</button>}</div>)}</div>}
+          {recoverableAttachments.length > 0 && <div className="library-recoverable-attachments"><strong>{text("Fichiers temporaires récupérables (expiration après 24 h)", "Recoverable temporary files (expire after 24 h)")}</strong>{recoverableAttachments.map((item) => <div key={item.scopeId}><button type="button" onClick={() => changeScope(() => { setAttachment({ project: item.project, scopeId: item.scopeId }); setProjectId(item.project.id); setMode("attachment"); })}>{text("Récupérer", "Recover")} · {item.project.filename} · {item.project.id.slice(0, 8)}</button>{attachment?.scopeId !== item.scopeId && <button type="button" onClick={async () => { try { await request(`library/attachments/${item.scopeId}`, { method: "DELETE", body: "{}" }); setRecoverableAttachments((items) => items.filter((entry) => entry.scopeId !== item.scopeId)); } catch (cause) { setError(cause.message); } }}>{text("Supprimer", "Remove")}</button>}</div>)}</div>}
         </div>
       </section>
       {error && <p className="notice error" role="alert">{error}</p>}
-      <section className="library-trace-summary" aria-live="polite">
-        <strong>{text("Dernière opération", "Latest operation")}</strong>
-        <span>{latestTraceSummary}</span>
-        <a href="#library-trace-heading" onClick={() => {
-          document.getElementById("library-trace")?.setAttribute("open", "");
-        }}>{text("Trace détaillée", "Detailed trace")}</a>
-      </section>
+
       <div className="library-search-columns">
         <section className="library-results" aria-labelledby="library-results-heading">
           <h3 id="library-results-heading">{text("Résultats", "Results")}</h3>
@@ -1324,12 +1350,21 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             {(lineage.edges || []).flatMap((edge, index) => (edge.cacheDiagnostic || []).map((diagnostic, diagnosticIndex) => <p key={`cache:${index}:${diagnosticIndex}`}>{text("Valeur mise en cache comparée à la cible actuelle", "Saved cache compared with current target")} · {diagnostic.address}: {searchText(diagnostic.cached, english)} → {searchText(diagnostic.current, english)} · {diagnostic.agreement === false ? text("différent", "different") : diagnostic.agreement === true ? text("identique", "same") : text("comparaison inconnue", "comparison unknown")}</p>))}
           </div>}
           {lineage ? <div className="library-graph-layout">
+            <nav className="library-revision-navigation" aria-label={text("Classeurs du graphe et cellules regroupées", "Graph workbooks and member cells")}>
+              {graphView.expandedRevision && <button type="button" onClick={() => setExpandedRevision(null)}>{text("Vue des classeurs", "Workbook overview")}</button>}
+              {graphView.groups.map(group => <div key={group.id}>
+                <button type="button" aria-pressed={graphView.expandedRevision === group.id} onClick={() => setExpandedRevision(group.id)}>{text("Développer", "Expand")} · {group.filename} · {group.revision.projectId?.slice(0, 8)} · {group.revision.sha256?.slice(0, 8)}</button>
+                <span>{group.members.map(node => `${node.sheet}!${node.address || node.cell || ""}`).join(", ")}</span>
+                {!!group.boundaries.length && <span className="library-boundary-summary">{boundaryText(group.boundaries)}</span>}
+              </div>)}
+            </nav>
+            <p className="help library-graph-counts" role="status">{graphView.edges.length} {text("liaisons affichées représentant", "links drawn representing")} {graphView.edges.reduce((sum, edge) => sum + (edge.weight || 1), 0)} {text("dépendances · 0 lien synthétique.", "dependencies · 0 synthetic links.")} {graphView.internalEdgesGrouped} {text("relations internes regroupées. Développez un classeur pour suivre ses cellules. Les arrêts sont indiqués sur les cartes et dans les preuves.", "internal relationships grouped. Expand a workbook to follow its cells. Stops appear on cards and in evidence.")}</p>
             <div className="library-graph-canvas" ref={canvas} role="application" aria-label={text("Graphe de lignage. Une alternative en liste suit.", "Lineage graph. A list alternative follows.")} />
             <details className="library-accessible-graph" open>
               <summary>{text("Preuves détaillées par classeur et révision", "Evidence grouped by workbook revision")}</summary>
               {lineageGroups.map((group) => <section key={group.key} className="library-revision-group"><h4>{group.title || text("Révision inconnue", "Unknown revision")}</h4><ul>
                 {group.nodes.map((node) => <li key={node.id}><strong>{lineageNodeLabels.get(node.id)}</strong>
-                  {node.value !== null && node.value !== undefined && <span>{text("Valeur", "Value")}: {searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>}
+                  <span>{text("Valeur", "Value")}: {node.value == null ? text("aucune valeur enregistrée", "no saved value") : searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>
                   {node.formula && <span>{text("Formule", "Formula")}: <code>{node.formula}</code></span>}
                   {(node.labels || []).map((label, index) => <span key={`${node.id}:label:${index}`}>{roleLabel(label.role || label.method)} · {label.text} · {label.certainty === "heuristic" || !["table_column", "defined_name"].includes(label.method) ? text("inféré · certitude indicative", "inferred · indicative certainty") : text("déclaré", "declared")}{[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).length ? ` · ${text("source", "source")} ${[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).join("!")}` : ""}</span>)}
                 </li>)}
@@ -1380,13 +1415,14 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         {linksPagination?.hasMore && <button type="button" onClick={() => refreshLinks(attachment?.scopeId, linkStatus, (linksPagination.offset || 0) + linksPagination.limit)}>{text("Afficher les liens suivants", "Show next links")}</button>}
       </details>
       <details id="library-trace" className="library-trace">
-        <summary><h3 id="library-trace-heading">{text("Trace complète des opérations", "Full operation trace")}</h3></summary>
+        <summary><h3 id="library-trace-heading" tabIndex={-1}>{text("Trace complète des opérations", "Full operation trace")}</h3></summary>
         {traceEvents.length === 0 && <p>{text("Aucune requête effectuée. La trace apparaîtra ici, y compris si aucun résultat n’est trouvé.", "No request yet. The trace will appear here, including when a search has no results.")}</p>}
         <ol>{traceEvents.map((event, index) => {
           const trace = event.trace || {};
           const scope = trace.scope || {};
           const counts = trace.counts || {};
           const operation = event.type === "search" ? text("Recherche", "Search") : event.type === "lineage" ? text("Lignage", "Lineage") : event.type === "occurrences" ? text("Occurrences", "Occurrences") : text("Import", "Import");
+          const eventStatus = { pending: text("en cours", "pending"), completed: text("terminé", "completed"), failed: text("échec", "failed"), superseded: text("remplacé", "superseded") }[event.status];
           const directionName = event.detail === "upstream" ? text("En amont", "Upstream") : event.detail === "downstream" ? text("En aval", "Downstream") : event.detail;
           const revisionsInTrace = (trace.revisions || []).map((item) => revisionLabel({
             filename: revisions.find((revision) => revision.projectId === item.projectId)?.filename,
@@ -1394,7 +1430,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             sha256: item.sha256,
           }));
           return <li key={`${event.type}:${index}`}>
-            <strong>{operation}{event.error ? ` · ${text("échec", "failed")}` : ""}</strong>
+            <strong>{operation}{eventStatus ? ` · ${eventStatus}` : ""}</strong>
             <span>{event.type === "search"
               ? `${text("Requête", "Query")}: ${event.queryText} · ${text("Termes normalisés", "Normalized terms")}: ${(trace.terms || []).join(", ")} · ${text("Portée", "Scope")}: ${event.scopeLabel} · ${text("types", "types")}: ${(scope.kinds || []).map(kindLabel).join(", ")}`
               : event.type === "lineage"
@@ -1403,7 +1439,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             {event.error && <p className="library-trace-error">{text("Échec", "Failure")}: {event.error}</p>}
             {trace.normalization && <span>{text("Normalisation", "Normalization")}: {text("accents neutralisés, minuscules, tous les termes doivent correspondre", "accents folded, lower case, all terms must match")}</span>}
             {trace.scope?.scope && <span>{text("Périmètre", "Scope")}: {trace.scope.scope}</span>}
-            {trace.limits && <span>{text("Budgets", "Budgets")}: {Object.entries(trace.limits).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key] || ["limite technique", "technical limit"], english)}: ${value}`).join(" · ")}</span>}
+            {trace.limits && <span>{text("Budgets", "Budgets")}: {Object.entries(trace.limits).filter(([key]) => SEARCH_BUDGET_LABELS[key]).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key], english)}: ${value}`).join(" · ")}</span>}
             <small>{trace.durationMs !== undefined ? traceTime(trace.durationMs) : ""}{trace.backend ? ` · ${trace.backend === "fts5" ? "FTS5" : text("recherche de secours", "fallback search")}` : ""}{trace.tool ? ` · ${operation}` : ""}{trace.capsHit?.length ? ` · ${text("arrêts", "stops")}: ${trace.capsHit.map(capLabel).join(", ")}` : ""}{trace.complete !== undefined ? ` · ${trace.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : event.complete !== undefined ? ` · ${event.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : ""}{trace.exhaustive !== undefined ? ` · ${trace.exhaustive ? text("parcours exhaustif", "exhaustive traversal") : text("parcours non exhaustif", "non-exhaustive traversal")}` : ""}</small>
             <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ error: event.technicalError, generation: trace.generation, scope, revisions: trace.revisions, counts, limits: trace.limits, capsHit: trace.capsHit, direction: trace.direction }, null, 2)}</pre></details>
           </li>;

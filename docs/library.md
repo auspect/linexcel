@@ -36,10 +36,29 @@ without exposing the attachment to library-wide searches. Scope pin requests
 include `scope` in the JSON body; scope unpin requests include it in the query.
 `GET /api/library/attachments` lists recoverable temporary projects after a
 reload. Each has an opaque scope ID and an expiry time. Temporary projects
-expire after 24 hours; listing attachments removes expired projects and their
-files. Deleting a scope removes the temporary project, including after an
+expire after 24 hours; scoped reads reject them and keeping an expired scope
+returns HTTP 410. Listing attachments and starting an upload advance a bounded
+owner-local cleanup sweep (32 manifests per call), freeing expired projects and
+their files before upload quota admission. Repeated calls continue the sweep;
+active tasks are cancelled and retried by a later sweep. Kept projects have no
+scope ID or attachment expiry and are never candidates for this TTL cleanup.
+Deleting a scope removes the temporary project, including after an
 import task failed. A kept project becomes an ordinary library member and no
 longer needs `scope`.
+
+The no-AI view binds results and trace steps to each submitted scope. Superseded
+requests are aborted and marked as superseded, rather than completed; their
+responses cannot replace the current evidence. The persistent trace control is
+before the search controls, including on mobile, and exposes the full audit.
+
+The shared graph starts with a collapsed workbook/revision overview. Each card
+represents its listed member cells and counts internal relationships; expanding
+a revision shows those cells while other revisions stay aggregated as context.
+Cross-revision dependencies retain their direction and aggregate their counts.
+Origins and stops are labelled on cards and in the detailed evidence, not added
+as synthetic dependency edges. Display counts distinguish drawn relationships,
+the source dependencies they represent, and grouped internal relationships;
+the API lineage and its coverage remain unchanged by this presentation filter.
 
 `q` and `query` are aliases; supplying both is an error. Kinds are `cell`,
 `sheet`, `name`, `table` and `column`. Text search folds case and diacritics and

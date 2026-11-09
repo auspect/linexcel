@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settle and abort superseded library requests, clear evidence when recovering
+  another temporary file, and keep the trace accessible in the initial mobile
+  viewport. Show missing saved values with their provenance and use plain
+  French relationship and budget labels.
+- Replace flat revision title cards with an expandable revision overview on
+  the shared graph, with explicit members, aggregated dependency counts and no
+  fabricated membership edges. Confirm existing pin selections after reload.
+- Enforce the attachment deadline when keeping a file, advance bounded expiry
+  cleanup before upload quota admission, preserve kept projects, and poll
+  ready-but-stale catalogs until their refresh settles.
+
 - Recover temporary search attachments after reload, discard failed imports
   through the attachment route, and expire temporary projects after 24 hours.
   Reconcile scoped catalogs on the catalog executor outside the global task

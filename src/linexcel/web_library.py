@@ -20,6 +20,7 @@ from linexcel.catalog import (
 )
 
 SEARCH_ATTACHMENT_TTL = 24 * 60 * 60
+SEARCH_ATTACHMENT_CLEANUP_LIMIT = 32
 
 
 class Library:
@@ -31,6 +32,7 @@ class Library:
         self.scoped_pending = {}
         self.dirty = set()
         self.mutations = {}
+        self.attachment_cleanup = {}
         # Catalog builds cannot consume workbook-import task slots.
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="catalog")
 
@@ -40,6 +42,7 @@ class Library:
             self.pending.clear()
             self.scoped_pending.clear()
             self.dirty.clear()
+            self.attachment_cleanup.clear()
 
     def catalog(self, owner: str) -> Catalog:
         if owner not in self.catalogs:
@@ -83,13 +86,23 @@ class Library:
             raise KeyError("Search-scoped attachment not found")
         return sources
 
-    def cleanup_expired_attachments(self, owner: str) -> None:
-        from linexcel.web import _read
+    def cleanup_expired_attachments(self, owner: str) -> dict:
+        """Advance a bounded owner-local sweep, outside the global lock first."""
+        from linexcel.web import APIError, _read
 
+        scanned = removed = 0
         with self.mutation(owner), self.store.lock:
-            for manifest in (self.store.root / owner / "projects").glob(
-                "*/project.json"
-            ):
+            manifests = self.attachment_cleanup.setdefault(
+                owner,
+                (self.store.root / owner / "projects").glob("*/project.json"),
+            )
+            while scanned < SEARCH_ATTACHMENT_CLEANUP_LIMIT:
+                try:
+                    manifest = next(manifests)
+                except StopIteration:
+                    self.attachment_cleanup.pop(owner, None)
+                    break
+                scanned += 1
                 try:
                     project = _read(manifest)
                 except (OSError, ValueError, TypeError):
@@ -101,7 +114,15 @@ class Library:
                     project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
                 )
                 if expires_at <= time.time():
-                    self.store.delete(owner, project["id"])
+                    try:
+                        self.store.delete(owner, project["id"])
+                        removed += 1
+                    except APIError as error:
+                        if error.status != 409:
+                            raise
+                        # An active task is cancelled by delete; a later sweep
+                        # retries after it settles. One file cannot block a list.
+        return {"scanned": scanned, "removed": removed}
 
     def list_attachments(self, owner: str) -> dict:
         from linexcel.web import _read
@@ -118,6 +139,14 @@ class Library:
                     continue
                 scope_id = project.get("searchScopeId")
                 if not scope_id:
+                    continue
+                if (
+                    project.get(
+                        "searchScopeExpiresAt",
+                        project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
+                    )
+                    <= time.time()
+                ):
                     continue
                 attachments.append(
                     {
@@ -655,6 +684,18 @@ class Library:
                     project = _read(manifest)
                     if project.get("searchScopeId") != search_scope:
                         continue
+                    if (
+                        project.get(
+                            "searchScopeExpiresAt",
+                            project.get("createdAt", 0) + SEARCH_ATTACHMENT_TTL,
+                        )
+                        <= time.time()
+                    ):
+                        raise APIError(
+                            410,
+                            "Le fichier temporaire a expiré après 24 heures ; "
+                            "joignez-le à nouveau pour le conserver.",
+                        )
                     project.pop("searchScopeId")
                     project.pop("searchScopeExpiresAt", None)
                     _write(manifest, project)

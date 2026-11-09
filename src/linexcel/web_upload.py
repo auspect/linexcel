@@ -171,6 +171,9 @@ class UploadStore:
         name = body.get("name") or files[0]["name"]
         if not isinstance(name, str) or len(name) > 200:
             raise APIError(400, "Nom de l’espace invalide")
+        # Acquire the owner mutation gate before the global lock. Expired
+        # completed attachments also consume the quota, not just upload tails.
+        self.store.library.cleanup_expired_attachments(owner)
         with self.store.lock:
             self._expire()
             self.store._has_capacity()

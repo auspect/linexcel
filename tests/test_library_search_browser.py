@@ -316,7 +316,7 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                 "ne prouve pas l’absence"
             ).wait_for()
         if state == "boundary":
-            page.get_by_test_id("rf__node-boundary:0").get_by_text(
+            page.locator(".library-graph-canvas .flow-card.boundary").get_by_text(
                 "macro non exécutée", exact=False
             ).wait_for()
         if state == "found":
@@ -329,9 +329,12 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             page.locator(".library-accessible-graph").get_by_text(
                 "source-value", exact=False
             ).wait_for()
+            page.locator(".library-revision-navigation button").filter(
+                has_text="reader.xlsx"
+            ).click()
             long_value_card = page.locator(
-                '.library-graph-canvas .flow-card[title*="reader.xlsx"]'
-            ).last
+                '.library-graph-canvas .flow-card[title*="long-node-value-"]'
+            )
             assert long_node_value in long_value_card.get_attribute("title")
             value = long_value_card.locator(".flow-value")
             assert (

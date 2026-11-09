@@ -171,6 +171,15 @@ def test_search_scoped_upload_stays_out_of_library_until_kept(app):
     )
     projects = json.loads(request(app, "GET", "/api/projects")[1])["projects"]
     assert project_id in {project["id"] for project in projects}
+    owner = app.store.tasks[imported["task"]["id"]]["owner"]
+    kept_path = app.store.root / owner / "projects" / project_id
+    kept = json.loads((kept_path / "project.json").read_text())
+    assert "searchScopeId" not in kept and "searchScopeExpiresAt" not in kept
+    kept["createdAt"] = 0
+    kept["searchScopeExpiresAt"] = 0
+    (kept_path / "project.json").write_text(json.dumps(kept), encoding="utf-8")
+    app.store.library.cleanup_expired_attachments(owner)
+    assert kept_path.exists()
 
     second, second_raw = begin(app, searchScoped=True)
     assert put(app, second, second_raw)[0] == 200
@@ -228,6 +237,55 @@ def test_expired_search_attachment_is_listed_for_cleanup_and_freed(app):
     listed = json.loads(request(app, "GET", "/api/library/attachments")[1])
     assert listed["attachments"] == []
     assert not project_path.exists()
+
+
+def test_expired_attachment_cannot_be_kept_and_upload_cleans_its_quota(app):
+    upload, raw = begin(app, searchScoped=True)
+    assert put(app, upload, raw)[0] == 200
+    imported = json.loads(
+        request(app, "POST", f"/api/uploads/{upload['id']}/complete", {})[1]
+    )
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    task = app.store.tasks[imported["task"]["id"]]
+    path = app.store.root / task["owner"] / "projects" / imported["project"]["id"]
+    manifest = json.loads((path / "project.json").read_text())
+    manifest["searchScopeExpiresAt"] = time.time() - 1
+    (path / "project.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert (
+        request(app, "POST", f"/api/library/attachments/{upload['id']}/keep", {})[0]
+        == 410
+    )
+    begin(app)  # Cleanup also runs before a new upload's quota reservation.
+    assert not path.exists()
+
+
+def test_attachment_cleanup_is_bounded_and_never_deletes_a_kept_project(
+    app, monkeypatch
+):
+    import hashlib
+
+    import linexcel.web_library as library_module
+
+    owner = hashlib.sha256(b"alice").hexdigest()
+    root = app.store.root / owner / "projects"
+    root.mkdir(parents=True, exist_ok=True)
+    for number in range(6):
+        path = root / f"{number:032x}"
+        path.mkdir()
+        manifest = {
+            "id": path.name,
+            "filename": "example.xlsx",
+            "createdAt": 0,
+            "searchScopeExpiresAt": 0,
+        }
+        if number < 5:
+            manifest["searchScopeId"] = f"{number:032x}"
+        (path / "project.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(library_module, "SEARCH_ATTACHMENT_CLEANUP_LIMIT", 2)
+    for _ in range(4):
+        result = app.store.library.cleanup_expired_attachments(owner)
+        assert result["scanned"] <= 2
+    assert [p.parent.name for p in root.glob("*/project.json")] == [f"{5:032x}"]
 
 
 def test_failed_chunk_rolls_back_and_resumes_without_duplicate_bytes(app):
