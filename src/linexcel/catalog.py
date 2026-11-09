@@ -168,8 +168,17 @@ class Source:
 
 
 class Catalog:
-    def __init__(self, directory: Path, limits: CatalogLimits | None = None):
+    def __init__(
+        self,
+        directory: Path,
+        limits: CatalogLimits | None = None,
+        *,
+        pin_directory: Path | None = None,
+    ):
         self.directory = directory
+        self.pin_directory = (
+            pin_directory if pin_directory is not None else directory.parent
+        )
         self.directory.mkdir(parents=True, exist_ok=True)
         self.limits = limits or CatalogLimits()
         self.fts5 = fts5_available()  # Check at service startup, not first query.

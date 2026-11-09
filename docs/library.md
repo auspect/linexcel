@@ -60,6 +60,9 @@ most 5,000 source cells/20 hits with explicit coverage. Range omissions are
 reported as blank-or-unindexed; they are not invented evidence. Search and
 directed lineage call the M1/M2 engines in a private, disposable run catalog,
 so a narrow question cannot replace the library's shared catalog generation.
+The private catalog reads the same durable owner-local link pins as the library;
+the model cannot create or change them. User pin changes invalidate its derived
+generation and remain constrained by the question's frozen authorized revisions.
 Its disk ceiling is 16 MiB, build allowance 15 seconds, additionally bounded by
 the configured catalog limits. These are cooperative limits, not hard real-time
 or process-memory isolation guarantees.

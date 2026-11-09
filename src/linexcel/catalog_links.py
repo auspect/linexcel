@@ -15,7 +15,7 @@ STATUSES = {"resolved_by_name", "pinned", "ambiguous", "unresolved"}
 
 
 def read_pins(catalog):
-    path = catalog.directory.parent / "link-pins.sqlite"
+    path = catalog.pin_directory / "link-pins.sqlite"
     if not path.exists():
         return {}
     with sqlite3.connect(path) as db:
@@ -187,7 +187,7 @@ def set_pin(catalog, sources, link, project=None, sha=None, *, remove=False):
             ):
                 raise KeyError("Target revision not found")
         # This database is deliberately outside the disposable catalog directory.
-        with sqlite3.connect(catalog.directory.parent / "link-pins.sqlite") as db:
+        with sqlite3.connect(catalog.pin_directory / "link-pins.sqlite") as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS pins(link TEXT PRIMARY KEY,"
                 "project TEXT NOT NULL,sha TEXT NOT NULL)"

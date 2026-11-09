@@ -519,3 +519,82 @@ def test_injected_values_labels_sheet_names_and_formulas_cannot_widen_scope(
     assert result["answer"]["cells"][0]["value"] == attack
     assert len(result["answer"]["cells"]) == 1
     assert result["answer"]["rationale"] == ""
+
+
+def test_private_question_catalog_honors_owner_pins_and_pin_changes(tools, tmp_path):
+    from test_external import _link
+
+    from linexcel.catalog import revision
+    from linexcel.catalog_links import list_links, set_pin
+    from linexcel.lazy_store import WorkbookIndex
+
+    engine, original = tools
+    duplicate = fixture_source(tmp_path, 3, "source.xlsx", {"A2": 99})
+    reader = fixture_source(
+        tmp_path,
+        4,
+        "reader.xlsx",
+        {"B1": "='[1]S'!A2"},
+        links=[_link("source.xlsx", "S")],
+    )
+    for source in [duplicate, reader]:
+        root = engine.store.root / engine.owner / "projects" / source.project_id
+        root.mkdir()
+        (root / "index.sqlite").write_bytes(source.path.read_bytes())
+        _write(
+            root / "project.json",
+            {
+                "id": source.project_id,
+                "filename": source.filename,
+                "createdAt": time.time(),
+            },
+        )
+        with WorkbookIndex(source.path) as index:
+            engine.scope["revisions"].append(
+                {
+                    **revision(source.project_id, index.meta["sha256"]),
+                    "filename": source.filename,
+                    "sheets": ["S"],
+                }
+            )
+    with engine.authorize() as sources:
+        owner_catalog = engine.store.library.catalog(engine.owner)
+        owner_catalog.ensure(sources)
+        link = list_links(owner_catalog, sources)["links"][0]
+        assert link["status"] == "ambiguous"
+        assert (
+            engine.execute("list_external_links", {"status": ""})["data"]["links"][0][
+                "status"
+            ]
+            == "ambiguous"
+        )
+        target = engine.scope["revisions"][0]
+        set_pin(
+            owner_catalog, sources, link["id"], original.project_id, target["sha256"]
+        )
+    links = engine.execute("list_external_links", {"status": ""})["data"]["links"]
+    assert links[0]["status"] == "pinned"
+    assert engine.catalog.pin_directory == owner_catalog.pin_directory
+    result, _ = run(
+        engine,
+        [
+            [
+                call(
+                    "read_range",
+                    {"project": reader.project_id, "sheet": "S", "range": "B1"},
+                    "read",
+                )
+            ],
+            lambda messages: [
+                call(
+                    "submit_answer",
+                    {"status": "proposed", "handles": [select_handle(messages, "B1")]},
+                    "end",
+                )
+            ],
+        ],
+    )
+    lineage = result["answer"]["lineages"][0]
+    assert any(edge.get("resolutionStatus") == "pinned" for edge in lineage["edges"])
+    assert any(node["value"] == 7 for node in lineage["nodes"])
+    assert not any(node["value"] == 99 for node in lineage["nodes"])

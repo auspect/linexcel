@@ -188,7 +188,11 @@ class QuestionTools:
             ),
             build_seconds=min(store.config.catalog_limits.build_seconds, 15),
         )
-        self.catalog = Catalog(directory / "catalog", limits)
+        self.catalog = Catalog(
+            directory / "catalog",
+            limits,
+            pin_directory=store.root / owner,
+        )
 
     @contextmanager
     def authorize(self):
