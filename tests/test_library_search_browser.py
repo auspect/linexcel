@@ -363,9 +363,10 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             graph_counts = page.locator(".library-graph-counts").inner_text()
             assert "1 liaison affichée représentant 1 dépendance" in graph_counts
             assert "0 relations internes regroupées" in graph_counts
-            assert page.locator(
-                ".library-graph-canvas .flow-card.is-selected"
-            ).count() == 0
+            assert (
+                page.locator(".library-graph-canvas .flow-card.is-selected").count()
+                == 0
+            )
             if viewport[0] == 390:
                 minimap = page.locator(".library-graph-canvas .react-flow__minimap")
                 for node in minimap.locator(".react-flow__minimap-node").all():
@@ -443,7 +444,6 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             )
             assert round(height) >= 44
         summary = page.locator(".library-trace-summary")
-        controls = page.locator(".library-search-controls")
         assert page.evaluate(
             """() => Boolean(document.querySelector('.library-trace-summary')
               .compareDocumentPosition(document.querySelector('.library-search-controls')
@@ -452,9 +452,10 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
         assert summary.locator("a").is_visible()
         if viewport[0] == 390:
             main = page.locator(".workspace > main")
-            assert summary.evaluate(
-                "element => getComputedStyle(element).position"
-            ) != "sticky"
+            assert (
+                summary.evaluate("element => getComputedStyle(element).position")
+                != "sticky"
+            )
             main.evaluate(
                 """main => {
                   const filter = document.querySelector('.library-kind-filter');
@@ -473,7 +474,8 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             assert page.evaluate(
                 """() => window.scrollY === 0
                   && document.documentElement.scrollHeight <= innerHeight
-                  && document.querySelector('header.top').getBoundingClientRect().top >= 0"""
+                  && document.querySelector('header.top')
+                    .getBoundingClientRect().top >= 0"""
             )
         assert not any("/ai/" in path for _, path in requests)
         assert errors == []
