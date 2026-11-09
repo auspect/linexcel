@@ -40,7 +40,8 @@ const Card = memo(({ data, selected }) => (
 const nodeTypes = { cell: Card, formulaGroup: Card, sheet: Card, cellGroup: Card };
 function countLabel(count, english, french, en) {
   const forms = english ? en : french;
-  return `${count} ${forms[Number(count) === 1 ? 0 : 1]}`;
+  const singular = Number(count) === 1 || (!english && Number(count) === 0);
+  return `${count} ${forms[singular ? 0 : 1]}`;
 }
 function LayeredEdge({
   id,
@@ -254,8 +255,24 @@ export function mount(element, options) {
   function Graph() {
     const hudRef = useRef(null);
     const [model, setModel] = useState(current);
+    const [minimapSize, setMinimapSize] = useState(() =>
+      window.matchMedia("(max-width: 650px)").matches
+        ? { width: 100, height: 74 }
+        : { width: 200, height: 150 },
+    );
     update = setModel;
     const en = model.language === "en";
+    useEffect(() => {
+      const mobile = window.matchMedia("(max-width: 650px)");
+      const updateSize = () =>
+        setMinimapSize(
+          mobile.matches
+            ? { width: 100, height: 74 }
+            : { width: 200, height: 150 },
+        );
+      mobile.addEventListener("change", updateSize);
+      return () => mobile.removeEventListener("change", updateSize);
+    }, []);
     useEffect(() => {
       let previousSize=`${element.clientWidth}:${element.clientHeight}`;
       const stageObserver = new ResizeObserver(() => {
@@ -336,6 +353,7 @@ export function mount(element, options) {
         }
       >
         <MiniMap
+          style={{ width: minimapSize.width, height: minimapSize.height }}
           pannable
           zoomable
           nodeColor={(node) =>
