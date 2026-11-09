@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain saved legacy-array and dynamic-spill member values in worksheet
+  presentation, source-data grids and exports, with cache provenance and accurate
+  range counts. Refresh derived data snapshots without recalculating formulas.
 - Keep downstream external readers and uncertainty scoped to the selected cell
   when traversal crosses a local range, while retaining overlap lookup for a
   selected range and containment lookup for verified blank cells.

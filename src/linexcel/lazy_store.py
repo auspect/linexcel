@@ -123,6 +123,13 @@ def _unpack(data):
     if "value" in node:
         node.setdefault("cached_value", node["value"])
         node.setdefault("cached_comparison_value", node["value"])
+    if node.get("kind") == "array_result" and node.get("arrayAnchor"):
+        # Members have no <f> of their own, but their stored values are array
+        # caches, not literal inputs. Normalize older indexes on read as well.
+        if node.get("provenance") == "saved_input":
+            node["provenance"] = "saved_cache"
+        if provenance := node.get("sourceValueProvenance"):
+            provenance.update(role="formula_cache", arrayAnchor=node["arrayAnchor"])
     return node
 
 
@@ -228,6 +235,8 @@ class WorkbookIndex(Mapping):
                 ).fetchone()
                 if hit:
                     node = _unpack(hit[0])
+                    if node["kind"] == "array_result":
+                        return NON_TEXT_CELL
                     if not node.get("formula") and node.get("sourceDataType") in {
                         "s",
                         "str",

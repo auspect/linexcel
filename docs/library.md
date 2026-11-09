@@ -377,11 +377,12 @@ linexcel library --data-dir PATH lineage HANDLE --direction downstream --workboo
 
 The committed external-link contract tests generate OOXML externalLink parts
 and relationships, with hand-computed graphs, including Excel's three-relationship
-alternate-URL shape. A local trial on 2026-11-09 authored external-link workbooks
-with real Excel 16.0 through COM and compared saved values and lineage. Those
-workbooks are kept outside Git because they contain absolute local paths; the
-trial did not use GUI actions. Excel-authored shared external formulas, working
-legacy CSE arrays and live cloud links remain unverified. The committed
+alternate-URL shape. Local trials on 2026-11-09 authored external-link workbooks
+with real Excel 16.0 through COM and through GUI actions, then compared saved
+values and lineage. The GUI trial includes single-cell and multi-cell legacy CSE
+arrays and dynamic spills. Those workbooks are kept outside Git because they
+contain absolute local paths. Excel-authored shared external formulas and live
+cloud links remain unverified. The committed
 Excel-authored VBA and Power Query fixtures exercise those distinct stop boundaries.
 
 Search order is stable `(projectId, kind, entryId)` within a generation. Supply
