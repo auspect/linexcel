@@ -30,7 +30,7 @@ from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
 
 TRACE_VERSION = "linexcel.search.v1"
-CATALOG_VERSION = 5
+CATALOG_VERSION = 6
 KINDS = frozenset({"cell", "sheet", "name", "table", "column"})
 
 

@@ -15,6 +15,7 @@ from linexcel.structured_refs import formula_tokens
 
 _BOOK = re.compile(r"\[([^\]]+)\]")
 _A1 = re.compile(r"\$?[A-Za-z]{1,3}\$?[1-9]\d*(?::\$?[A-Za-z]{1,3}\$?[1-9]\d*)?")
+FACTS_VERSION = 2
 
 
 def reference_facts(formula, books):
@@ -134,7 +135,7 @@ def index_facts(path, store, metadata):
         CREATE INDEX lineage_range_sheet ON lineage_ranges(sheet,r1,r2);
     """)
     books = read_external_links(path)
-    metadata["externalFactsVersion"] = 1
+    metadata["externalFactsVersion"] = FACTS_VERSION
     from linexcel.powerquery import read_destinations
 
     metadata["powerQueryDestinations"] = [
@@ -179,4 +180,4 @@ def index_facts(path, store, metadata):
 
 
 def facts_available(index):
-    return index.meta.get("externalFactsVersion") == 1
+    return index.meta.get("externalFactsVersion") == FACTS_VERSION

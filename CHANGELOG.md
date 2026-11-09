@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Follow blank declared-array members through their anchor without expanding huge
+  output rectangles; keep capped downstream traversal explicitly incomplete.
+- Match HTTP(S) external links by URL path, retaining original query/fragment
+  evidence, and reject conflicting relationship IDs as unresolved identity.
 - Retain saved legacy-array and dynamic-spill member values in worksheet
   presentation, source-data grids and exports, with cache provenance and accurate
   range counts. Refresh derived data snapshots without recalculating formulas.

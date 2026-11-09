@@ -37,7 +37,7 @@ from openpyxl.utils.datetime import (
 )
 
 from linexcel.formula_source import cell_source_fields
-from linexcel.refs import a1, parse_ref, split_sheet_prefix
+from linexcel.refs import a1, parse_ref, quote_sheet, split_sheet_prefix
 from linexcel.structured_refs import formula_tokens
 
 SCHEMA_VERSION = 4
@@ -310,8 +310,65 @@ class WorkbookIndex(Mapping):
             raise KeyError(key)
         return self._decode(row)
 
+    def array_anchors(self, sheet, bounds, *, limit):
+        """Bounded array-group provenance, without enumerating output cells."""
+        if not self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='array_definitions'"
+        ).fetchone():
+            return []
+        r1, c1, r2, c2 = bounds
+        return [
+            f"{quote_sheet(sheet)}!{anchor}"
+            for (anchor,) in self.db.execute(
+                "SELECT anchor FROM array_definitions WHERE sheet=? "
+                "AND r1<=? AND r2>=? AND c1<=? AND c2>=? ORDER BY anchor LIMIT ?",
+                (sheet, r2, r1, c2, c1, limit),
+            )
+        ]
+
+    def implicit_array_member(self, key):
+        if not isinstance(key, str):
+            return None
+        rect = parse_ref(key)
+        if not rect or not rect.sheet or rect.ncells != 1 or rect.to_a1() != key:
+            return None
+        anchors = self.array_anchors(
+            rect.sheet, (rect.r1, rect.c1, rect.r2, rect.c2), limit=2
+        )
+        if not anchors or key in anchors:
+            return None
+        node = {
+            "id": key,
+            "kind": "array_result",
+            "sheet": rect.sheet,
+            "cell": a1(rect.r1, rect.c1),
+            "row": rect.r1,
+            "column": rect.c1,
+            "formula": None,
+            "value": None,
+            "cache_status": "blank",
+            "provenance": "saved_blank",
+            "dependencies": anchors,
+            "diagnostics": [],
+        }
+        if len(anchors) == 1:
+            node["arrayAnchor"] = anchors[0]
+        else:
+            node.update(
+                kind="unresolved",
+                reference=key,
+                dependencies=[],
+                diagnostics=[
+                    "Overlapping declared arrays have unknown member ownership."
+                ],
+            )
+        return node
+
     def _decode(self, row, *, context=False):
         node = _unpack(row[0])
+        if node.get("kind") == "input" and node.get("provenance") == "saved_blank":
+            if member := self.implicit_array_member(node["id"]):
+                node.update(member)
         node["label"] = (
             node.get("name") or node.get("cell") or node.get("reference") or node["id"]
         )
@@ -449,7 +506,10 @@ class WorkbookIndex(Mapping):
         row = self.db.execute(
             "SELECT data,pattern_id FROM nodes WHERE id=?", (node_id,)
         ).fetchone()
-        return self._decode(row, context=True) if row else None
+        if row:
+            return self._decode(row, context=True)
+        member = self.implicit_array_member(node_id)
+        return self._decode((_pack(member), None), context=True) if member else None
 
 
 def _schema(db):

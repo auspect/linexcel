@@ -267,6 +267,12 @@ Drive-less paths, file URLs, UNC paths, OneDrive and SharePoint URLs use the sam
 basename rule; URI escapes are decoded for name matching, while
 `relationshipPath` preserves the selected Target as written. No target URL is
 fetched, and no absolute path is opened to identify a loaded revision.
+For HTTP(S) Targets, name matching uses the URL path without its query or fragment;
+local paths retain literal question marks. Conflicting declarations of one
+relationship ID leave identity unresolved; identical type/Target/mode duplicates
+remain valid. Older external-fact indexes require a structure refresh or reimport;
+until refreshed, lineage reports `index_rebuild_required` instead of trusting
+previously extracted identity facts.
 
 Pins are explicit user actions binding a stable link ID to a project and source
 content hash. Both source link and target revision are authorized against the
@@ -297,6 +303,11 @@ one of its members continues only to its exact local consumers; its other
 members' external readers and uncertainties are not inherited. A range selected
 as the traversal root includes external readers overlapping its full span.
 Verified blank-cell handles use the same containment rule as stored cells.
+Blank members inside declared array bounds also follow their array anchor. This
+is array-group provenance, without inventing a formula or value for the member.
+Read-time lookup does not materialize the output rectangle. Downstream expands
+implicit members only within the node ceiling; a larger implicit output region
+stops with an explicit budget boundary and incomplete coverage.
 
 Downstream also checks every identity-unresolved link in the loaded owner's
 generation, including missing targets, ambiguous targets and stale pins. A
