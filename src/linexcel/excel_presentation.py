@@ -413,6 +413,7 @@ def sheet_presentation(
             node, decoded_bytes = _bounded_node(
                 packed, MAX_PRESENTATION_BYTES - node_bytes
             )
+            node = source.resolve_array_ownership(node)
             node_bytes += decoded_bytes
             if (node.get("sourceValueProvenance") or {}).get("workbookSha256") == sha:
                 nodes[(node["row"], node["column"])] = node

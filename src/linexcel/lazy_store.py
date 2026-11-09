@@ -133,6 +133,27 @@ def _unpack(data):
     return node
 
 
+def _unknown_array_owner(node, *, persisted=False):
+    # Keep the saved scalar/provenance, while refusing any chosen array owner.
+    # Persist as an array result so source-cell readers still retain the value.
+    node.update(
+        kind="array_result" if persisted else "unresolved",
+        reference=node["id"],
+        dependencies=[],
+        arrayOwnershipUnknown=True,
+    )
+    node.pop("arrayAnchor", None)
+    if node.get("provenance") == "saved_input":
+        node["provenance"] = "saved_cache"
+    if provenance := node.get("sourceValueProvenance"):
+        provenance.pop("arrayAnchor", None)
+        provenance["role"] = "formula_cache"
+    diagnostic = "Overlapping declared arrays have unknown member ownership."
+    if diagnostic not in node.setdefault("diagnostics", []):
+        node["diagnostics"].append(diagnostic)
+    return node
+
+
 def file_sha256(path: Path) -> str:
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
@@ -335,7 +356,7 @@ class WorkbookIndex(Mapping):
         anchors = self.array_anchors(
             rect.sheet, (rect.r1, rect.c1, rect.r2, rect.c2), limit=2
         )
-        if not anchors or key in anchors:
+        if not anchors or (len(anchors) == 1 and key in anchors):
             return None
         node = {
             "id": key,
@@ -354,21 +375,23 @@ class WorkbookIndex(Mapping):
         if len(anchors) == 1:
             node["arrayAnchor"] = anchors[0]
         else:
-            node.update(
-                kind="unresolved",
-                reference=key,
-                dependencies=[],
-                diagnostics=[
-                    "Overlapping declared arrays have unknown member ownership."
-                ],
-            )
+            _unknown_array_owner(node)
+        return node
+
+    def resolve_array_ownership(self, node):
+        if node.get("arrayOwnershipUnknown"):
+            return _unknown_array_owner(node)
+        blank = node.get("kind") == "input" and node.get("provenance") == "saved_blank"
+        if blank or node.get("kind") == "array_result" or node.get("arrayBounds"):
+            member = self.implicit_array_member(node["id"])
+            if member and member.get("arrayOwnershipUnknown"):
+                return _unknown_array_owner(node)
+            if blank and member:
+                node.update(member)
         return node
 
     def _decode(self, row, *, context=False):
-        node = _unpack(row[0])
-        if node.get("kind") == "input" and node.get("provenance") == "saved_blank":
-            if member := self.implicit_array_member(node["id"]):
-                node.update(member)
+        node = self.resolve_array_ownership(_unpack(row[0]))
         node["label"] = (
             node.get("name") or node.get("cell") or node.get("reference") or node["id"]
         )
@@ -1600,7 +1623,10 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "AND r1=? AND c1=? AND r2=? AND c2=?",
                         (sheet, r1, c1, r2, c2),
                     ).fetchone()
-                    if definition:
+                    member = store.implicit_array_member(node["id"])
+                    if member and member.get("arrayOwnershipUnknown"):
+                        _unknown_array_owner(node, persisted=True)
+                    elif definition:
                         anchor_id = _id(sheet, definition[0])
                         node.update(
                             kind="array_result",
