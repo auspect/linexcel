@@ -44,6 +44,22 @@ const operationNames = {
   sum: ["Somme", "Sum"], difference: ["Différence", "Difference"], ratio: ["Rapport", "Ratio"],
   min: ["Minimum", "Minimum"], max: ["Maximum", "Maximum"], mean: ["Moyenne", "Mean"], count: ["Nombre de valeurs numériques", "Numeric value count"],
 };
+const COUNT_UNITS = {
+  cells: ["cellule", "cellules", "cell", "cells"],
+  results: ["résultat", "résultats", "result", "results"],
+  nodes: ["nœud", "nœuds", "node", "nodes"],
+  edges: ["relation", "relations", "relationship", "relationships"],
+  revisions: ["révision", "révisions", "revision", "revisions"],
+  links: ["lien", "liens", "link", "links"],
+  steps: ["étape", "étapes", "step", "steps"],
+  tokens: ["jeton", "jetons", "token", "tokens"],
+  resultBytes: ["octet de résultat", "octets de résultats", "result byte", "result bytes"],
+};
+function countText(value, key, english) {
+  const words = COUNT_UNITS[key] || [key, key, key, key];
+  const singular = Number(value) === 1;
+  return `${value} ${words[(english ? 2 : 0) + (singular ? 0 : 1)]}`;
+}
 
 export function AskTrace({ run, english }) {
   const text = (fr, en) => english ? en : fr;
@@ -54,14 +70,14 @@ export function AskTrace({ run, english }) {
     {failures[reason] && <p role="status">{failures[reason][english ? 1 : 0]}</p>}
     <ol>{(trace?.steps || []).map((step, index) => <li key={index}>
       <strong>{(toolNames[step.tool] || [step.tool, step.tool])[english ? 1 : 0]} · {step.verdict === "failed" ? text("échec", "failed") : step.tool === "finish" ? text("terminée", "finished") : text("effectué", "completed")}</strong>
-      {step.durationMs !== undefined && <small>{Math.round(step.durationMs)} ms{step.tokens ? ` · ${step.tokens.input_tokens + step.tokens.output_tokens} tokens` : ""}</small>}
-      {step.summary?.counts && <span>{Object.entries(step.summary.counts).map(([key, count]) => `${count} ${{ cells: text("cellules", "cells"), results: text("résultats", "results"), nodes: text("nœuds", "nodes"), edges: text("relations", "relationships"), revisions: text("révisions", "revisions"), links: text("liens", "links") }[key] || key}`).join(" · ")}</span>}
+      {step.durationMs !== undefined && <small>{Math.round(step.durationMs)} ms{step.tokens ? ` · ${countText(step.tokens.input_tokens + step.tokens.output_tokens, "tokens", english)}` : ""}</small>}
+      {step.summary?.counts && <span>{Object.entries(step.summary.counts).map(([key, count]) => countText(count, key, english)).join(" · ")}</span>}
       {step.tool === "finish" && <p className="library-ask-last">{step.summary?.searchCompleted
         ? text("La recherche délimitée a terminé ses opérations dans cette portée.", "The bounded search completed its operations in this scope.")
         : text("La recherche dans cette portée est incomplète ou tronquée.", "The scoped search is incomplete or truncated.")} {text("Cela ne prouve pas l’absence d’une réponse dans les classeurs.", "This does not prove that an answer is absent from the workbooks.")}</p>}
       <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ tool: step.tool, arguments: step.arguments, summary: step.summary, budgetUse: step.budgetUse, verdict: step.verdict }, null, 2)}</pre></details>
     </li>)}</ol>
-    {trace?.budgetUse && <p>{trace.budgetUse.steps} {text("étapes", "steps")} · {trace.budgetUse.tokens} tokens · {trace.budgetUse.resultBytes} {text("octets de résultats", "result bytes")}</p>}
+    {trace?.budgetUse && <p>{countText(trace.budgetUse.steps, "steps", english)} · {countText(trace.budgetUse.tokens, "tokens", english)} · {countText(trace.budgetUse.resultBytes, "resultBytes", english)}</p>}
     {trace?.traceId && <p>{text("Identifiant de trace", "Trace ID")} · <code>{trace.traceId}</code>{trace.traceUrl && /^https?:\/\//.test(trace.traceUrl) && <> · <a href={trace.traceUrl} target="_blank" rel="noreferrer">Phoenix</a></>}</p>}
     {trace?.scope?.revisions && <details><summary>{text("Révisions autorisées pour cette question", "Revisions authorized for this question")}</summary><ul>{trace.scope.revisions.map(rev => <li key={rev.id}>{rev.filename} · {rev.projectId.slice(0, 8)} · {rev.sha256.slice(0, 8)}</li>)}</ul></details>}
   </div>;
@@ -139,6 +155,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
   };
   const runId = useRef(null);
   const answer = run?.status === "answer_proposed" ? run.answer : null;
+  const busySteps = run?.trace?.budgetUse?.steps || 0;
   return <section className="library-ask-state" aria-label={text("Poser une question", "Ask a question")}>
     <p className="help">{text("Le modèle cherche et propose des cellules. Les valeurs et le lignage sont relus par linexcel ; leur pertinence reste à confirmer.", "The model searches and proposes cells. Linexcel rereads values and lineage; relevance still needs confirmation.")}</p>
     {config?.endpoint && <p className="library-ask-endpoint">{config.local ? text("Modèle local", "Local model") : text("Modèle distant, autorisation par question", "Remote model, consent per question")} · {config.model} · {config.endpoint}</p>}
@@ -148,7 +165,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       <textarea id="library-ask-question" rows={2} maxLength={2000} value={question} disabled={!config?.available} onChange={event => { clear(); setQuestion(event.target.value); }} />
       <div className="library-ask-actions"><button type="submit" className={disclosure ? "" : "primary"} disabled={!config?.available || busy || !question.trim() || Boolean(disclosure)}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
     </form>
-    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {run?.trace?.budgetUse?.steps || 0} {text("étapes effectuées. La trace est disponible ci-dessus.", "steps completed. The trace is accessible above.")}</p>}
+    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 1 ? "effectuée. La trace est disponible ci-dessus." : "effectuées. La trace est disponible ci-dessus.", "completed. The trace is accessible above.")}</p>}
     {error && <p role="alert">{error}</p>}
     {disclosure && <section className="library-ask-consent" aria-label={text("Autorisation distante", "Remote consent")}>
       <h3>{text("Autoriser cette question à distance", "Allow this question remotely")}</h3>

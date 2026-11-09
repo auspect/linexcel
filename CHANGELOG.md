@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   advisories concern Vite's development server, which is not part of a Python
   installation. The offline React Flow bundle is rebuilt with this version.
 
+### Fixed
+
+- Correct search-view sizing beneath the actual header, keep trace summaries from
+  covering mobile filters, and separate workbook-picker labels from filenames.
+  Improve singular/plural count labels, search-cap explanations, and graph
+  summaries; keep collapsed overview cards unselected and fit mobile minimaps and
+  stacked-edge labels inside their graph.
+
 ## [1.18.0] — 2026-11-09
 
 ### Added

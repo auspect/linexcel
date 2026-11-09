@@ -6,13 +6,24 @@ from pathlib import Path
 
 import pytest
 from test_app_browser import APP
+from test_library_search_transitions import live_library as live_library
+from test_library_search_transitions import open_search as open_live_search
 
 playwright = pytest.importorskip("playwright.sync_api")
 CAPTURE_DIR = (
     Path(os.environ["M3_CAPTURE_DIR"]) if os.environ.get("M3_CAPTURE_DIR") else None
 )
 VIEWPORTS = [(1440, 900), (390, 844)]
-STATES = ["found", "empty", "capped", "boundary", "ambiguous", "pinned"]
+STATES = [
+    "found",
+    "empty",
+    "capped",
+    "header_capped",
+    "catalog_failed",
+    "boundary",
+    "ambiguous",
+    "pinned",
+]
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +97,15 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
         "ambiguous": "ambiguous_external",
         "pinned": "unresolved_external",
     }.get(state)
-    caps = ["entries_per_workbook"] if state == "capped" else []
+    caps = (
+        ["entries_per_workbook"]
+        if state == "capped"
+        else ["header_scan_cells"]
+        if state == "header_capped"
+        else ["catalog_build_failed"]
+        if state == "catalog_failed"
+        else []
+    )
     search_trace = {
         "schemaVersion": "linexcel.search.v1",
         "tool": "search_catalog",
@@ -271,6 +290,12 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                 f"connection={page.locator('#connection').inner_text()}"
             ) from cause
         page.locator(".library-search-trigger").click()
+        assert page.locator(".library-file-picker span:first-child").evaluate(
+            """element => {
+              const style = getComputedStyle(element, '::after');
+              return style.content === '"·"' && parseFloat(style.marginInlineEnd) > 0;
+            }"""
+        )
         page.locator("#library-search-query").fill("café")
         page.get_by_role("button", name="Rechercher", exact=True).last.click()
         if hits:
@@ -310,6 +335,16 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             page.get_by_text(
                 "limite d’entrées du classeur", exact=False
             ).first.wait_for()
+        if state == "header_capped":
+            page.get_by_text("Résultats partiels", exact=False).wait_for()
+            page.get_by_text(
+                "analyse des cellules d’en-tête limitée", exact=False
+            ).first.wait_for()
+        if state == "catalog_failed":
+            page.get_by_text("Résultats partiels", exact=False).wait_for()
+            page.get_by_text(
+                "la construction du catalogue a échoué", exact=False
+            ).first.wait_for()
         if state == "empty":
             page.locator(".library-trace-summary a").click()
             page.locator(".library-trace-last").get_by_text(
@@ -325,6 +360,28 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             page.locator(".library-revision-group").get_by_text(
                 "Formule", exact=False
             ).wait_for()
+            graph_counts = page.locator(".library-graph-counts").inner_text()
+            assert "1 liaison affichée représentant 1 dépendance" in graph_counts
+            assert "0 relations internes regroupées" in graph_counts
+            assert page.locator(
+                ".library-graph-canvas .flow-card.is-selected"
+            ).count() == 0
+            if viewport[0] == 390:
+                minimap = page.locator(".library-graph-canvas .react-flow__minimap")
+                for node in minimap.locator(".react-flow__minimap-node").all():
+                    node_box = node.bounding_box()
+                    minimap_box = minimap.bounding_box()
+                    assert node_box["x"] >= minimap_box["x"]
+                    assert node_box["x"] + node_box["width"] <= (
+                        minimap_box["x"] + minimap_box["width"] + 1
+                    )
+                label = page.locator(
+                    ".library-graph-canvas .react-flow__edge-text"
+                ).first.bounding_box()
+                card = page.locator(
+                    ".library-graph-canvas .flow-card"
+                ).first.bounding_box()
+                assert label["x"] + label["width"] / 2 < card["x"] + 100
             assert page.locator(".library-trace-last.is-incomplete").count() == 0
             page.locator(".library-accessible-graph").get_by_text(
                 "source-value", exact=False
@@ -385,6 +442,39 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                 "(el) => el.getBoundingClientRect().height"
             )
             assert round(height) >= 44
+        summary = page.locator(".library-trace-summary")
+        controls = page.locator(".library-search-controls")
+        assert page.evaluate(
+            """() => Boolean(document.querySelector('.library-trace-summary')
+              .compareDocumentPosition(document.querySelector('.library-search-controls')
+              ) & Node.DOCUMENT_POSITION_FOLLOWING)"""
+        )
+        assert summary.locator("a").is_visible()
+        if viewport[0] == 390:
+            main = page.locator(".workspace > main")
+            assert summary.evaluate(
+                "element => getComputedStyle(element).position"
+            ) != "sticky"
+            main.evaluate(
+                """main => {
+                  const filter = document.querySelector('.library-kind-filter');
+                  main.scrollTop += filter.getBoundingClientRect().top
+                    - main.getBoundingClientRect().top - 8;
+                }"""
+            )
+            summary_box = summary.bounding_box()
+            filter_box = page.locator(".library-kind-filter").bounding_box()
+            assert summary_box["y"] + summary_box["height"] <= filter_box["y"] or (
+                summary_box["y"] >= filter_box["y"] + filter_box["height"]
+            )
+            assert page.locator(".library-kind-filter input").first.is_visible()
+            main.evaluate("(element) => element.scrollTo(0, 0)")
+        if viewport[0] == 1440:
+            assert page.evaluate(
+                """() => window.scrollY === 0
+                  && document.documentElement.scrollHeight <= innerHeight
+                  && document.querySelector('header.top').getBoundingClientRect().top >= 0"""
+            )
         assert not any("/ai/" in path for _, path in requests)
         assert errors == []
         if CAPTURE_DIR:
@@ -413,6 +503,44 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                         / f"{prefix}-{section.removeprefix('.library-')}.png"
                     )
                 )
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_workspace_menu_recovers_from_library_search(browser, live_library, width):
+    _, url, _ = live_library
+    page = open_live_search(browser, url, width)
+    menu = page.locator("#workspace-menu")
+    sidebar = page.locator("#workspace-sidebar")
+    main = page.locator(".workspace > main")
+    header = page.locator("header.top")
+    try:
+        menu.click()
+        playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+        playwright.expect(sidebar).to_be_visible()
+        bounds = sidebar.bounding_box()
+        assert bounds and bounds["width"] > 0 and bounds["height"] > 0
+        assert sidebar.get_by_text("Espaces de travail", exact=True).is_visible()
+        if CAPTURE_DIR:
+            CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(CAPTURE_DIR / f"workspace-menu-{width}.png"))
+        close = page.locator("#workspace-close")
+        playwright.expect(close).to_be_visible()
+        close.click()
+        playwright.expect(menu).to_have_attribute("aria-expanded", "false")
+        assert sidebar.is_hidden()
+        assert not main.evaluate("element => element.inert")
+        assert not header.evaluate("element => element.inert")
+        playwright.expect(menu).to_be_focused()
+
+        menu.click()
+        page.keyboard.press("Escape")
+        playwright.expect(menu).to_have_attribute("aria-expanded", "false")
+        assert sidebar.is_hidden()
+        assert not main.evaluate("element => element.inert")
+        assert not header.evaluate("element => element.inert")
+        playwright.expect(menu).to_be_focused()
     finally:
         page.close()
 
