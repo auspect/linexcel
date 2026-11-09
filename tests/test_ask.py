@@ -412,8 +412,11 @@ def test_trace_arguments_never_retain_repeated_workbook_content(tools):
     assert secret not in retained
     step = next(s for s in result["trace"]["steps"] if s["tool"] == "search_catalog")
     assert step["arguments"]["redacted"] and step["arguments"]["fields"] == ["query"]
-    assert len(step["arguments"]["sha256"]) == 64
-    assert "callId" not in step and "callIdSha256" in step
+    assert set(step["arguments"]) == {"bytes", "fields", "redacted"}
+    assert "callId" not in step and "callIdSha256" not in step
+    assert (
+        hashlib.sha256(encoded({"query": secret}).encode()).hexdigest() not in retained
+    )
 
 
 @pytest.mark.parametrize(

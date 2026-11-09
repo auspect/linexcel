@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import threading
@@ -133,15 +132,11 @@ class QuestionRun:
         args = {key: value for key, value in args.items() if key != "rationale"}
         blob = encoded(args).encode("utf-8")
         arguments = {
-            "sha256": hashlib.sha256(blob).hexdigest(),
             "bytes": len(blob),
             "fields": sorted(args),
             "redacted": True,
         }
-        if "callId" in extra:
-            extra["callIdSha256"] = hashlib.sha256(
-                extra.pop("callId").encode()
-            ).hexdigest()
+        extra.pop("callId", None)
         self.trace["steps"].append(
             {
                 "tool": tool,
