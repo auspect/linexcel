@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exclude stale overlapping-array owner edges from graph views and structure
+  exports of existing indexes, without requiring workbook reimport.
 - Preserve saved values for overlapping array declarations while reporting their
   ownership as unresolved, upstream and downstream, instead of choosing an anchor.
 - Follow blank declared-array members through their anchor without expanding huge

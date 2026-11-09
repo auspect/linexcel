@@ -11,7 +11,15 @@ from test_total_lineage import fixture_source, handle
 
 from linexcel.catalog import Catalog
 from linexcel.excel_presentation import sheet_presentation
-from linexcel.lazy_store import WorkbookIndex, _pack
+from linexcel.graph_store import build_graph
+from linexcel.lazy_store import (
+    WorkbookIndex,
+    _pack,
+    export_structure,
+    graph_neighborhood,
+    graph_page,
+    structure_page,
+)
 from linexcel.web_data import build_source_database
 
 
@@ -112,7 +120,18 @@ def test_nonoverlapping_array_ownership_and_downstream_are_unchanged(tmp_path):
         assert result["coverage"]["complete"]
 
 
-def test_old_stored_first_owner_is_not_reused_or_exported(tmp_path):
+@pytest.mark.parametrize(
+    "graph_view",
+    [
+        "page",
+        "owner_neighborhood",
+        "member_neighborhood",
+        "structure",
+        "export",
+        "hierarchy",
+    ],
+)
+def test_old_stored_first_owner_is_not_reused_or_exported(tmp_path, graph_view):
     source = overlapping_source(tmp_path)
     with WorkbookIndex(source.path, writable=True) as index:
         node = index["S!B2"]
@@ -125,6 +144,40 @@ def test_old_stored_first_owner_is_not_reused_or_exported(tmp_path):
         )
         index.db.execute("INSERT OR IGNORE INTO edges VALUES ('S!A1','S!B2')")
         index.db.commit()
+        raw_edges = index.db.execute("SELECT count(*) FROM edges").fetchone()[0]
+    original = source.path.read_bytes()
+    if graph_view == "hierarchy":
+        meta = build_graph(source.path, tmp_path / "hierarchy.sqlite")
+        assert meta["edgeCount"] == raw_edges - 1
+    else:
+        if graph_view == "page":
+            graph = graph_page(source.path)
+        elif graph_view.endswith("neighborhood"):
+            root = "S!A1" if graph_view.startswith("owner") else "S!B2"
+            graph = graph_neighborhood(source.path, root, depth=3, limit=3)
+            assert not graph["pagination"]["truncated"]
+            assert ("S!B2" if root == "S!A1" else "S!A1") not in {
+                node["id"] for node in graph["nodes"]
+            }
+        elif graph_view == "structure":
+            edges = []
+            while True:
+                graph = structure_page(
+                    source.path, part="edges", offset=len(edges), limit=1
+                )
+                assert graph["pagination"]["total"] == raw_edges - 1
+                edges.extend(graph["edges"])
+                if not graph["pagination"]["hasMore"]:
+                    break
+                assert graph["edges"]
+            graph["edges"] = edges
+        else:
+            graph = export_structure(source.path)
+        assert not any(
+            edge["source"] == "S!A1" and edge["target"] == "S!B2"
+            for edge in graph["edges"]
+        )
+    assert source.path.read_bytes() == original
     catalog = Catalog(tmp_path / "catalog")
     for direction, address in [("upstream", "B2"), ("downstream", "A1")]:
         result = catalog.lineage(
@@ -173,3 +226,40 @@ def test_large_fully_stored_array_reports_overlap_beyond_enumeration_ceiling(tmp
     )
     assert "unsupported_reference" in result["coverage"]["boundaries"]
     assert not result["coverage"]["complete"]
+
+
+@pytest.mark.parametrize("size", [10, 2000])
+def test_normal_array_graph_reads_stay_bounded_without_decoding_structure(
+    tmp_path, monkeypatch, size
+):
+    from linexcel import lazy_store
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = ArrayFormula(ref=f"A1:A{size}", text="=1")
+    for row in range(2, size + 1):
+        sheet.cell(row, 1, row)
+    content = io.BytesIO()
+    book.save(content)
+    source = fixture_source(tmp_path, 1, "normal.xlsx", {}, content=content.getvalue())
+    decoded = []
+    unpack = lazy_store._unpack
+
+    def track(data):
+        decoded.append(None)
+        return unpack(data)
+
+    monkeypatch.setattr(lazy_store, "_unpack", track)
+    page = structure_page(source.path, part="edges", limit=2)
+    assert len(page["edges"]) == 2
+    assert page["pagination"] == {"offset": 0, "total": size - 1, "hasMore": True}
+    meta = build_graph(source.path, tmp_path / "normal-hierarchy.sqlite")
+    assert meta["edgeCount"] == size - 1
+    assert not decoded  # Complete counts and structure never decode cell blobs.
+    around = graph_neighborhood(source.path, "S!A1", depth=3, limit=3)
+    assert len(around["nodes"]) == 3
+    assert len(decoded) <= 30  # Includes the bounded nearby-label context reads.
+    assert around["pagination"]["truncated"]
+    assert len(around["edges"]) == 2
+    assert all(not n.get("arrayOwnershipUnknown") for n in around["nodes"])

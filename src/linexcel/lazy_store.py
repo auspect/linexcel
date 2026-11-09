@@ -1819,6 +1819,37 @@ def _filters(sheet=None, query=None, kind=None):
     return " WHERE " + " AND ".join(conditions) if conditions else "", values
 
 
+def _array_edge_filter(store, *, schema="main"):
+    """Reject old chosen-owner edges using coordinates, never decoded cells.
+
+    Ordinary formula targets skip the lookup. Array-result targets stop at the
+    second containing declaration; the sheet key bounds the declaration scan.
+    """
+    if not store.db.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='array_definitions'"
+    ).fetchone():
+        return "1"
+    return (
+        "(t.kind<>'array_result' OR NOT EXISTS ("
+        f"SELECT 1 FROM {schema}.array_definitions a WHERE a.sheet=t.sheet "
+        "AND a.r1<=t.row AND a.r2>=t.row AND a.c1<=t.col AND a.c2>=t.col "
+        "LIMIT 1 OFFSET 1))"
+    )
+
+
+def _edge_count(store):
+    total = store.db.execute("SELECT count(*) FROM edges").fetchone()[0]
+    condition = _array_edge_filter(store)
+    if condition != "1":
+        # Keep the ordinary-workbook count fast: only array-result targets use
+        # the geometry check, via nodes_kind and edges_target, without blobs.
+        total -= store.db.execute(
+            "SELECT count(*) FROM nodes t JOIN edges e ON e.target=t.id "
+            f"WHERE t.kind='array_result' AND NOT {condition}"
+        ).fetchone()[0]
+    return total
+
+
 def _edges_for_nodes(store, ids):
     from linexcel.macros import static_edge_record
 
@@ -1829,7 +1860,8 @@ def _edges_for_nodes(store, ids):
         "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
         "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
         f"WHERE e.target IN ({placeholders}) "
-        f"AND e.source IN ({placeholders}) ORDER BY e.source,e.target",
+        f"AND e.source IN ({placeholders}) AND {_array_edge_filter(store)} "
+        "ORDER BY e.source,e.target",
         ids + ids,
     )
     return [static_edge_record(s, t, sk, tk) for s, t, sk, tk in rows]
@@ -1919,7 +1951,11 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
         raise ValueError("Unknown structure part")
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
-        total = store.db.execute(f"SELECT count(*) FROM {part}").fetchone()[0]
+        total = (
+            store.db.execute("SELECT count(*) FROM nodes").fetchone()[0]
+            if part == "nodes"
+            else _edge_count(store)
+        )
         if part == "nodes":
             items = [
                 {"id": nid, "kind": kind, "sheet": sheet}
@@ -1936,6 +1972,7 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
                 for source, target, sk, tk in store.db.execute(
                     "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
                     "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                    f"WHERE {_array_edge_filter(store)} "
                     "ORDER BY e.source,e.target LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
@@ -1995,6 +2032,7 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         ids = {node_id: None}
         frontier = [node_id]
         truncated = False
+        condition = _array_edge_filter(store)
         for _ in range(depth):
             if not frontier:
                 break
@@ -2002,8 +2040,12 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
             for current in frontier:
                 rows = store.db.execute(
                     (
-                        "SELECT source AS neighbor FROM edges WHERE target=? "
-                        "UNION SELECT target FROM edges WHERE source=? "
+                        "SELECT e.source AS neighbor FROM edges e "
+                        "JOIN nodes t ON t.id=e.target "
+                        f"WHERE e.target=? AND {condition} "
+                        "UNION SELECT e.target FROM edges e "
+                        "JOIN nodes t ON t.id=e.target "
+                        f"WHERE e.source=? AND {condition} "
                         "ORDER BY neighbor LIMIT ?"
                     ),
                     (current, current, limit + 1),
@@ -2144,6 +2186,7 @@ def export_structure(index_path: Path) -> dict:
             for s, t, sk, tk in store.db.execute(
                 "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
                 "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                f"WHERE {_array_edge_filter(store)} "
                 "ORDER BY e.source,e.target"
             )
         ]

@@ -15,9 +15,9 @@ from pathlib import Path
 
 from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
-from linexcel.lazy_store import WorkbookIndex
+from linexcel.lazy_store import WorkbookIndex, _array_edge_filter, _edge_count
 
-VERSION = 4
+VERSION = 5
 FANOUT = 32
 OUTSIDE = -1
 
@@ -238,12 +238,14 @@ def build_graph(index: Path, output: Path) -> dict:
             CREATE INDEX members_node ON members(node,view,child);
             CREATE TABLE raw_edges(source INTEGER,target INTEGER);
         """)
-        db.execute("""
+        db.execute(f"""
             INSERT INTO raw_edges SELECT a.id,b.id FROM original.edges e
             JOIN nodes a ON a.node_id=e.source JOIN nodes b ON b.node_id=e.target
+            JOIN original.nodes t ON t.id=e.target
+            WHERE {_array_edge_filter(source, schema="original")}
         """)
         edge_count = db.execute("SELECT count(*) FROM raw_edges").fetchone()[0]
-        if edge_count != source.db.execute("SELECT count(*) FROM edges").fetchone()[0]:
+        if edge_count != _edge_count(source):
             raise ValueError("Indexed edge endpoints are missing")
         db.executescript("""
             INSERT INTO edges
