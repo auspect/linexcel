@@ -1,4 +1,5 @@
 import React, { memo, useEffect, useState, useRef } from "react";
+import { AskQuestion, AskTrace } from "./ask.jsx";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
@@ -573,6 +574,9 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
   const english = language === "en";
   const text = (fr, en) => (english ? en : fr);
   const [query, setQuery] = useState("");
+  const [intent, setIntent] = useState("search");
+  const [askRun, setAskRun] = useState(null);
+  const [askEpoch, setAskEpoch] = useState(0);
   const [mode, setMode] = useState("library");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
@@ -779,6 +783,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       ? { ...event, status: "superseded" } : event));
   };
   const invalidateAnswer = (clearSearch = true) => {
+    setAskRun(null);
+    setAskEpoch(value => value + 1);
     supersedeRequests(["search", "lineage"]);
     setLineage(null);
     setExpandedRevision(null);
@@ -918,7 +924,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         if (node.collapsed) setExpandedRevision(node.id);
         else {
           const found = (lineage.nodes || []).find(item => item.id === node.id);
-          if (found) selectResult(found, direction);
+            if (found && intent === "search") selectResult(found, direction);
         }
       },
       relationshipStatus: (model) => {
@@ -958,7 +964,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       if (flow.current === instance) instance.render(nodes, edges, { language: english ? "en" : "fr" });
     });
     return () => { cancelAnimationFrame(frame); instance.destroy(); flow.current = null; };
-  }, [lineage, expandedRevision, english]);
+  }, [lineage, expandedRevision, english, intent]);
 
   const toggleKind = (kind) => {
     invalidateAnswer();
@@ -1232,7 +1238,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
     }}>
       <section ref={traceSummary} className="library-trace-summary" aria-live="polite">
         <strong>{text("Dernière opération", "Latest operation")}</strong>
-        <span>{latestTraceSummary}</span>
+        <span>{intent === "ask" ? askRun?.status === "running" ? text("Question en cours · trace disponible", "Question running · trace available") : askRun ? text("Question terminée · consultez la trace", "Question finished · see trace") : text("Aucune question exécutée.", "No question run yet.") : latestTraceSummary}</span>
         <a href="#library-trace-heading" onClick={(event) => {
           event.preventDefault();
           document.getElementById("library-trace")?.setAttribute("open", "");
@@ -1261,13 +1267,18 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         {(status?.buildState?.status === "failed" || catalogPollTimedOut) && <button type="button" onClick={() => document.getElementById("library-attach-file")?.click()}>{text("Choisir un classeur pour reconstruire l’index", "Choose a workbook to rebuild the index")}</button>}
       </section>
       <section className="library-search-controls" aria-label={text("Recherche dans la bibliothèque", "Search the library")}>
-        <form onSubmit={(event) => { event.preventDefault(); performSearch(); }}>
+        <nav className="library-ask-actions" aria-label={text("Mode de recherche", "Search mode")}>
+          <button type="button" aria-pressed={intent === "search"} onClick={() => { invalidateAnswer(); setIntent("search"); }}>{text("Rechercher", "Search")}</button>
+          <button type="button" aria-pressed={intent === "ask"} onClick={() => { invalidateAnswer(); setIntent("ask"); }}>{text("Poser une question", "Ask a question")}</button>
+        </nav>
+        {intent === "ask" && <AskQuestion key={`${apiScope().toString()}:${askEpoch}`} request={request} scope={Object.fromEntries(apiScope())} english={english} onRun={setAskRun} onClear={() => { setSearch(null); setSelected(null); setLineage(null); }} onEvidence={(answer, index = 0) => { setSelected(answer.cells[index]); setLineage(answer.lineages[index]); setDirection("upstream"); setExpandedRevision(null); }} />}
+        {intent === "search" && <form onSubmit={(event) => { event.preventDefault(); performSearch(); }}>
           <label htmlFor="library-search-query">{text("Requête", "Query")}</label>
           <div className="library-search-form-row">
             <input id="library-search-query" type="search" value={query} onChange={(event) => { setQuery(event.target.value); invalidateAnswer(); setError(""); }} />
             <button type="submit" className="primary" disabled={busy}>{text("Rechercher", "Search")}</button>
           </div>
-        </form>
+        </form>}
         <fieldset className="library-scope">
           <legend>{text("Portée", "Scope")}</legend>
           {[
@@ -1282,10 +1293,10 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           {mode === "revision" && <label>{text("Révision", "Revision")}<select value={revisionId} onChange={(event) => changeScope(setRevisionId, event.target.value)}><option value="">{text("Choisir…", "Choose…")}</option>{revisions.map((revision) => <option key={revision.revision?.id || revision.projectId} value={revision.revision?.id}>{revisionLabel({ filename: revision.filename, projectId: revision.projectId, sha256: revision.revision?.sha256 })}</option>)}</select></label>}
           {mode === "attachment" && attachment && <span>{attachment.project.filename} · {attachment.project.id.slice(0, 8)}</span>}
         </fieldset>
-        <fieldset className="library-kind-filter">
+        {intent === "search" && <fieldset className="library-kind-filter">
           <legend>{text("Types", "Kinds")}</legend>
           {["cell", "sheet", "name", "table", "column"].map((kind) => <label key={kind}><input type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} />{kindLabel(kind)}</label>)}
-        </fieldset>
+        </fieldset>}
         <div className="library-attach-control">
           <label htmlFor="library-attach-file">{text("Joindre un classeur à cette recherche", "Attach a workbook to this search")}</label>
           <input id="library-attach-file" className="library-file-input" type="file" accept=".xlsx,.xlsm,.xlam,.xla" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) attachFile(file); event.target.value = ""; }} />
@@ -1298,7 +1309,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       {error && <p className="notice error" role="alert">{error}</p>}
 
       <div className="library-search-columns">
-        <section className="library-results" aria-labelledby="library-results-heading">
+        <section className="library-results" hidden={intent === "ask"} aria-labelledby="library-results-heading">
           <h3 id="library-results-heading">{text("Résultats", "Results")}</h3>
           {search && <p className={`library-result-coverage ${complete ? "is-complete" : "is-incomplete"}`} role="status">
             {complete ? text("Recherche complète dans le périmètre et le contenu indexé.", "Search complete for the indexed content in this scope.") : text("Résultats partiels : la recherche a atteint une limite.", "Partial results: the search reached a limit.")}
@@ -1334,9 +1345,9 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           {results.length > visibleResultCount && <button type="button" onClick={() => setVisibleResultCount((count) => count + 10)}>{text("Afficher 10 résultats supplémentaires", "Show 10 more results")}</button>}
           {search?.pagination?.hasMore && <button type="button" onClick={() => performSearch((search.pagination.offset || 0) + search.pagination.limit, search.generation)}>{text("Page de résultats suivante", "Next results page")}</button>}
         </section>
-        <section className="library-lineage" aria-labelledby="library-lineage-heading">
+        <section className="library-lineage" hidden={intent === "ask" && !lineage} aria-labelledby="library-lineage-heading">
           <div className="library-section-heading"><h3 id="library-lineage-heading">{text("Piste de lignage", "Lineage trail")}</h3>
-            <label>{text("Sens", "Direction")}<select value={direction} onChange={(event) => { const nextDirection = event.target.value; setDirection(nextDirection); if (selected) selectResult(selected, nextDirection); }}><option value="upstream">{text("En amont", "Upstream")}</option><option value="downstream">{text("En aval", "Downstream")}</option></select></label>
+            {intent === "search" && <label>{text("Sens", "Direction")}<select value={direction} onChange={(event) => { const nextDirection = event.target.value; setDirection(nextDirection); if (selected) selectResult(selected, nextDirection); }}><option value="upstream">{text("En amont", "Upstream")}</option><option value="downstream">{text("En aval", "Downstream")}</option></select></label>}
           </div>
           {selected && lineageCoverage && <p className={`library-verdict ${lineageCoverage.complete ? "is-complete" : "is-incomplete"}`} role="status">
             {lineageCoverage.exhaustive ? text("Parcours exhaustif dans le périmètre chargé.", "Traversal exhaustive within the loaded scope.") : text("Parcours non exhaustif.", "Traversal is not exhaustive.")}
@@ -1414,9 +1425,10 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
         })}
         {linksPagination?.hasMore && <button type="button" onClick={() => refreshLinks(attachment?.scopeId, linkStatus, (linksPagination.offset || 0) + linksPagination.limit)}>{text("Afficher les liens suivants", "Show next links")}</button>}
       </details>
-      <details id="library-trace" className="library-trace">
+      <details id="library-trace" className="library-trace" open={intent === "ask" ? true : undefined}>
         <summary><h3 id="library-trace-heading" tabIndex={-1}>{text("Trace complète des opérations", "Full operation trace")}</h3></summary>
-        {traceEvents.length === 0 && <p>{text("Aucune requête effectuée. La trace apparaîtra ici, y compris si aucun résultat n’est trouvé.", "No request yet. The trace will appear here, including when a search has no results.")}</p>}
+        {intent === "ask" && <AskTrace run={askRun} english={english} />}
+        {intent === "search" && traceEvents.length === 0 && <p>{text("Aucune requête effectuée. La trace apparaîtra ici, y compris si aucun résultat n’est trouvé.", "No request yet. The trace will appear here, including when a search has no results.")}</p>}
         <ol>{traceEvents.map((event, index) => {
           const trace = event.trace || {};
           const scope = trace.scope || {};
@@ -1444,7 +1456,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ error: event.technicalError, generation: trace.generation, scope, revisions: trace.revisions, counts, limits: trace.limits, capsHit: trace.capsHit, direction: trace.direction }, null, 2)}</pre></details>
           </li>;
         })}</ol>
-        <p className={`library-trace-last ${complete === false ? "is-incomplete" : ""}`}>{search ? (complete === false ? text("La recherche dans ce périmètre est incomplète ou tronquée.", "The scoped search is incomplete or truncated.") : text("La recherche du contenu indexé est complète dans ce périmètre.", "The indexed-content search is complete in this scope.")) : text("Aucune recherche exécutée.", "No search performed.")} {text("Une recherche complète du contenu indexé ne prouve pas l’absence d’une valeur dans les classeurs.", "A complete search of indexed content does not prove that a value is absent from workbooks.")}</p>
+        {intent === "search" && <p className={`library-trace-last ${complete === false ? "is-incomplete" : ""}`}>{search ? (complete === false ? text("La recherche dans ce périmètre est incomplète ou tronquée.", "The scoped search is incomplete or truncated.") : text("La recherche du contenu indexé est complète dans ce périmètre.", "The indexed-content search is complete in this scope.")) : text("Aucune recherche exécutée.", "No search performed.")} {text("Une recherche complète du contenu indexé ne prouve pas l’absence d’une valeur dans les classeurs.", "A complete search of indexed content does not prove that a value is absent from workbooks.")}</p>}
       </details>
     </div>
   );

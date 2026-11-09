@@ -12,6 +12,113 @@ and graph responses expose `workbookRevision` separately.
 All routes use the existing authenticated owner. No request can select an owner,
 path, URL, SQL expression or another owner's source index.
 
+## Optional questions
+
+Search works with no AI configuration. The adjacent **Poser une question** mode
+requires the server's existing AI configuration and the `ai` extra. The endpoint
+and model are named in the view. The separate `ask_provider.ToolProvider`
+protocol returns structured tool calls; it does not implement `aidoc.LLMProvider`.
+Its OpenAI-compatible adapter reuses the documentation client's HTTP connection
+setup and M0 parameter negotiation. A text-only or tool-rejecting endpoint fails
+explicitly, with a trace and no prose fallback.
+
+Questions are prepared through `POST /api/library/ask/prepare` with
+`{question, project?, revision?, scope?}`. The response discloses the exact
+loaded revisions, question, endpoint, model and categories (values, formulas,
+labels, sheet/workbook names). The 10-minute, owner-bound token freezes this
+scope. `POST /api/library/ask` consumes `{token, remoteConsent:false}` locally;
+a remote endpoint requires `remoteConsent:true` for that individual question.
+Only literal loopback IPs and `localhost` count as local. A changed endpoint,
+expired token or reused token requires fresh preparation. No model request is
+made before required consent. An empty/unimported scope fails clearly; scopes
+above 32 revisions or 64 KiB of revision metadata require narrower selection.
+
+`GET /api/library/ask/config` exposes availability and retention. A started run
+is an ordinary `ask` task on the existing executor, capacity queue and cancel
+event. `GET /api/library/ask/RUN_ID` returns task progress and its authorized run;
+`POST /api/tasks/RUN_ID/cancel` cancels it. Model calls occur outside
+`TaskStore.lock`. Cancellation is cooperative: an in-flight HTTP call can take
+up to the smaller of 30 seconds and the remaining run time to settle. Queued
+cancellation and interrupted-server recovery also persist terminal traces.
+Question results are intentionally available only from the ask route, where
+source authorization is rechecked; generic task polling exposes task metadata.
+
+The explicit state machine validates tool names, strict argument objects,
+finite numbers, call IDs (unique across the run), response finish reasons and
+terminal-call placement. There is no code, path, URL, SQL, file, network, pin or
+upload tool. Workbook text is inside JSON marked `untrusted_workbook_data`;
+all text is rendered inertly. Every tool reacquires the owner mutation gate,
+re-enumerates authorized current sources and checks frozen content hashes.
+Newly loaded workbooks cannot enter an existing run. Pins and file loading remain
+user actions, and a missing source is a lineage boundary.
+
+Tools are `list_workbooks`, `list_revisions`, `search_catalog`, `describe_sheet`,
+`read_range` (at most 25 indexed cells), `get_cell`, `find_value`, `trace_lineage`,
+`list_external_links`, `compute` and `submit_answer`. Search/links return at most
+20 results, sheet descriptions sample 12 cells, and numeric lookup assesses at
+most 5,000 source cells/20 hits with explicit coverage. Range omissions are
+reported as blank-or-unindexed; they are not invented evidence. Search and
+directed lineage call the M1/M2 engines in a private, disposable run catalog,
+so a narrow question cannot replace the library's shared catalog generation.
+Its disk ceiling is 16 MiB, build allowance 15 seconds, additionally bounded by
+the configured catalog limits. These are cooperative limits, not hard real-time
+or process-memory isolation guarantees.
+
+`submit_answer` accepts `{status:"proposed", handles?, compute?, rationale?}`
+or `{status:"not_found"}`. Every proposed cell and computation operand must have
+been returned to the model by a tool in this run. The server rereads its value,
+formula and labels, checks index existence and computes upstream M2 lineage.
+Outcomes are `answer_proposed`, `not_found`, `failed`. No valid handle or an
+exhausted search budget gives `not_found`, displaying only the trace. Provider,
+call-validation and cancellation failures terminate explicitly. The trace's last
+step states whether operations completed or were truncated and that this does
+not establish absence. A model's decision to stop is not an exhaustive search
+of every cell or proof of relevance.
+
+The **Réponse proposée** card marks source facts as verified while keeping
+relevance **à confirmer**, shows source revision/coordinates, heuristic label
+provenance, saved values/formulas and source lineage with its boundaries. No
+formula is recalculated. A short rationale is shown only as **le raisonnement du
+modèle, non vérifié**. Numbers absent from cited saved values cause its removal;
+this conservative hygiene rule cannot validate meaning. Rationale text is never
+retained in trace arguments, including `not_found`. Confirm/reject calls to
+`POST /api/library/ask/RUN_ID/feedback` with `{decision:"confirm"|"reject"}`
+record up to 20 timestamped decisions without blocking initial display.
+
+`compute` accepts only sum, difference, ratio, min, max, mean and count over
+issued operand handles. Difference/ratio require two finite numerics. Sum,
+min/max/mean and count ignore explicit blank values, preserve all operands and
+labels, propagate source errors, and reject nonnumeric operands. Count counts
+numeric operands. An absent saved formula cache is unavailable, not an arithmetic
+blank. Results are synthetic nodes labelled **Calculé par linexcel pour cette
+réponse, présent dans aucun classeur**. Their operands retain server-computed
+source lineage. Arithmetic correctness does not establish that a calculation
+answers the question, matches units or uses the right period.
+
+`WebConfig(ask_limits=AskLimits(...))` configures default ceilings: 16 tool steps,
+64,000 tokens (further limited by the task/server AI token budget), 120 seconds,
+512 KiB cumulative tool-result bytes, 2,048 output tokens per call and 30 seconds
+per HTTP call. Context preflight includes tool schemas; observed or estimated
+provider usage includes parameter-negotiation attempts. Oversized results are
+discarded before issuing their handles. Each trace is bounded to 256 KiB, with
+argument/handle-detail omissions disclosed if necessary. Provider prose and
+reasoning streams are neither answers nor trace content.
+
+Runs persist under the private owner's `ask/RUN_ID/`, separately from source
+indexes. `linexcel.ask.v1` records scope/revisions, tool and arguments, bounded
+result counts/handles, duration, tokens, budget use and verdict. Cell values,
+formulas and labels are excluded from default step summaries; input questions
+and authorized factual answers have separate local artifacts. Do not export
+these private artifacts by default. Retention defaults to seven days and 100
+settled runs per owner; preparation and reads sweep expired/excess runs, excluding
+active tasks. `AskLimits.retention_days` and `retained_runs` configure it. Reading
+a run after source replacement/deletion or attachment expiry suppresses its
+evidence and old scope details. Trace publication is application-owned, with no
+global tracer or network exporter; an optional content-free export can subscribe
+at the run's publish boundary later.
+
+## Deterministic library routes
+
 - `GET /api/library/search?q=cafe&kinds=cell,table&limit=50&offset=0`
 - `GET /api/library/search?query=42&project=PROJECT_ID`
 - `GET /api/library/search?q=revenue&revision=PROJECT_ID:SHA256`

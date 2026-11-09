@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add an optional question mode beside deterministic library search, with a
+  separate tool-capable provider, bounded read-only tools and owner/revision
+  authorization inside every execution. Reuse the OpenAI-compatible client and
+  negotiated sampling/token parameters; reject text-only and malformed responses.
+- Render proposed cells and typed saved-value calculations from server-reread
+  evidence and M2 lineage, preserve boundaries and operand provenance, and record
+  relevance confirmations/rejections. The model never supplies an answer sentence;
+  its optional rationale is explicitly unverified and subject to number hygiene.
+- Require single-use remote consent per question with endpoint, revision and
+  content-category disclosure. Persist bounded owner-local `linexcel.ask.v1`
+  traces with configurable retention, progress and cancellation using existing
+  task capacity, without holding the task-store lock across model calls.
 - Reserve the library's up-to-date badge for settled fresh catalog responses;
   show pending while ready responses remain stale and use singular cell copy
   for one-member revision cards.

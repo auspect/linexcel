@@ -658,7 +658,8 @@ class OpenAICompatProvider:
         options: dict[str, Any],
         *,
         vision: bool = False,
-    ) -> tuple[str, TokenUsage]:
+        structured: bool = False,
+    ) -> tuple[Any, TokenUsage]:
         streaming = getattr(self, "_streaming", False)
         if streaming:
             options["stream"] = True
@@ -752,6 +753,22 @@ class OpenAICompatProvider:
                     adapt()  # At most one retry for each rejected parameter.
             if streaming:
                 return self._consume_stream(response, prompt)
+            if structured:
+                # The question agent has a distinct structured-output contract.
+                # Reuse the client and negotiated wire parameters, without
+                # treating tool calls as documentation prose.
+                blob = response.model_dump_json()
+                usage = _usage_from(
+                    getattr(response, "usage", None),
+                    ("prompt_tokens", "completion_tokens"),
+                    prompt,
+                    blob,
+                    model=self._model,
+                    provider="openai-compatible",
+                )
+                usage.add(self._request_state.rejected_usage)
+                self._request_state.usage_accounted = True
+                return response, usage
             text = (response.choices[0].message.content or "").strip()
         except AiDocError as exc:
             if exc.usage is not None and not self._request_state.usage_accounted:

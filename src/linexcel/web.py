@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -42,6 +43,7 @@ OPERATIONS = {
     "document",
     "describe_capture",
     "export_html",
+    "ask",
 }
 AI_OPERATIONS = {"document", "describe_capture"}
 MAX_RESULT_BYTES = 16 * 1024 * 1024
@@ -83,6 +85,7 @@ class WebConfig:
     allow_local_import: bool = False
     local_profile: bool = False
     catalog_limits: CatalogLimits = field(default_factory=CatalogLimits)
+    ask_limits: AskLimits = field(default_factory=AskLimits)
 
     def __post_init__(self):
         for key in (
@@ -230,6 +233,9 @@ class TaskStore:
         from linexcel.web_library import Library
 
         self.library = Library(self)
+        from linexcel.web_ask import AskService
+
+        self.ask = AskService(self)
 
     def _recover(self):
         from linexcel.web_backup import clean_interrupted_archives
@@ -695,6 +701,10 @@ class TaskStore:
         return public
 
     def _task_result(self, task: dict) -> dict | None:
+        if task["operation"] == "ask":
+            # Question evidence needs source reauthorization outside this lock.
+            # It is available exclusively through the owner-scoped ask route.
+            return None
         if task.get("result") is not None:
             return task["result"]
         if not task.get("resultAvailable"):
@@ -704,6 +714,8 @@ class TaskStore:
 
     def task_export(self, owner: str, task_id: str) -> Path:
         task = self.get_task(owner, task_id, include_result=False)
+        if task["operation"] == "ask":
+            raise APIError(404, "Utilisez la trace de question autorisée")
         path = self.project_path(owner, task["projectId"])
         result = path / "tasks" / task_id / "result-data.json"
         if not task.get("resultAvailable") or not result.is_file():
@@ -748,6 +760,10 @@ class TaskStore:
         force: bool = False,
         options: dict | None = None,
     ) -> dict:
+        if operation == "ask":
+            raise APIError(
+                400, "Utilisez la préparation de question et son autorisation"
+            )
         if operation in AI_OPERATIONS | {
             "import",
             "build_graph",
@@ -1245,6 +1261,8 @@ class TaskStore:
                         log.write_bytes(head)
                     task["finishedAt"] = time.time()
                     task["progress"] = {"phase": task["status"], "fraction": 1}
+                    if task["operation"] == "ask":
+                        self.ask.finalize(task)
                     _write(root / "task.json", task)
                 except OSError as exc:
                     task.update(
@@ -1262,6 +1280,8 @@ class TaskStore:
                     self.capacity.notify_all()
 
     def _worker(self, task: dict, root: Path, event: threading.Event) -> dict:
+        if task["operation"] == "ask":
+            return self.ask.run(task, event)
         request = {
             "operation": task["operation"],
             "nodeId": task["nodeId"],
@@ -1894,6 +1914,18 @@ class WebApp:
         query: dict | None = None,
     ) -> Any:
         parts = path.strip("/").split("/")
+        if parts[:3] == ["api", "library", "ask"]:
+            if len(parts) == 4 and parts[3] == "config" and method == "GET":
+                return self.store.ask.config()
+            if len(parts) == 4 and parts[3] == "prepare" and method == "POST":
+                return self.store.ask.prepare(owner, body)
+            if len(parts) == 3 and method == "POST":
+                return self.store.ask.submit(owner, body)
+            if len(parts) == 4 and method == "GET":
+                return self.store.ask.get(owner, parts[3])
+            if len(parts) == 5 and parts[4] == "feedback" and method == "POST":
+                return self.store.ask.feedback(owner, parts[3], body)
+            raise APIError(404, "Question introuvable")
         if parts == ["api", "library", "attachments"] and method == "GET":
             return self.store.library.list_attachments(owner)
         if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
