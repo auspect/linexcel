@@ -303,11 +303,26 @@ def _read_link_part(zf: zipfile.ZipFile, part: str, key: str) -> ExternalBook | 
     root = _xml(zf, part)
     if root is None:
         return None
-    target = ""
-    for rid, (rel_type, resolved) in _rels(zf, part).items():
-        if rel_type.endswith("/externalLinkPath"):
-            target = resolved
-            break
+    book = next((element for element in root if _tag(element) == "externalBook"), None)
+    rid = (
+        next((v for k, v in book.attrib.items() if _tag_of(k) == "id"), None)
+        if book is not None
+        else None
+    )
+    # Excel may emit absolute/relative alternateUrls before the primary path.
+    # Relationship order does not identify which Target the book declares.
+    rels = _rels(zf, part)
+    if rid is None:
+        # Some producers omit r:id while emitting exactly one external path.
+        # Retain that unambiguous form, never guess among alternate paths.
+        paths = [
+            key for key, (kind, _) in rels.items() if kind.endswith("/externalLinkPath")
+        ]
+        if len(paths) == 1:
+            rid = paths[0]
+    rel_type, target = rels.get(rid or "", ("", ""))
+    if not rel_type.endswith("/externalLinkPath"):
+        target = ""
     sheets = [
         element.get("val") or ""
         for element in root.iter()
@@ -326,7 +341,8 @@ def _read_link_part(zf: zipfile.ZipFile, part: str, key: str) -> ExternalBook | 
             (
                 r.get("Target", "")
                 for r in relationships
-                if r.get("Type", "").endswith("/externalLinkPath")
+                if r.get("Id") == rid
+                and r.get("Type", "").endswith("/externalLinkPath")
             ),
             "",
         )

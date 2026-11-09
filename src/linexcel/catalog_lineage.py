@@ -431,7 +431,12 @@ class Traversal:
                         ),
                     )
                 ]
-            self.reverse_external(key, pid, raw, level)
+            # Membership propagates the selected cell's influence only to this
+            # range's exact local consumers. Its other members have not been
+            # reached. Cell lookups already include every overlapping external
+            # operand and uncertainty; only a range root selects its whole span.
+            if kind != "range" or level == 0:
+                self.reverse_external(key, pid, raw, level)
         for neighbor, edge_kind in neighbors:
             if time.monotonic() >= self.deadline:
                 self.boundary(key, "time_budget")

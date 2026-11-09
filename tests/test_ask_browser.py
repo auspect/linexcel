@@ -1,5 +1,6 @@
 """Question states on the real WSGI app; fake providers test UI plumbing only."""
 
+import importlib.util
 import json
 import os
 from dataclasses import replace
@@ -19,6 +20,18 @@ playwright = pytest.importorskip("playwright.sync_api")
 CAPTURES = (
     Path(os.environ["M4_CAPTURE_DIR"]) if os.environ.get("M4_CAPTURE_DIR") else None
 )
+
+
+@pytest.fixture(autouse=True)
+def fake_provider_sdk_available(monkeypatch):
+    # The fake provider exercises browser states without the optional SDK,
+    # just as the API tests do. Keep the real no-model configuration test.
+    find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *args: object() if name == "openai" else find_spec(name, *args),
+    )
 
 
 def capture(page, name):

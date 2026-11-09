@@ -261,6 +261,13 @@ values never select a target. `resolved_by_name` explicitly warns that this
 may not be the revision the link was saved against. A moved file with the same
 basename can resolve; a renamed file needs a pin.
 
+The external book's declared `r:id` selects its relationship, including when
+Excel writes `xxl21:alternateUrls` and lists alternate relationships first.
+Drive-less paths, file URLs, UNC paths, OneDrive and SharePoint URLs use the same
+basename rule; URI escapes are decoded for name matching, while
+`relationshipPath` preserves the selected Target as written. No target URL is
+fetched, and no absolute path is opened to identify a loaded revision.
+
 Pins are explicit user actions binding a stable link ID to a project and source
 content hash. Both source link and target revision are authorized against the
 current owner. Pins persist in the owner's `link-pins.sqlite`, outside the
@@ -285,6 +292,12 @@ target revision and follows its own formulas. Downstream searches the generation
 reverse link table, including range containment, plus local ranges. An ambiguous
 potential reader creates a boundary, never a fabricated consumer edge.
 
+A cell's external readers must contain that cell. A local range reached through
+one of its members continues only to its exact local consumers; its other
+members' external readers and uncertainties are not inherited. A range selected
+as the traversal root includes external readers overlapping its full span.
+Verified blank-cell handles use the same containment rule as stored cells.
+
 Downstream also checks every identity-unresolved link in the loaded owner's
 generation, including missing targets, ambiguous targets and stale pins. A
 different filename cannot exclude a reader: the target may have been renamed.
@@ -292,8 +305,8 @@ A verified A1 reference can be excluded when its sheet differs from the selected
 cell's sheet or its rectangle does not overlap the selected cell/range.
 Unsupported forms without verified bounds remain possible readers.
 
-Each reached cell/range aggregates the remaining possibilities in a
-`possible_unresolved_reader` boundary with an exact `count`, a deterministic
+Each reached cell (or selected range root) aggregates the remaining possibilities
+in a `possible_unresolved_reader` boundary with an exact `count`, a deterministic
 `linkIds` sample, and `sampleOmitted`. The count describes link operands, not
 distinct workbooks. `lineage_reader_samples` bounds the sample (default 8);
 zero retains the count with an empty sample. Known ambiguous candidates can also
@@ -362,10 +375,14 @@ linexcel library --data-dir PATH lineage HANDLE --direction upstream --depth 10
 linexcel library --data-dir PATH lineage HANDLE --direction downstream --workbooks 8
 ```
 
-The external-link contract tests generate OOXML externalLink parts and
-relationships with openpyxl, with hand-computed graphs. No Excel-authored
-external-link file is claimed as validation; the existing Excel-authored VBA
-and Power Query fixtures exercise those distinct stop boundaries.
+The committed external-link contract tests generate OOXML externalLink parts
+and relationships, with hand-computed graphs, including Excel's three-relationship
+alternate-URL shape. A local trial on 2026-11-09 authored external-link workbooks
+with real Excel 16.0 through COM and compared saved values and lineage. Those
+workbooks are kept outside Git because they contain absolute local paths; the
+trial did not use GUI actions. Excel-authored shared external formulas, working
+legacy CSE arrays and live cloud links remain unverified. The committed
+Excel-authored VBA and Power Query fixtures exercise those distinct stop boundaries.
 
 Search order is stable `(projectId, kind, entryId)` within a generation. Supply
 the returned `generation` on later pages; a changed generation rejects the page

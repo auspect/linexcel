@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep downstream external readers and uncertainty scoped to the selected cell
+  when traversal crosses a local range, while retaining overlap lookup for a
+  selected range and containment lookup for verified blank cells.
+- Follow the external book's declared relationship when Excel writes alternate
+  URLs, preserving its original Target. Cover drive-less, accented, OneDrive,
+  SharePoint and UNC targets with generated OOXML tests and no network access.
+- Run fake-provider question browser tests with or without the optional OpenAI SDK.
+
+### Documentation
+
+- Record the local trial with Excel-authored external-link workbooks, its private
+  absolute paths and the remaining shared-formula, legacy-array and cloud limits.
+
 ### Security
 
 - Update the build-only Vite dependency to 7.3.8, clearing `npm audit`. The fixed
