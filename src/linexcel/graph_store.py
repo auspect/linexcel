@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
+
+from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
 from linexcel.lazy_store import WorkbookIndex
 
-VERSION = 1
+VERSION = 4
 FANOUT = 32
 OUTSIDE = -1
 
@@ -48,8 +51,10 @@ def build_graph(index: Path, output: Path) -> dict:
                                parent INTEGER,kind TEXT);
             CREATE INDEX nodes_parent ON nodes(parent);
             CREATE TABLE groups(id INTEGER PRIMARY KEY,parent INTEGER,
-                                label TEXT,sheet TEXT,node_count INTEGER);
+                                label TEXT,sheet TEXT,node_count INTEGER,
+                                level TEXT,signature TEXT);
             CREATE INDEX groups_parent ON groups(parent);
+            CREATE INDEX groups_sheet ON groups(sheet,level);
             CREATE TABLE members(view INTEGER,node INTEGER,child INTEGER,
                                  PRIMARY KEY(view,node)) WITHOUT ROWID;
             CREATE TABLE edges(view INTEGER,source INTEGER,target INTEGER,
@@ -59,42 +64,72 @@ def build_graph(index: Path, output: Path) -> dict:
         """)
         next_group = -2
 
-        def group(children, label, sheet=None):
+        def bounds(children):
+            cells = [
+                coordinate_to_tuple(cell)
+                for child in children
+                for cell in child[3:5]
+                if re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", cell)
+            ]
+            if not cells:
+                return (children[0][3], children[-1][4]) if children else ("", "")
+            return (
+                get_column_letter(min(c[1] for c in cells))
+                + str(min(c[0] for c in cells)),
+                get_column_letter(max(c[1] for c in cells))
+                + str(max(c[0] for c in cells)),
+            )
+
+        def group(children, label, sheet=None, level="partition", signature=None):
             nonlocal next_group
             gid = next_group
             next_group -= 1
             count = sum(c[1] for c in children)
             db.execute(
-                "INSERT INTO groups VALUES (?,NULL,?,?,?)",
-                (gid, label[:256], sheet, count),
+                "INSERT INTO groups VALUES (?,NULL,?,?,?,?,?)",
+                (gid, label[:256], sheet, count, level, signature),
             )
             db.executemany(
                 "UPDATE groups SET parent=? WHERE id=?", [(gid, c[0]) for c in children]
             )
+            first, last = bounds(children) if children else (label, label)
             return (
                 gid,
                 count,
                 label[:256],
-                children[0][3] if children else label,
-                children[-1][4] if children else label,
+                first,
+                last,
             )
 
         def pack(children, sheet):
             while len(children) > FANOUT:
-                children = [
-                    group(
-                        children[i : i + FANOUT],
-                        children[i][3]
-                        + " … "
-                        + children[min(i + FANOUT, len(children)) - 1][4],
-                        sheet,
-                    )
-                    for i in range(0, len(children), FANOUT)
-                ]
+                packed = []
+                for i in range(0, len(children), FANOUT):
+                    chunk = children[i : i + FANOUT]
+                    if len(chunk) == 1:
+                        packed.append(chunk[0])
+                    else:
+                        first, last = bounds(chunk)
+                        packed.append(group(chunk, first + " … " + last, sheet))
+                children = packed
             return children
 
-        sheets, leaves, batch = [], [], []
+        sheets, leaves, batch, patterns = [], [], [], []
         current_sheet = None
+        current_pattern = None
+
+        # The grouping counts are computed by SQLite, never by loading a full
+        # workbook graph into the coordinator or browser. Keep the derived
+        # table on disk even for hundreds of thousands of unique patterns.
+        db.execute("ATTACH DATABASE ? AS original", (_attach_path(index),))
+        db.executescript("""
+            CREATE TABLE pattern_counts AS
+            SELECT coalesce(sheet,'') sheet,coalesce(pattern_id,'') pattern_id,
+                   count(*) size
+            FROM original.nodes GROUP BY coalesce(sheet,''),coalesce(pattern_id,'');
+            CREATE UNIQUE INDEX pattern_counts_key
+            ON pattern_counts(sheet,pattern_id);
+        """)
 
         def flush_leaf():
             if not batch:
@@ -113,34 +148,79 @@ def build_graph(index: Path, output: Path) -> dict:
             batch.clear()
 
         def flush_sheet():
+            flush_pattern()
+            if not patterns:
+                return
+            # Pattern hashes are not spreadsheet positions. Sort their actual
+            # bounding coordinates and propagate bounds over every child, not
+            # merely the first/last hash bucket's (possibly unrelated) cells.
+            patterns.sort(
+                key=lambda c: (
+                    coordinate_to_tuple(c[3])[::-1]
+                    if re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", c[3])
+                    else (0, 0)
+                )
+            )
+            children = pack(patterns, current_sheet)
+            item = group(children, current_sheet or "∅", current_sheet, "sheet")
+            title = current_sheet or "∅"
+            sheets.append((item[0], item[1], title, title, title))
+            patterns.clear()
+
+        def flush_pattern():
             flush_leaf()
             if not leaves:
                 return
-            children = pack(leaves, current_sheet)
-            if len(children) == 1:
-                item = children[0]
+            signature = None
+            if current_pattern:
+                row = source.db.execute(
+                    "SELECT data FROM patterns WHERE id=?", (current_pattern,)
+                ).fetchone()
+                if row:
+                    signature = str(json.loads(row[0]).get("signature", ""))[:256]
+            title = signature or ("◇ " + (current_sheet or "∅"))
+            level = "pattern" if current_pattern else "sources"
+            if len(leaves) == 1:
+                # A bounded leaf already owns its cells. Reuse it as the
+                # semantic group instead of introducing a one-child partition.
+                item = leaves[0]
                 db.execute(
-                    "UPDATE groups SET label=? WHERE id=?",
-                    (current_sheet or "∅", item[0]),
+                    "UPDATE groups SET label=?,level=?,signature=? WHERE id=?",
+                    (title[:256], level, signature, item[0]),
                 )
             else:
-                item = group(children, current_sheet or "∅", current_sheet)
-            title = current_sheet or "∅"
-            sheets.append((item[0], item[1], title, title, title))
+                item = group(
+                    pack(leaves, current_sheet), title, current_sheet, level, signature
+                )
+            expected = db.execute(
+                "SELECT size FROM pattern_counts WHERE sheet=? AND pattern_id=?",
+                (current_sheet or "", current_pattern or ""),
+            ).fetchone()[0]
+            if item[1] != expected:
+                raise ValueError("Formula group membership count differs from index")
+            patterns.append(item)
             leaves.clear()
 
-        for seq, nid, kind, sheet in source.db.execute(
-            "SELECT seq,id,kind,coalesce(sheet,'') FROM nodes ORDER BY sheet,seq"
+        for seq, nid, kind, sheet, pattern in source.db.execute(
+            "SELECT seq,id,kind,coalesce(sheet,''),coalesce(pattern_id,'') "
+            "FROM nodes ORDER BY sheet,coalesce(pattern_id,''),seq"
         ):
             if sheet != current_sheet:
                 flush_sheet()
                 current_sheet = sheet
+                current_pattern = pattern
+            elif pattern != current_pattern:
+                flush_pattern()
+                current_pattern = pattern
             batch.append((seq, nid, kind))
             if len(batch) == FANOUT:
                 flush_leaf()
         flush_sheet()
         total = sum(s[1] for s in sheets)
-        db.execute("INSERT INTO groups VALUES (0,NULL,'Classeur',NULL,?)", (total,))
+        db.execute(
+            "INSERT INTO groups VALUES (0,NULL,'Classeur',NULL,?,'workbook',NULL)",
+            (total,),
+        )
         db.executemany(
             "UPDATE groups SET parent=0 WHERE id=?",
             [(c[0],) for c in pack(sheets, None)],
@@ -158,7 +238,6 @@ def build_graph(index: Path, output: Path) -> dict:
             CREATE INDEX members_node ON members(node,view,child);
             CREATE TABLE raw_edges(source INTEGER,target INTEGER);
         """)
-        db.execute("ATTACH DATABASE ? AS original", (_attach_path(index),))
         db.execute("""
             INSERT INTO raw_edges SELECT a.id,b.id FROM original.edges e
             JOIN nodes a ON a.node_id=e.source JOIN nodes b ON b.node_id=e.target
@@ -179,6 +258,7 @@ def build_graph(index: Path, output: Path) -> dict:
             WHERE a.node IS NULL GROUP BY b.view,b.child;
             DROP TABLE raw_edges;
             DROP TABLE members;
+            DROP TABLE pattern_counts;
         """)
         meta = {
             "version": VERSION,
@@ -186,6 +266,7 @@ def build_graph(index: Path, output: Path) -> dict:
             "nodeCount": total,
             "edgeCount": edge_count,
             "maxViewNodes": FANOUT + 1,
+            "hierarchy": "workbook/sheet/r1c1-pattern/cell",
             "indexStatus": source.meta.get("status", "complete"),
         }
         db.execute("INSERT INTO metadata VALUES (?)", (json.dumps(meta),))
@@ -196,7 +277,9 @@ def build_graph(index: Path, output: Path) -> dict:
     return meta
 
 
-def read_view(path: Path, stamp: str, *, view=0, node_id=None) -> dict:
+def read_view(
+    path: Path, stamp: str, *, view=0, node_id=None, sheet=None, index_path=None
+) -> dict:
     """Indexed, bounded reads only; never aggregate the workbook in HTTP."""
     with WorkbookIndex(path) as store:
         db = store.db
@@ -209,6 +292,13 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None) -> dict:
             ).fetchone()
             if row is None:
                 raise KeyError(node_id)
+            view = row[0]
+        elif sheet is not None:
+            row = db.execute(
+                "SELECT id FROM groups WHERE sheet=? AND level='sheet'", (sheet,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(sheet)
             view = row[0]
         group_row = db.execute(
             "SELECT parent,label,node_count FROM groups WHERE id=?", (view,)
@@ -225,9 +315,11 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None) -> dict:
                 "sheet": sheet,
                 "nodeCount": size,
                 "internalEdges": 0,
+                "level": level,
+                "signature": signature,
             }
-            for gid, name, sheet, size in db.execute(
-                "SELECT id,label,sheet,node_count FROM groups "
+            for gid, name, sheet, size, level, signature in db.execute(
+                "SELECT id,label,sheet,node_count,level,signature FROM groups "
                 "WHERE parent=? ORDER BY id DESC",
                 (view,),
             )
@@ -245,6 +337,23 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None) -> dict:
                 "SELECT id,node_id,kind FROM nodes WHERE parent=? ORDER BY id", (view,)
             )
         ]
+        if index_path is not None:
+            with WorkbookIndex(index_path) as original:
+                for node in nodes:
+                    if "nodeId" not in node:
+                        continue
+                    source = original[node["nodeId"]]
+                    formula = source.get("sourceFormula") or source.get("formula") or ""
+                    value = source.get("cachedValue")
+                    if value is None:
+                        value = source.get("value")
+                    node.update(
+                        formula=str(formula)[:512],
+                        value=value[:256] if isinstance(value, str) else value,
+                        valueSource=source.get("valueSource", "unknown"),
+                        contentTruncated=len(str(formula)) > 512
+                        or (isinstance(value, str) and len(value) > 256),
+                    )
         if parent is not None:
             nodes.append(
                 {
@@ -276,15 +385,19 @@ def read_view(path: Path, stamp: str, *, view=0, node_id=None) -> dict:
         breadcrumbs = []
         ancestor = view
         while ancestor is not None:
-            p, title = db.execute(
-                "SELECT parent,label FROM groups WHERE id=?", (ancestor,)
+            p, title, level, size = db.execute(
+                "SELECT parent,label,level,node_count FROM groups WHERE id=?",
+                (ancestor,),
             ).fetchone()
-            breadcrumbs.append({"viewId": ancestor, "label": title})
+            breadcrumbs.append(
+                {"viewId": ancestor, "label": title, "level": level, "nodeCount": size}
+            )
             ancestor = p
         return {
             "viewId": view,
             "parent": parent,
             "label": label,
+            "focusedNodeId": node_id,
             "scopeNodeCount": count,
             "nodes": nodes,
             "edges": edges,

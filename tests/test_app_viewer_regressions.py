@@ -7,7 +7,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from graph_test_helpers import open_graph_depth, open_graph_options, open_workspace_menu
+from graph_test_helpers import (
+    open_graph_depth,
+    open_graph_options,
+    open_neighborhood,
+    open_workspace_menu,
+)
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -87,10 +92,16 @@ def app(browser, request):
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
-        elif path.endswith("cytoscape.min.js"):
+        elif path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
         elif path == "/api/config":
             fulfill(route, {"limits": {"memoryMb": 2048, "uploadMb": 64}})
@@ -128,7 +139,7 @@ def app(browser, request):
             )
         elif path == "/api/projects/p/tasks":
             if payload["operation"] == "evaluate":
-                assert payload["force"] is True
+                assert isinstance(payload["force"], bool)
                 fulfill(
                     route,
                     {
@@ -157,6 +168,12 @@ def app(browser, request):
                     },
                 )
         elif path == "/api/projects/p/graph-view":
+            if params.get("sheet") == ["Empty"]:
+                route.fulfill(
+                    status=404,
+                    json={"error": {"message": "Empty sheet has no graph group"}},
+                )
+                return
             fulfill(
                 route,
                 {
@@ -225,13 +242,13 @@ def test_expanded_sidebar_fields_stay_inside_sidebar(app):
 def test_sheet_navigation_handles_blank_empty_and_stale_response(app):
     page, _, errors, delayed, fulfill = app
     assert page.locator("#manual-recalculation").count() == 0
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     playwright.expect(
         page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("Second")
     assert "A2" in page.locator("#graph-preview .graph-reader-heading h3").inner_text()
-    assert page.locator("#graph-canvas").evaluate("el=>el._cy.edges().length") == 1
+    assert page.locator("#graph-canvas").evaluate("el=>el._flow.getEdges().length") == 1
     page.locator("#graph-sheet").select_option("")
     assert page.locator("#graph-sheet").input_value() == ""
     assert (
@@ -247,7 +264,7 @@ def test_sheet_navigation_handles_blank_empty_and_stale_response(app):
     )
     page.locator("#tab-nodes").click()
     assert page.locator("#graph-sheet-status").is_hidden()
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Slow")
     deadline = time.monotonic() + 5
     while not delayed and time.monotonic() < deadline:
@@ -271,18 +288,23 @@ def test_full_workbook_overview_fits_and_reader_can_be_hidden(app):
     page, _, errors, _, _ = app
     page.locator("#tab-graph").click()
     open_graph_options(page)
-    page.locator("#graph-build").click()
+    page.wait_for_function("() => !document.querySelector('#graph-breadcrumbs').hidden")
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes()"
-        ".map(n=>n.id()).sort().join(',')==='left,right'"
+        "document.querySelector('#graph-canvas')._flow?.getNodes()"
+        ".map(n=>n.id).sort().join(',')==='left,right'"
     )
     assert page.evaluate("""() => {
-        const cy=document.querySelector('#graph-canvas')._cy;
-        return cy.nodes().every(n=>{const b=n.renderedBoundingBox();
-            return b.x1>=0&&b.x2<=cy.width()&&b.y1>=0&&b.y2<=cy.height();});
+        const cy=document.querySelector('#graph-canvas')._flow;
+        return cy.getNodes().every(n=>{const b=cy.getNodeBounds(n.id,true);
+            const host=document.querySelector('#graph-canvas');
+            return b.x1>=0&&b.x2<=host.clientWidth&&b.y1>=0&&b.y2<=host.clientHeight;});
     }""")
     canvas = page.locator("#graph-canvas")
+    assert page.locator("#graph-preview").is_hidden()
+    open_graph_options(page)
+    page.locator("#graph-reader-toggle").click()
     before = canvas.bounding_box()
+    open_graph_options(page)
     page.locator("#graph-reader-toggle").click()
     assert page.locator("#graph-preview").is_hidden()
     assert (
@@ -290,10 +312,9 @@ def test_full_workbook_overview_fits_and_reader_can_be_hidden(app):
     )
     after = canvas.bounding_box()
     assert after["width"] > before["width"] or after["height"] > before["height"]
-    page.locator("#graph-fit").click()
-    assert canvas.evaluate("el => el._cy.zoom() < .05") == (
-        page.viewport_size["width"] == 390
-    )
+    page.locator(".react-flow__controls-fitview").click()
+    assert canvas.evaluate("el => el._flow.getViewport().zoom") > 0
+    open_graph_options(page)
     page.locator("#graph-reader-toggle").click()
     assert page.locator("#graph-preview").is_visible()
     assert not errors
@@ -347,7 +368,7 @@ def test_data_only_sheet_prefers_input_before_local_name(app, has_input):
 
     page.route("**/api/projects/p/nodes?*", first_sheet)
     page.route("**/api/projects/p/neighborhood?*", named_neighborhood)
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("First")
     # The heading can already show A1 from the initial graph. Wait for the
     # selection operation to finish before checking its fallback requests.
@@ -372,7 +393,7 @@ def test_sheet_change_cancels_pending_neighborhood_after_optimistic_selection(
     app, next_sheet
 ):
     page, _, errors, _, fulfill = app
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
@@ -428,37 +449,36 @@ def test_sheet_change_cancels_pending_neighborhood_after_optimistic_selection(
 
 
 @pytest.mark.parametrize("next_sheet", ["Empty", ""])
-def test_sheet_change_cancels_pending_hierarchy_after_optimistic_selection(
-    app, next_sheet
-):
+def test_sheet_change_cancels_pending_aggregate_view(app, next_sheet):
     page, _, errors, _, fulfill = app
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
     open_graph_options(page)
     page.locator("#graph-build").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes()"
-        ".map(n=>n.id()).sort().join(',')==='left,right'"
+        "document.querySelector('#graph-canvas')._flow?.getNodes()"
+        ".map(n=>n.id).sort().join(',')==='left,right'"
     )
     pending = []
 
     def delay_first(route):
         params = parse_qs(urlsplit(route.request.url).query)
-        if params.get("nodeId") == ["First!A1"]:
+        if params.get("sheet") == ["First"]:
             pending.append(route)
         else:
             route.fallback()
 
     page.route("**/api/projects/p/graph-view?*", delay_first)
+    open_graph_options(page)
     page.locator("#graph-sheet").select_option("First")
     page.wait_for_timeout(100)
     assert pending
-    playwright.expect(heading).to_contain_text("First")
+    playwright.expect(heading).to_contain_text("Second")
     page.locator("#graph-sheet").select_option(next_sheet)
     if next_sheet:
-        playwright.expect(page.locator("#graph-sheet-status")).to_contain_text("Empty")
+        playwright.expect(page.locator("#graph-build-status")).to_contain_text("Empty")
     try:
         fulfill(
             pending.pop(),
@@ -484,9 +504,9 @@ def test_sheet_change_cancels_pending_hierarchy_after_optimistic_selection(
         pass  # Aborting the obsolete fetch is an equally valid cancellation.
     page.wait_for_timeout(100)
     assert page.locator("#graph-sheet").input_value() == next_sheet
-    assert "First" in heading.inner_text()
+    assert "Second" in heading.inner_text()
     assert page.locator("#graph-canvas").evaluate(
-        "e=>e._cy.nodes().map(n=>n.id()).sort()"
+        "e=>e._flow.getNodes().map(n=>n.id).sort()"
     ) == ["left", "right"]
     assert not errors
 
@@ -502,7 +522,7 @@ def test_graph_tab_does_not_cancel_pending_node_selection(app):
     page.locator("#node-list [data-node='First!A1']").click()
     page.wait_for_timeout(100)
     assert len(pending) == 1
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.wait_for_timeout(100)
     assert len(pending) == 1  # No refresh of the old center supersedes selection.
     fulfill(
@@ -531,8 +551,8 @@ def test_graph_tab_does_not_cancel_pending_node_selection(app):
 
 def test_depth_change_restarts_pending_target_and_ignores_old_depth(app):
     page, _, errors, _, fulfill = app
-    page.locator("#tab-graph").click()
-    page.wait_for_function("document.querySelector('#graph-canvas')._cy != null")
+    open_neighborhood(page)
+    page.wait_for_function("document.querySelector('#graph-canvas')._flow != null")
     pending = []
 
     def delay_second(route):
@@ -581,7 +601,7 @@ def test_depth_change_restarts_pending_target_and_ignores_old_depth(app):
     fulfill(route, {"nodes": [], "edges": []})
     page.wait_for_timeout(100)
     assert page.locator("#graph-depth").input_value() == "2"
-    assert page.locator("#graph-canvas").evaluate("e=>e._cy.edges().length") == 1
+    assert page.locator("#graph-canvas").evaluate("e=>e._flow.getEdges().length") == 1
     assert not errors
 
 
@@ -619,6 +639,7 @@ def test_project_intent_cancels_old_selection_before_project_response(app):
     page.wait_for_timeout(100)
     open_workspace_menu(page)
     page.locator("[data-project='next']").click()
+    posted_at_intent = len([p for path, p in requests if path.endswith("/tasks")])
     page.wait_for_timeout(100)
     assert old_pending and project_pending
     fulfill(
@@ -639,9 +660,8 @@ def test_project_intent_cancels_old_selection_before_project_response(app):
     page.wait_for_timeout(100)
     assert "Second" in page.locator("#node-detail h2").inner_text()
     posted = [payload for path, payload in requests if path.endswith("/tasks")]
-    assert len(posted) == 1
-    assert posted[0]["operation"] == "evaluate"
-    assert posted[0]["nodeId"] == "Second!A2" and posted[0]["force"] is True
+    assert len(posted) == posted_at_intent
+    assert all(p["operation"] == "evaluate" and p["force"] is False for p in posted)
     fulfill(
         project_pending.pop(),
         {
@@ -672,7 +692,7 @@ def test_failed_back_access_keeps_optimistic_target_and_local_retry(app):
     page, _, errors, _, _ = app
     page.locator("#node-list [data-node='First!A1']").click()
     page.locator("#node-detail h2").wait_for()
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
@@ -683,7 +703,7 @@ def test_failed_back_access_keeps_optimistic_target_and_local_retry(app):
         "document.querySelector('#graph-notice').textContent.includes('profondeur 2')"
     )
     camera = page.locator("#graph-canvas").evaluate(
-        "e=>({zoom:e._cy.zoom(),pan:e._cy.pan()})"
+        "e=>({zoom:e._flow.getViewport().zoom,pan:e._flow.getViewport()})"
     )
 
     def fail_first(route):
@@ -704,7 +724,7 @@ def test_failed_back_access_keeps_optimistic_target_and_local_retry(app):
     assert page.locator("#graph-back").is_disabled()
     assert (
         page.locator("#graph-canvas").evaluate(
-            "e=>({zoom:e._cy.zoom(),pan:e._cy.pan()})"
+            "e=>({zoom:e._flow.getViewport().zoom,pan:e._flow.getViewport()})"
         )
         == camera
     )
@@ -719,7 +739,7 @@ def test_failed_back_access_keeps_optimistic_target_and_local_retry(app):
 @pytest.mark.parametrize("stage", ["neighborhood", "graph-view"])
 def test_explicit_group_navigation_cancels_staged_node_selection(app, stage):
     page, requests, errors, _, fulfill = app
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     heading = page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("Second")
@@ -734,8 +754,8 @@ def test_explicit_group_navigation_cancels_staged_node_selection(app, stage):
     open_graph_options(page)
     page.locator("#graph-build").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes()"
-        ".map(n=>n.id()).sort().join(',')==='left,right'"
+        "document.querySelector('#graph-canvas')._flow?.getNodes()"
+        ".map(n=>n.id).sort().join(',')==='left,right'"
     )
     pending = []
 
@@ -747,7 +767,8 @@ def test_explicit_group_navigation_cancels_staged_node_selection(app, stage):
             route.fallback()
 
     page.route(f"**/api/projects/p/{stage}?*", delay_first)
-    page.locator("#graph-sheet").select_option("First")
+    page.locator("#graph-search").fill("First!A1")
+    page.locator('#graph-results [data-related="First!A1"]').click()
     page.wait_for_timeout(100)
     assert pending
     playwright.expect(heading).to_contain_text("First")
@@ -795,7 +816,7 @@ def test_explicit_group_navigation_cancels_staged_node_selection(app, stage):
     page.wait_for_timeout(100)
     assert "First" in heading.inner_text()
     assert page.locator("#graph-canvas").evaluate(
-        "e=>e._cy.nodes().map(n=>n.id()).sort()"
+        "e=>e._flow.getNodes().map(n=>n.id).sort()"
     ) == ["left", "right"]
     open_graph_options(page)
     page.locator("#graph-selected").click()

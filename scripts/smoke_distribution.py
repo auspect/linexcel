@@ -74,7 +74,8 @@ def main():
         app = create_app(Path(folder) / "workspace", resolve_user=lambda env: "smoke")
         try:
             assert b"Linexcel" in request(app, "GET", "/")
-            assert len(request(app, "GET", "/assets/cytoscape.min.js")) > 1000
+            assert len(request(app, "GET", "/assets/app-graph.js")) > 1000
+            assert len(request(app, "GET", "/assets/app-graph.css")) > 1000
             imported = json.loads(
                 request(
                     app,

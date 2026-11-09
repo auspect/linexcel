@@ -52,7 +52,8 @@ NODE = "Summary!C10"
 PROJECT_NAME = "FY26 B2B Commercial Review"
 SOURCES = (
     "src/linexcel/assets/app.html",
-    "src/linexcel/assets/cytoscape.min.js",
+    "src/linexcel/assets/app-graph.js",
+    "src/linexcel/assets/app-graph.css",
     "validation_workbooks.py",
     "scripts/capture_app.py",
 )
@@ -438,10 +439,8 @@ def frame(page, selector: str, offset: int = 0) -> None:
 
 def fit_graph(page) -> None:
     """Show the complete loaded neighborhood before photographing its cards."""
-    page.locator("#graph-fit").click()
-    page.wait_for_function(
-        "() => !document.querySelector('#graph-canvas')._cy.animated()"
-    )
+    page.locator(".react-flow__controls-fitview").click()
+    page.wait_for_function("() => !!document.querySelector('#graph-canvas')._flow")
     page.evaluate(
         "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
     )
@@ -530,13 +529,13 @@ def capture(args) -> int:
             require_english(page)
             page.locator("#tab-graph").click()
             page.locator("#graph-search").fill(NODE)
-            with page.expect_response(
-                lambda response: (
-                    response.request.method == "POST"
-                    and response.url.endswith("/tasks")
-                )
-            ):
-                page.locator(f'#graph-results [data-related="{NODE}"]').click()
+            page.locator(f'#graph-results [data-related="{NODE}"]').click()
+            if page.locator("#graph-neighborhood").is_visible():
+                page.locator("#graph-neighborhood").click()
+            page.wait_for_function(
+                "() => !document.querySelector('#graph-recalculate').disabled && document.querySelector('#graph-calculation-steps .step-card')",
+                timeout=args.timeout * 1000,
+            )
             data = wait_tasks(page, base, project, args.timeout)
             document = None if args.no_ai else english_document(data)
             if document is None and args.generate_doc:
@@ -631,18 +630,18 @@ def capture(args) -> int:
                 set_document_language(page)
             page.locator("#tab-graph").click()
             page.locator("#graph-search").fill(NODE)
-            with page.expect_response(
-                lambda response: (
-                    response.request.method == "POST"
-                    and response.url.endswith("/tasks")
-                )
-            ):
-                page.locator(f'#graph-results [data-related="{NODE}"]').click()
+            page.locator(f'#graph-results [data-related="{NODE}"]').click()
+            if page.locator("#graph-neighborhood").is_visible():
+                page.locator("#graph-neighborhood").click()
+            page.wait_for_function(
+                "id=>!!document.querySelector('#graph-canvas')._flow?.getNode(id)",
+                arg=NODE,
+            )
             page.locator("#graph-panel-calculation").wait_for()
             wait_tasks(page, base, project, args.timeout)
             expect(page.locator("#graph-recalculate")).to_be_enabled()
             expect(
-                page.locator("#graph-preview .value-pair .value-card").nth(1)
+                page.locator("#graph-preview .inspector-values span").nth(1)
             ).to_contain_text("816668.1")
             require_english(page, documentation=bool(document))
             output.mkdir(parents=True, exist_ok=True)
@@ -706,7 +705,7 @@ def capture(args) -> int:
                         "Input/output token counts are not visible in the documentation screenshot."
                     )
             else:
-                expect(page.locator("#node-detail .value-pair")).to_contain_text(
+                expect(page.locator("#node-detail .inspector-values")).to_contain_text(
                     "816668.1"
                 )
                 shot("app_node_documented.png", "#node-detail", 40)

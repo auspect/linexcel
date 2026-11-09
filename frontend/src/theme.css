@@ -1,0 +1,1185 @@
+/* Linexcel design system: one layer of tokens and one look per kind of control.
+   Loaded after the legacy page styles and shell.css, so it owns the visual language.
+   Hierarchy: primary (filled, one per view) > secondary (outlined) > quiet (toolbar,
+   no border) > icon. Navigation is never a button: views are underline tabs, the
+   reader switch is a segmented control, breadcrumbs are text. Fields are sunken. */
+
+:root {
+  /* Neutrals: one near-black ink, hairlines derived from it. */
+  --ink: #14241f;
+  --ink-2: #384a44;
+  --muted: #56685f;
+  --line: #dfe5e2;
+  --line-strong: #c4cfc9;
+  --bg: #f3f5f4;
+  --canvas: #f3f5f4;
+  --surface: #ffffff;
+  --surface-2: #eef2f0;
+  --surface-3: #e3e9e6;
+  --side: #f7f9f8;
+  /* One accent: the brand green drives primary, focus, selection and links. */
+  --accent: #145b4b;
+  --accent-hover: #0f4c3e;
+  --accent-press: #0b3e33;
+  --accent-tint: #e4f0ea;
+  --accent-ring: rgb(20 91 75 / 0.22);
+  /* State colours, used only for state. */
+  --ok: #1d6a4a;
+  --ok-tint: #e3f2ea;
+  --warn: #87580b;
+  --warn-tint: #fbf1dd;
+  --danger: #a3302a;
+  --danger-tint: #fcecea;
+  --info: #2d5a84;
+  --info-tint: #e8eff7;
+  /* Type */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --fs-meta: 12px;
+  --fs-label: 13px;
+  --fs-body: 14px;
+  --fs-h: 18px;
+  /* Geometry: a sharp family for a data tool. */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-pill: 999px;
+  --h-md: 32px;
+  --tap: 44px;
+  /* Depth and motion */
+  --shadow-hud: 0 1px 2px rgb(20 36 31 / 0.06), 0 4px 14px rgb(20 36 31 / 0.07);
+  --shadow-pop: 0 2px 4px rgb(20 36 31 / 0.06), 0 12px 32px rgb(20 36 31 / 0.14);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --m-in: 150ms;
+  --m-out: 120ms;
+  --m-press: 90ms;
+  --m-slide: 240ms;
+  /* Icons (drawn for Linexcel, used as masks so they take the text colour). */
+  --i-search: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2356685f' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.6'/%3E%3Cpath d='m10.4 10.4 3.4 3.4'/%3E%3C/svg%3E");
+  --i-chevron-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2356685f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4.5 6.5 3.5 3.5 3.5-3.5'/%3E%3C/svg%3E");
+  --m-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 4 4 4-4 4'/%3E%3C/svg%3E");
+  --m-expand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9'/%3E%3C/svg%3E");
+  --m-fit: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3'/%3E%3Crect x='5.5' y='5.5' width='5' height='5' rx='1'/%3E%3C/svg%3E");
+  --m-panel: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linejoin='round'%3E%3Crect x='2' y='3' width='12' height='10' rx='1.5'/%3E%3Cpath d='M10 3v10'/%3E%3C/svg%3E");
+  --m-hub: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='2.2'/%3E%3Ccircle cx='2.8' cy='4' r='1.3'/%3E%3Ccircle cx='13.2' cy='4' r='1.3'/%3E%3Ccircle cx='8' cy='14' r='1.3'/%3E%3Cpath d='M4 4.8 6.3 6.7M12 4.8 9.7 6.7M8 10.2v2.5'/%3E%3C/svg%3E");
+  --m-menu: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M2.5 4.5h11M2.5 8h11M2.5 11.5h11'/%3E%3C/svg%3E");
+  --m-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6'/%3E%3Ccircle cx='10' cy='5' r='1.5'/%3E%3Ccircle cx='6' cy='11' r='1.5'/%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------- base */
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}
+body {
+  font-size: var(--fs-body);
+  -webkit-font-smoothing: antialiased;
+}
+code,
+pre,
+kbd,
+.formula,
+.step-card > summary code {
+  font-family: var(--font-mono);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+small,
+.muted,
+.help {
+  color: var(--muted);
+}
+.section-label,
+.flow-kind {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 600;
+}
+.section-label {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+label {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------- buttons */
+/* Secondary is the default: outlined, quiet surface. */
+button,
+.link,
+.project-utilities > summary {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background-color var(--m-out) var(--ease),
+    border-color var(--m-out) var(--ease),
+    color var(--m-out) var(--ease),
+    transform var(--m-out) var(--ease);
+}
+/* Geometry only for plain buttons (text or icon); rows built from several
+   elements (node list, related cells, step summaries) keep their own layout. */
+button:not(:has(> *)),
+.link,
+.project-utilities > summary {
+  min-height: var(--h-md);
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--fs-label);
+  font-weight: 500;
+  line-height: 1.2;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (hover: hover) and (pointer: fine) {
+  button:hover:not(:disabled),
+  .link:hover,
+  .project-utilities > summary:hover {
+    background: var(--surface-2);
+    border-color: #a9b7b0;
+    transition-duration: var(--m-in);
+  }
+}
+button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+  transition-duration: var(--m-press);
+}
+
+/* Primary: the one filled action of a view. */
+button.primary,
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+@media (hover: hover) and (pointer: fine) {
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    transform: translateY(-1px);
+  }
+}
+button.primary:active:not(:disabled) {
+  background: var(--accent-press);
+  border-color: var(--accent-press);
+  transform: translateY(1px) scale(0.985);
+}
+
+/* One filled action per view: inside a workspace the view owns it, so the
+   sidebar import is secondary; on the welcome screen an open import form owns
+   it and the welcome shortcut steps back. */
+.workspace-active #import-button.primary,
+body:has(#import-panel[open]):not(.workspace-active) #begin-import.primary {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-active #import-button.primary:hover:not(:disabled),
+  body:has(#import-panel[open]):not(.workspace-active) #begin-import.primary:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: #a9b7b0;
+  }
+}
+
+/* Destructive stays text-coloured until hovered. */
+button.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line-strong));
+}
+@media (hover: hover) and (pointer: fine) {
+  button.danger:hover:not(:disabled) {
+    background: var(--danger-tint);
+    border-color: var(--danger);
+  }
+}
+
+/* ---------------------------------------------------------------- fields */
+input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])),
+select,
+textarea {
+  min-height: var(--h-md);
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background-color: var(--surface);
+  color: var(--ink);
+  font: 400 var(--fs-body) / 1.3 var(--font-ui);
+  transition:
+    border-color 140ms var(--ease),
+    box-shadow 140ms var(--ease),
+    background-color 140ms var(--ease);
+}
+textarea {
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring);
+}
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: var(--i-chevron-down);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+input[type="number"] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Search: sunken, with its glass, distinct from a plain field. */
+input[type="search"] {
+  background: var(--surface-2) var(--i-search) no-repeat 10px center / 16px !important;
+  padding-left: 32px !important;
+  border-color: transparent !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  input[type="search"]:hover {
+    border-color: var(--line-strong) !important;
+  }
+}
+input[type="search"]:focus {
+  background-color: var(--surface) !important;
+  border-color: var(--accent) !important;
+}
+input[type="search"]::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- header */
+.workspace-active header.top,
+header.top {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  min-height: 48px;
+}
+header.top .logo {
+  background: var(--accent);
+  border-radius: var(--r-sm);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+header.top h1 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+header.top .workspace-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#workspace-menu,
+#workspace-close {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+#workspace-menu::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: var(--m-menu) center / contain no-repeat;
+  mask: var(--m-menu) center / contain no-repeat;
+}
+#ui-language {
+  border-color: transparent;
+  background-color: transparent;
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+}
+@media (hover: hover) and (pointer: fine) {
+  #ui-language:hover {
+    background-color: var(--surface-2);
+  }
+}
+#connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+#connection::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+#connection[data-state="ok"]::before {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-tint);
+}
+#connection[data-state="warn"]::before {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-tint);
+}
+#connection[data-state="down"]::before {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-tint);
+}
+
+/* ---------------------------------------------------------------- sidebar */
+.workspace > aside {
+  background: var(--side);
+  border-right: 1px solid var(--line);
+}
+.workspace > aside .section-label {
+  margin-bottom: 8px;
+}
+.project,
+#projects > button,
+#welcome-projects button {
+  width: 100%;
+  min-height: 44px;
+  margin: 2px 0;
+  padding: 7px 10px 7px 12px;
+  display: block;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 500;
+  position: relative;
+}
+.project small,
+#projects > button small {
+  font-weight: 400;
+  font-size: var(--fs-meta);
+}
+@media (hover: hover) and (pointer: fine) {
+  .project:hover:not(:disabled),
+  #projects > button:hover:not(:disabled) {
+    background: var(--surface-3);
+    border-color: transparent;
+  }
+}
+.project.active,
+#projects > button.active {
+  background: var(--accent-tint);
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.project:active:not(:disabled) {
+  transform: none;
+}
+.workspace > aside > details {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+.workspace > aside > details > summary,
+#import-panel > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 0 !important;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.workspace > aside > details > summary::-webkit-details-marker {
+  display: none;
+}
+.workspace > aside > details > summary::before {
+  content: "";
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: var(--muted);
+  -webkit-mask: var(--m-chevron) center / contain no-repeat;
+  mask: var(--m-chevron) center / contain no-repeat;
+  transition: transform var(--m-in) var(--ease);
+}
+.workspace > aside > details[open] > summary::before {
+  transform: rotate(90deg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace > aside > details > summary:hover {
+    background: var(--surface-3);
+  }
+}
+.workspace > aside > details[open] {
+  padding-bottom: 8px;
+}
+.dropzone {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.file-pick {
+  width: 100%;
+}
+
+/* ---------------------------------------------------------------- workspace heading */
+.workspace-active .workspace-heading h2 {
+  font-size: var(--fs-h);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.workspace-heading .stats {
+  gap: 0;
+  align-items: center;
+}
+.workspace-heading .stats .badge {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.workspace-heading .stats .badge + .badge::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--line-strong);
+}
+.project-utilities > summary {
+  list-style: none;
+  font-weight: 500;
+}
+.project-utilities > summary::-webkit-details-marker {
+  display: none;
+}
+.project-utilities > summary::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: var(--muted);
+  -webkit-mask: var(--m-chevron) center / contain no-repeat;
+  mask: var(--m-chevron) center / contain no-repeat;
+  transform: rotate(90deg);
+  transition: transform var(--m-in) var(--ease);
+}
+.project-utilities[open] > summary::after {
+  transform: rotate(-90deg);
+}
+.project-utilities[open] {
+  border-color: var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+
+/* ---------------------------------------------------------------- view tabs */
+/* Views are navigation, not buttons: text with a sliding underline. */
+.tabs,
+.workspace-active .tabs {
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  padding: 0;
+  min-height: 0;
+  align-items: stretch;
+}
+.tabs > button[role="tab"],
+.workspace-active .tabs > button[role="tab"] {
+  position: relative;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.tabs > button[role="tab"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transition: transform var(--m-slide) var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tabs > button[role="tab"]:hover:not(:disabled) {
+    color: var(--ink);
+    background: var(--surface-2);
+    transform: none;
+  }
+}
+.tabs > button[role="tab"]:active:not(:disabled) {
+  transform: none;
+}
+.tabs > button[role="tab"][aria-selected="true"],
+.workspace-active .tabs > button[role="tab"][aria-selected="true"] {
+  background: transparent;
+  color: var(--ink);
+  font-weight: 600;
+}
+.tabs > button[role="tab"][aria-selected="true"]::after {
+  transform: scaleX(1);
+}
+
+/* ---------------------------------------------------------------- cards and notices */
+.card {
+  border-color: var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.notice {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.notice.error,
+.error {
+  border-color: color-mix(in srgb, var(--danger) 25%, transparent);
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+.badge {
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ai-card {
+  border-color: var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.ai-card .badge {
+  background: var(--info-tint);
+  color: var(--info);
+}
+.file-pick {
+  border-color: var(--line-strong);
+}
+pre {
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+
+/* ---------------------------------------------------------------- graph toolbar (HUD) */
+/* One floating toolbar; inside it, quiet buttons and grouped controls. */
+.graph-hud .graph-docked-controls {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-hud);
+}
+.graph-hud button,
+.graph-hud summary,
+.graph-hud .graph-actions > button,
+.graph-hud .graph-context-actions button,
+.graph-hud #graph-options > summary {
+  min-height: var(--h-md);
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .graph-hud button:hover:not(:disabled),
+  .graph-hud summary:hover {
+    background: var(--surface-2);
+    border-color: transparent;
+    color: var(--ink);
+  }
+}
+.graph-hud button[aria-pressed="true"],
+.graph-hud #graph-options[open] > summary {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+.graph-hud #graph-fullscreen::before,
+.graph-hud #graph-fit::before,
+.graph-hud #graph-reader-toggle::before,
+.graph-hud #graph-neighborhood::before,
+.graph-hud #graph-options > summary::before {
+  content: "" !important;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  font-size: 0 !important;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.graph-hud #graph-fullscreen { --icon: var(--m-expand); }
+.graph-hud #graph-fit { --icon: var(--m-fit); }
+.graph-hud #graph-reader-toggle { --icon: var(--m-panel); }
+.graph-hud #graph-neighborhood { --icon: var(--m-hub); }
+.graph-hud #graph-options > summary {
+  --icon: var(--m-sliders);
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.graph-hud #graph-options > summary::-webkit-details-marker {
+  display: none;
+}
+.graph-hud #graph-options[open] {
+  border-color: var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+.graph-hud .graph-toolbar input {
+  min-height: var(--h-md);
+}
+.graph-hud .graph-sheet-control select {
+  min-height: var(--h-md);
+  font-size: var(--fs-label);
+  padding: 0 28px 0 10px;
+}
+.graph-hud .graph-actions,
+.graph-hud .graph-context-actions {
+  gap: 2px;
+}
+/* A narrow canvas (reader open, long French labels) keeps one toolbar row:
+   view toggles become icon squares; their text stays the accessible name. */
+/* Desktop only: containment would make the canvas the containing block and
+   stacking context of the phone options sheet. */
+@media (min-width: 651px) {
+  #graph-canvas {
+    container-type: inline-size;
+  }
+}
+@container (min-width: 480px) and (max-width: 860px) {
+  /* Two stable rows: navigation (back, search, depth, sheet), then view actions. */
+  .graph-hud .graph-docked-controls::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .graph-hud .graph-actions,
+  .graph-hud .graph-context-actions,
+  .graph-hud #graph-options {
+    order: 2;
+  }
+  .graph-hud #graph-options {
+    margin-left: auto;
+  }
+  .graph-hud .graph-toolbar {
+    min-width: 120px;
+  }
+  .graph-hud .graph-toolbar input {
+    width: 100%;
+  }
+}
+@container (max-width: 860px) {
+  .graph-hud #graph-fullscreen,
+  .graph-hud #graph-reader-toggle,
+  .graph-hud #graph-options > summary {
+    width: var(--h-md);
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+}
+
+/* Stepper: one control, not three buttons. */
+.graph-depth-control,
+.graph-hud .graph-depth-control {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.graph-depth-control > button,
+.graph-hud .graph-depth-control > button {
+  min-height: calc(var(--h-md) - 2px);
+  width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--ink-2);
+  font-size: 16px;
+}
+/* The stepper is named by its own aria-labels; its label would sit inside the frame. */
+.graph-depth-control > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.graph-depth-control > button:first-of-type {
+  border-radius: calc(var(--r-sm) - 1px) 0 0 calc(var(--r-sm) - 1px);
+}
+.graph-depth-control > button:last-of-type {
+  border-radius: 0 calc(var(--r-sm) - 1px) calc(var(--r-sm) - 1px) 0;
+}
+.graph-depth-control > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.graph-depth-control > input,
+.graph-hud .graph-depth-control input {
+  width: 36px;
+  height: auto;
+  min-height: calc(var(--h-md) - 2px);
+  padding: 0;
+  border: 0 !important;
+  border-left: 1px solid var(--line) !important;
+  border-right: 1px solid var(--line) !important;
+  border-radius: 0;
+  text-align: center;
+  font-weight: 600;
+  -moz-appearance: textfield;
+}
+.graph-depth-control > input::-webkit-inner-spin-button,
+.graph-depth-control > input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.graph-depth-control > input:focus,
+.graph-hud .graph-depth-control input:focus {
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Breadcrumbs: a path of text links, the current place in ink. */
+.react-flow__panel.graph-breadcrumb-panel {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-hud);
+  padding: 2px 4px;
+}
+.graph-breadcrumb-panel #graph-breadcrumbs {
+  gap: 0;
+  align-items: center;
+  color: var(--line-strong);
+}
+.graph-breadcrumb-panel button,
+.graph-breadcrumb-panel #graph-breadcrumbs button {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-label);
+  font-weight: 500;
+}
+@media (hover: hover) and (pointer: fine) {
+  .graph-breadcrumb-panel button:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+.graph-breadcrumb-panel button[aria-current="page"],
+.graph-breadcrumb-panel button[aria-current="page"]:disabled {
+  opacity: 1;
+  color: var(--ink);
+  font-weight: 600;
+}
+.graph-breadcrumb-panel select {
+  min-height: 28px;
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.react-flow__panel.graph-breadcrumb-panel:not(:has(#graph-breadcrumbs:not([hidden]) :is(button, select))) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* Search results dropdown */
+.graph-results:not(:empty) {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  background: var(--surface);
+}
+
+/* React Flow chrome */
+.react-flow__controls {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-hud);
+}
+.react-flow__controls-button {
+  min-height: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+.react-flow__controls-button:active:not(:disabled) {
+  transform: none;
+}
+.react-flow__minimap {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-hud);
+}
+.react-flow__panel.graph-status-panel {
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+}
+.react-flow__edge-text {
+  font: 500 11px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  fill: var(--ink-2);
+}
+.react-flow__edge-textbg {
+  fill: var(--surface);
+}
+
+/* Graph cards: role by a quiet tint and a sentence-case kind line. */
+.flow-card {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 1px 2px rgb(20 36 31 / 0.06);
+  font-family: var(--font-ui);
+}
+.flow-kind {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 1;
+}
+.flow-card.focus .flow-kind,
+.flow-card.focus .flow-subtitle {
+  color: rgb(255 255 255 / 0.82);
+}
+.flow-card strong {
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+.flow-subtitle {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  opacity: 1;
+}
+.flow-count {
+  border-radius: var(--r-pill);
+  background: rgb(20 36 31 / 0.07);
+  padding: 0 7px;
+  font: 600 11px/18px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.flow-card.focus .flow-count {
+  background: rgb(255 255 255 / 0.18);
+}
+.flow-card.source,
+.react-flow__node-cellGroup .flow-card {
+  background: var(--ok-tint);
+  border-color: #a9cfbb;
+}
+.flow-card.usage {
+  background: var(--warn-tint);
+  border-color: #e3c58b;
+}
+.flow-card.outside {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+.react-flow__node-sheet .flow-card {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  box-shadow: inset 0 3px 0 var(--accent), 0 1px 2px rgb(20 36 31 / 0.06);
+}
+.react-flow__node-formulaGroup .flow-card {
+  background: var(--info-tint);
+  border-color: #b4c7db;
+}
+.flow-card.focus {
+  background: var(--accent);
+  border-color: var(--accent-press);
+  color: #fff;
+}
+.flow-card.is-selected {
+  outline: 2px solid #c38a2e;
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------- reader panel */
+.graph-preview {
+  background: var(--surface);
+}
+.graph-reader-heading h3 {
+  font-weight: 650;
+}
+.graph-reader-heading .formula {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-label);
+}
+/* The reader switch is a segmented control, not two buttons. */
+.graph-reader-tabs {
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+}
+.graph-reader-tabs[role="tablist"] {
+  gap: 0;
+}
+.graph-reader-tabs > button[role="tab"] {
+  flex: 1;
+  min-height: var(--h-md);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--fs-label);
+  font-weight: 500;
+}
+.graph-reader-tabs > button[role="tab"]:first-child {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+.graph-reader-tabs > button[role="tab"]:last-child {
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  margin-left: -1px;
+}
+.graph-reader-tabs > button[role="tab"][aria-selected="true"],
+.graph-reader-tabs > #graph-tab-ai[aria-selected="true"] {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+  z-index: 1;
+}
+.graph-reader-tabs > button[role="tab"]:active:not(:disabled) {
+  transform: none;
+}
+/* Value strip: key and value, the match as a state chip. */
+.inspector-values > span,
+.graph-reader-body .inspector-values span {
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.inspector-values > span[data-state="match"] {
+  background: var(--ok-tint);
+  color: var(--ok);
+  font-weight: 600;
+}
+.inspector-values > span[data-state="mismatch"] {
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-weight: 600;
+}
+.graph-reader-footer {
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+}
+.graph-reader-footer button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .graph-reader-footer button:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+}
+.step-card > summary code,
+.inspector-decomposition code {
+  font-size: 12px;
+}
+
+/* Node list rows (Nodes tab) */
+.node {
+  min-height: 44px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  justify-content: flex-start;
+  text-align: left;
+}
+.node.selected {
+  background: var(--accent-tint);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.node:active:not(:disabled) {
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- phones and touch */
+@media (max-width: 650px), (pointer: coarse) {
+  button,
+  .link,
+  .project-utilities > summary,
+  .graph-hud button,
+  .graph-hud summary,
+  .graph-hud .graph-actions > button,
+  .graph-hud #graph-options > summary,
+  .graph-breadcrumb-panel button,
+  .graph-breadcrumb-panel #graph-breadcrumbs button,
+  .graph-reader-tabs > button[role="tab"],
+  .tabs > button[role="tab"],
+  .workspace-active .tabs > button[role="tab"],
+  .workspace > aside > details > summary,
+  input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="file"])),
+  select {
+    min-height: var(--tap);
+  }
+  .react-flow__controls-button {
+    width: 44px;
+    height: 44px;
+  }
+  .graph-hud #graph-options > summary {
+    width: 44px;
+    padding: 0;
+    font-size: 0;
+  }
+  /* Options open as a bottom sheet outside the clipped canvas; the graph's own
+     stacking context (.react-flow, z-index 0) rises so the reader stays below. */
+  .react-flow:has(#graph-options[open]) {
+    z-index: 96 !important; /* React Flow sets an inline z-index: 0 */
+  }
+  /* Options open as a bottom sheet outside the clipped canvas. */
+  .graph-hud #graph-options[open] {
+    position: fixed;
+    inset: auto 0 0 0;
+    top: auto;
+    right: 0;
+    width: 100%;
+    max-height: min(72dvh, 560px);
+    overflow: auto;
+    z-index: 95;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    box-shadow: 0 -8px 32px rgb(20 36 31 / 0.18);
+  }
+  .graph-hud #graph-options[open] > summary {
+    position: sticky;
+    top: -16px;
+    z-index: 1;
+    width: 100%;
+    justify-content: flex-start;
+    padding: 0 8px;
+    font-size: var(--fs-label);
+    background: var(--surface);
+  }
+  .graph-hud .graph-toolbar input,
+  .graph-hud .graph-sheet-control select,
+  .graph-hud .graph-context-actions button,
+  .graph-hud #graph-neighborhood,
+  #import-panel > summary,
+  .node-return,
+  .has-selection > .node-return {
+    min-height: var(--tap);
+  }
+  .graph-hud .graph-depth-control > button,
+  .graph-depth-control > button {
+    min-height: var(--tap);
+    width: var(--tap);
+  }
+  .graph-hud .graph-depth-control input,
+  .graph-depth-control > input {
+    min-height: var(--tap);
+    width: var(--tap);
+  }
+  .workspace-active header.top #connection {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    overflow: visible;
+  }
+  .workspace-active header.top #connection::before {
+    display: block;
+  }
+  .graph-hud #graph-options > summary::after {
+    content: none;
+  }
+  .workspace-active header.top #connection {
+    background: transparent;
+  }
+  .tabs,
+  .workspace-active .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs > button[role="tab"] {
+    flex: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .link,
+  .tabs > button[role="tab"]::after,
+  .workspace > aside > details > summary::before,
+  .project-utilities > summary::after,
+  input,
+  select,
+  textarea {
+    transition: none !important;
+  }
+  button:active:not(:disabled),
+  button.primary:hover:not(:disabled) {
+    transform: none !important;
+  }
+}

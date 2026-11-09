@@ -39,10 +39,12 @@ class Navigation:
     hold_saved_result: bool = False
     reject_saved_result: bool = False
     finish_calculations: bool = False
+    patterns: list[dict] = field(default_factory=list)
 
     def neighborhood(self, node_id):
         return {
             "nodes": self.nodes,
+            "formulaPatterns": self.patterns,
             "edges": [
                 {"source": "Source!A1", "target": "Calc!B1"},
                 {"source": "Source!A1", "target": "Calc!B2"},
@@ -56,6 +58,16 @@ class Navigation:
         }
 
     def route(self, route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         url = urlsplit(route.request.url)
         path = url.path.removeprefix("/mounted/")
         query = parse_qs(url.query, keep_blank_values=True)
@@ -63,10 +75,16 @@ class Navigation:
         if not path:
             route.fulfill(body=APP.read_text("utf-8"), content_type="text/html")
             return
-        if path.endswith("cytoscape.min.js"):
+        if path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text("utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    "utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
             return
         project = {"id": "p", "name": "Lazy navigation", "revision": 1}
@@ -81,7 +99,7 @@ class Navigation:
                     "lazy": True,
                     "nodes": self.nodes,
                     "edges": [],
-                    "formulaPatterns": [],
+                    "formulaPatterns": self.patterns,
                     "meta": {"sheets": ["Source", "Calc"], "nodeCount": 1000000},
                     "pagination": {"offset": 0, "limit": 200, "total": 1000000},
                 },
@@ -125,7 +143,9 @@ class Navigation:
             assert body["operation"] == "evaluate", (
                 "Navigation must not start global/AI work"
             )
-            assert body["force"] is True, "Access requests a new targeted calculation"
+            assert isinstance(body["force"], bool), (
+                "Access requests a new targeted calculation"
+            )
             self.evaluations.append(body)
             task = {
                 "id": f"evaluate-{len(self.evaluations)}",
@@ -159,6 +179,10 @@ class Navigation:
                     status=503, json={"error": {"message": "Saved result unavailable"}}
                 )
                 return
+        elif path.endswith("/cancel"):
+            task = self.tasks[path.split("/")[-2]]
+            task["status"] = "cancelled"
+            data = {"task": task}
         elif path.startswith("api/tasks/evaluate-"):
             task = self.tasks[path.rsplit("/", 1)[1]]
             if self.finish_calculations:
@@ -206,7 +230,7 @@ class Navigation:
 
     def tap(self, node_id):
         visible = self.page.locator("#graph-canvas").evaluate(
-            """(e,id)=>{const p=e._cy.getElementById(id).renderedPosition();
+            """(e,id)=>{const p=e._flow.getNodePoint(id);
             return p.x>=0&&p.y>=0&&p.x<=e.clientWidth&&p.y<=e.clientHeight}""",
             node_id,
         )
@@ -222,24 +246,24 @@ class Navigation:
             tap_graph_node(self.page, node_id)
 
     def remember_canvas(self):
-        self.page.locator("#graph-zoom-in").click()
+        self.page.locator(".react-flow__controls-zoomin").click()
         self.page.locator("#graph-canvas").focus()
         self.page.keyboard.press("ArrowRight")
         return self.page.locator("#graph-canvas").evaluate(
             """element => {
-                const cy=element._cy; window.navigationCanvas=cy;
-                return {zoom:cy.zoom(),pan:cy.pan(),
-                    positions:cy.nodes().map(n=>({id:n.id(),position:n.position()}))};
+                const cy=element._flow; window.navigationCanvas=cy;
+                return {zoom:cy.getViewport().zoom,pan:cy.getViewport(),
+                    positions:cy.getNodes().map(n=>({id:n.id,position:n.position}))};
             }"""
         )
 
     def assert_canvas(self, remembered):
         canvas = self.page.locator("#graph-canvas")
-        assert canvas.evaluate("e=>e._cy===window.navigationCanvas")
+        assert canvas.evaluate("e=>e._flow===window.navigationCanvas")
         assert (
             canvas.evaluate(
-                """e=>({zoom:e._cy.zoom(),pan:e._cy.pan(),
-                positions:e._cy.nodes().map(n=>({id:n.id(),position:n.position()}))})"""
+                """e=>({zoom:e._flow.getViewport().zoom,pan:e._flow.getViewport(),
+                positions:e._flow.getNodes().map(n=>({id:n.id,position:n.position}))})"""
             )
             == remembered
         )
@@ -293,7 +317,7 @@ def navigation(browser, request):
     playwright.expect(page.locator("#node-detail h2")).to_contain_text("A1")
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===4"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===4"
     )
     yield app
     for route, data, _, _ in app.held:
@@ -302,6 +326,38 @@ def navigation(browser, request):
         except playwright.Error:
             pass
     page.close()
+
+
+def test_completed_calculation_preserves_open_inspector_pattern(navigation):
+    app = navigation
+    page = app.page
+    app.patterns = [
+        {
+            "id": "copied",
+            "sheet": "Calc",
+            "signature": "=RC[-1]+1",
+            "memberCount": 2,
+            "memberIds": ["Calc!B1", "Calc!B2"],
+            "ranges": ["B1:B2"],
+        }
+    ]
+    for node in app.nodes[1:3]:
+        node["patternId"] = "copied"
+    page.locator("#tab-nodes").click()
+    open_workspace_menu(page)
+    page.locator("[data-project='p']").click()
+    page.locator('[data-node="Calc!B1"]').click()
+    page.wait_for_function("()=>document.querySelector('#recalculate').disabled")
+    page.locator(".inspector-evidence > summary").click()
+    page.locator(".pattern-card summary").click()
+    app.finish_calculations = True
+    page.wait_for_function("()=>!document.querySelector('#recalculate').disabled")
+    assert page.locator(".inspector-evidence").evaluate("e=>e.open")
+    assert page.locator(".pattern-card details").evaluate("e=>e.open")
+    page.locator('.pattern-card [data-related="Calc!B2"]').click()
+    playwright.expect(page.locator("#node-detail h2")).to_contain_text("B2")
+    assert not page.locator(".inspector-evidence").evaluate("e=>e.open")
+    app.assert_bounded()
 
 
 def test_old_manual_preference_cannot_block_calculation_behind_saved_reply(navigation):
@@ -320,29 +376,22 @@ def test_old_manual_preference_cannot_block_calculation_behind_saved_reply(navig
         app.page.wait_for_timeout(10)
     assert any(k == "saved_result" for _, _, k, _ in app.held)
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1"]
     app.release("saved_result", "Calc!B1")
     app.assert_bounded()
 
 
-def test_first_graph_visit_calculates_its_initial_formula_with_old_preference(
-    navigation,
-):
+def test_first_graph_visit_does_not_calculate_an_unselected_formula(navigation):
     app = navigation
     app.page.locator("#tab-nodes").click()
     open_workspace_menu(app.page)
     app.page.locator("[data-project='p']").click()
-    assert app.evaluations == []
-    app.hold_saved_result = True
     app.page.locator("#tab-graph").click()
-    playwright.expect(
-        app.page.locator("#graph-preview .graph-reader-heading h3")
-    ).to_contain_text("B1")
-    app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1"]
-    # No direct cell action preceded this first Graph visit for the reopened
-    # project. The stale preference and saved document fetch cannot block it.
-    app.release("saved_result", "Calc!B1")
+    app.page.wait_for_timeout(250)
+    assert app.evaluations == []
+    # Workbook navigation is structural; automatic evaluation requires an
+    # explicit formula access through a card, search, grid, list or deep link.
     app.assert_bounded()
 
 
@@ -354,6 +403,7 @@ def test_saved_reply_error_does_not_block_calculation_or_next_node(navigation):
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B1")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     playwright.expect(
         app.page.locator("#graph-preview .node-access-error")
@@ -364,6 +414,7 @@ def test_saved_reply_error_does_not_block_calculation_or_next_node(navigation):
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B2"]
     app.assert_bounded()
 
@@ -394,6 +445,7 @@ def test_known_node_opens_while_its_neighbors_wait_and_latest_click_wins(navigat
     heading = app.page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("B1")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     assert any(
         node == "Calc!B1" for _, _, kind, node in app.held if kind == "neighborhood"
@@ -401,20 +453,22 @@ def test_known_node_opens_while_its_neighbors_wait_and_latest_click_wins(navigat
     app.tap("Calc!B2")
     playwright.expect(heading).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    assert app.evaluations[-1]["nodeId"] == "Calc!B2"
+    assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
     app.release("neighborhood", "Calc!B2")
     app.release("neighborhood", "Calc!B1")
     playwright.expect(heading).to_contain_text("B3")
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B2", "Calc!B3"]
+    app.page.wait_for_timeout(250)
+    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B3"]
     app.assert_bounded()
 
 
 def test_neighborhood_error_keeps_known_cell_and_navigation_available(navigation):
     app = navigation
     app.rejected_nodes.add("Calc!B2")
+    before_size = app.page.locator("#graph-canvas").bounding_box()
     remembered = app.remember_canvas()
     app.tap("Calc!B2")
     heading = app.page.locator("#graph-preview .graph-reader-heading h3")
@@ -425,17 +479,35 @@ def test_neighborhood_error_keeps_known_cell_and_navigation_available(navigation
         "Links unavailable"
     )
     assert "12" in app.page.locator("#graph-panel-calculation").inner_text()
-    app.assert_canvas(remembered)
+    after_size = app.page.locator("#graph-canvas").bounding_box()
+    if before_size["height"] != after_size["height"]:
+        # Opening the accessible fallback list consumes canvas height. The
+        # resize fit keeps cards visible while retaining the canvas and layout.
+        assert app.page.locator("#graph-canvas").evaluate(
+            "e=>e._flow===window.navigationCanvas"
+        )
+        assert (
+            app.page.locator("#graph-canvas").evaluate(
+                "e=>e._flow.getNodes().map(n=>({id:n.id,position:n.position}))"
+            )
+            == remembered["positions"]
+        )
+    else:
+        app.assert_canvas(remembered)
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert app.evaluations[-1]["nodeId"] == "Calc!B3"
     app.assert_bounded()
 
 
 def test_history_restores_previous_camera_and_recalculates_access(navigation):
     app = navigation
-    app.tap("Calc!B2")
+    with app.page.expect_request(
+        lambda r: r.method == "POST" and r.url.endswith("/tasks")
+    ):
+        app.tap("Calc!B2")
     heading = app.page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
@@ -443,16 +515,17 @@ def test_history_restores_previous_camera_and_recalculates_access(navigation):
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.locator("#graph-zoom-out").click()
+    app.page.locator(".react-flow__controls-zoomout").click()
     app.page.locator("#graph-back").click()
     playwright.expect(heading).to_contain_text("B2")
     app.assert_canvas(remembered)
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B2", "Calc!B3", "Calc!B2"]
+    app.page.wait_for_timeout(250)
+    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B2", "Calc!B2"]
     app.assert_bounded()
 
 
-def test_slow_calculation_submission_does_not_reuse_old_result_or_block_navigation(
+def test_cached_access_and_failed_manual_refresh_keep_navigation_available(
     navigation,
 ):
     app = navigation
@@ -488,47 +561,58 @@ def test_slow_calculation_submission_does_not_reuse_old_result_or_block_navigati
     app.page.locator("#node-list [data-node='Source!A1']").click()
     app.page.locator("#tab-graph").click()
     app.page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===4"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===4"
     )
     app.held_evaluations.add("Calc!B1")
     app.rejected_nodes.add("Calc!B1")
     app.tap("Calc!B1")
     reader = app.page.locator("#graph-panel-calculation")
-    result_card = reader.locator(".value-card").nth(1)
-    result = result_card.locator("strong")
+    result_card = reader.locator(".inspector-values span").nth(1)
+    result = result_card
     playwright.expect(
         app.page.locator("#graph-preview .graph-reader-heading .formula")
-    ).to_have_text(source)
-    playwright.expect(
-        reader.locator(".value-card").first.locator("strong")
-    ).to_have_text("11")
-    playwright.expect(result).to_have_text("Envoi du recalcul…")
-    playwright.expect(result_card).not_to_contain_text("Différent du cache")
-    playwright.expect(app.page.locator("#graph-calculation-steps")).not_to_contain_text(
+    ).to_contain_text(source)
+    playwright.expect(reader.locator(".inspector-values span").first).to_contain_text(
+        "11"
+    )
+    playwright.expect(result).to_contain_text("999")
+    app.page.wait_for_timeout(250)
+    assert app.evaluations == []
+    playwright.expect(app.page.locator("#graph-calculation-steps")).to_contain_text(
         "999"
     )
-    # A failed relationship fetch has a different stage from the calculation
-    # POST, which is still awaiting the server and must retain its pending label.
     playwright.expect(reader.locator(".node-access-error")).to_contain_text(
         "Links unavailable"
     )
-    playwright.expect(result).to_have_text("Envoi du recalcul…")
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1"]
+    app.page.locator("#graph-recalculate").click()
+    playwright.expect(result).to_contain_text("Envoi du recalcul…")
     assert app.evaluations[0]["force"] is True
-    assert any(kind == "evaluate" for _, _, kind, _ in app.held)
     app.reject("evaluate", "Calc!B1", "Compute submission unavailable")
-    playwright.expect(result).to_have_text("Recalcul non abouti")
-    playwright.expect(result_card).not_to_contain_text("Différent du cache")
+    playwright.expect(result).to_contain_text("Recalcul non abouti")
     playwright.expect(reader).to_contain_text("Compute submission unavailable")
-    playwright.expect(reader).to_contain_text("Links unavailable")
-    playwright.expect(app.page.locator("#graph-calculation-steps")).not_to_contain_text(
-        "999"
-    )
     assert app.page.locator("#message").inner_text() == ""
     app.tap("Calc!B2")
     playwright.expect(
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
+    app.page.wait_for_timeout(250)
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B2"]
     app.assert_bounded()
+
+
+@pytest.mark.parametrize("tab", ["nodes", "graph"])
+def test_deep_link_access_automatically_calculates_without_forcing(navigation, tab):
+    app = navigation
+    with app.page.expect_response(
+        lambda r: (
+            r.request.method == "POST"
+            and r.url.endswith("/tasks")
+            and r.request.post_data_json.get("operation") == "evaluate"
+        )
+    ):
+        app.page.goto(f"http://localhost/mounted/?project=p&node=Calc!B2&tab={tab}")
+    assert [r["nodeId"] for r in app.evaluations] == ["Calc!B2"]
+    assert app.evaluations[0]["force"] is False
+    assert app.page.locator("#tab-" + tab).get_attribute("aria-selected") == "true"
+    assert not app.errors

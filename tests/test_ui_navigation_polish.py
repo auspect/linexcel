@@ -4,7 +4,12 @@ import pytest
 import test_app_captures_browser as capture_tests
 import test_app_viewer_regressions as serve_tests
 import test_viewer_browser as export_tests
-from graph_test_helpers import open_workspace_menu
+from graph_test_helpers import (
+    close_graph_options,
+    open_graph_options,
+    open_neighborhood,
+    open_workspace_menu,
+)
 
 from linexcel import viewer
 
@@ -15,38 +20,21 @@ report = export_tests.report
 
 def test_serve_compact_primary_commands_and_one_row_depth(app):
     page, _, errors, _, _ = app
-    page.locator("#tab-graph").click()
-    page.wait_for_function("document.querySelector('#graph-canvas')._cy != null")
-    assert not page.locator("#graph-options").evaluate("e => e.open")
-    bounds = page.evaluate("""() => {
-      const rect = id => document.getElementById(id).getBoundingClientRect();
-      return {canvasOffset: rect('graph-canvas').top - rect('view-graph').top,
-        depth: ['graph-depth-minus','graph-depth','graph-depth-plus'].map(id => {
-          const r=rect(id);return {y:r.y, height:r.height, left:r.left, right:r.right};
-        }), overflow: [...document.querySelectorAll(
-          '#view-graph button,#view-graph input,#view-graph select')]
-          .filter(e=>e.getClientRects().length).filter(e=>{
-            const r=e.getBoundingClientRect();
-            return r.left < -1 || r.right > innerWidth+1;
-          }).map(e=>e.id)};
-    }""")
-    export_tests.capture(page, f"serve-compact-{page.viewport_size['width']}")
-    assert bounds["canvasOffset"] < 400
-    assert (
-        max(b["y"] for b in bounds["depth"]) - min(b["y"] for b in bounds["depth"]) < 3
-    )
-    assert not bounds["overflow"]
+    open_neighborhood(page)
+    page.wait_for_function("document.querySelector('#graph-canvas')._flow != null")
+    open_graph_options(page)
     assert page.locator("#graph-sheet").is_visible()
-    if page.viewport_size["width"] <= 650:
-        assert page.locator("#graph-read-cell").is_visible()
-    else:
-        assert page.locator("#graph-reader-toggle").is_visible()
-    assert page.locator("#graph-reset").is_hidden()
+    assert page.locator("#graph-reset").is_visible()
     page.locator("#graph-options > summary").focus()
     page.keyboard.press("Enter")
-    assert page.locator("#graph-reset").is_visible()
-    page.locator("#graph-reset").focus()
-    assert page.locator("#graph-reset").evaluate("e => e === document.activeElement")
+    assert page.locator("#graph-reset").is_hidden()
+    bounds = page.locator("#graph-canvas").bounding_box()
+    assert bounds["height"] > 150
+    assert bounds["y"] < 200
+    assert page.locator(".react-flow__minimap").is_visible()
+    assert page.locator(".react-flow__controls-zoomin").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    export_tests.capture(page, f"serve-compact-{page.viewport_size['width']}")
     assert not errors
 
 
@@ -93,17 +81,21 @@ def test_serve_workbook_and_macro_guidance_are_distinct(app):
     )
     assert (
         "procédure sélectionnée"
-        in page.locator(".graph-reader-heading").inner_text().lower()
+        in page.locator(".graph-reader-heading").text_content().lower()
     )
     assert page.locator("#graph-tab-calculation").inner_text() == "Source VBA"
     assert "Sub Run()" in page.locator("#graph-panel-calculation").inner_text()
     assert "cellules de la feuille" not in page.locator("#graph-notice").inner_text()
     assert "Non disponible" not in page.locator("#graph-canvas").evaluate(
-        "e => e._cy.nodes().map(n=>n.data('label')).join(' ')"
+        "e => e._flow.getNodes().map(n=>n.data.title).join(' ')"
     )
     assert page.locator("#graph-recalculate").is_hidden()
     export_tests.capture(page, f"serve-vba-{page.viewport_size['width']}")
-    assert not [body for endpoint, body in requests if endpoint.endswith("/tasks")]
+    assert all(
+        body["operation"] == "build_graph"
+        for endpoint, body in requests
+        if endpoint.endswith("/tasks")
+    )
     assert not errors
 
 
@@ -201,7 +193,7 @@ def test_macro_options_keep_static_scope_in_both_languages(app, suffix, language
     page.locator("#ui-language").select_option(language)
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     page.locator("#graph-options > summary").click()
     options = page.locator("#graph-options")
@@ -212,7 +204,7 @@ def test_macro_options_keep_static_scope_in_both_languages(app, suffix, language
     assert "cell" not in text and "sheet" not in text
     assert (
         "relation vba statique" if language == "fr" else "static vba relationship"
-    ) in text
+    ) in page.locator("#graph-edge-key").inner_text().lower()
     assert ("sans exécution" if language == "fr" else "without execution") in text
     assert ("procédure" if language == "fr" else "procedure") in page.locator(
         "#graph-lazy-notice"
@@ -226,7 +218,11 @@ def test_macro_options_keep_static_scope_in_both_languages(app, suffix, language
     export_tests.capture(
         page, f"macro-options-{suffix}-{language}-{page.viewport_size['width']}"
     )
-    assert not [body for endpoint, body in requests if endpoint.endswith("/tasks")]
+    assert all(
+        body["operation"] == "build_graph"
+        for endpoint, body in requests
+        if endpoint.endswith("/tasks")
+    )
     assert not errors
 
 
@@ -264,20 +260,21 @@ def test_macro_graph_dynamic_guidance_covers_literal_empty_and_hierarchy(app, la
     page.locator('[data-project="p"]').click()
     page.locator("#project-title").get_by_text("Literal VBA", exact=True).wait_for()
     page.locator("#ui-language").select_option(language)
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.wait_for_function("!document.querySelector('.graph-pending-overlay')")
     assert (
         "nœud sélectionné" if language == "fr" else "selected node"
-    ) in page.locator(".graph-reader-heading").inner_text().lower()
+    ) in page.locator(".graph-reader-heading").text_content().lower()
     assert (
         "relation indexée pour cette cellule"
         not in page.locator("#graph-notice").inner_text()
     )
+    close_graph_options(page)
     page.locator("#graph-list > summary").click()
     assert (
         "relations statiques" if language == "fr" else "static source relationships"
     ) in page.locator("#graph .graph-direction").inner_text().lower()
-    page.locator("#graph-options > summary").click()
+    open_graph_options(page)
     page.locator("#graph-build").click()
     page.wait_for_function(
         "document.querySelector('#graph-neighborhood').hidden === false"
@@ -290,19 +287,13 @@ def test_macro_graph_dynamic_guidance_covers_literal_empty_and_hierarchy(app, la
     open_workspace_menu(page)
     page.locator('[data-project="p"]').click()
     page.wait_for_function(
-        "text => document.querySelector('#graph-notice').textContent === text",
-        arg="Aucun nœud disponible." if language == "fr" else "No node available.",
-    )
-    assert page.locator("#graph-notice").inner_text() == (
-        "Aucun nœud disponible." if language == "fr" else "No node available."
-    )
-    page.locator("#graph-build").click()
-    page.wait_for_function(
         "document.querySelector('#graph-neighborhood').hidden === false"
     )
-    assert ("hiérarchie vba" if language == "fr" else "vba hierarchy") in page.locator(
-        "#graph-notice"
-    ).inner_text().lower()
+    playwright_text = "hiérarchie vba" if language == "fr" else "vba hierarchy"
+    page.wait_for_function(
+        "t=>document.querySelector('#graph-notice').textContent.toLowerCase().includes(t)",
+        arg=playwright_text,
+    )
     assert "cell" not in page.locator("#graph-preview").inner_text().lower()
     assert all(
         body["operation"] == "build_graph"

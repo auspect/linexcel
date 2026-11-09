@@ -31,42 +31,58 @@ def open_graph_options(page):
     assert options.evaluate("element => element.open")
 
 
+def close_graph_options(page):
+    """Close the options; on phones they are a bottom sheet over the page."""
+    options = page.locator("#graph-options")
+    if options.evaluate("element => element.open"):
+        options.locator(":scope > summary").click()
+    assert not options.evaluate("element => element.open")
+
+
 def tap_graph_node(page, node_id):
+    """Click the rendered HTML card, falling back to its accessible relation."""
     canvas = page.locator("#graph-canvas")
     canvas.scroll_into_view_if_needed()
-    page.wait_for_function("!document.querySelector('#graph-canvas')._cy.animated()")
+    # Titles can be user-facing sheet labels; data-id is the stable identity.
+    card = page.locator(".react-flow__node").locator(
+        f'xpath=./self::*[@data-id="{node_id}"]'
+    )
     page.evaluate(
-        "() => new Promise(resolve => requestAnimationFrame(() => "
-        "requestAnimationFrame(resolve)))"
+        "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
     )
-    # A readable focal view may intentionally leave distant neighbours offscreen.
-    # Use the same explicit overview control as a person before tapping one.
-    if not canvas.evaluate(
-        """(element, id) => {
-            const p=element._cy.getElementById(id).renderedPosition();
-            return p.x>=0 && p.x<=element.clientWidth &&
-                p.y>=0 && p.y<=element.clientHeight;
-        }""",
-        node_id,
-    ):
-        page.locator("#graph-fit").click()
-        canvas.scroll_into_view_if_needed()
-        page.evaluate(
-            "() => new Promise(resolve => requestAnimationFrame(() => "
-            "requestAnimationFrame(resolve)))"
+    box = card.bounding_box()
+    if box:
+        point = {"x": box["x"] + box["width"] / 2, "y": box["y"] + box["height"] / 2}
+        hit = page.evaluate(
+            "([p,id]) => document.elementFromPoint(p.x,p.y)"
+            "?.closest('.react-flow__node')?.dataset.id === id",
+            [point, node_id],
         )
-    point = canvas.evaluate(
-        """(element, id) => {
-            const p=element._cy.getElementById(id).renderedPosition();
-            const b=element.getBoundingClientRect();
-            return {x:b.left+element.clientLeft+p.x,
-                y:b.top+element.clientTop+p.y};
-        }""",
-        node_id,
-    )
-    assert page.evaluate(
-        "p => document.elementFromPoint(p.x,p.y)?.closest('#graph-canvas') "
-        "=== document.querySelector('#graph-canvas')",
-        point,
-    )
-    page.mouse.click(point["x"], point["y"])
+        if hit:
+            page.mouse.click(point["x"], point["y"])
+            return
+    relation = page.locator(f'#graph [data-graph-node="{node_id}"]').first
+    if relation.count():
+        details = page.locator("#graph-list")
+        if not details.evaluate("e => e.open"):
+            details.locator(":scope > summary").click()
+        relation.click()
+        return
+    card.click()
+    return
+
+
+def open_neighborhood(page):
+    """Choose the explicit cell mode after the automatic workbook overview."""
+    page.locator("#tab-graph").click()
+    page.wait_for_function("""() => {
+      const back=document.querySelector('#graph-neighborhood');
+      const status=document.querySelector('#graph-build-status');
+      return !document.querySelector('#graph-build').disabled ||
+        (back&&!back.hidden) || status.textContent.includes('unavailable');
+    }""")
+    button = page.locator("#graph-neighborhood")
+    if button.is_visible():
+        button.click()
+    if page.locator("#graph-sheet").is_hidden():
+        open_graph_options(page)

@@ -583,6 +583,8 @@ class TaskStore:
                         generation(index),
                         view=view_id,
                         node_id=value("nodeId") or None,
+                        sheet=value("sheet") or None,
+                        index_path=index,
                     )
                 except KeyError:
                     raise APIError(404, "Vue introuvable") from None
@@ -1431,7 +1433,8 @@ class WebApp:
                             "/",
                             "/api/config",
                             "/api/session",
-                            "/assets/cytoscape.min.js",
+                            "/assets/app-graph.js",
+                            "/assets/app-graph.css",
                         }:
                             raise APIError(
                                 401,
@@ -1555,11 +1558,18 @@ class WebApp:
                             "frame-ancestors 'self'; base-uri 'none'",
                         )
                     )
-            elif path == "/assets/cytoscape.min.js" and method in {"GET", "HEAD"}:
+            elif path in {
+                "/assets/app-graph.js",
+                "/assets/app-graph.css",
+            } and method in {"GET", "HEAD"}:
                 # Fixed packaged asset only: never resolve a caller-supplied path.
-                content_type = "text/javascript; charset=utf-8"
+                content_type = (
+                    "text/css; charset=utf-8"
+                    if path.endswith(".css")
+                    else "text/javascript; charset=utf-8"
+                )
                 payload = (
-                    Path(__file__).parent / "assets" / "cytoscape.min.js"
+                    Path(__file__).parent / "assets" / path.rsplit("/", 1)[-1]
                 ).read_bytes()
             elif (
                 backup_match := re.fullmatch(
@@ -1853,6 +1863,7 @@ class WebApp:
                     if issue["owner"] == owner
                 ],
                 "ai": self.ai_config(),
+                "cacheVersion": self.store.cache_version,
                 "uploads": {
                     "chunkBytes": CHUNK_BYTES,
                     "localImport": self.config.allow_local_import

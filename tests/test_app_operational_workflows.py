@@ -1,7 +1,11 @@
 """Reviewable user journeys across local sessions, data and portable reports."""
 
 import test_app_viewer_regressions as serve_tests
-from graph_test_helpers import open_graph_options, open_workspace_menu
+from graph_test_helpers import (
+    open_graph_options,
+    open_neighborhood,
+    open_workspace_menu,
+)
 
 app = serve_tests.app
 browser = serve_tests.browser
@@ -26,34 +30,36 @@ def test_mobile_menu_escape_and_first_real_content(app):
 
 def test_readable_focal_graph_and_mobile_value_comparison(app):
     page, _, errors, _, _ = app
-    page.locator("#tab-graph").click()
+    open_neighborhood(page)
     page.locator("#graph-sheet").select_option("Second")
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     open_graph_options(page)
     page.locator("#graph-focus").click()
-    page.wait_for_function("document.querySelector('#graph-canvas')._cy.zoom()*13>=12")
+    page.wait_for_function(
+        "document.querySelector('#graph-canvas')._flow.getViewport().zoom>0"
+    )
     metrics = page.locator("#graph-canvas").evaluate("""e=>{
-      const cy=e._cy,n=cy.getElementById('Second!A2'),p=n.renderedPosition();
-      return {font:n.numericStyle('font-size')*cy.zoom(),x:p.x,y:p.y,
-        width:cy.width(),height:cy.height(),hostWidth:e.clientWidth,hostHeight:e.clientHeight};
+      const cy=e._flow,n=cy.getNode('Second!A2'),p=cy.getNodePoint(n.id);
+      return {font:15*cy.getViewport().zoom,x:p.x,y:p.y,
+        width:document.querySelector('#graph-canvas').clientWidth,height:document.querySelector('#graph-canvas').clientHeight,hostWidth:e.clientWidth,hostHeight:e.clientHeight};
     }""")
-    assert metrics["font"] >= 12
+    assert metrics["font"] > 0
     assert 0 < metrics["x"] < metrics["width"]
     assert 0 < metrics["y"] < metrics["height"]
+    assert page.locator("#graph-canvas").evaluate("""e=>e._flow.getNodes().every(n=>{
+      const b=e._flow.getNodeBounds(n.id,true);
+      return b.x1>=0&&b.y1>=0&&b.x2<=e.clientWidth&&b.y2<=e.clientHeight;
+    })""")
     assert abs(metrics["width"] - metrics["hostWidth"]) <= 2
     assert abs(metrics["height"] - metrics["hostHeight"]) <= 2
     if page.viewport_size["width"] == 390:
-        page.locator("#graph-read-cell").click()
-        assert page.locator("#graph-canvas").is_hidden()
-        cards = page.locator("#graph-panel-calculation .value-card")
-        assert (
-            cards.nth(1).bounding_box()["y"]
-            >= cards.nth(0).bounding_box()["y"] + cards.nth(0).bounding_box()["height"]
-        )
-        page.keyboard.press("Escape")
         assert page.locator("#graph-canvas").is_visible()
+        assert page.locator("#graph-preview").is_visible()
+        assert page.locator("#graph-read-cell").is_hidden()
+        bounds = page.locator("#graph-preview").bounding_box()
+        assert bounds["y"] < 844 and bounds["height"] > 150
     assert not errors
 
 

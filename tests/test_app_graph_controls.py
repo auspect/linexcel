@@ -61,6 +61,16 @@ def graph_app(browser, request):
         route.fulfill(body=json.dumps(body), content_type="application/json")
 
     def handle(route):
+        if (
+            route.request.method == "POST"
+            and route.request.url.endswith("/tasks")
+            and route.request.post_data_json.get("operation") == "build_graph"
+        ):
+            route.fulfill(
+                status=409,
+                json={"error": {"message": "Overview unavailable in fixture"}},
+            )
+            return
         path = urlsplit(route.request.url).path
         params = parse_qs(urlsplit(route.request.url).query)
         requests.append((path, params))
@@ -68,10 +78,16 @@ def graph_app(browser, request):
             route.fulfill(
                 body=APP.read_text(encoding="utf-8"), content_type="text/html"
             )
-        elif path.endswith("cytoscape.min.js"):
+        elif path.endswith(("app-graph.js", "app-graph.css")):
             route.fulfill(
-                body=(APP.parent / "cytoscape.min.js").read_text(encoding="utf-8"),
-                content_type="application/javascript",
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
             )
         elif path == "/api/config":
             fulfill(route, {})
@@ -164,6 +180,7 @@ def test_sheet_picker_retains_complete_workbook_order_and_option_identity(graph_
     open_graph_options(page)
     page.locator("#graph-reset").click()
     assert option.evaluate("el=>el.isConnected")
+    open_graph_options(page)
     assert "31" in page.locator("#graph-sheet-inventory").inner_text()
     page.locator("#graph-sheet").select_option(sheets[-1])
     playwright.expect(
@@ -177,6 +194,294 @@ def test_sheet_picker_retains_complete_workbook_order_and_option_identity(graph_
     assert not errors
 
 
+def test_search_dismissal_focus_overlay_and_bidirectional_routes(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.locator("#graph-search").fill("A1")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    page.locator("#graph-search").press("Escape")
+    assert not page.locator("#graph-results").inner_text()
+    page.locator("#graph-search").fill("A2")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    page.locator("#project-title").click()
+    assert not page.locator("#graph-results").inner_text()
+    page.locator("#graph-fullscreen").click()
+    bounds = page.locator("#view-graph").bounding_box()
+    assert bounds["x"] == 0 and bounds["y"] == 0
+    assert bounds["width"] == page.viewport_size["width"]
+    assert bounds["height"] == page.viewport_size["height"]
+    page.keyboard.press("Escape")
+    assert page.locator("#view-graph").get_attribute("aria-modal") is None
+    page.locator("#graph-canvas").evaluate("""e=>e._flow.render(
+      [{id:'a',title:'A'},{id:'b',title:'B'}],
+      [{source:'a',target:'b'},{source:'b',target:'a'}])""")
+    page.wait_for_function(
+        "()=>document.querySelectorAll('.react-flow__edge-path').length===2"
+    )
+    page.wait_for_timeout(100)
+    crossed = page.locator("#graph-canvas").evaluate("""e=>{
+      const boxes=e._flow.getNodes().map(n=>({x:n.position.x,y:n.position.y}));
+      return [...e.querySelectorAll('.react-flow__edge-path')].some(path=>{
+        const length=path.getTotalLength();
+        for(let i=1;i<100;i++){const p=path.getPointAtLength(length*i/100);
+          if(boxes.some(b=>p.x>b.x+2&&p.x<b.x+230&&p.y>b.y+2&&p.y<b.y+102))return true;}
+        return false;});} """)
+    assert not crossed
+    assert not errors
+
+
+def test_large_fanout_stays_readable_and_opens_bounded_indexed_cells(graph_app):
+    page, _, _, errors, _ = graph_app
+    center = {
+        "id": "Z first!A1",
+        "kind": "cell",
+        "sheet": "Z first",
+        "cell": "A1",
+        "value": 1,
+        "formula": "=1",
+    }
+    source = {
+        "id": "Ledger!J2:J249676",
+        "kind": "range",
+        "sheet": "Ledger",
+        "cell_count": 249675,
+    }
+    members = [
+        {
+            "id": f"Forecast!D{i}",
+            "kind": "cell",
+            "sheet": "Forecast",
+            "cell": f"D{i}",
+            "formula": f"=SUM(Ledger!J2:J249676)+A{i}",
+            "patternId": "copied",
+            "patternMemberCount": 12483,
+        }
+        for i in range(2, 200)
+    ]
+    nodes = [center, source, *members]
+    edges = [{"source": source["id"], "target": n["id"]} for n in [center, *members]]
+    page.route(
+        "**/api/projects/p/neighborhood?*",
+        lambda route: route.fulfill(
+            json={
+                "nodes": nodes,
+                "edges": edges,
+                "depth": 3,
+                "pagination": {"returned": 200, "limit": 200, "truncated": True},
+            }
+        ),
+    )
+    page.route(
+        "**/api/projects/p/graph-view?*",
+        lambda route: route.fulfill(
+            json={
+                "viewId": -1,
+                "scopeNodeCount": 32,
+                "meta": {"nodeCount": 12483, "edgeCount": 198},
+                "breadcrumbs": [
+                    {"viewId": 0, "label": "Classeur"},
+                    {"viewId": -2, "label": "Forecast", "level": "sheet"},
+                    {"viewId": -3, "label": "D2 … P12484", "level": "partition"},
+                    {
+                        "viewId": -4,
+                        "label": "=SUMIFS(RC[-1])",
+                        "level": "pattern",
+                        "nodeCount": 12483,
+                    },
+                    {"viewId": -5, "label": "D2 … D1025", "level": "partition"},
+                    {"viewId": -1, "label": "D2 … D33", "level": "partition"},
+                ],
+                "nodes": [
+                    {
+                        "id": str(i),
+                        "nodeId": n["id"],
+                        "kind": "cell",
+                        "label": n["id"],
+                        "internalEdges": 0,
+                        "nodeCount": 1,
+                    }
+                    for i, n in enumerate(members[:32])
+                ],
+                "edges": [],
+            }
+        ),
+    )
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length>0"
+    )
+    open_graph_depth(page)
+    page.locator("#graph-depth").fill("3")
+    page.locator("#graph-depth").dispatch_event("change")
+    page.locator("#graph-options").evaluate("e=>e.open=false")
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().some(n=>n.data.original.aggregate)"
+    )
+    page.locator(".react-flow__controls-fitview").click()
+    page.wait_for_timeout(150)
+    data = page.locator("#graph-canvas").evaluate("""e=>{
+      const flow=e._flow,group=flow.getNodes().find(n=>n.data.original.aggregate);
+      return {cards:flow.getNodes().length,zoom:flow.getViewport().zoom,
+        group:group.data.original,weights:flow.getEdges().map(e=>e.weight)};
+    }""")
+    assert data["cards"] == 3
+    assert data["zoom"] >= 0.35
+    assert len(data["group"]["members"]) == 198
+    assert data["group"]["patternTotal"] == 12483
+    assert sorted(data["weights"]) == [1, 198]
+    assert "200" in page.locator("#graph-notice").text_content()
+    page.locator("#graph-sheet").evaluate("e=>e.add(new Option('Forecast','Forecast'))")
+    page.locator("#graph-canvas").evaluate(
+        "(e,id)=>e._flow.select(id)", data["group"]["id"]
+    )
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length===32"
+    )
+    assert page.locator("#graph-breadcrumbs button").nth(1).inner_text() == "Forecast"
+    assert page.locator("#graph-breadcrumbs").text_content().endswith("D2 … D33")
+    assert page.locator("#graph-sheet").input_value() == "Forecast"
+    assert page.locator("#graph-breadcrumbs").evaluate(
+        "e=>e.scrollWidth<=e.clientWidth"
+    )
+    page.locator("#graph-neighborhood").click()
+    assert page.locator("#graph-sheet").input_value() == "Z first"
+    assert not errors
+
+
+def test_pan_keeps_text_nodes_and_translation_ignores_flow_owned_mutations(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#ui-language").select_option("en")
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "()=>document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
+    )
+    page.wait_for_timeout(100)
+    result = page.evaluate("""async()=>{
+      const frame=()=>new Promise(r=>requestAnimationFrame(r));
+      const flow=document.querySelector('#graph-canvas')._flow;
+      await flow.setViewport({...flow.getViewport(),zoom:.2});
+      for(let i=0;i<3;i++)await frame();
+      const zoom=document.querySelector('#graph-zoom-level');
+      const hint=document.querySelector('#graph-readability');
+      const before=[zoom.firstChild,hint.firstChild];
+      for(let i=0;i<6;i++){flow.panBy({x:i%2?2:-2,y:0});await frame();}
+      const preserved=before[0]===zoom.firstChild&&before[1]===hint.firstChild;
+      const original=document.createTreeWalker;let walks=0;
+      document.createTreeWalker=function(...args){
+        walks++;return original.apply(this,args)};
+      const owned=document.createElement('span');owned.textContent='Recalculer';
+      document.querySelector('.react-flow__viewport').append(owned);
+      await frame();await frame();
+      const ignored=walks===0&&owned.textContent==='Recalculer';owned.remove();
+      const legacy=document.createElement('span');legacy.textContent='Recalculer';
+      document.querySelector('.graph-docked-controls').append(legacy);
+      await frame();await frame();
+      const translated=walks>0&&legacy.textContent==='Recalculate';
+      legacy.remove();document.createTreeWalker=original;
+      return {preserved,ignored,translated};
+    }""")
+    assert result == {"preserved": True, "ignored": True, "translated": True}
+    assert not errors
+
+
+def test_search_escapes_canvas_clip_and_uniform_bus_labels_are_hidden(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    matches = [
+        {"id": f"Other!A{i}", "cell": f"A{i}", "sheet": "Other", "kind": "input"}
+        for i in range(1, 21)
+    ]
+    page.route(
+        "**/api/projects/p/nodes?*",
+        lambda route: route.fulfill(
+            json={"nodes": matches, "pagination": {"total": 20}}
+        ),
+    )
+    page.locator("#graph-search").fill("Other")
+    page.locator("#graph-results [data-related]").first.wait_for()
+    assert page.locator("#graph-results").evaluate("e=>e.matches(':popover-open')")
+    assert page.locator("#graph-results").evaluate("""e=>{
+      const b=e.getBoundingClientRect();
+      const hit=document.elementFromPoint(b.x+12,b.bottom-12);
+      return hit?.closest('#graph-results')===e;
+    }""")
+    page.locator("#graph-search").press("Escape")
+    assert not page.locator("#graph-results").evaluate("e=>e.matches(':popover-open')")
+    page.locator("#graph-canvas").evaluate("""e=>{
+      const cells=Array.from({length:32},(_,i)=>(
+        {id:'c'+i,nodeId:'c'+i,title:'Cell '+i}));
+      e._flow.render([...cells,{id:'rest',tone:'outside',title:'Rest'}],
+        cells.flatMap(n=>[{source:n.id,target:'rest',weight:5},
+          {source:'rest',target:n.id,weight:1}]));} """)
+    assert page.locator("#graph-canvas").evaluate(
+        "e=>e._flow.getEdges().every(edge=>[1,5].includes(edge.weight)&&!edge.label)"
+    )
+    page.wait_for_function(
+        "()=>document.querySelectorAll('.react-flow__edge-text').length===2"
+    )
+    assert page.locator("#graph-canvas").evaluate("""e=>{
+      const outside=e.querySelector('[data-id="rest"]').getBoundingClientRect();
+      return [...e.querySelectorAll('.react-flow__edge-text')].every(label=>
+        label.getBoundingClientRect().right<outside.left);
+    }""")
+    assert not errors
+
+
+def test_fixed_workbook_neighborhood_matrix_has_readable_fit_and_clear_routes(
+    graph_app,
+):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.wait_for_function("()=>document.querySelector('#graph-canvas')._flow")
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/graph_layout_matrix.json").read_text()
+    )
+    for case in cases:
+        page.locator("#graph-canvas").evaluate(
+            """(e,c)=>{
+          const g=LinexcelGraph.compressNeighborhood(c.nodes,c.edges,c.center);
+          e._flow.render(g.nodes.map(n=>({...n,original:n,title:n.label||n.id,
+            tone:n.id===c.center?'focus':''})),g.edges);
+        }""",
+            case,
+        )
+        page.wait_for_timeout(120)
+        page.locator("#graph-canvas").evaluate("e=>e._flow.fit()")
+        page.wait_for_timeout(80)
+        quality = page.locator("#graph-canvas").evaluate("""e=>{
+          const f=e._flow,boxes=f.getNodes().map(n=>(
+            {...f.getNodeBounds(n.id),id:n.id}));
+          const paths=[...e.querySelectorAll('.react-flow__edge-path')];
+          const crossings=paths.filter(path=>{
+            const length=path.getTotalLength();
+            for(let i=1;i<200;i++){const p=path.getPointAtLength(length*i/200);
+              const hit=boxes.find(b=>p.x>b.x1+2&&p.x<b.x2-2&&
+                p.y>b.y1+2&&p.y<b.y2-2);
+              if(hit){path._crossing={id:hit.id,x:p.x,y:p.y};return true;}}
+            return false;
+          }).map(p=>({edge:p.closest('[data-id]')?.dataset.id,hit:p._crossing}));
+          return {zoom:f.getViewport().zoom,crossings,nodes:f.getNodes().length};
+        }""")
+        floor = 0.45 if page.viewport_size["width"] >= 1000 else 0.10
+        assert quality["zoom"] >= floor, (case["name"], quality)
+        assert not quality["crossings"], (case["name"], quality)
+    assert not errors
+
+
+def test_copied_formula_chains_are_not_folded_into_siblings(graph_app):
+    page, _, _, errors, _ = graph_app
+    result = page.evaluate("""()=>{
+      const nodes=Array.from({length:12},(_,i)=>(
+        {id:'S!B'+(i+1),sheet:'S',cell:'B'+(i+1),kind:'cell',
+          patternId:'running-total'}));
+      const edges=nodes.slice(1).map((n,i)=>({source:nodes[i].id,target:n.id}));
+      return LinexcelGraph.compressNeighborhood(nodes,edges,nodes[0].id);
+    }""")
+    assert len(result["nodes"]) == 12
+    assert len(result["edges"]) == 11
+    assert not errors
+
+
 @pytest.mark.parametrize("lazy", [True, False])
 def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app, lazy):
     page, _, requests, errors, state = graph_app
@@ -185,30 +490,35 @@ def test_depth_stepper_follows_mixed_direction_paths_beyond_two_levels(graph_app
     page.locator("[data-project='p']").click()
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     open_graph_depth(page)
+    if page.viewport_size["width"] <= 650:
+        for selector in ("#graph-depth-minus", "#graph-depth", "#graph-depth-plus"):
+            box = page.locator(selector).bounding_box()
+            assert box["width"] >= 44 and box["height"] >= 44
     page.locator("#graph-depth-plus").click()
+    if page.viewport_size["width"] <= 650:
+        # The phone sheet stays open so the depth can be stepped repeatedly.
+        assert page.locator("#graph-options").evaluate("element => element.open")
     open_graph_depth(page)
     page.locator("#graph-depth-plus").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===4"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===4"
     )
     canvas = page.locator("#graph-canvas")
-    assert canvas.evaluate("el=>el._cy.nodes().map(n=>n.id())") == [
+    assert canvas.evaluate("el=>el._flow.getNodes().map(n=>n.id)") == [
         f"Z first!A{i}" for i in range(1, 5)
     ]
-    assert canvas.evaluate(
-        "el=>el._cy.getElementById('Z first!A3').hasClass('context')"
-    )
+    assert canvas.evaluate("el=>el._flow.getNode('Z first!A3').data.tone==='context'")
     open_graph_options(page)
-    assert page.locator("#graph-neutral-key").is_visible()
+    assert page.locator("#graph-neutral-key").get_attribute("hidden") is None
     for depth, count in [(5, 6), (20, 21)]:
         open_graph_depth(page)
         page.locator("#graph-depth").fill(str(depth))
         page.locator("#graph-depth").press("Tab")
         page.wait_for_function(
-            "n=>document.querySelector('#graph-canvas')._cy?.nodes().length===n",
+            "n=>document.querySelector('#graph-canvas')._flow?.getNodes().length===n",
             arg=count,
         )
         assert f"profondeur {depth}" in page.locator("#graph-notice").inner_text()
@@ -239,7 +549,7 @@ def test_pending_depth_keeps_the_previous_view_truthfully_labelled(graph_app):
     page, _, _, errors, _ = graph_app
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
     held = []
 
@@ -291,7 +601,7 @@ def test_depth_failure_stops_loading_and_retains_previous_graph(graph_app):
     page, _, _, errors, _ = graph_app
     page.locator("#tab-graph").click()
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
 
     def reject_third(route):
@@ -406,20 +716,25 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
     assert "usage(s)" not in pending_notice
     assert "Aucune relation indexée" not in pending_notice
     page.wait_for_function(
-        "document.querySelector('#graph-canvas')._cy?.nodes().length===2"
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
     )
 
     def assert_exact_neighborhood():
         # Selecting a new center keeps the previous canvas while its request loads.
         playwright.expect(page.locator("#graph-notice")).to_contain_text("2 nœuds")
-        assert set(canvas.evaluate("el=>el._cy.nodes().map(n=>n.id())")) == {
+        assert set(canvas.evaluate("el=>el._flow.getNodes().map(n=>n.id)")) == {
             "QRA!H2",
             "QRA!H3",
         }
         assert canvas.evaluate(
-            "el=>el._cy.edges().map(e=>({source:e.source().id(),target:e.target().id()}))"
+            "el=>el._flow.getEdges().map(e=>({source:e.source,target:e.target}))"
         ) == [link]
-        assert canvas.evaluate("el=>el._cy.elements('.membership').length") == 0
+        assert (
+            canvas.evaluate(
+                "el=>el._flow.getEdges().filter(e=>e.className==='membership').length"
+            )
+            == 0
+        )
         assert "2 nœuds" in page.locator("#graph-notice").inner_text()
         assert off_page_range["id"] not in page.locator("#graph").inner_text()
         assert foreign_input["id"] not in page.locator("#graph").inner_text()

@@ -1,0 +1,126 @@
+.flow-card {
+  width: 232px;
+  height: 104px;
+  border: 1.5px solid var(--line, #b7c9c2);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 10px #1833310c;
+  padding: 12px 15px;
+  color: var(--ink, #183331);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  font: 13px/1.4 system-ui;
+}
+.flow-card strong,
+.flow-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.flow-card strong {
+  font-size: 15px;
+}
+.flow-title-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.flow-title-row strong { flex: 1; min-width: 0; }
+.flow-count { flex-shrink: 0; border-radius: 4px; background: #1833310d; padding: 1px 5px; font: 11px/1.6 system-ui; }
+.flow-value { font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.react-flow__node-cellGroup .flow-card { background: #e9f3ec; border-color: #7fa087; }
+.flow-mobile-status { display: none; }
+.flow-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+.flow-subtitle {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.flow-card.focus {
+  background: #145b4b;
+  color: #fff;
+  border-color: #0c392d;
+}
+.flow-card.source {
+  background: #e2f2eb;
+}
+.flow-card.usage {
+  background: #fff1d7;
+}
+.flow-card.outside {
+  border-style: dashed;
+  background: #f6ecdf;
+}
+.flow-card.is-selected {
+  outline: 3px solid #bf7f25;
+  outline-offset: 3px;
+}
+.react-flow__node-sheet .flow-card {
+  background: #e3edf8;
+  border-color: #7795b6;
+}
+.react-flow__node-formulaGroup .flow-card {
+  border-color: #9384af;
+  background: #f3eff9;
+}
+.react-flow__edge-path {
+  stroke: #748c80;
+  stroke-width: 1.7;
+}
+.react-flow__edge.membership path {
+  stroke-dasharray: 6 4;
+}
+.react-flow__edge-text {
+  font: 12px system-ui;
+  fill: #183331;
+}
+.react-flow__minimap {
+  border: 1px solid #d6e2da;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.react-flow__controls {
+  box-shadow: 0 2px 8px #18333120;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.react-flow__controls button {
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 0;
+}
+.react-flow__attribution {
+  font-size: 10px;
+}
+.react-flow__handle {
+  width: 6px;
+  height: 6px;
+  background: #789387;
+  border: 0;
+}
+@media (max-width: 650px) {
+  .react-flow__minimap {
+    width: 100px;
+    height: 74px;
+    bottom: 4px;
+    right: 4px;
+  }
+  .react-flow__controls button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.flow-edge-label {
+  position: absolute;
+  pointer-events: none;
+  background: #fffffff0;
+  border: 1px solid #e1e9e4;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font: 11px system-ui;
+  color: #435850;
+}

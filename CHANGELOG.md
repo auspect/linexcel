@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Bundle an offline React Flow dashboard graph with sheet, R1C1 formula-group
+  and cell drill-down, weighted relationships, breadcrumbs, minimap, layered
+  Dagre layout and an accessible relationship list. Cache bounded hierarchy
+  views against immutable SQLite indexes and open the workbook overview
+  automatically from the graph tab.
+- Use the full desktop workspace width, remember sidebar collapse, and provide
+  a graph focus mode. Consolidate authored inline presentation into CSS classes,
+  shared design tokens and responsive graph controls.
+- Debounce formula selection, abort superseded neighborhood requests, cancel
+  known superseded automatic calculations, reuse completed decomposition results,
+  and support cell deep links while retaining manual forced recalculation.
+- Add a reproducible frontend build/check and a three-viewport dashboard capture
+  probe. Python installations use the committed assets without Node or a CDN.
+- Give the dashboard one visual system with a distinct look per kind of control:
+  a filled primary action, outlined secondary buttons, quiet toolbar buttons
+  with icons, underline view tabs, a segmented reader switch, sunken search
+  fields, a single depth stepper, text breadcrumbs and state chips (cache match,
+  server connection). Labels use sentence case, formulas a monospace face, and
+  graph cards quiet role tints without violet. On phones, graph options open as
+  a dismissible bottom sheet with 44px controls.
+
+### Fixed
+
+- Preserve expanded inspector details and focus when automatic calculation
+  completes, while starting a newly selected cell at its decomposition.
+- Keep ordinary neighborhoods in Dagre dependency layers after grouping copied
+  formula siblings; check fit and edge clearance across a fixed workbook matrix.
+  Show bounded formulas and values on leaf cards, bundle their outside links,
+  and retain meaningful, compact breadcrumbs for deep formula partitions.
+
+- Keep graph cards clear of floating controls, route reverse arrows around
+  cards, pack disconnected cell groups, and skip redundant single partitions.
+- Expand focus mode over the entire viewport, dismiss search and action menus,
+  clear the return-to-sheet notice, and expose decomposition rows on mobile.
+- Avoid redundant text updates and whole-page translation rescans while panning
+  the React Flow graph; keep translation active for its docked legacy controls.
+- Collapse high-fanout sibling cells into counted, expandable neighborhood
+  groups, refit after reader resizing, and keep search results above clipped
+  mobile canvases. Remove duplicate counts and repeated bus-edge labels.
+
 ## [1.17.1] — 2026-11-07
 
 ### Fixed

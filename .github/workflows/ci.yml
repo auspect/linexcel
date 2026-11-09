@@ -31,6 +31,13 @@ jobs:
       - run: uv run ruff format --check src/ tests/
       - run: uv run python scripts/capture_viewer.py --check
       - run: uv run python scripts/capture_app.py --check
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm run check --prefix frontend
 
   typecheck:
     runs-on: ubuntu-latest
