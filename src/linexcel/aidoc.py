@@ -27,13 +27,14 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from threading import local
+from threading import Lock, local
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from urllib.parse import quote, urlsplit
 
 from linexcel.ai_validation import review_protocol, strip_claims, validate_documentation
 from linexcel.doc_evidence import (
+    cell_label_evidence,
     formula_evidence,
     formula_text_evidence,
     relevant_names,
@@ -427,6 +428,42 @@ def _resolve_provider(
     )
 
 
+_PARAMETER_SHAPES: dict[tuple[str, str], frozenset[str]] = {}
+_PARAMETER_LOCK = Lock()
+
+
+def _rejected_parameter(exc: Exception) -> str | None:
+    """Negotiate only explicit HTTP 400 parameter rejections, never model names."""
+    if getattr(exc, "status_code", None) != 400:
+        return None
+    body = getattr(exc, "body", None)
+    error = body.get("error", body) if isinstance(body, dict) else body
+    parameter = error.get("param") if isinstance(error, dict) else None
+    message = (
+        str(error.get("message", ""))
+        if isinstance(error, dict)
+        else error
+        if isinstance(error, str)
+        else ""
+    )
+    # A mention in an unrelated validation message does not authorize a retry.
+    if not re.search(
+        r"unsupported|not supported|does not support|not allowed|"
+        r"only .*supported|use .*instead|unknown parameter|unrecognized|"
+        r"not permitted|invalid parameter",
+        message,
+        re.I,
+    ):
+        return None
+    for candidate in ("max_tokens", "temperature"):
+        if parameter == candidate:
+            return candidate
+    for candidate in ("max_tokens", "temperature"):
+        if re.search(rf"\b{candidate}\b", message):
+            return candidate
+    return None
+
+
 class OpenAICompatProvider:
     """A client for anything exposing an OpenAI-compatible chat API.
 
@@ -467,13 +504,24 @@ class OpenAICompatProvider:
         self._model = model
         self._streaming = streaming
         self._vision_state = local()
+        self._request_state = local()
         self._request_kwargs = dict(request_kwargs or {})
-        if {"model", "messages", "max_tokens"} & self._request_kwargs.keys():
+        if {
+            "model",
+            "messages",
+            "max_tokens",
+            "max_completion_tokens",
+        } & self._request_kwargs.keys():
             raise ValueError(
                 "request_kwargs cannot override model, messages or max_tokens"
             )
         extra_body = self._request_kwargs.get("extra_body") or {}
-        if {"model", "messages", "max_tokens"} & extra_body.keys():
+        if {
+            "model",
+            "messages",
+            "max_tokens",
+            "max_completion_tokens",
+        } & extra_body.keys():
             raise ValueError("extra_body cannot override model, messages or max_tokens")
         if "stream" in self._request_kwargs or "stream" in extra_body:
             raise ValueError(
@@ -484,6 +532,8 @@ class OpenAICompatProvider:
                 raise ValueError("Documentation requires a single choice (n=1)")
         self._owns_client = client is None and http_client is None
         if client is not None:
+            if getattr(getattr(client, "_client", None), "follow_redirects", False):
+                raise ValueError("AI SDK clients must disable follow_redirects")
             if any(
                 (
                     base_url,
@@ -498,6 +548,7 @@ class OpenAICompatProvider:
                     "client cannot be combined with SDK or HTTP configuration"
                 )
             self._client = client
+            self._base_url = str(getattr(client, "base_url", "")).rstrip("/")
             return
         base = (
             base_url
@@ -507,6 +558,7 @@ class OpenAICompatProvider:
         if not base:
             raise AiDocError("No AI provider selected: pass base_url= or client=")
         base = _model_base_url(base, model)
+        self._base_url = base.rstrip("/")
         options = dict(client_kwargs or {})
         if {"api_key", "base_url", "http_client"} & options.keys():
             raise ValueError("Use explicit api_key, base_url and http_client arguments")
@@ -515,6 +567,14 @@ class OpenAICompatProvider:
             raise ValueError(
                 "http_client cannot be combined with proxy or http_client_kwargs"
             )
+        if http_client is None:
+            if http_options.get("follow_redirects"):
+                raise ValueError(
+                    "AI endpoint redirects are refused; configure the final URL"
+                )
+            http_options["follow_redirects"] = False
+        elif getattr(http_client, "follow_redirects", False):
+            raise ValueError("AI HTTP clients must disable follow_redirects")
         if proxy is not None:
             if "proxy" in http_options:
                 raise ValueError("Specify proxy only once")
@@ -608,7 +668,8 @@ class OpenAICompatProvider:
         options: dict[str, Any],
         *,
         vision: bool = False,
-    ) -> tuple[str, TokenUsage]:
+        structured: bool = False,
+    ) -> tuple[Any, TokenUsage]:
         streaming = getattr(self, "_streaming", False)
         if streaming:
             options["stream"] = True
@@ -623,16 +684,106 @@ class OpenAICompatProvider:
             options["stream_options"] = stream_options
             if "extra_body" in options:
                 options["extra_body"] = extra_body
+        if not hasattr(self, "_request_state"):
+            self._request_state = local()
+        self._request_state.receipt = None
+        self._request_state.attempts = []
+        self._request_state.rejected_usage = TokenUsage()
+        self._request_state.usage_accounted = False
+        key = (getattr(self, "_base_url", ""), self._model)
+        with _PARAMETER_LOCK:
+            shape = set(_PARAMETER_SHAPES.get(key, ())) if key[0] else set()
+        options = dict(options)
+        options["extra_body"] = dict(options.get("extra_body") or {})
+
+        def adapt():
+            if "max_tokens" in shape and "max_tokens" in options:
+                options["max_completion_tokens"] = options.pop("max_tokens")
+            if "temperature" in shape:
+                options.pop("temperature", None)
+                options["extra_body"].pop("temperature", None)
+
+        adapt()
         try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=cast("Iterable[ChatCompletionMessageParam]", messages),
-                **options,
-            )
+            while True:
+                sent = {**options, **options["extra_body"]}
+                attempt = {
+                    "parameters": {
+                        k: sent[k]
+                        for k in ("temperature", "max_tokens", "max_completion_tokens")
+                        if k in sent
+                    },
+                    "temperature_omitted": "temperature" not in sent,
+                    "token_parameter": next(
+                        (
+                            k
+                            for k in ("max_tokens", "max_completion_tokens")
+                            if k in sent
+                        ),
+                        None,
+                    ),
+                    "status": "pending",
+                }
+                self._request_state.attempts.append(attempt)
+                try:
+                    response = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=cast("Iterable[ChatCompletionMessageParam]", messages),
+                        **options,
+                    )
+                    attempt["status"] = "received"
+                    if key[0]:
+                        with _PARAMETER_LOCK:
+                            _PARAMETER_SHAPES[key] = frozenset(
+                                shape
+                            ) | _PARAMETER_SHAPES.get(key, frozenset())
+                    break
+                except Exception as exc:
+                    rejected = _rejected_parameter(exc)
+                    attempt.update(
+                        status="failed",
+                        http_status=getattr(exc, "status_code", None),
+                        rejected_parameter=rejected,
+                    )
+                    # HTTP 400 has no completion usage. Charge a conservative
+                    # prompt estimate and count the request rather than silently
+                    # excluding the negotiation from the shared budget tally.
+                    self._request_state.rejected_usage.add(
+                        TokenUsage(
+                            input_tokens=estimate_tokens(prompt),
+                            requests=1,
+                            estimated=True,
+                            model=self._model,
+                            provider="openai-compatible",
+                        )
+                    )
+                    if rejected is None or rejected in shape or rejected not in sent:
+                        raise
+                    shape.add(rejected)
+                    adapt()  # At most one retry for each rejected parameter.
             if streaming:
                 return self._consume_stream(response, prompt)
+            if structured:
+                # The question agent has a distinct structured-output contract.
+                # Reuse the client and negotiated wire parameters, without
+                # treating tool calls as documentation prose.
+                blob = response.model_dump_json()
+                usage = _usage_from(
+                    getattr(response, "usage", None),
+                    ("prompt_tokens", "completion_tokens"),
+                    prompt,
+                    blob,
+                    model=self._model,
+                    provider="openai-compatible",
+                )
+                usage.add(self._request_state.rejected_usage)
+                self._request_state.usage_accounted = True
+                return response, usage
             text = (response.choices[0].message.content or "").strip()
-        except AiDocError:
+        except AiDocError as exc:
+            if exc.usage is not None and not self._request_state.usage_accounted:
+                exc.usage.add(self._request_state.rejected_usage)
+            self._failed_receipt(prompt, exc.usage)
             raise
         except Exception as exc:
             kind = "vision" if vision else "API"
@@ -641,10 +792,29 @@ class OpenAICompatProvider:
                 if vision
                 else ""
             )
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 300 <= status < 400:
+                hint = " Endpoint redirect refused; configure the final endpoint URL."
+            self._failed_receipt(prompt, self._request_state.rejected_usage)
             raise AiDocError(
-                f"OpenAI-compatible {kind} call failed ({_api_error_name(exc)}).{hint}"
+                f"OpenAI-compatible {kind} call failed ({_api_error_name(exc)}).{hint}",
+                usage=self._request_state.rejected_usage,
             ) from exc
         return self._checked_response(response, prompt, text)
+
+    def _failed_receipt(self, prompt: str, usage: TokenUsage | None) -> None:
+        if self.receipt is not None:
+            return
+        self._request_state.receipt = {
+            "status": "failed",
+            "requested_model": self._model,
+            "prompt_text_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "usage": vars(usage).copy() if usage is not None else None,
+            **self.request_parameters,
+        }
+        state = getattr(self, "_vision_state", None)
+        if state is not None and getattr(state, "active", False):
+            state.receipt = self._request_state.receipt
 
     def _consume_stream(self, stream: Any, prompt: str) -> tuple[str, TokenUsage]:
         parts: list[str] = []
@@ -774,14 +944,22 @@ class OpenAICompatProvider:
                 getattr(response.choices[0], "finish_reason", None),
                 require_stop=require_stop,
             )
+            state = getattr(self, "_request_state", None)
+            if state is not None:
+                usage.add(getattr(state, "rejected_usage", TokenUsage()))
+                state.usage_accounted = True
             status = "complete"
             return output, usage
         except AiDocError as exc:
             usage = exc.usage
+            state = getattr(self, "_request_state", None)
+            if usage is not None and state is not None:
+                usage.add(getattr(state, "rejected_usage", TokenUsage()))
+                state.usage_accounted = True
             raise
         finally:
-            state = getattr(self, "_vision_state", None)
-            if state is not None and getattr(state, "active", False):
+            state = getattr(self, "_request_state", None)
+            if state is not None:
                 state.receipt = {
                     "status": status,
                     "requested_model": self._model,
@@ -795,7 +973,11 @@ class OpenAICompatProvider:
                     "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
                     "content_characters": len(text),
                     "usage": vars(usage).copy() if usage is not None else None,
+                    **self.request_parameters,
                 }
+                vision_state = getattr(self, "_vision_state", None)
+                if vision_state is not None and getattr(vision_state, "active", False):
+                    vision_state.receipt = state.receipt
 
     def _checked_output(
         self,
@@ -899,6 +1081,27 @@ class OpenAICompatProvider:
             )
         finally:
             self._vision_state.active = False
+
+    @property
+    def request_parameters(self) -> dict[str, Any]:
+        """Actual wire sampling/token fields, including rejected attempts."""
+        attempts = getattr(getattr(self, "_request_state", None), "attempts", [])
+        return {
+            **(
+                {
+                    k: attempts[-1][k]
+                    for k in ("parameters", "temperature_omitted", "token_parameter")
+                }
+                if attempts
+                else {}
+            ),
+            "request_attempts": [dict(a) for a in attempts],
+        }
+
+    @property
+    def receipt(self) -> dict[str, Any] | None:
+        """Last completion receipt in this thread, excluding credentials."""
+        return getattr(getattr(self, "_request_state", None), "receipt", None)
 
     @property
     def vision_receipt(self) -> dict[str, Any] | None:
@@ -1009,6 +1212,7 @@ def _build_dossier(index: tuple[dict, dict, dict, dict], node_id: str) -> dict |
         "kind": node.get("kind"),
         "sheet": node.get("sheet"),
         "address": node.get("addr"),
+        "cell_labels": cell_label_evidence(node),
         "formula": node.get("formula"),
         "r1c1_form": node.get("r1c1"),
         "group_cells": node.get("count"),
@@ -2013,6 +2217,7 @@ def _reviewed_document(
                 raw_response=text,
                 content_sha256=hashlib.sha256((text or "").encode()).hexdigest(),
                 usage=vars(consumed).copy(),
+                provider_receipt=getattr(llm, "receipt", None),
             )
             if not text or not _insert_tables(text).strip():
                 raise AiDocError("AI returned empty response")

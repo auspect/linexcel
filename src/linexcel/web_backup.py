@@ -373,6 +373,12 @@ def restore(store, owner: str, archive_path: Path) -> dict:
                     "restoredAt": time.time(),
                     "originalCreatedAt": project.get("createdAt"),
                 }
+                from linexcel.catalog import revision as workbook_revision
+                from linexcel.lazy_store import file_sha256
+
+                restored["workbookRevision"] = workbook_revision(
+                    project_id, file_sha256(stage / "workbook.xlsx")
+                )
                 if restored["revision"] != project.get("revision"):
                     raise _error("Révision des sources différente du manifeste")
                 _write(stage / "project.json", restored)

@@ -9,6 +9,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `tracing` extra for content-free, application-owned OpenInference OTLP
+  export to a user-run local Phoenix, with a bounded queue, refused redirects,
+  explicit remote opt-in and per-run trace IDs/optional links. Export failure
+  cannot fail a question; the app's own trace remains authoritative.
+- User guide for deterministic library search, cross-workbook lineage and
+  optional questions, with source correctness separated from answer relevance.
+- Content-free provider finish-reason and output-size diagnostics for local
+  model failures; truncation and missing tool calls remain explicit failures.
+
+### Fixed
+
+- Use stateless Responses tool calling for official OpenAI GPT-6 models with
+  configured reasoning, preserving the selected effort and encrypted reasoning
+  history in run memory. Local compatible endpoints keep Chat Completions.
+
+- Shared documentation, vision and question clients refuse redirects, including
+  redirects from an explicitly configured remote endpoint.
+- Completed answers use stable source/lineage content and recompute lineage on
+  read; equivalent rebuilds and unrelated pins preserve valid proposals while
+  relevant resolution changes suppress stale completeness verdicts.
+- Retained question traces omit argument and call-ID digests as well as values;
+  low-entropy input is not protected by an unkeyed digest.
+
+### Added
+
+- Normalize SDK tool calls, including Ollama's extra metadata, before strict
+  validation and assistant-message echoing. Question clients refuse redirects
+  and use the approved endpoint/model snapshot with a check before each request.
+- Invalidate completed question evidence after owner-pin or private catalog
+  changes, redact argument values and call IDs from retained traces, and make
+  the limits of unverified model rationale explicit.
+- Add an optional question mode beside deterministic library search, with a
+  separate tool-capable provider, bounded read-only tools and owner/revision
+  authorization inside every execution. Reuse the OpenAI-compatible client and
+  negotiated sampling/token parameters; reject text-only and malformed responses.
+- Render proposed cells and typed saved-value calculations from server-reread
+  evidence and M2 lineage, preserve boundaries and operand provenance, and record
+  relevance confirmations/rejections. The model never supplies an answer sentence;
+  its optional rationale is explicitly unverified; digit-containing text is omitted
+  without validating digit-free claims or word-numbers.
+- Distinguish unavailable saved formula caches from blank arithmetic operands
+  and name the exact operand cells on synthetic calculation cards.
+- Honor the owner's durable external-link pins inside private question catalogs,
+  including same-name workbook ambiguity, without exposing a model pin action.
+- Require single-use remote consent per question with endpoint, revision and
+  content-category disclosure. Persist bounded owner-local `linexcel.ask.v1`
+  traces with configurable retention, progress and cancellation using existing
+  task capacity, without holding the task-store lock across model calls.
+- Reserve the library's up-to-date badge for settled fresh catalog responses;
+  show pending while ready responses remain stale and use singular cell copy
+  for one-member revision cards.
+- Settle and abort superseded library requests, clear evidence when recovering
+  another temporary file, and keep the trace accessible in the initial mobile
+  viewport. Show missing saved values with their provenance and use plain
+  French relationship and budget labels.
+- Replace flat revision title cards with an expandable revision overview on
+  the shared graph, with explicit members, aggregated dependency counts and no
+  fabricated membership edges. Confirm existing pin selections after reload.
+- Enforce the attachment deadline when keeping a file, advance bounded expiry
+  cleanup before upload quota admission, preserve kept projects, and poll
+  ready-but-stale catalogs until their refresh settles.
+
+- Recover temporary search attachments after reload, discard failed imports
+  through the attachment route, and expire temporary projects after 24 hours.
+  Reconcile scoped catalogs on the catalog executor outside the global task
+  lock, with pending/incomplete responses while a scope is building.
+- Bind search and lineage UI state to current requests, clear stale answers on
+  failed searches and scope mutations, and send the selected lineage direction.
+  Show coverage and accessible workbook/revision evidence near the decision,
+  keep technical trace fields secondary, and improve link, occurrence and
+  attachment recovery controls.
+
+- Add a French-first, no-AI library search view with workbook/revision scopes,
+  kind filters, paged text occurrences, source-attributed result cards, directed
+  lineage on the shared React Flow graph, explicit boundary and coverage
+  verdicts, a content-free trace, external-link pin controls, and search-scoped
+  uploads that become library members only after an explicit keep action.
+
+- Report bounded possible-reader boundaries in downstream library lineage when
+  unresolved links cannot be excluded by sheet/range evidence, without guessing
+  an edge. Expose the loaded-revision scope and preserve exact revision identities
+  in graph contract tests.
+
+- Add directed upstream/downstream library lineage across loaded revisions,
+  OOXML external link facts, range-aware reverse lookup, cycle detection and
+  explicit origin, unresolved, unsupported, cache-only and budget boundaries.
+  Resolve only by unique filename or durable owner-authorized project/hash pins;
+  cached values are diagnostics only. Expose link status/filtering and pins in
+  the API and CLI, preserving the existing undirected neighborhood route.
+  Retain crossed revisions under response trimming and distinguish external
+  qualifiers from numeric or filename-like local table column names.
+
+- Page grouped library text occurrences through owner-authorized, generation-scoped
+  source scans with bounded work, response size and reusable cell handles.
+- Require corroborated multi-column header bands, distinguish row keys from text
+  context, and expose heuristic label certainty. Reserve a separate catalog worker,
+  skip queued builds after closure, and report source-snapshot failures explicitly.
+
+- Build library catalogs across all sheets with structural entries first,
+  fair sheet budgets, distinct text groups with bounded source occurrences,
+  separate numeric records, and per-sheet/per-kind coverage. Add catalog-only
+  bounded header bands with exact source cells for corroborated numeric text
+  axes and contiguous data; keep dossier label inference unchanged.
+
+- Add deterministic owner-scoped library search and status APIs, offline
+  `linexcel library` commands, stable revision/cell handles and same-workbook
+  neighborhood evidence. Search uses bounded immutable catalog generations,
+  FTS5 with diacritic folding or a reported bounded LIKE fallback, explicit
+  coverage counts, named budgets and a versioned search trace. Numeric lookup
+  requires source-attributed heuristic labels; source indexes remain authoritative.
+- Expose workbook revision identity as project ID plus source content SHA-256,
+  preserving distinct candidates for same-name projects and existing task cache
+  revision semantics.
+
 - Bundle an offline React Flow dashboard graph with sheet, R1C1 formula-group
   and cell drill-down, weighted relationships, breadcrumbs, minimap, layered
   Dagre layout and an accessible relationship list. Cache bounded hierarchy
@@ -30,7 +144,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph cards quiet role tints without violet. On phones, graph options open as
   a dismissible bottom sheet with 44px controls.
 
+- Deterministic, source-attributed cell labels in batch and lazy node evidence:
+  nearby literal text, merged headers, declared table columns and exact-cell
+  defined names, with bounded searches independent of any model.
+  Merged headings spanning other rows/columns are identified as sections;
+  geometric evidence records distance and blank gaps, and searches stop at
+  three consecutive blanks to avoid attaching a previous section's heading.
+
 ### Fixed
+
+- Decline new header-band inference when a legacy index lacks merge metadata,
+  exposing the missing geometry instead of assuming no merged boundaries.
+
+- Mark text-group occurrence counts incomplete when a sheet receives spare
+  capacity after earlier occurrences may already have been omitted.
+
+- Reconcile library catalogs on the bounded background executor outside the
+  global task-store lock; expose progress, failures and explicitly stale search
+  coverage while excluding deleted/replaced revision evidence.
+- Recover abandoned catalog staging files and invalid published artifacts,
+  and release reader pins when opening a generation fails.
 
 - Preserve expanded inspector details and focus when automatic calculation
   completes, while starting a newly selected cell at its decomposition.
@@ -48,6 +181,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Collapse high-fanout sibling cells into counted, expandable neighborhood
   groups, refit after reader resizing, and keep search results above clipped
   mobile canvases. Remove duplicate counts and repeated bus-edge labels.
+
+- Negotiate explicitly rejected sampling/token parameters on OpenAI-compatible
+  HTTP 400 responses for documentation and vision, remembering the accepted
+  shape per endpoint/model. Receipts retain actual parameters and attempts;
+  rejected requests count toward usage with conservative prompt estimates.
 
 ## [1.17.1] — 2026-11-07
 

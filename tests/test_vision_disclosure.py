@@ -161,12 +161,13 @@ def test_serve_recognizes_only_balanced_attribute_free_disclosures(app):
     ]
     for text in snippets:
         install_serve_document(page, text)
+        # App-owned source-proof disclosures are legitimate. The untrusted
+        # model content must not create disclosure/HTML elements of its own.
         assert (
-            page.locator(
-                "#node-detail details,#node-detail script,#node-detail img"
-            ).count()
+            page.locator("#node-ai .ai-result").locator("details,script,img").count()
             == 0
         )
+        assert page.locator("#node-detail script,#node-detail img").count() == 0
         assert page.evaluate("window.nativeEvidenceInjected || false") is False
     assert not errors
 

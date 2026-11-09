@@ -83,6 +83,8 @@ class ExternalBook:
     path: Path | None = None
     #: Values read from that file, by ``(sheet, row, col)``.
     values: dict[tuple[str, int, int], Any] = field(default_factory=dict)
+    #: Relationship Target exactly as written, before URI unescaping.
+    relationship_path: str = ""
 
     @property
     def resolved(self) -> bool:
@@ -144,7 +146,7 @@ def parse_external_refs(formula: str) -> list[ExternalRef]:
     return refs
 
 
-def read_external_links(data: bytes) -> dict[str, ExternalBook]:
+def read_external_links(data: bytes | Path) -> dict[str, ExternalBook]:
     """The workbooks a file declares a link to, keyed by ``[N]`` index.
 
     The index is the position in ``<externalReferences>`` in ``xl/workbook.xml``
@@ -152,7 +154,9 @@ def read_external_links(data: bytes) -> dict[str, ExternalBook]:
     """
     books: dict[str, ExternalBook] = {}
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        with zipfile.ZipFile(
+            data if isinstance(data, Path) else io.BytesIO(data)
+        ) as zf:
             book = _xml(zf, "xl/workbook.xml")
             if book is None:
                 return books
@@ -315,6 +319,17 @@ def _read_link_part(zf: zipfile.ZipFile, part: str, key: str) -> ExternalBook | 
         name=target.replace("\\", "/").rsplit("/", 1)[-1] or target,
         sheets=sheets,
     )
+    base, _, name = part.rpartition("/")
+    relationships = _xml(zf, f"{base}/_rels/{name}.rels")
+    if relationships is not None:
+        entry.relationship_path = next(
+            (
+                r.get("Target", "")
+                for r in relationships
+                if r.get("Type", "").endswith("/externalLinkPath")
+            ),
+            "",
+        )
     _read_cached_cells(root, sheets, entry.cached)
     return entry
 

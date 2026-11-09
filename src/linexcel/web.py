@@ -24,11 +24,15 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+
+from linexcel.ask import AskLimits
+from linexcel.catalog import CatalogLimits
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -39,6 +43,7 @@ OPERATIONS = {
     "document",
     "describe_capture",
     "export_html",
+    "ask",
 }
 AI_OPERATIONS = {"document", "describe_capture"}
 MAX_RESULT_BYTES = 16 * 1024 * 1024
@@ -79,6 +84,8 @@ class WebConfig:
     ai_reasoning_effort: str | None = None
     allow_local_import: bool = False
     local_profile: bool = False
+    catalog_limits: CatalogLimits = field(default_factory=CatalogLimits)
+    ask_limits: AskLimits = field(default_factory=AskLimits)
 
     def __post_init__(self):
         for key in (
@@ -223,6 +230,12 @@ class TaskStore:
         from linexcel.web_upload import UploadStore
 
         self.uploads = UploadStore(self)
+        from linexcel.web_library import Library
+
+        self.library = Library(self)
+        from linexcel.web_ask import AskService
+
+        self.ask = AskService(self)
 
     def _recover(self):
         from linexcel.web_backup import clean_interrupted_archives
@@ -325,6 +338,8 @@ class TaskStore:
                 event.set()
             self.capacity.notify_all()
         self.executor.shutdown(wait=True)
+        self.ask.tracing.close()
+        self.library.close()
         self._lock_file.close()
 
     def project_path(self, owner: str, project_id: str) -> Path:
@@ -455,6 +470,11 @@ class TaskStore:
                 "references": [name for name, _ in files[1:]],
                 "createdAt": time.time(),
             }
+            from linexcel.catalog import revision as workbook_revision
+
+            project["workbookRevision"] = workbook_revision(
+                project_id, hashlib.sha256(workbook[1]).hexdigest()
+            )
             _write(path / "project.json", project)
             task = self.submit(owner, project_id, "import", None, budget)
             return {"project": project, "task": task}
@@ -480,13 +500,18 @@ class TaskStore:
         return revision
 
     def list_projects(self, owner: str) -> list:
+        from linexcel.web_library import project_revision
+
         with self.lock:
             projects = []
             for path in (self.root / owner).glob("projects/*/project.json"):
                 if (owner, path.parent.name) in self.unreadable_projects:
                     continue
                 try:
-                    projects.append(_read(path))
+                    project = _read(path)
+                    if project.get("searchScopeId"):
+                        continue
+                    projects.append(project_revision(project, path.parent))
                 except (OSError, ValueError):
                     continue
             return sorted(
@@ -496,10 +521,12 @@ class TaskStore:
             )
 
     def snapshot(self, owner: str, project_id: str) -> dict:
+        from linexcel.web_library import project_revision
+
         with self.lock:
             path = self.project_path(owner, project_id)
             return {
-                "project": _read(path / "project.json"),
+                "project": project_revision(_read(path / "project.json"), path),
                 "graph": self._graph(path),
                 "tasks": [
                     self.public(t, include_result=False)
@@ -528,6 +555,17 @@ class TaskStore:
         )
 
     def graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
+        from linexcel.web_library import project_revision
+
+        with self.lock:
+            path = self.project_path(owner, project_id)
+            result = self._graph_query(owner, project_id, kind, query)
+            result["workbookRevision"] = project_revision(
+                _read(path / "project.json"), path
+            )["workbookRevision"]
+            return result
+
+    def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
         from linexcel.lazy_store import (
             MAX_NEIGHBORHOOD_DEPTH,
@@ -635,6 +673,10 @@ class TaskStore:
 
     @staticmethod
     def _save_result(root: Path, task: dict, result: dict) -> None:
+        if task.get("workbookRevision") is not None and (
+            "filename" in result or "filename" in (result.get("meta") or {})
+        ):
+            result = {**result, "workbookRevision": task["workbookRevision"]}
         _write(root / "result-data.json", result)
         preview = result.copy()
         if (
@@ -660,6 +702,10 @@ class TaskStore:
         return public
 
     def _task_result(self, task: dict) -> dict | None:
+        if task["operation"] == "ask":
+            # Question evidence needs source reauthorization outside this lock.
+            # It is available exclusively through the owner-scoped ask route.
+            return None
         if task.get("result") is not None:
             return task["result"]
         if not task.get("resultAvailable"):
@@ -669,6 +715,8 @@ class TaskStore:
 
     def task_export(self, owner: str, task_id: str) -> Path:
         task = self.get_task(owner, task_id, include_result=False)
+        if task["operation"] == "ask":
+            raise APIError(404, "Utilisez la trace de question autorisée")
         path = self.project_path(owner, task["projectId"])
         result = path / "tasks" / task_id / "result-data.json"
         if not task.get("resultAvailable") or not result.is_file():
@@ -713,6 +761,10 @@ class TaskStore:
         force: bool = False,
         options: dict | None = None,
     ) -> dict:
+        if operation == "ask":
+            raise APIError(
+                400, "Utilisez la préparation de question et son autorisation"
+            )
         if operation in AI_OPERATIONS | {
             "import",
             "build_graph",
@@ -753,7 +805,9 @@ class TaskStore:
             raise APIError(400, "Opération indisponible")
         with self.lock:
             path = self.project_path(owner, project_id)
-            project = _read(path / "project.json")
+            from linexcel.web_library import project_revision
+
+            project = project_revision(_read(path / "project.json"), path)
             graph_generation = None
             if operation in {"import", "build_graph"}:
                 opposite = "build_graph" if operation == "import" else "import"
@@ -979,6 +1033,7 @@ class TaskStore:
                 "owner": owner,
                 "projectId": project_id,
                 "revision": project["revision"],
+                "workbookRevision": project.get("workbookRevision"),
                 "cacheVersion": self.cache_version,
                 "aiCacheKey": ai_cache_key,
                 "graphGeneration": graph_generation,
@@ -1041,7 +1096,7 @@ class TaskStore:
             return path
 
     def delete(self, owner: str, project_id: str):
-        with self.lock:
+        with self.library.mutation(owner), self.lock:
             path = self.project_path(owner, project_id)
             if self._project_exports.get((owner, project_id)):
                 raise APIError(409, "Un export est en cours ; réessayez après sa fin")
@@ -1062,6 +1117,7 @@ class TaskStore:
             for task in tasks:
                 self.tasks.pop(task["id"], None)
                 self.events.pop(task["id"], None)
+            self.library.refresh(owner)
 
     def _run(self, task: dict, root: Path):
         event = self.events[task["id"]]
@@ -1083,7 +1139,12 @@ class TaskStore:
                 task["progress"] = {"phase": task["operation"], "fraction": None}
                 _write(root / "task.json", task)
             result = self._worker(task, root, event)
-            with self.lock:
+            mutation = (
+                self.library.mutation(task["owner"])
+                if task["operation"] == "import"
+                else nullcontext()
+            )
+            with mutation, self.lock:
                 if event.is_set():
                     terminal_status = "cancelled"
                 elif result.get("error"):
@@ -1128,6 +1189,7 @@ class TaskStore:
                         else:
                             _write(project / "graph.json", payload)
                         (project / "hierarchy.sqlite").unlink(missing_ok=True)
+                        self.library.refresh(task["owner"])
                         payload = {
                             "nodeCount": payload.get("meta", {}).get(
                                 "nodeCount", len(payload.get("nodes", []))
@@ -1200,6 +1262,8 @@ class TaskStore:
                         log.write_bytes(head)
                     task["finishedAt"] = time.time()
                     task["progress"] = {"phase": task["status"], "fraction": 1}
+                    if task["operation"] == "ask":
+                        self.ask.finalize(task)
                     _write(root / "task.json", task)
                 except OSError as exc:
                     task.update(
@@ -1217,6 +1281,8 @@ class TaskStore:
                     self.capacity.notify_all()
 
     def _worker(self, task: dict, root: Path, event: threading.Event) -> dict:
+        if task["operation"] == "ask":
+            return self.ask.run(task, event)
         request = {
             "operation": task["operation"],
             "nodeId": task["nodeId"],
@@ -1802,6 +1868,7 @@ class WebApp:
                     value,
                     ensure_ascii=False,
                     allow_nan=False,
+                    separators=(",", ":") if path.startswith("/api/library/") else None,
                 ).encode("utf-8")
         except APIError as exc:
             status = exc.status
@@ -1848,6 +1915,51 @@ class WebApp:
         query: dict | None = None,
     ) -> Any:
         parts = path.strip("/").split("/")
+        if parts[:3] == ["api", "library", "ask"]:
+            if len(parts) == 4 and parts[3] == "config" and method == "GET":
+                return self.store.ask.config()
+            if len(parts) == 4 and parts[3] == "prepare" and method == "POST":
+                return self.store.ask.prepare(owner, body)
+            if len(parts) == 3 and method == "POST":
+                return self.store.ask.submit(owner, body)
+            if len(parts) == 4 and method == "GET":
+                return self.store.ask.get(owner, parts[3])
+            if len(parts) == 5 and parts[4] == "feedback" and method == "POST":
+                return self.store.ask.feedback(owner, parts[3], body)
+            raise APIError(404, "Question introuvable")
+        if parts == ["api", "library", "attachments"] and method == "GET":
+            return self.store.library.list_attachments(owner)
+        if len(parts) == 3 and parts[:2] == ["api", "library"] and method == "GET":
+            return self.store.library.query(owner, parts[2], query or {})
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "library", "attachments"]
+            and parts[4] == "keep"
+            and method == "POST"
+        ):
+            return self.store.library.keep_attachment(owner, parts[3])
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "library", "attachments"]
+            and method == "DELETE"
+        ):
+            return self.store.library.discard_attachment(owner, parts[3])
+        if parts == ["api", "library", "pins"] and method == "POST":
+            return self.store.library.pin_link(owner, body)
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "library", "pins"]
+            and method == "DELETE"
+        ):
+            scope = (query or {}).get("scope", [""])
+            if len(scope) != 1:
+                raise APIError(400, "Invalid library parameter")
+            return self.store.library.pin_link(
+                owner,
+                {"linkId": parts[3]},
+                remove=True,
+                search_scope=scope[0] or None,
+            )
         if parts == ["api", "config"] and method == "GET":
             from linexcel.web_upload import CHUNK_BYTES
 
