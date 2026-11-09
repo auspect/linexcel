@@ -628,6 +628,28 @@ def test_collapsed_desktop_sidebar_state_resets_when_leaving_search(
     page.close()
 
 
+def test_expanded_desktop_sidebar_is_announced_after_leaving_search(
+    browser, live_library
+):
+    _, url, _ = live_library
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.add_init_script("localStorage.setItem('linexcel-sidebar-collapsed', 'false')")
+    page.goto(url)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.locator("#connection[data-state=ok]").wait_for(state="attached")
+    page.locator(".library-search-trigger").click()
+    menu = page.locator("#workspace-menu")
+    sidebar = page.locator("#workspace-sidebar")
+    menu.click()
+    playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+    page.locator(".library-search-trigger").click()
+    assert sidebar.is_visible()
+    playwright.expect(menu).to_have_attribute("aria-expanded", "true")
+    assert not errors, errors
+    page.close()
+
+
 def test_pin_unpin_and_direction_changes_replace_the_lineage_verdict(browser):
     page = browser.new_page(viewport={"width": 390, "height": 844})
     page.set_default_timeout(6000)
