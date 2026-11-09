@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Update the build-only Vite dependency to 7.3.8, clearing `npm audit`. The fixed
+  advisories concern Vite's development server, which is not part of a Python
+  installation. The offline React Flow bundle is rebuilt with this version.
+
 ## [1.18.0] — 2026-11-09
 
 ### Added
