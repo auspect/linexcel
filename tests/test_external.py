@@ -10,6 +10,8 @@ import io
 import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from urllib.parse import unquote
+from xml.etree import ElementTree as ET
 
 import pytest
 from openpyxl import Workbook
@@ -98,6 +100,97 @@ def linked_workbook(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def alternate_urls_workbook(
+    target: str, filename: str, *, relationship_id: str | None = "rId1"
+) -> bytes:
+    """Generated OOXML matching Excel's three-relationship external-book shape."""
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    relationship = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    package = "http://schemas.openxmlformats.org/package/2006/relationships"
+    alternate = "http://schemas.microsoft.com/office/spreadsheetml/2021/extlinks2021"
+    content = linked_workbook({"A1": "='[1]S'!B2"}, [_link(target, "S", {"B2": 10})])
+    output = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(content)) as archive,
+        zipfile.ZipFile(output, "w") as result,
+    ):
+        for name in archive.namelist():
+            data = archive.read(name)
+            if name == "xl/externalLinks/externalLink1.xml":
+                root = ET.fromstring(data)
+                book = root.find(f"{{{main}}}externalBook")
+                if relationship_id is not None:
+                    book.set(f"{{{relationship}}}id", relationship_id)
+                urls = ET.Element(f"{{{alternate}}}alternateUrls")
+                ET.SubElement(
+                    urls,
+                    f"{{{alternate}}}absoluteUrl",
+                    {f"{{{relationship}}}id": "rId2"},
+                )
+                ET.SubElement(
+                    urls,
+                    f"{{{alternate}}}relativeUrl",
+                    {f"{{{relationship}}}id": "rId3"},
+                )
+                book.insert(0, urls)
+                data = ET.tostring(root)
+            elif name == "xl/externalLinks/_rels/externalLink1.xml.rels":
+                root = ET.Element(f"{{{package}}}Relationships")
+                # Excel emits the alternatives first; document order is not the
+                # externalBook's declared relationship identity.
+                for rid, path in (
+                    ("rId3", "../Sources/" + filename),
+                    ("rId2", "file:///C:\\Users\\x\\dir\\" + filename),
+                    ("rId1", target),
+                ):
+                    ET.SubElement(
+                        root,
+                        f"{{{package}}}Relationship",
+                        Id=rid,
+                        Type=relationship + "/externalLinkPath",
+                        Target=path,
+                        TargetMode="External",
+                    )
+                data = ET.tostring(root)
+            result.writestr(name, data)
+    return output.getvalue()
+
+
+EXCEL_TARGETS = [
+    ("/Users/x/dir/budget.xlsx", "budget.xlsx"),
+    ("/Users/x/dir/Ventes%20Région%20été.xlsx", "Ventes Région été.xlsx"),
+    ("https://d.docs.live.net/abc123/Documents/budget.xlsx", "budget.xlsx"),
+    (
+        "https://tenant.sharepoint.com/sites/x/Shared%20Documents/budget.xlsx",
+        "budget.xlsx",
+    ),
+    (r"file:///\\server\share\budget.xlsx", "budget.xlsx"),
+    (r"file:///C:\Users\x\dir\budget.xlsx", "budget.xlsx"),
+]
+
+
+@pytest.mark.parametrize("target,filename", EXCEL_TARGETS)
+def test_declared_external_book_relationship_with_alternate_urls(target, filename):
+    content = alternate_urls_workbook(target, filename)
+    entry = read_external_links(content)["1"]
+    assert entry.name == filename
+    assert entry.target == unquote(target)
+    assert entry.relationship_path == target
+    assert entry.sheets == ["S"] and entry.cached == {("S", 2, 2): 10}
+
+
+@pytest.mark.parametrize("relationship_id", [None, "missing"])
+def test_alternate_urls_without_a_valid_primary_relationship_never_guess(
+    relationship_id,
+):
+    content = alternate_urls_workbook(
+        "/Users/x/dir/budget.xlsx", "budget.xlsx", relationship_id=relationship_id
+    )
+    entry = read_external_links(content)["1"]
+    assert entry.name == entry.target == entry.relationship_path == ""
+    assert entry.sheets == ["S"] and entry.cached == {("S", 2, 2): 10}
 
 
 @pytest.fixture

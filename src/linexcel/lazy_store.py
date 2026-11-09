@@ -37,7 +37,7 @@ from openpyxl.utils.datetime import (
 )
 
 from linexcel.formula_source import cell_source_fields
-from linexcel.refs import a1, parse_ref, split_sheet_prefix
+from linexcel.refs import a1, parse_ref, quote_sheet, split_sheet_prefix
 from linexcel.structured_refs import formula_tokens
 
 SCHEMA_VERSION = 4
@@ -123,6 +123,34 @@ def _unpack(data):
     if "value" in node:
         node.setdefault("cached_value", node["value"])
         node.setdefault("cached_comparison_value", node["value"])
+    if node.get("kind") == "array_result" and node.get("arrayAnchor"):
+        # Members have no <f> of their own, but their stored values are array
+        # caches, not literal inputs. Normalize older indexes on read as well.
+        if node.get("provenance") == "saved_input":
+            node["provenance"] = "saved_cache"
+        if provenance := node.get("sourceValueProvenance"):
+            provenance.update(role="formula_cache", arrayAnchor=node["arrayAnchor"])
+    return node
+
+
+def _unknown_array_owner(node, *, persisted=False):
+    # Keep the saved scalar/provenance, while refusing any chosen array owner.
+    # Persist as an array result so source-cell readers still retain the value.
+    node.update(
+        kind="array_result" if persisted else "unresolved",
+        reference=node["id"],
+        dependencies=[],
+        arrayOwnershipUnknown=True,
+    )
+    node.pop("arrayAnchor", None)
+    if node.get("provenance") == "saved_input":
+        node["provenance"] = "saved_cache"
+    if provenance := node.get("sourceValueProvenance"):
+        provenance.pop("arrayAnchor", None)
+        provenance["role"] = "formula_cache"
+    diagnostic = "Overlapping declared arrays have unknown member ownership."
+    if diagnostic not in node.setdefault("diagnostics", []):
+        node["diagnostics"].append(diagnostic)
     return node
 
 
@@ -228,6 +256,8 @@ class WorkbookIndex(Mapping):
                 ).fetchone()
                 if hit:
                     node = _unpack(hit[0])
+                    if node["kind"] == "array_result":
+                        return NON_TEXT_CELL
                     if not node.get("formula") and node.get("sourceDataType") in {
                         "s",
                         "str",
@@ -301,8 +331,67 @@ class WorkbookIndex(Mapping):
             raise KeyError(key)
         return self._decode(row)
 
+    def array_anchors(self, sheet, bounds, *, limit):
+        """Bounded array-group provenance, without enumerating output cells."""
+        if not self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='array_definitions'"
+        ).fetchone():
+            return []
+        r1, c1, r2, c2 = bounds
+        return [
+            f"{quote_sheet(sheet)}!{anchor}"
+            for (anchor,) in self.db.execute(
+                "SELECT anchor FROM array_definitions WHERE sheet=? "
+                "AND r1<=? AND r2>=? AND c1<=? AND c2>=? ORDER BY anchor LIMIT ?",
+                (sheet, r2, r1, c2, c1, limit),
+            )
+        ]
+
+    def implicit_array_member(self, key):
+        if not isinstance(key, str):
+            return None
+        rect = parse_ref(key)
+        if not rect or not rect.sheet or rect.ncells != 1 or rect.to_a1() != key:
+            return None
+        anchors = self.array_anchors(
+            rect.sheet, (rect.r1, rect.c1, rect.r2, rect.c2), limit=2
+        )
+        if not anchors or (len(anchors) == 1 and key in anchors):
+            return None
+        node = {
+            "id": key,
+            "kind": "array_result",
+            "sheet": rect.sheet,
+            "cell": a1(rect.r1, rect.c1),
+            "row": rect.r1,
+            "column": rect.c1,
+            "formula": None,
+            "value": None,
+            "cache_status": "blank",
+            "provenance": "saved_blank",
+            "dependencies": anchors,
+            "diagnostics": [],
+        }
+        if len(anchors) == 1:
+            node["arrayAnchor"] = anchors[0]
+        else:
+            _unknown_array_owner(node)
+        return node
+
+    def resolve_array_ownership(self, node):
+        if node.get("arrayOwnershipUnknown"):
+            return _unknown_array_owner(node)
+        blank = node.get("kind") == "input" and node.get("provenance") == "saved_blank"
+        if blank or node.get("kind") == "array_result" or node.get("arrayBounds"):
+            member = self.implicit_array_member(node["id"])
+            if member and member.get("arrayOwnershipUnknown"):
+                return _unknown_array_owner(node)
+            if blank and member:
+                node.update(member)
+        return node
+
     def _decode(self, row, *, context=False):
-        node = _unpack(row[0])
+        node = self.resolve_array_ownership(_unpack(row[0]))
         node["label"] = (
             node.get("name") or node.get("cell") or node.get("reference") or node["id"]
         )
@@ -440,7 +529,10 @@ class WorkbookIndex(Mapping):
         row = self.db.execute(
             "SELECT data,pattern_id FROM nodes WHERE id=?", (node_id,)
         ).fetchone()
-        return self._decode(row, context=True) if row else None
+        if row:
+            return self._decode(row, context=True)
+        member = self.implicit_array_member(node_id)
+        return self._decode((_pack(member), None), context=True) if member else None
 
 
 def _schema(db):
@@ -1531,7 +1623,10 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "AND r1=? AND c1=? AND r2=? AND c2=?",
                         (sheet, r1, c1, r2, c2),
                     ).fetchone()
-                    if definition:
+                    member = store.implicit_array_member(node["id"])
+                    if member and member.get("arrayOwnershipUnknown"):
+                        _unknown_array_owner(node, persisted=True)
+                    elif definition:
                         anchor_id = _id(sheet, definition[0])
                         node.update(
                             kind="array_result",
@@ -1724,6 +1819,37 @@ def _filters(sheet=None, query=None, kind=None):
     return " WHERE " + " AND ".join(conditions) if conditions else "", values
 
 
+def _array_edge_filter(store, *, schema="main"):
+    """Reject old chosen-owner edges using coordinates, never decoded cells.
+
+    Ordinary formula targets skip the lookup. Array-result targets stop at the
+    second containing declaration; the sheet key bounds the declaration scan.
+    """
+    if not store.db.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='array_definitions'"
+    ).fetchone():
+        return "1"
+    return (
+        "(t.kind<>'array_result' OR NOT EXISTS ("
+        f"SELECT 1 FROM {schema}.array_definitions a WHERE a.sheet=t.sheet "
+        "AND a.r1<=t.row AND a.r2>=t.row AND a.c1<=t.col AND a.c2>=t.col "
+        "LIMIT 1 OFFSET 1))"
+    )
+
+
+def _edge_count(store):
+    total = store.db.execute("SELECT count(*) FROM edges").fetchone()[0]
+    condition = _array_edge_filter(store)
+    if condition != "1":
+        # Keep the ordinary-workbook count fast: only array-result targets use
+        # the geometry check, via nodes_kind and edges_target, without blobs.
+        total -= store.db.execute(
+            "SELECT count(*) FROM nodes t JOIN edges e ON e.target=t.id "
+            f"WHERE t.kind='array_result' AND NOT {condition}"
+        ).fetchone()[0]
+    return total
+
+
 def _edges_for_nodes(store, ids):
     from linexcel.macros import static_edge_record
 
@@ -1734,7 +1860,8 @@ def _edges_for_nodes(store, ids):
         "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
         "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
         f"WHERE e.target IN ({placeholders}) "
-        f"AND e.source IN ({placeholders}) ORDER BY e.source,e.target",
+        f"AND e.source IN ({placeholders}) AND {_array_edge_filter(store)} "
+        "ORDER BY e.source,e.target",
         ids + ids,
     )
     return [static_edge_record(s, t, sk, tk) for s, t, sk, tk in rows]
@@ -1824,7 +1951,11 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
         raise ValueError("Unknown structure part")
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
-        total = store.db.execute(f"SELECT count(*) FROM {part}").fetchone()[0]
+        total = (
+            store.db.execute("SELECT count(*) FROM nodes").fetchone()[0]
+            if part == "nodes"
+            else _edge_count(store)
+        )
         if part == "nodes":
             items = [
                 {"id": nid, "kind": kind, "sheet": sheet}
@@ -1841,6 +1972,7 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
                 for source, target, sk, tk in store.db.execute(
                     "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
                     "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                    f"WHERE {_array_edge_filter(store)} "
                     "ORDER BY e.source,e.target LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
@@ -1900,6 +2032,7 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         ids = {node_id: None}
         frontier = [node_id]
         truncated = False
+        condition = _array_edge_filter(store)
         for _ in range(depth):
             if not frontier:
                 break
@@ -1907,8 +2040,12 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
             for current in frontier:
                 rows = store.db.execute(
                     (
-                        "SELECT source AS neighbor FROM edges WHERE target=? "
-                        "UNION SELECT target FROM edges WHERE source=? "
+                        "SELECT e.source AS neighbor FROM edges e "
+                        "JOIN nodes t ON t.id=e.target "
+                        f"WHERE e.target=? AND {condition} "
+                        "UNION SELECT e.target FROM edges e "
+                        "JOIN nodes t ON t.id=e.target "
+                        f"WHERE e.source=? AND {condition} "
                         "ORDER BY neighbor LIMIT ?"
                     ),
                     (current, current, limit + 1),
@@ -2049,6 +2186,7 @@ def export_structure(index_path: Path) -> dict:
             for s, t, sk, tk in store.db.execute(
                 "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
                 "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                f"WHERE {_array_edge_filter(store)} "
                 "ORDER BY e.source,e.target"
             )
         ]

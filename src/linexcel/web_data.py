@@ -32,7 +32,7 @@ from openpyxl.utils.cell import get_column_letter
 from linexcel.graph_store import generation
 from linexcel.lazy_store import WorkbookIndex, _unpack
 
-DATA_VERSION = 2
+DATA_VERSION = 4
 MAX_GRID_COLUMNS = 512
 MAX_INSTANCES = 8
 
@@ -118,7 +118,7 @@ def build_source_database(index: Path, destination: Path, *, max_bytes: int) -> 
                 count, rows, maximum, previous_row = 0, 0, 0, None
                 for (packed,) in source.db.execute(
                     "SELECT data FROM nodes WHERE sheet=? "
-                    "AND kind IN ('cell','input') ORDER BY row,col",
+                    "AND kind IN ('cell','input','array_result') ORDER BY row,col",
                     (sheet,),
                 ):
                     node = _unpack(packed)
@@ -170,12 +170,13 @@ def build_source_database(index: Path, destination: Path, *, max_bytes: int) -> 
 
                 for (packed,) in source.db.execute(
                     "SELECT data FROM nodes WHERE sheet=? "
-                    "AND kind IN ('cell','input') ORDER BY row,col",
+                    "AND kind IN ('cell','input','array_result') ORDER BY row,col",
                     (sheet,),
                 ):
                     node = _unpack(packed)
                     if not _worksheet_source_cell(node, metadata.get("sha256"), sheet):
                         continue
+                    node = source.resolve_array_ownership(node)
                     value = node.get("value")
                     provenance = node.get("sourceValueProvenance") or {}
                     formula = node.get("formulaProvenance") or {}

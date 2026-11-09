@@ -171,7 +171,7 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
                 count = index.db.execute(
                     "SELECT count(*) FROM nodes WHERE sheet=? "
                     "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input')",
+                    "AND kind IN ('cell','input','array_result')",
                     (node["sheet"], r1, r2, c1, c2),
                 ).fetchone()[0]
                 members = [
