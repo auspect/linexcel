@@ -463,7 +463,7 @@ def test_compact_range_membership_navigation(browser, viewport):
         assert page.locator('[data-graph-node="Summary!C5"]').is_visible()
         assert page.locator("[data-graph-node]").count() == 3
         note = page.locator("#graph .range-membership").inner_text()
-        assert "1 cellules représentées" in note
+        assert "1 cellule représentée" in note
         assert "1\u202f000\u202f000 positions" in note
         assert "1 relations" in page.locator("#stats").inner_text()
         assert (
