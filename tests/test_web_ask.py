@@ -414,4 +414,3 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
     assert changed["status"] == "failed" and changed["answer"] is None
     assert changed["trace"]["reason"] == "lineage_state_changed"
     assert not changed["trace"]["steps"][-1]["summary"]["searchCompleted"]
-
