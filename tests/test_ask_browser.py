@@ -767,3 +767,50 @@ def test_budget_stop_is_named_and_never_reads_as_absence(browser, live_library):
         playwright.expect(status).to_contain_text("pas une preuve d’absence")
     finally:
         page.close()
+
+
+def test_dismissed_consent_returns_focus_to_the_question(browser, live_library):
+    app, url, upload = live_library
+    upload("remote.xlsx", book_bytes())
+    app.store.config = replace(
+        app.store.config,
+        ai_enabled=True,
+        ai_base_url="https://remote.example.test/v1",
+    )
+    app.store.ask.provider_factory = lambda _: FakeProvider([])
+    page = open_search(browser, url, 1440)
+    try:
+        scope_ready(page, url)
+        page.get_by_role("button", name="Poser une question à l’IA", exact=True).click()
+        page.locator("#library-ask-question").fill("Quel est le montant ?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        playwright.expect(page.locator(".library-ask-consent")).to_be_focused()
+        page.get_by_role("button", name="Revenir sans envoyer", exact=True).click()
+        playwright.expect(page.locator(".library-ask-consent")).to_have_count(0)
+        playwright.expect(page.locator("#library-ask-question")).to_be_focused()
+        assert not any(t["operation"] == "ask" for t in app.store.tasks.values())
+    finally:
+        page.close()
+
+
+def test_server_message_is_translated_in_the_english_question_view(
+    browser, live_library
+):
+    app, url, upload = live_library
+    upload("rapport.xlsx", book_bytes())
+    app.store.config = replace(app.store.config, ai_enabled=True)
+    app.store.ask.provider_factory = lambda _: FakeProvider([])
+    page = open_search(browser, url, 1440)
+    try:
+        scope_ready(page, url)
+        page.locator("#ui-language").select_option("en")
+        page.get_by_role("button", name="Ask AI a question", exact=True).click()
+        page.locator("#library-ask-question").fill("Which cells read inconnu.xlsx?")
+        page.get_by_role("button", name="Search for an answer", exact=True).click()
+        alert = page.locator(".library-ask-state [role=alert]")
+        playwright.expect(alert).to_contain_text(
+            "“inconnu.xlsx” is neither an imported workbook nor a reference"
+        )
+        assert "n’est ni" not in alert.inner_text()
+    finally:
+        page.close()
