@@ -54,9 +54,16 @@ const COUNT_UNITS = {
   edges: ["relation", "relations", "relationship", "relationships"],
   revisions: ["révision", "révisions", "revision", "revisions"],
   links: ["lien", "liens", "link", "links"],
+  boundaries: ["arrêt", "arrêts", "stop", "stops"],
   steps: ["étape", "étapes", "step", "steps"],
   tokens: ["jeton", "jetons", "token", "tokens"],
   resultBytes: ["octet de résultat", "octets de résultats", "result byte", "result bytes"],
+};
+// A step that did not simply complete says so in the trace line itself.
+const stepVerdicts = {
+  failed: ["échec", "failed"],
+  rejected: ["appel refusé, à corriger par le modèle", "call rejected, for the model to correct"],
+  result_bytes: ["arrêt, volume de résultats atteint", "stopped, result size reached"],
 };
 function countText(value, key, english) {
   const words = COUNT_UNITS[key] || [key, key, key, key];
@@ -73,9 +80,10 @@ export function AskTrace({ run, english }) {
     <p className="help">{text("Cette trace décrit la recherche et les appels d’outils. Les dépendances de chaque réponse figurent dans son lignage vérifié.", "This trace describes searches and tool calls. Each answer’s dependencies are shown in its verified lineage.")}</p>
     {failures[reason] && <p role="status">{failures[reason][english ? 1 : 0]}</p>}
     <ol>{(trace?.steps || []).map((step, index) => <li key={index}>
-      <strong>{(toolNames[step.tool] || [step.tool, step.tool])[english ? 1 : 0]} · {step.verdict === "failed" ? text("échec", "failed") : step.tool === "finish" ? text("terminée", "finished") : text("effectué", "completed")}</strong>
+      <strong>{(toolNames[step.tool] || [step.tool, step.tool])[english ? 1 : 0]} · {stepVerdicts[step.verdict] ? stepVerdicts[step.verdict][english ? 1 : 0] : step.tool === "finish" ? text("terminée", "finished") : text("effectué", "completed")}</strong>
       {step.durationMs !== undefined && <small>{Math.round(step.durationMs)} ms{step.tokens ? ` · ${countText(step.tokens.input_tokens + step.tokens.output_tokens, "tokens", english)}` : ""}</small>}
       {step.summary?.counts && <span>{Object.entries(step.summary.counts).map(([key, count]) => countText(count, key, english)).join(" · ")}</span>}
+      {step.summary?.omittedForModel && <span className="library-trace-omitted">{text("Résultat abrégé pour le modèle, non transmis : ", "Result shortened for the model, not sent: ")}{Object.entries(step.summary.omittedForModel).map(([key, count]) => countText(count, key, english)).join(" · ")}</span>}
       {step.tool === "finish" && <p className="library-ask-last">{step.summary?.searchCompleted
         ? text("La recherche délimitée a terminé ses opérations dans cette portée.", "The bounded search completed its operations in this scope.")
         : text("La recherche dans cette portée est incomplète ou tronquée.", "The scoped search is incomplete or truncated.")} {text("Cela ne prouve pas l’absence d’une réponse dans les classeurs.", "This does not prove that an answer is absent from the workbooks.")}</p>}
@@ -208,6 +216,7 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       const steps = run?.trace?.steps || [];
       const last = steps[steps.length - 1];
       return !run ? text("Préparation de la question…", "Preparing the question…")
+        : run.libraryBusy ? text("La bibliothèque met à jour son index de recherche après un import ; la question démarre ensuite.", "The library is updating its search index after an import; the question starts afterwards.")
         : !last ? text("En attente de la première réponse du modèle ; cela peut prendre une minute.", "Waiting for the model’s first response; this can take a minute.")
         : `${text("Dernière étape : ", "Latest step: ")}${(toolNames[last.tool] || [last.tool, last.tool])[english ? 1 : 0]}.`;
     })()} {text("La trace est disponible ci-dessus.", "The trace is accessible above.")}</p>}

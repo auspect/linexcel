@@ -19,6 +19,18 @@ class UnissuedHandleError(KeyError):
     """The model supplied a handle that no successful tool result returned."""
 
 
+class ToolArgumentError(ValueError):
+    """A well-formed, in-scope call whose values do not fit the workbook.
+
+    The model is told the fixed code and may correct the call. Nothing from the
+    workbook or the exception travels with it.
+    """
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 def string(limit=256, **extra):
     return {"type": "string", "maxLength": limit, **extra}
 
@@ -48,7 +60,8 @@ TOOLS = {
         obj({"project": PROJECT}),
     ),
     "search_catalog": (
-        "Search indexed text/labels or exact labelled numbers. Read coverage.",
+        "Search indexed text/labels, a labelled number as displayed (967.5 finds "
+        "967.538) or a cell address (Sheet!B5). Read coverage.",
         obj(
             {
                 "query": string(512),
@@ -332,7 +345,7 @@ class QuestionTools:
                     lambda: int(time.monotonic() >= self.deadline), 100
                 )
                 if args["sheet"] not in index.meta.get("sheets", []):
-                    raise KeyError("Sheet outside question scope")
+                    raise ToolArgumentError("unknown_sheet")
                 rev = revision(source.project_id, index.meta["sha256"])
                 if name == "describe_sheet":
                     ids = [
@@ -354,9 +367,7 @@ class QuestionTools:
                     }
                 rect = parse_ref(args["range"], args["sheet"])
                 if rect is None or rect.sheet != args["sheet"] or rect.ncells > 25:
-                    raise ValueError(
-                        "Range must contain at most 25 cells on the selected sheet"
-                    )
+                    raise ToolArgumentError("invalid_range")
                 ids = list(
                     index.range_members(
                         args["sheet"], (rect.r1, rect.c1, rect.r2, rect.c2)

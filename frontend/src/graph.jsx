@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useState, useRef } from "react";
 import { AskQuestion, AskTrace } from "./ask.jsx";
+import { displayValue } from "./ask-evidence.jsx";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
@@ -606,6 +607,8 @@ const SEARCH_BUDGET_LABELS = {
 function searchText(value, english) {
   if (Array.isArray(value)) return value[english ? 1 : 0];
   if (value && typeof value === "object") return JSON.stringify(value);
+  // Saved numbers read as Excel shows them: 6600, not 6600.000000000001.
+  if (typeof value === "number") return displayValue(value);
   return value == null ? "" : String(value);
 }
 
@@ -1391,6 +1394,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
             {!!caps.length && <span> {caps.map(capLabel).join(" · ")}</span>}
             {search.pagination?.hasMore && <span> {text("D’autres résultats sont disponibles.", "More results are available.")}</span>}
           </p>}
+          {search?.trace?.numericMatch && <p className="help library-result-rule">{text("Nombres enregistrés qui s’affichent ainsi, arrondis au nombre de décimales saisi.", "Saved numbers that display this way, rounded to the decimals typed.")}</p>}
+          {search?.trace?.addressMatch && <p className="help library-result-rule">{text(`Aucun texte ne correspond : cellules situées à l’adresse ${search.trace.addressMatch.address}.`, `No text matches: cells located at address ${search.trace.addressMatch.address}.`)}</p>}
           {search && results.length === 0 && <p className="library-empty">{text("Aucun résultat affiché pour cette requête et cette portée.", "No results are displayed for this query and scope.")}</p>}
           {results.slice(0, visibleResultCount).map((hit) => {
             const labels = hit.labels || [];

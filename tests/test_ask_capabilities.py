@@ -39,7 +39,7 @@ def test_model_uses_short_aliases_but_answer_and_trace_keep_authority(tools):
 
     def finish(messages):
         lineage = json.loads(messages[-1]["content"])["data"]
-        assert all(not n["id"].startswith("lx1.") for n in lineage["nodes"])
+        assert all(not n["handle"].startswith("lx1.") for n in lineage["nodes"])
         return [
             call(
                 "submit_answer",
@@ -113,7 +113,7 @@ def test_graph_revealed_source_alias_can_be_reread_computed_and_submitted(tools)
     def read_graph_source(messages):
         graph = json.loads(messages[-1]["content"])["data"]
         source_cell = next(n for n in graph["nodes"] if n["address"] == "A2")
-        assert source_cell["handle"] == source_cell["id"]
+        assert re.fullmatch(r"c[1-9][0-9]*", source_cell["handle"])
         assert source_cell["handle"] != first_alias[0]
         return [call("get_cell", {"handle": source_cell["handle"]}, "read-source")]
 
@@ -218,7 +218,8 @@ def test_reused_tools_cannot_inherit_source_or_computation_capabilities(tools):
                         "compute": "lc1.1",
                     },
                 )
-            ]
+            ],
+            [call("submit_answer", {"status": "not_found"}, "end")],
         ],
     )
     assert third["status"] == "not_found" and third["answer"] is None

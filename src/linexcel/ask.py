@@ -18,10 +18,12 @@ from linexcel.ask_provider import (
 from linexcel.ask_tools import (
     TOOL_SCHEMAS,
     TOOLS,
+    ToolArgumentError,
     UnissuedHandleError,
     issued_handles,
     validate,
 )
+from linexcel.ask_view import model_view
 
 TRACE_VERSION = "linexcel.ask.v1"
 SYSTEM = """You search saved Excel evidence using read-only tools. You are never a
@@ -44,7 +46,41 @@ model-authored code. You may comment on evidence, but cannot supply source facts
 Source handles are short run-local aliases such as c1. Copy them exactly from
 tool results. Never invent, decode, reconstruct, pad or reuse another run's alias.
 Always terminate with submit_answer. Rationale is short and explicitly unverified.
+list_workbooks gives the project id and the exact sheet names of each workbook.
+Tool results are compact: when one carries omittedForModel, part of it was left
+out, so make a narrower call. A result may instead be an error with a hint:
+correct that call once, do not repeat it unchanged. An answer cites cells only
+(kind cell, input or array_result). A range, sheet, name or table cannot be
+cited: cite the formula cell that reads it, or its member cells.
 """
+# The verified answer goes to the reader, never back to the model, so it has its
+# own ceiling instead of sharing the budget of model-facing results.
+ANSWER_BYTES = 8 * 1024 * 1024
+# A model may misname a sheet, ask for too large a range or cite a range where
+# an answer needs cells. It is told so and may correct itself a few times; any
+# other invalid call still ends the run.
+REJECTED_CALLS = 3
+ARGUMENT_HINTS = {
+    "unknown_sheet": (
+        "No sheet has exactly that name in this workbook. list_workbooks gives "
+        "the exact sheet names."
+    ),
+    "invalid_range": (
+        "Give one A1 rectangle of at most 25 cells on that sheet, such as "
+        "B2:F6, without a sheet prefix."
+    ),
+    "invalid_handle": (
+        "An answer cites cells only: kind cell, input or array_result, with "
+        "handles copied from this run. A range, sheet, name or table cannot be "
+        "cited; cite the formula cell that reads it, or its member cells."
+    ),
+    "no_valid_handle": (
+        "Cite at least one cell handle from this run, or submit not_found."
+    ),
+    "unissued_computation": (
+        "That compute handle was not returned by compute in this run."
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -133,6 +169,9 @@ class QuestionRun:
         self.tools.computations.clear()
         self._model_aliases: dict[str, str] = {}
         self._source_handles: dict[str, str] = {}
+        self._many = len(tools.scope.get("revisions") or []) > 1
+        self._token_scale = 1.0
+        self.rejections = 0
         self.started = time.monotonic()
         self.deadline = min(tools.deadline, self.started + limits.seconds)
         self.ids: set[str] = set()
@@ -268,6 +307,32 @@ class QuestionRun:
             "trace": self.trace,
         }
 
+    def request_tokens(self, messages):
+        """Tokens the next request will cost, before it is sent.
+
+        Counting words underestimates JSON several times over, and one oversized
+        request used to pass the whole question budget. Three bytes per token is
+        a safe floor for JSON; the provider count for the previous request then
+        corrects the estimate for this model.
+        """
+        text = encoded({"messages": messages, "tools": TOOL_SCHEMAS})
+        estimate = max(estimate_tokens(text), len(text.encode("utf-8")) // 3)
+        return estimate, int(estimate * self._token_scale)
+
+    @staticmethod
+    def rejection(call_id, code):
+        """A fixed, application-authored correction; never workbook or error text."""
+        return {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": encoded(
+                {
+                    "trust": "linexcel",
+                    "error": {"code": code, "hint": ARGUMENT_HINTS[code]},
+                }
+            ),
+        }
+
     def stop_reason(self):
         if self.cancel.is_set():
             return "cancelled"
@@ -295,9 +360,7 @@ class QuestionRun:
                         "failed" if reason == "cancelled" else "not_found",
                         reason=reason,
                     )
-                prompt_tokens = estimate_tokens(
-                    encoded({"messages": messages, "tools": TOOL_SCHEMAS})
-                )
+                estimate, prompt_tokens = self.request_tokens(messages)
                 available = self.limits.tokens - self.used["tokens"] - prompt_tokens
                 if available < 128:
                     return self.terminal("not_found", reason="token_budget")
@@ -314,6 +377,10 @@ class QuestionRun:
                     ),
                 )
                 self.used["tokens"] += response.usage.total
+                if not response.usage.estimated and response.usage.input_tokens:
+                    self._token_scale = min(
+                        3.0, max(0.5, response.usage.input_tokens / max(1, estimate))
+                    )
                 self.emit(
                     "model",
                     {},
@@ -400,6 +467,22 @@ class QuestionRun:
                     started = time.monotonic()
                     try:
                         result = self.tools.execute(name, self.model_arguments(args))
+                    except ToolArgumentError as error:
+                        self.rejections += 1
+                        self.emit(
+                            name,
+                            args,
+                            {"rejected": error.code},
+                            started,
+                            "rejected",
+                            callId=cid,
+                        )
+                        if self.rejections > REJECTED_CALLS:
+                            return self.terminal(
+                                "failed", reason="invalid_or_unavailable_tool_provider"
+                            )
+                        messages.append(self.rejection(cid, error.code))
+                        continue
                     except Exception:
                         self.emit(name, args, {}, started, "failed", callId=cid)
                         raise
@@ -411,12 +494,60 @@ class QuestionRun:
                             if self.cancel.is_set()
                             else "time_budget",
                         )
-                    size = len(encoded(result).encode("utf-8"))
+                    rejected = data.get("rejected")
+                    if (
+                        name == "submit_answer"
+                        and rejected in ARGUMENT_HINTS
+                        and self.rejections < REJECTED_CALLS
+                    ):
+                        # A proposal citing a range or an unknown handle is not
+                        # an absence of answer: the model may cite cells instead.
+                        self.rejections += 1
+                        self.emit(
+                            name,
+                            args,
+                            {"rejected": rejected},
+                            started,
+                            "rejected",
+                            callId=cid,
+                        )
+                        messages.append(self.rejection(cid, rejected))
+                        continue
+                    if name == "submit_answer":
+                        size = len(encoded(result).encode("utf-8"))
+                        if size > ANSWER_BYTES:
+                            self.emit(
+                                name, args, {"bytes": size}, started, "result_bytes"
+                            )
+                            return self.terminal("not_found", reason="result_bytes")
+                        self.emit(name, args, summary(result), started, callId=cid)
+                        return self.terminal(data["status"], answer=data.get("answer"))
+                    view, omitted = model_view(name, data, many=self._many)
+                    delivered = {"trust": result["trust"], "data": view}
+                    # Only handles actually delivered in a successful tool result
+                    # become eligible answer sources.
+                    handles = list(dict.fromkeys(issued_handles(delivered)))
+                    for handle in handles:
+                        if handle not in self._model_aliases:
+                            alias = f"c{len(self._model_aliases) + 1}"
+                            self._model_aliases[handle] = alias
+                            self._source_handles[alias] = handle
+                    content = encoded(self.model_result(delivered))
+                    size = len(content.encode("utf-8"))
                     if self.used["resultBytes"] + size > self.limits.result_bytes:
                         self.emit(name, args, {"bytes": size}, started, "result_bytes")
                         return self.terminal("not_found", reason="result_bytes")
                     self.used["resultBytes"] += size
-                    self.emit(name, args, summary(result), started, callId=cid)
+                    self.emit(
+                        name,
+                        args,
+                        {
+                            **summary(result),
+                            **({"omittedForModel": omitted} if omitted else {}),
+                        },
+                        started,
+                        callId=cid,
+                    )
                     if name in {
                         "search_catalog",
                         "find_value",
@@ -424,24 +555,11 @@ class QuestionRun:
                         "describe_sheet",
                     }:
                         self.searched = True
-                    if data.get("coverage", {}).get("complete") is False:
+                    if data.get("coverage", {}).get("complete") is False or omitted:
                         self.incomplete = True
-                    if name == "submit_answer":
-                        return self.terminal(data["status"], answer=data.get("answer"))
-                    # Only handles actually delivered in a successful tool result
-                    # become eligible answer sources.
-                    self.tools.issued.update(issued_handles(result))
-                    for handle in issued_handles(result):
-                        if handle not in self._model_aliases:
-                            alias = f"c{len(self._model_aliases) + 1}"
-                            self._model_aliases[handle] = alias
-                            self._source_handles[alias] = handle
+                    self.tools.issued.update(handles)
                     messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": cid,
-                            "content": encoded(self.model_result(result)),
-                        }
+                        {"role": "tool", "tool_call_id": cid, "content": content}
                     )
         except Exception as exc:
             if self.cancel.is_set() or time.monotonic() >= self.deadline:

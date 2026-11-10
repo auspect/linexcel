@@ -187,7 +187,11 @@ class AskService:
         for key in ("project", "revision", "scope"):
             if key in body and (not isinstance(body[key], str) or len(body[key]) > 128):
                 raise APIError(400, "Portée invalide")
-        with self.store.library.mutation(owner), self.store.lock:
+        # Reading the source list needs the store lock only: every import,
+        # replacement and deletion completes under it. The owner's mutation gate
+        # is also held for a whole catalog rebuild, up to two minutes after a
+        # large import, and the consent step must not wait behind that.
+        with self.store.lock:
             self.cleanup(owner)
             sources = self.store.library.sources(owner, body.get("scope") or None)
             library_sources = sources
@@ -378,6 +382,18 @@ class AskService:
         # documentation budget is per call and was cutting questions short after
         # three or four tool steps, since every step resends the history.
         limits = self.store.config.ask_limits
+        # Every tool call takes the owner's mutation gate, which a catalog
+        # rebuild holds until it ends. Wait for it here, before the question's
+        # clock starts, instead of spending the time budget in that queue.
+        gate = self.store.library.mutation(task["owner"])
+        waiting_until = (
+            time.monotonic() + self.store.config.catalog_limits.build_seconds + 30
+        )
+        while not gate.acquire(timeout=0.2):
+            if event.is_set() or time.monotonic() >= waiting_until:
+                break
+        else:
+            gate.release()
         tools = QuestionTools(
             self.store,
             task["owner"],
@@ -464,8 +480,54 @@ class AskService:
                     "trace": trace,
                 }
             )
+        unavailable = {
+            "status": "failed",
+            "answer": None,
+            "trace": {
+                "schemaVersion": trace["schemaVersion"],
+                "state": "terminal",
+                "verdict": "failed",
+                "reason": "scope_or_source_changed",
+                "steps": [
+                    {
+                        "tool": "finish",
+                        "summary": {
+                            "searchCompleted": False,
+                            "truncated": True,
+                            "doesNotProveAbsence": True,
+                        },
+                        "verdict": "failed",
+                    }
+                ],
+            },
+        }
         # Access rules match source evidence, including replacement and attachment
         # expiry. Persisted run logs never extend source authorization.
+        gate = self.store.library.mutation(owner)
+        if gate.acquire(blocking=False):
+            gate.release()
+        elif result.get("status") != "answer_proposed":
+            # A catalog rebuild holds the gate. Polling a run that has no answer
+            # to reverify must not hang behind it: check that every source still
+            # exists, say why the run is waiting, and reverify on a later poll.
+            with self.store.lock:
+                try:
+                    available = {
+                        source.project_id
+                        for source in self.store.library.sources(
+                            owner, trace["scope"].get("attachment")
+                        )
+                    }
+                except KeyError:
+                    available = set()
+                if not all(
+                    item["projectId"] in available
+                    for item in trace["scope"]["revisions"]
+                ):
+                    return unavailable
+                if (root / "feedback.json").is_file():
+                    result["feedback"] = _read(root / "feedback.json")
+                return {**result, "libraryBusy": True}
         try:
             tools = QuestionTools(
                 self.store, owner, trace["scope"], root, time.monotonic() + 5
@@ -499,27 +561,7 @@ class AskService:
                         },
                     }
         except (KeyError, ValueError, OSError, sqlite3.Error, TimeoutError):
-            return {
-                "status": "failed",
-                "answer": None,
-                "trace": {
-                    "schemaVersion": trace["schemaVersion"],
-                    "state": "terminal",
-                    "verdict": "failed",
-                    "reason": "scope_or_source_changed",
-                    "steps": [
-                        {
-                            "tool": "finish",
-                            "summary": {
-                                "searchCompleted": False,
-                                "truncated": True,
-                                "doesNotProveAbsence": True,
-                            },
-                            "verdict": "failed",
-                        }
-                    ],
-                },
-            }
+            return unavailable
         with self.store.lock:
             if (root / "feedback.json").is_file():
                 result["feedback"] = _read(root / "feedback.json")

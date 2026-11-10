@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation budget no longer applies to questions. Every tool step resends
   the history, so in a real-user trial that budget stopped four of eight
   questions without an answer after three to seven steps.
+- Send the question model a compact view of each tool result: cell identity,
+  labels, saved value, formula and stop reasons, at most 24 KiB. Revision
+  hashes, XML provenance, per-sheet catalog coverage and the folder an external
+  link had on its author's machine no longer leave the server. A lineage is cut
+  to its 60 nearest cells for the model and the trace says so. The answer shown
+  to the reader is still reread in full. In a trial with `gpt-6.1-terra`, the
+  same questions that used 30,000 to 105,000 tokens without an answer were
+  answered with 7,000 to 27,000.
+- Let the model correct a misnamed sheet, a range over 25 cells or a proposal
+  that cites a range instead of cells. It receives a fixed code and hint, up to
+  three times, and the trace shows each refused call. Any other invalid call
+  still ends the search at once.
 - While a question runs, show the elapsed time and what it waits for: the
   model's first response or the latest tool step. When a search stops on a
   token, step, time or result limit, name that limit and state that this does
@@ -46,6 +58,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep a verified answer whatever the size of its lineage. The reread cells
+  and lineage were counted against the 512 KiB budget of model-facing results,
+  so an answer citing two cells with long lineages was discarded as "result
+  size limit" after the model had found it.
+- Do not send a request that would exceed the question's token allowance. The
+  estimate counted words and missed JSON by a factor of three or more; one
+  request of 102,000 tokens passed a 64,000-token allowance. Requests are now
+  estimated from their size and from the provider's previous count.
+- Show the consent step at once after a large import. Preparing a question
+  waited for the library's search index rebuild, up to two minutes with no
+  explanation. A submitted question now waits for that rebuild before its time
+  allowance starts, and says so.
+- Find a saved number by the value the sheet displays. `6600` finds a cell
+  saved as `6600.000000000001`, and `967.5` or `967,5` finds `967.538`: a number
+  matches the saved values that round to it at the decimals typed. Thousands
+  separators are accepted. Search required exact equality and reported a
+  complete search with no result.
+- Find a cell by its address. `B5` or `Synthèse!B5` lists that cell when no
+  text matches the query, so labels such as `Q4` are still searched as text.
 - Return a clear conflict that names the workbook when a question targets one
   whose import is still writing its index. The server answered with an internal
   error.

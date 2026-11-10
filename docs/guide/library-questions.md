@@ -6,6 +6,9 @@ immediately; **Advanced search** reveals scope and object-type filters. Use
 work without an AI provider. Import the workbooks first, then search their labels,
 sheet names, names, table columns or labelled numbers. Accents and case are folded;
 all search terms must match. Try a short label if a sentence finds nothing.
+Type a number as the sheet shows it: `967,5` or `967.5` finds a saved 967.538,
+and `1 455 900` finds 1455900. A cell address such as `B5` or `Synthèse!B5`
+finds that cell when no text matches it.
 Check the scope, revision, coordinates and coverage beside each result. A partial
 search cannot establish absence.
 
@@ -58,7 +61,17 @@ question. Relevance remains yours to confirm or reject. Labels are often inferre
 No workbook formula is recalculated by the question tool. Arithmetic uses the
 bounded `compute` tool and produces a synthetic result with all operands, units
 and periods still requiring review. A model rationale is unverified, even if it
-contains no digits. No proposal is shown after an invalid call or provider failure.
+contains no digits. A model that misnames a sheet, asks for too large a range or
+proposes a range instead of cells is told so and may correct itself, up to three
+times; the trace shows each refused call. Any other invalid call, or a provider
+failure, ends the search without a proposal.
+
+The model does not receive whole tool results. It gets the cell identities,
+labels, saved values and formulas it needs to choose its next step, without
+revision hashes, file-format details or the folder an external link pointed to
+on its author's machine. A long lineage is cut to its nearest cells for the
+model, and the trace says so. The answer you read is not shortened: linexcel
+rereads every cited cell and its full lineage from the indexes.
 
 Every proposed cell shows its directed dependency relationships, saved values,
 formulas, provenance, origins and traversal limits beside the answer. Arrows run
@@ -83,7 +96,10 @@ stops on its token, step, time or result-size limit, the answer area names that
 limit. Such a stop never establishes that the information is absent. A server
 started with `linexcel serve` gives each question 64,000 cumulative tokens by
 default. Every tool step resends the history. Change the allowance with
-`--ai-question-token-budget`. A completed search
+`--ai-question-token-budget`. A request that would pass the allowance is not
+sent. Right after a large import the library rebuilds its search index; a
+question asked then says it is waiting and starts when the rebuild ends. A
+completed search
 is not proof that no answer exists. Stored proposals are checked against current
 source content and freshly traversed link state on read. An unrelated pin or an
 equivalent catalog rebuild preserves a valid proposal; relevant changes suppress

@@ -317,10 +317,17 @@ def test_cancellation_during_provider_request(tools):
 
 def test_time_budget_and_unissued_computation(tools):
     engine, _ = tools
-    result, _ = run(
-        engine, [[call("submit_answer", {"status": "proposed", "compute": "lc1.100"})]]
+    result, provider = run(
+        engine,
+        [
+            [call("submit_answer", {"status": "proposed", "compute": "lc1.100"})],
+            [call("submit_answer", {"status": "not_found"}, "end")],
+        ],
     )
     assert result["status"] == "not_found"
+    # The rejected proposal was reported to the model, which then gave up.
+    correction = json.loads(provider.messages[-1][-1]["content"])
+    assert correction["error"]["code"] == "unissued_computation"
     engine.deadline = time.monotonic() - 1
     result, _ = run(engine, [])
     assert (
@@ -569,7 +576,7 @@ def test_injected_values_labels_sheet_names_and_formulas_cannot_widen_scope(
     evidence = json.loads(provider.messages[-1][-1]["content"])
     assert evidence["trust"] == "untrusted_workbook_data"
     assert attack in encoded(evidence) and "HYPERLINK" in encoded(evidence)
-    assert any(c["labels"] for c in evidence["data"]["cells"])
+    assert any(c.get("labels") for c in evidence["data"]["cells"])
     engine.issued.clear()
     result, _ = run(
         engine,

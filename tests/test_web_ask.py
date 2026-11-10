@@ -232,11 +232,21 @@ def test_actual_foreign_owner_handle_cannot_enter_question_scope(app):
         foreign_handle = cell_handle(
             revision(foreign["id"], index.meta["sha256"]), "Sheet!A1"
         )
+    proposal_with_foreign_handle = [
+        call("submit_answer", {"status": "proposed", "handles": [foreign_handle]}, cid)
+        for cid in ("first", "second", "third", "fourth")
+    ]
+    # However often the model insists, a foreign handle never becomes an answer.
     app.store.ask.provider_factory = lambda _: FakeProvider(
-        [[call("submit_answer", {"status": "proposed", "handles": [foreign_handle]})]]
+        [[attempt] for attempt in proposal_with_foreign_handle]
     )
     run = finished(app, start(app, prepare(app)))["run"]
     assert run["status"] == "not_found" and run["answer"] is None
+    assert [
+        step["verdict"]
+        for step in run["trace"]["steps"]
+        if step["tool"] == "submit_answer"
+    ] == ["rejected", "rejected", "rejected", "completed"]
     assert foreign["id"] not in encoded(run["trace"]["scope"])
     app.store.ask.provider_factory = lambda _: FakeProvider(
         [
@@ -478,3 +488,71 @@ def test_question_budget_is_not_capped_by_the_documentation_budget(tmp_path):
         assert result["run"]["status"] == "answer_proposed"
     finally:
         instance.close()
+
+
+def test_consent_and_polling_do_not_wait_behind_a_catalog_rebuild(app):
+    project = imported(app)
+    owner = hashlib.sha256(b"alice").hexdigest()
+    app.store.ask.provider_factory = lambda _: proposal(project)
+    gate = app.store.library.mutation(owner)
+    held, release = threading.Event(), threading.Event()
+
+    def rebuild():
+        # A catalog rebuild keeps the owner's mutation gate until it ends.
+        with gate:
+            held.set()
+            release.wait(30)
+
+    worker = threading.Thread(target=rebuild)
+    worker.start()
+    assert held.wait(10)
+    try:
+        started = time.monotonic()
+        prepared = prepare(app, project=project["id"])
+        task = start(app, prepared)
+        code, raw, _ = request(app, "GET", f"/api/library/ask/{task['id']}")
+        assert code == 200, raw
+        polled = json.loads(raw)["run"]
+        assert time.monotonic() - started < 5
+        assert polled["libraryBusy"] is True
+        assert polled["status"] == "running" and polled["answer"] is None
+        # The question's clock has not started: nothing ran against the model.
+        assert polled["trace"]["steps"] == []
+        assert polled["trace"]["budgetUse"]["tokens"] == 0
+    finally:
+        release.set()
+        worker.join()
+    result = finished(app, task)
+    assert result["run"]["status"] == "answer_proposed"
+    assert "libraryBusy" not in result["run"]
+
+
+def test_a_run_whose_source_was_deleted_is_not_shown_while_the_library_is_busy(app):
+    project = imported(app)
+    owner = hashlib.sha256(b"alice").hexdigest()
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [[call("submit_answer", {"status": "not_found"}, "end")]]
+    )
+    task = start(app, prepare(app, project=project["id"]))
+    assert finished(app, task)["run"]["status"] == "not_found"
+    app.store.delete(owner, project["id"])
+    gate = app.store.library.mutation(owner)
+    held, release = threading.Event(), threading.Event()
+
+    def rebuild():
+        with gate:
+            held.set()
+            release.wait(30)
+
+    worker = threading.Thread(target=rebuild)
+    worker.start()
+    assert held.wait(10)
+    try:
+        code, raw, _ = request(app, "GET", f"/api/library/ask/{task['id']}")
+    finally:
+        release.set()
+        worker.join()
+    assert code == 200, raw
+    run = json.loads(raw)["run"]
+    assert run["status"] == "failed" and "libraryBusy" not in run
+    assert run["trace"]["reason"] == "scope_or_source_changed"

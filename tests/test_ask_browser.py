@@ -814,3 +814,72 @@ def test_server_message_is_translated_in_the_english_question_view(
         assert "n’est ni" not in alert.inner_text()
     finally:
         page.close()
+
+
+def test_library_update_wait_and_corrected_call_are_named(browser, live_library):
+    app, url, upload = live_library
+    project = upload("attente.xlsx", book_bytes())
+    app.store.config = replace(app.store.config, ai_enabled=True)
+
+    def read_sheet(sheet, cid):
+        return [
+            call(
+                "read_range",
+                {"project": project["id"], "sheet": sheet, "range": "A1:B3"},
+                cid,
+            )
+        ]
+
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            read_sheet("Feuille inconnue", "wrong"),
+            read_sheet("Sheet", "right"),
+            lambda messages: [
+                call(
+                    "submit_answer",
+                    {"status": "proposed", "handles": [select_handle(messages, "B2")]},
+                    "end",
+                )
+            ],
+        ]
+    )
+    owner = next(iter(app.store.tasks.values()))["owner"]
+    gate = app.store.library.mutation(owner)
+    held, release = threading.Event(), threading.Event()
+
+    def rebuild():
+        # A catalog rebuild keeps the owner's mutation gate until it ends.
+        with gate:
+            held.set()
+            release.wait(30)
+
+    page = open_search(browser, url, 1440)
+    worker = threading.Thread(target=rebuild)
+    try:
+        scope_ready(page, url)
+        worker.start()
+        assert held.wait(10)
+        page.get_by_role("button", name="Poser une question à l’IA", exact=True).click()
+        page.locator("#library-ask-question").fill("Quel est le montant ?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        status = page.locator(".library-ask-state [role=status]").filter(
+            has_text="Recherche en cours"
+        )
+        playwright.expect(status).to_contain_text(
+            "La bibliothèque met à jour son index de recherche"
+        )
+        capture(page, "library-busy-1440")
+        release.set()
+        playwright.expect(page.locator(".library-ask-answer")).to_be_visible()
+        trace = page.locator(".library-ask-trace")
+        playwright.expect(trace).to_contain_text(
+            "Lecture d’une petite plage · appel refusé, à corriger par le modèle"
+        )
+        playwright.expect(trace).to_contain_text(
+            "Lecture d’une petite plage · effectué"
+        )
+    finally:
+        release.set()
+        if worker.is_alive():
+            worker.join()
+        page.close()

@@ -155,13 +155,39 @@ boundaries. Source-to-reader arrows follow the stored graph direction. The
 model's operation trace is distinct from this server-computed dependency proof.
 
 `WebConfig(ask_limits=AskLimits(...))` configures default ceilings: 16 tool steps,
-64,000 tokens (further limited by the task/server AI token budget), 120 seconds,
-512 KiB cumulative tool-result bytes, 2,048 output tokens per call and 30 seconds
-per HTTP call. Context preflight includes tool schemas; observed or estimated
-provider usage includes parameter-negotiation attempts. Oversized results are
-discarded before issuing their handles. Each trace is bounded to 256 KiB, with
-argument/handle-detail omissions disclosed if necessary. Provider prose and
-reasoning streams are neither answers nor trace content.
+64,000 cumulative tokens, 120 seconds, 512 KiB of tool results delivered to the
+model, 2,048 output tokens per call and 30 seconds per HTTP call.
+`linexcel serve --ai-question-token-budget` sets the token ceiling. Each request
+is estimated before it is sent, at no less than one token per three bytes of
+context and tool schemas, then corrected by the provider's count for the
+previous request. A request that would pass the ceiling is not made. Observed
+or estimated provider usage includes parameter-negotiation attempts. Each trace
+is bounded to 256 KiB, with argument/handle-detail omissions disclosed if
+necessary. Provider prose and reasoning streams are neither answers nor trace
+content.
+
+The model receives a compact view of each tool result, at most 24 KiB: cell
+identity, sheet, address, kind, saved value, formula, up to four labels and the
+value's provenance. Revision hashes, XML provenance, per-sheet catalog coverage
+and the path an external link had on its author's machine are not sent. Text is
+cut at 300 characters, a formula at 600 and a lineage at its 60 nearest nodes.
+A shortened result states what was left out, the trace records it, and the
+search is then reported as incomplete. Only handles in the delivered view
+become capabilities. The verified answer is read again in full from the source
+indexes. It never returns to the model, so it does not count against the
+512 KiB; it is refused above 8 MiB.
+
+A call that names an unknown sheet, asks for more than 25 cells, or proposes
+something other than a cell is answered with a fixed code and hint, and the
+model may correct it. The fourth such call ends the search. Every other invalid
+call still ends it at once: an unknown tool or argument, malformed JSON, a
+project outside the scope, or an unissued handle in a read, lineage or
+calculation.
+
+A catalog rebuild after an import holds the owner's library gate, for up to two
+minutes on a large workbook. Preparing a question does not wait for it. A
+submitted question waits before its 120 seconds start, and reading the run
+meanwhile returns `libraryBusy: true` instead of blocking.
 
 Runs persist under the private owner's `ask/RUN_ID/`, separately from source
 indexes. `linexcel.ask.v1` records scope/revisions, tool and argument metadata, bounded
@@ -235,8 +261,20 @@ When unavailable, the reported backend is `like`, with matching over a bounded
 prefix of catalog entries and a token-boundary check after the LIKE filter.
 Underscores are separators in both modes. Punctuation and SQL/FTS syntax are
 never executable.
-A complete finite numeric query uses exact numeric equality, exclusively on
-labelled cells. Decimal tolerance and computed values are outside this version.
+A numeric query matches the labelled cells whose saved number rounds to the
+query at the number of decimals typed: `6600` finds a saved
+`6600.000000000001` and `967.5` finds `967.538`, while `967.60` does not.
+Spaces, apostrophes, dots or commas group thousands; a comma or a dot is the
+decimal separator, whichever comes last. `1,234` is ambiguous and matches both
+1.234 and 1234. `34.3%` matches 34.3 and 0.343. Other spellings Python reads,
+such as `1e6`, match exactly. The trace reports the bounds as `numericMatch`.
+Number formats are not applied, and computed values are outside this version.
+
+A query that is one cell address, such as `B5`, `$B$5` or `Synthèse!B5`, is
+searched as text first, because `Q4` or `FY26` are labels far more often than
+addresses. When no text matches, the result lists the cell at that address in
+each scoped sheet, or in the named sheet. Those hits carry `matchedBy:
+"address"` and the trace reports `addressMatch`. Empty cells are not listed.
 
 Results include revision, filename, kind, sheet, address, labels (text, method,
 source sheet/cell, and geometry), value, value provenance, cache status, formula,

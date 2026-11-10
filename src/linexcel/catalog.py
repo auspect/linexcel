@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import math
 import re
 import sqlite3
 import threading
@@ -26,6 +25,7 @@ from typing import Any
 from urllib.parse import quote
 
 from linexcel.catalog_build import WorkbookBuilder, schema
+from linexcel.catalog_query import cell_address, displayed_numbers
 from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
 
@@ -706,12 +706,11 @@ class Catalog:
         start = time.monotonic()
         folded = normalize(query)
         terms = terms_for(folded)
-        try:
-            numeric = float(query.strip())
-            if not math.isfinite(numeric):
-                numeric = None
-        except ValueError:
-            numeric = None
+        # A number stands for the saved values that display as typed; see
+        # catalog_query. ``numeric`` keeps its meaning: a number query or None.
+        ranges = displayed_numbers(query)
+        numeric = ranges or None
+        address = None if ranges else cell_address(query)
         with (
             self.source_reads,
             self.pin() as (db, current),
@@ -763,8 +762,10 @@ class Catalog:
                 args.extend(kinds)
             backend = manifest["backend"]
             if numeric is not None:
-                clauses.append("n.number=?")
-                args.append(numeric)
+                clauses.append(
+                    "(" + " OR ".join("n.number BETWEEN ? AND ?" for _ in ranges) + ")"
+                )
+                args.extend(bound for item in ranges for bound in item)
             elif backend == "fts5" and terms:
                 clauses.append(
                     "e.id IN (SELECT rowid FROM search WHERE search MATCH ?)"
@@ -848,6 +849,67 @@ class Catalog:
             matched = min(len(rows), self.limits.hits)
             hits = []
             evidence_bytes = 0
+            located = []
+            address_match = None
+            if address and not rows and (not kinds or "cell" in kinds):
+                # No text matches "B5": show the cell at that address instead.
+                # Text comes first because Q4 or FY26 are labels far more often.
+                wanted, row, column, a1 = address
+                address_match = {
+                    "rule": "no text matched; cells at the queried address",
+                    "address": a1,
+                    "sheet": wanted,
+                }
+                for item in revisions:
+                    if not item["revision"] or item["rebuildRequired"]:
+                        continue
+                    index = pool.get(source_map[item["projectId"]].path)
+                    for sheet in index.meta.get("sheets", []):
+                        if wanted is not None and normalize(sheet) != normalize(wanted):
+                            continue
+                        if time.monotonic() >= deadline:
+                            caps.add("query_ms")
+                            break
+                        for nid in index.range_members(
+                            sheet, (row, column, row, column)
+                        ):
+                            located.append((item, sheet, a1, nid, index[nid]))
+                    if len(located) > self.limits.hits:
+                        caps.add("hits")
+                        break
+                matched = min(len(located), self.limits.hits)
+            for item, sheet, a1, nid, node in located[
+                offset : min(offset + limit, self.limits.hits)
+            ]:
+                handle = cell_handle(item["revision"], nid)
+                hit = {
+                    "kind": "cell",
+                    "matchedBy": "address",
+                    "occurrenceCount": 1,
+                    "occurrenceCountComplete": True,
+                    "occurrenceScope": "the cell at the queried address",
+                    "occurrences": [{"address": a1, "handle": handle}],
+                    "occurrencesOmitted": 0,
+                    "revision": item["revision"],
+                    "filename": item["filename"],
+                    "sheet": sheet,
+                    "address": a1,
+                    "labels": node.get("cellLabels", []),
+                    "handle": handle,
+                    "objectId": nid,
+                    "name": node.get("name"),
+                    "value": node.get("value"),
+                    "valueProvenance": node.get("provenance", "unknown"),
+                    "cacheStatus": node.get("cache_status"),
+                    "formula": node.get("formula"),
+                    "untrustedContent": True,
+                }
+                size = len(_json(hit).encode())
+                if evidence_bytes + size > self.limits.response_bytes:
+                    caps.add("response_bytes")
+                    break
+                hits.append(hit)
+                evidence_bytes += size
             for (
                 entry_id,
                 pid,
@@ -955,6 +1017,13 @@ class Catalog:
                 },
                 "untrustedContent": True,
             }
+            if ranges:
+                result["trace"]["numericMatch"] = {
+                    "rule": "saved numbers that round to the query as typed",
+                    "ranges": [list(item) for item in ranges],
+                }
+            if located and address_match:
+                result["trace"]["addressMatch"] = address_match
             result["coverage"] = {
                 **coverage,
                 "capsHit": sorted(caps),
