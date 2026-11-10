@@ -249,6 +249,10 @@ def test_real_question_states_and_inert_workbook_text(
         page.get_by_role("button", name="Chercher une réponse", exact=True).click()
         if state == "consent":
             playwright.expect(page.locator(".library-ask-consent")).to_be_visible()
+            # The consent step is brought into view and focused, but not armed:
+            # focus lands on the section, never on its Allow button.
+            playwright.expect(page.locator(".library-ask-consent")).to_be_focused()
+            playwright.expect(page.locator(".library-ask-consent")).to_be_in_viewport()
             assert page.locator(".library-ask-state .primary:visible").count() == 1
             consent = page.locator(".library-ask-consent").inner_text()
             assert all(

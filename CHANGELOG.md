@@ -29,8 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explains the bounded evidence tools, and provides a clear return to search.
   Direct search continues to work without AI.
 
+- Lock formualizer 0.14.0. A saved dynamic-array spill is now recalculated,
+  where 0.13.0 read it back as `#SPILL!` and linexcel kept the saved value. The
+  declared minimum stays 0.10.1.
+
 ### Fixed
 
+- Show the remote AI consent step right below the question and move focus to
+  it, without selecting its Allow button. It appeared below the help text,
+  often out of view, while the search button was already disabled.
+- Keep the graph legend clear of the zoom controls and minimap. On a narrow
+  canvas it hid the zoom-out and fit buttons. The workbook graph notice now
+  uses singular forms for one node, link or group.
 - Distinguish a source reference invented or altered by the question model from
   a changed workbook or scope. Unissued references still stop the question
   without a proposal; the trace explains the invalid model reference and the

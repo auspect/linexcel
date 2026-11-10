@@ -157,6 +157,13 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       setFeedback(value.feedback.at(-1).decision);
     } catch (cause) { setError(cause.message); }
   };
+  const consentRef = useRef(null);
+  useEffect(() => {
+    // Bring the consent step into view without arming it: focus the section, not its Allow button.
+    if (!disclosure || !consentRef.current) return;
+    consentRef.current.scrollIntoView?.({ block: "nearest" });
+    consentRef.current.focus({ preventScroll: true });
+  }, [disclosure]);
   const runId = useRef(null);
   const answer = run?.status === "answer_proposed" ? run.answer : null;
   const busySteps = run?.trace?.budgetUse?.steps || 0;
@@ -181,18 +188,18 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       <textarea id="library-ask-question" rows={2} maxLength={2000} value={question} disabled={!config?.available} aria-describedby="library-ask-help" placeholder={text("Ex. : D’où vient le montant de la marge ?", "E.g. Where does the margin amount come from?")} autoFocus onChange={event => { clear(); setQuestion(event.target.value); }} />
       <div className="library-ask-actions"><button type="submit" className={disclosure ? "" : "primary"} disabled={!config?.available || busy || !question.trim() || Boolean(disclosure)}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
     </form>
-    <details className="library-technical-trace"><summary>{text("Comment l’IA recherche", "How AI searches")}</summary><p>{text("Elle utilise des outils de recherche, de lecture des cellules et de parcours du lignage, dans le périmètre choisi. Chaque opération apparaît dans la trace. Les valeurs sont celles enregistrées dans les classeurs ; les formules ne sont pas recalculées.", "It uses search, cell-reading and lineage tools within the selected scope. Every operation appears in the trace. Values are those saved in the workbooks; formulas are not recalculated.")}</p></details>
     {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 0 || busySteps === 1 ? "effectuée. La trace est disponible ci-dessus." : "effectuées. La trace est disponible ci-dessus.", "completed. The trace is accessible above.")}</p>}
     {run?.status === "not_found" && <p role="status">{text("Aucune réponse proposée dans cette recherche. Consultez la trace pour voir les sources consultées et les limites rencontrées, ou précisez votre question.", "No answer proposed in this search. Check the trace for consulted sources and encountered limits, or refine your question.")}</p>}
     {run?.status === "failed" && <p role="status">{text("La recherche IA n’a pas abouti. La trace indique la cause ; vous pouvez revenir à la recherche sans IA.", "The AI search did not complete. The trace explains why; you can return to search without AI.")}</p>}
     {error && <p role="alert">{error}</p>}
-    {disclosure && <section className="library-ask-consent" aria-label={text("Autorisation distante", "Remote consent")}>
+    {disclosure && <section ref={consentRef} tabIndex={-1} className="library-ask-consent" aria-label={text("Autorisation distante", "Remote consent")}>
       <h3>{text("Autoriser cette question à distance", "Allow this question remotely")}</h3>
       <p>{text("La question, les valeurs, les formules, les libellés et les noms des feuilles et classeurs consultés quitteront cette machine vers", "The question, values, formulas, labels and names of consulted sheets and workbooks will leave this machine for")} <strong>{disclosure.endpoint}</strong> · {disclosure.model}.</p>
       <p>{disclosure.question}</p><ul>{disclosure.revisions.map(rev => <li key={rev.id}>{rev.filename} · {rev.projectId.slice(0, 8)} · {rev.sha256.slice(0, 8)}</li>)}</ul>
       <button type="button" className="primary" onClick={async () => { setBusy(true); try { await start(disclosure, true, identity.current); } catch(cause) { setError(cause.message); setBusy(false); } }}>{text("Autoriser pour cette question", "Allow for this question")}</button>
       <button type="button" onClick={() => setDisclosure(null)}>{text("Revenir sans envoyer", "Return without sending")}</button>
     </section>}
+    <details className="library-technical-trace"><summary>{text("Comment l’IA recherche", "How AI searches")}</summary><p>{text("Elle utilise des outils de recherche, de lecture des cellules et de parcours du lignage, dans le périmètre choisi. Chaque opération apparaît dans la trace. Les valeurs sont celles enregistrées dans les classeurs ; les formules ne sont pas recalculées.", "It uses search, cell-reading and lineage tools within the selected scope. Every operation appears in the trace. Values are those saved in the workbooks; formulas are not recalculated.")}</p></details>
     {answer && <section className="library-ask-answer" aria-label={text("Réponse proposée", "Proposed answer")}>
       <h3>{text("Réponse proposée", "Proposed answer")}</h3>
       <p><strong>{text("Valeurs, formules et lignage vérifiés dans les index.", "Values, formulas and lineage verified in the indexes.")}</strong> {text("Pertinence à confirmer. Les libellés inférés restent heuristiques ; les limites du lignage sont indiquées ci-dessous.", "Relevance to confirm. Inferred labels remain heuristic; lineage limits are shown below.")}</p>
