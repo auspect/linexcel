@@ -53,6 +53,12 @@ export function lineageLimits(lineages, cells, english) {
   return labels;
 }
 
+// The file an external link names. Its folder is the author's machine: not shown as an action.
+function linkedFilename(path) {
+  const name = String(path || "").split(/[\\/]/).pop();
+  try { return decodeURIComponent(name); } catch { return name; }
+}
+
 function valueText(value, english) {
   if (value == null) return english ? "no saved value" : "aucune valeur enregistrée";
   return typeof value === "object" ? JSON.stringify(value) : displayValue(value);
@@ -113,6 +119,7 @@ export function AnswerLineage({ root, lineage, english }) {
         <span>{nodeLabel(byId.get(boundary.node || boundary.nodeId || boundary.sourceNode), english, true)}</span>
         {boundary.reference && <code>{boundary.reference}</code>}
         {boundary.relationshipPath && <span>{boundary.relationshipPath}</span>}
+        {boundary.reason === "unresolved_external" && linkedFilename(boundary.relationshipPath) && <span className="library-proof-action">{text(`Pour suivre ce lien, « ${linkedFilename(boundary.relationshipPath)} » doit être importé dans la bibliothèque et faire partie des sources de la question.`, `To follow this link, “${linkedFilename(boundary.relationshipPath)}” must be imported into the library and be among the question’s sources.`)}</span>}
         {boundary.stalePin && <span>{text("La cible épinglée n’est plus à jour.", "The pinned target is no longer current.")}</span>}
       </li>)}</ul> : <p>{text("Aucune origine ou frontière supplémentaire signalée.", "No additional origin or boundary reported.")}</p>}
       {!!coverage?.capsHit?.length && <p>{text("Limites atteintes", "Limits reached")}: {coverage.capsHit.map(reason => (boundaryNames[reason] || ["Limite de traitement", "Processing limit"])[english ? 1 : 0]).join(" · ")}</p>}

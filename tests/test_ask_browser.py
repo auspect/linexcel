@@ -678,6 +678,11 @@ def test_selected_source_proof_stops_before_another_loaded_workbook(
         playwright.expect(proof.locator(".library-proof-boundaries")).to_contain_text(
             "Classeur externe hors des sources consultables ou introuvable"
         )
+        # The stop says what would let the lineage continue.
+        playwright.expect(proof.locator(".library-proof-action")).to_contain_text(
+            "« outside.xlsx » doit être importé dans la bibliothèque et faire partie "
+            "des sources de la question"
+        )
         # The headline names the limit beside the claim instead of announcing a
         # verified lineage that the evidence below contradicts.
         headline = page.locator(".library-answer-headline")

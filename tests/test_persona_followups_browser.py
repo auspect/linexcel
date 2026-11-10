@@ -81,3 +81,47 @@ def test_see_in_graph_opens_the_cell_neighbourhood_not_the_overview(
         assert not errors
     finally:
         page.close()
+
+
+def wide_bytes():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Wide"
+    for row in range(1, 81):
+        for column in range(1, 41):
+            sheet.cell(row, column, row * column)
+    output = io.BytesIO()
+    book.save(output)
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("size", [(824, 768), (1440, 900), (390, 844)])
+def test_data_grid_and_its_scrollbars_fit_in_the_panel(browser, live_library, size):
+    app, url, upload = live_library
+    project = upload("wide.xlsx", wide_bytes())
+    page = browser.new_page(viewport={"width": size[0], "height": size[1]})
+    try:
+        page.goto(f"{url}/?project={project['id']}")
+        page.locator("#tab-data").click()
+        if page.locator("#data-options").is_visible():
+            page.locator("#data-options > summary").click()
+        page.locator("#data-sheet").select_option(label="Wide")
+        playwright.expect(page.locator("#excel-window table")).to_be_visible()
+        page.evaluate(
+            "document.getElementById('excel-window').scrollIntoView({block:'start'})"
+        )
+        box = page.evaluate("""() => {
+          const grid = document.getElementById('excel-window').getBoundingClientRect();
+          const panel = document.getElementById('view-data');
+          return {top: grid.top, bottom: grid.bottom, height: grid.height,
+            viewport: innerHeight, panel: panel.clientHeight,
+            scrollsX: document.getElementById('excel-window').scrollWidth
+              > document.getElementById('excel-window').clientWidth};
+        }""")
+        # The grid scrolls sideways. Its scrollbar is at its bottom edge, which
+        # must be on screen together with its top: at 824x768 it never was.
+        assert box["scrollsX"]
+        assert box["height"] <= box["panel"]
+        assert box["top"] >= 0 and box["bottom"] <= box["viewport"]
+    finally:
+        page.close()

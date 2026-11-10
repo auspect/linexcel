@@ -60,9 +60,15 @@ def lineage(count):
             {"node": nodes[-1]["id"], "reason": "input_constant"},
             {
                 "node": nodes[0]["id"],
-                "reason": "external_workbook_not_loaded",
-                "filename": "other.xlsx",
+                "reason": "unresolved_external",
+                "linkId": "9" * 64,
+                "relationshipPath": "/Users/someone/dir/Ventes%20%C3%A9t%C3%A9.xlsx",
                 "revision": REVISION,
+            },
+            {
+                "node": nodes[0]["id"],
+                "reason": "cache_only",
+                "cached": [{"row": 2, "column": 2, "value": 6600.000000000001}],
             },
         ],
         "stronglyConnectedComponents": [],
@@ -75,7 +81,7 @@ def lineage(count):
             "edgesReturned": count - 1,
             "depth": 20,
             "capsHit": [],
-            "boundaries": ["external_workbook_not_loaded", "input_constant"],
+            "boundaries": ["cache_only", "input_constant", "unresolved_external"],
         },
         "trace": {"generation": "g" * 32, "revisions": [REVISION]},
         "untrustedContent": True,
@@ -96,11 +102,16 @@ def test_a_large_lineage_is_cut_to_its_nearest_nodes_and_says_so():
     assert view["edges"] and all(
         edge["source"] in kept and edge["target"] in kept for edge in view["edges"]
     )
-    # A constant input is not a limit; a missing workbook is, and keeps its name.
-    assert [item["reason"] for item in view["boundaries"]] == [
-        "external_workbook_not_loaded"
-    ]
-    assert view["boundaries"][0]["filename"] == "other.xlsx"
+    # A constant input is not a limit. A missing workbook is: the model gets its
+    # file name and the cached values, never the folder on the author's machine.
+    missing, cache = view["boundaries"]
+    assert missing == {
+        "node": "lx1.node1",
+        "reason": "unresolved_external",
+        "filename": "Ventes été.xlsx",
+    }
+    assert cache["cachedInCitingWorkbook"][0]["value"] == 6600.000000000001
+    assert "someone" not in blob and "9" * 64 not in blob
     assert view["coverage"]["complete"] is False
     # The reader's evidence is the untouched full result.
     assert len(full["nodes"]) == 172 and full["nodes"][0]["revision"] == REVISION

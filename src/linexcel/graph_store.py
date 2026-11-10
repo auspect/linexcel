@@ -17,7 +17,7 @@ from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
 from linexcel.lazy_store import WorkbookIndex, _array_edge_filter, _edge_count
 
-VERSION = 5
+VERSION = 6
 FANOUT = 32
 OUTSIDE = -1
 
@@ -64,7 +64,11 @@ def build_graph(index: Path, output: Path) -> dict:
         """)
         next_group = -2
 
-        def bounds(children):
+        def bounds(children, sheet=""):
+            # ``sheet`` is None when the children are whole sheets. Their names
+            # are not coordinates, even when one is called CO2 or TAG1.
+            if sheet is None:
+                return (children[0][3], children[-1][4]) if children else ("", "")
             cells = [
                 coordinate_to_tuple(cell)
                 for child in children
@@ -92,7 +96,7 @@ def build_graph(index: Path, output: Path) -> dict:
             db.executemany(
                 "UPDATE groups SET parent=? WHERE id=?", [(gid, c[0]) for c in children]
             )
-            first, last = bounds(children) if children else (label, label)
+            first, last = bounds(children, sheet) if children else (label, label)
             return (
                 gid,
                 count,
@@ -109,8 +113,15 @@ def build_graph(index: Path, output: Path) -> dict:
                     if len(chunk) == 1:
                         packed.append(chunk[0])
                     else:
-                        first, last = bounds(chunk)
-                        packed.append(group(chunk, first + " … " + last, sheet))
+                        first, last = bounds(chunk, sheet)
+                        packed.append(
+                            group(
+                                chunk,
+                                first + " … " + last,
+                                sheet,
+                                "sheets" if sheet is None else "partition",
+                            )
+                        )
                 children = packed
             return children
 

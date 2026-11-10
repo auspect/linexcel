@@ -2051,17 +2051,21 @@
 
         var metaRow = el('div', 'lin-badges');
         if (sheet.visibility !== 'visible') {
-          metaBadge(metaRow, _t('visibility') + ': ' + sheet.visibility, PALETTE.violet);
+          // Excel's own state words stay out of a translated report.
+          var state = sheet.visibility === 'hidden' ? _t('visibility_hidden')
+            : sheet.visibility === 'veryHidden' ? _t('visibility_very_hidden')
+            : sheet.visibility;
+          metaBadge(metaRow, _t('visibility') + _t('label_separator') + state, PALETTE.violet);
         }
         if (sheet.freeze_panes) {
-          metaBadge(metaRow, _t('freeze_panes') + ': ' + sheet.freeze_panes, PALETTE.green);
+          metaBadge(metaRow, _t('freeze_panes') + _t('label_separator') + sheet.freeze_panes, PALETTE.green);
         }
         if (sheet.hidden_columns && sheet.hidden_columns.length) {
-          metaBadge(metaRow, _t('hidden_columns') + ': ' + sheet.hidden_columns.join(', '),
+          metaBadge(metaRow, _t('hidden_columns') + _t('label_separator') + sheet.hidden_columns.join(', '),
             PALETTE.orange);
         }
         if (sheet.merged_ranges && sheet.merged_ranges.length) {
-          metaBadge(metaRow, _t('merged_ranges') + ': ' + sheet.merged_ranges.length,
+          metaBadge(metaRow, _t('merged_ranges') + _t('label_separator') + sheet.merged_ranges.length,
             PALETTE.blue);
         }
         if (metaRow.children.length > 0) {

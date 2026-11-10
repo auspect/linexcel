@@ -77,6 +77,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   complete search with no result.
 - Find a cell by its address. `B5` or `Synthèse!B5` lists that cell when no
   text matches the query, so labels such as `Q4` are still searched as text.
+- Name the sheet groups of a large workbook's overview by their sheets. A sheet
+  called `CO2` or `TAG1` was read as a cell coordinate, so a group of 32 sheets
+  was titled `CO2 … CO2`. Cards now read "Sheet group, A to Z", the notice says
+  that sheets are grouped alphabetically, and sheetless objects read "No sheet"
+  rather than `∅`. Existing overviews are rebuilt on first use.
+- Keep the data grid and its horizontal scrollbar inside the panel that scrolls
+  them. In an 824 × 768 window the grid was taller than its panel, so its
+  scrollbar and its first rows were never on screen together.
+- Show the graph's loading message in the middle of the canvas. At the top it
+  covered the cell search and the sheet picker for as long as a large workbook
+  was loading.
+- Say what would let an answer's lineage continue past an external workbook:
+  the named file must be imported and be among the question's sources.
+- Translate a sheet's hidden state in static reports, where a French report
+  read `Visibilité: hidden`, and use each language's label separator.
 - Return a clear conflict that names the workbook when a question targets one
   whose import is still writing its index. The server answered with an internal
   error.

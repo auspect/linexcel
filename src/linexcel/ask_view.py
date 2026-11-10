@@ -10,6 +10,7 @@ every cell made one lineage cost more tokens than a whole question.
 from __future__ import annotations
 
 import json
+from urllib.parse import unquote
 
 TEXT_CHARS = 300
 FORMULA_CHARS = 600
@@ -117,30 +118,42 @@ def _link(fact):
         link["supported"] = False
     if fact.get("versionCaveat"):
         link["versionCaveat"] = _clip(str(fact["versionCaveat"]), LABEL_CHARS)
-    cached = [
-        {
-            "row": item.get("row"),
-            "column": item.get("column"),
-            "value": _clip(item.get("value")),
-        }
-        for item in (fact.get("cached") or [])[:CACHED_VALUES]
-        if isinstance(item, dict)
-    ]
+    cached = _cached(fact.get("cached"))
     if cached:
         # Saved by Excel in the citing workbook; the linked file was not read.
         link["cachedInCitingWorkbook"] = cached
     return link
 
 
+def _cached(items):
+    return [
+        {
+            "row": item.get("row"),
+            "column": item.get("column"),
+            "value": _clip(item.get("value")),
+        }
+        for item in (items or [])[:CACHED_VALUES]
+        if isinstance(item, dict)
+    ]
+
+
 def _boundary(raw):
     boundary = {"node": raw.get("node"), "reason": raw.get("reason")}
+    path = raw.get("relationshipPath")
+    if isinstance(path, str) and path:
+        # The file name only: its folder is on the workbook author's machine.
+        name = unquote(path.replace("\\", "/").rsplit("/", 1)[-1])
+        boundary["filename"] = _clip(name, LABEL_CHARS)
     for key, value in raw.items():
-        if key in boundary or key == "component":
+        if key in boundary or key in {"component", "relationshipPath", "linkId"}:
             continue
         if isinstance(value, (str, int, float, bool)):
             boundary[key] = _clip(value, LABEL_CHARS)
     if isinstance(raw.get("component"), list):
         boundary["componentNodes"] = len(raw["component"])
+    cached = _cached(raw.get("cached"))
+    if cached:
+        boundary["cachedInCitingWorkbook"] = cached
     return boundary
 
 

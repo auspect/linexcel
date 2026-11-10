@@ -821,3 +821,4 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
     padding-inline: 7px;
   }
 }
+.library-proof-action { color: var(--ink); font-weight: 600; }

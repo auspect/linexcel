@@ -637,3 +637,23 @@ class TestDiffsAndCardStrings:
         for language in LANGUAGES:
             missing = set(self.NEW_KEYS) - set(UI_STRINGS[language])
             assert not missing, f"{language} is missing {missing}"
+
+
+class TestSheetStateIsTranslated:
+    """A French report read ``Visibilité: hidden``: Excel's state word, untranslated."""
+
+    def test_every_language_names_both_hidden_states(self):
+        for language in LANGUAGES:
+            strings = UI_STRINGS[language]
+            assert strings["visibility_hidden"] and strings["visibility_very_hidden"]
+            assert strings["visibility_hidden"] != "hidden" or language == "en"
+            assert strings["label_separator"].strip() in {":", "："}
+        assert UI_STRINGS["fr"]["visibility_hidden"] == "masquée"
+        assert UI_STRINGS["fr"]["label_separator"] == "\u00a0: "
+
+    def test_the_badge_uses_the_translated_state_and_separator(self):
+        script = script_of(render_html(demo_graph()))
+        assert "_t('visibility_hidden')" in script
+        assert "_t('visibility_very_hidden')" in script
+        assert "_t('visibility') + _t('label_separator') + state" in script
+        assert "+ ': ' + sheet.visibility" not in script

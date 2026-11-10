@@ -754,3 +754,122 @@ def test_lazy_range_in_another_node_page_cannot_invent_neighborhood_edges(graph_
     playwright.expect(page.locator("#graph-notice")).to_contain_text("profondeur 20")
     assert_exact_neighborhood()
     assert not errors
+
+
+def test_pending_overlay_leaves_the_search_and_sheet_picker_readable(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
+    )
+    # The message the app adds to the canvas while a neighbourhood loads, with
+    # the text a large workbook showed for minutes.
+    page.locator("#graph-canvas").evaluate("""host => {
+      const overlay = document.createElement('p');
+      overlay.className = 'graph-pending-overlay';
+      overlay.setAttribute('role', 'status');
+      overlay.textContent = 'Cover!A4 · Chargement des relations…';
+      host.appendChild(overlay);
+    }""")
+    overlay = page.locator(".graph-pending-overlay")
+    playwright.expect(overlay).to_be_visible()
+    # A large workbook keeps this message up for a long time. At the top of the
+    # canvas it hid the cell search and the sheet picker.
+    boxes = page.evaluate("""() => {
+      const box = e => { const r = e.getBoundingClientRect();
+        return {x: r.x, y: r.y, right: r.right, bottom: r.bottom,
+          visible: r.width > 0}; };
+      return {overlay: box(document.querySelector('.graph-pending-overlay')),
+        canvas: box(document.getElementById('graph-canvas')),
+        controls: ['graph-search', 'graph-sheet', 'graph-fit']
+          .map(id => document.getElementById(id)).filter(Boolean).map(box)
+          .filter(b => b.visible)};
+    }""")
+    overlay_box, canvas = boxes["overlay"], boxes["canvas"]
+    assert boxes["controls"]
+    for control in boxes["controls"]:
+        apart = (
+            control["right"] <= overlay_box["x"]
+            or control["x"] >= overlay_box["right"]
+            or control["bottom"] <= overlay_box["y"]
+            or control["y"] >= overlay_box["bottom"]
+        )
+        assert apart, (control, overlay_box)
+    assert canvas["x"] <= overlay_box["x"] and overlay_box["right"] <= canvas["right"]
+    assert not errors
+
+
+def test_sheet_groups_say_what_they_hold_and_how_they_are_ordered(graph_app):
+    page, _, _, errors, _ = graph_app
+
+    def card(view, label, count):
+        return {
+            "id": str(view),
+            "viewId": view,
+            "kind": "group",
+            "level": "sheets",
+            "label": label,
+            "internalEdges": 10,
+            "nodeCount": count,
+        }
+
+    page.route(
+        "**/api/projects/p/graph-view?*",
+        lambda route: route.fulfill(
+            json={
+                "viewId": 0,
+                "scopeNodeCount": 125365,
+                "meta": {"nodeCount": 125365, "edgeCount": 275986},
+                "breadcrumbs": [
+                    {"viewId": 0, "label": "Classeur"},
+                    {"viewId": -9, "label": "∅ … CORSIA", "level": "sheets"},
+                ],
+                "nodes": [
+                    card(-2, "∅ … A4.1.5", 35128),
+                    card(-3, "A4.1.6 … CORSIA", 34903),
+                ],
+                "edges": [{"source": "-2", "target": "-3", "weight": 372}],
+            }
+        ),
+    )
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
+    )
+    page.route(
+        "**/api/projects/p/tasks",
+        lambda route: route.fulfill(
+            json={
+                "task": {
+                    "id": "overview",
+                    "operation": "build_graph",
+                    "status": "succeeded",
+                    "result": {},
+                }
+            }
+        ),
+    )
+    page.evaluate("document.getElementById('graph-build').click()")
+    page.wait_for_function(
+        """() => document.querySelector('#graph-canvas')._flow?.getNodes()
+          .some(n => n.data.original.level === 'sheets')"""
+    )
+    cards = page.locator("#graph-canvas").evaluate(
+        "e=>e._flow.getNodes().map(n=>[n.data.kindLabel,n.data.title])"
+    )
+    assert cards == [
+        ["Groupe de feuilles, de A à Z", "Sans feuille … A4.1.5"],
+        ["Groupe de feuilles, de A à Z", "A4.1.6 … CORSIA"],
+    ]
+    notice = page.locator("#graph-notice")
+    playwright.expect(notice).to_contain_text(
+        "Feuilles regroupées par ordre alphabétique"
+    )
+    assert "Sans feuille … CORSIA" in page.locator("#graph-breadcrumbs").text_content()
+    page.locator("#ui-language").select_option("en")
+    playwright.expect(notice).to_contain_text("Sheets are grouped in alphabetical")
+    cards = page.locator("#graph-canvas").evaluate(
+        "e=>e._flow.getNodes().map(n=>[n.data.kindLabel,n.data.title])"
+    )
+    assert cards[0] == ["Sheet group, A to Z", "No sheet … A4.1.5"]
+    assert not errors
