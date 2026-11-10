@@ -15,7 +15,13 @@ from linexcel.ask_provider import (
     QuestionConfigurationChangedError,
     ToolCapabilityError,
 )
-from linexcel.ask_tools import TOOL_SCHEMAS, TOOLS, issued_handles, validate
+from linexcel.ask_tools import (
+    TOOL_SCHEMAS,
+    TOOLS,
+    UnissuedHandleError,
+    issued_handles,
+    validate,
+)
 
 TRACE_VERSION = "linexcel.ask.v1"
 SYSTEM = """You search saved Excel evidence using read-only tools. You are never a
@@ -30,6 +36,13 @@ saved-value provenance and boundary reasons. Missing external sources require a
 user action. A complete bounded search never proves absence. Prefer a few small
 queries; search_catalog returns occurrences with source handles. describe_sheet
 and narrow read_range help find nearby values. All arithmetic uses compute.
+Use only the frozen authorized database and graph evidence. A source named by the
+user is resolved by the server before this run; never widen that scope. Iterate:
+search, inspect saved cells and their labels, then trace the relevant lineage.
+Every calculated quantity must come from compute, never mental arithmetic or
+model-authored code. You may comment on evidence, but cannot supply source facts.
+Source handles are short run-local aliases such as c1. Copy them exactly from
+tool results. Never invent, decode, reconstruct, pad or reuse another run's alias.
 Always terminate with submit_answer. Rationale is short and explicitly unverified.
 """
 
@@ -114,6 +127,12 @@ class QuestionRun:
         self.publish = publish or (lambda _: None)
         self.before_request = before_request or (lambda: None)
         self.observation = observation
+        # A QuestionTools instance normally belongs to one run. Explicitly reset
+        # capabilities even if an embedding caller reuses that instance.
+        self.tools.issued.clear()
+        self.tools.computations.clear()
+        self._model_aliases: dict[str, str] = {}
+        self._source_handles: dict[str, str] = {}
         self.started = time.monotonic()
         self.deadline = min(tools.deadline, self.started + limits.seconds)
         self.ids: set[str] = set()
@@ -138,6 +157,46 @@ class QuestionRun:
                 self.trace["traceUrl"] = observation.owner.link.replace(
                     "{trace_id}", observation.id
                 )
+
+    def model_arguments(self, args):
+        """Resolve exact aliases only in schema-defined source-handle fields."""
+        result = dict(args)
+        if "handle" in result:
+            result["handle"] = self._source_handles.get(
+                result["handle"], result["handle"]
+            )
+        for key in ("handles", "operands"):
+            if key in result:
+                result[key] = [self._source_handles.get(h, h) for h in result[key]]
+        # Unknown/altered aliases remain unissued strings. The existing tool
+        # authorization rejects them; no decoding or approximate lookup occurs.
+        return result
+
+    def model_result(self, value, field=None):
+        """Keep workbook text literal; shorten only known source identities."""
+        if isinstance(value, dict):
+            if field == "receipt":
+                # The downloadable recipe contains canonical source identities.
+                # The model needs its verdict, not a second copy of that code.
+                return {
+                    key: value[key]
+                    for key in ("schemaVersion", "engine", "engineVersion", "operation")
+                }
+            return {key: self.model_result(item, key) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.model_result(item, field) for item in value]
+        if isinstance(value, str) and field in {
+            "handle",
+            "handles",
+            "id",
+            "source",
+            "target",
+            "node",
+            "root",
+            "stronglyConnectedComponents",
+        }:
+            return self._model_aliases.get(value, value)
+        return value
 
     def emit(self, tool, args, result_summary, started, verdict="completed", **extra):
         args = {key: value for key, value in args.items() if key != "rationale"}
@@ -340,7 +399,7 @@ class QuestionRun:
                     self.used["steps"] += 1
                     started = time.monotonic()
                     try:
-                        result = self.tools.execute(name, args)
+                        result = self.tools.execute(name, self.model_arguments(args))
                     except Exception:
                         self.emit(name, args, {}, started, "failed", callId=cid)
                         raise
@@ -372,11 +431,16 @@ class QuestionRun:
                     # Only handles actually delivered in a successful tool result
                     # become eligible answer sources.
                     self.tools.issued.update(issued_handles(result))
+                    for handle in issued_handles(result):
+                        if handle not in self._model_aliases:
+                            alias = f"c{len(self._model_aliases) + 1}"
+                            self._model_aliases[handle] = alias
+                            self._source_handles[alias] = handle
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": cid,
-                            "content": encoded(result),
+                            "content": encoded(self.model_result(result)),
                         }
                     )
         except Exception as exc:
@@ -410,6 +474,8 @@ class QuestionRun:
                 if isinstance(exc, EndpointRedirectRefusedError)
                 else "approved_configuration_changed"
                 if isinstance(exc, QuestionConfigurationChangedError)
+                else "invalid_source_handle"
+                if isinstance(exc, UnissuedHandleError)
                 else "scope_or_source_changed"
                 if isinstance(exc, KeyError)
                 else "invalid_or_unavailable_tool_provider",

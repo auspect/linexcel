@@ -618,13 +618,16 @@ function provenanceLabel(value, english) {
   return searchText(labels[value] || ["origine enregistrée", "saved provenance"], english);
 }
 
-function LibrarySearch({ apiBase = "api/", language = "fr" }) {
+function LibrarySearch({ apiBase = "api/", language = "fr", onClose }) {
   const english = language === "en";
   const text = (fr, en) => (english ? en : fr);
   const [query, setQuery] = useState("");
   const [intent, setIntent] = useState("search");
   const [askRun, setAskRun] = useState(null);
   const [askEpoch, setAskEpoch] = useState(0);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askConfig, setAskConfig] = useState(null);
+  const [aiConfigFailed, setAiConfigFailed] = useState(false);
   const [mode, setMode] = useState("library");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
@@ -695,6 +698,19 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
     }
     if (!response.ok) throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
     return data;
+  };
+  useEffect(() => {
+    let active = true;
+    request("library/ask/config")
+      .then(value => { if (active) setAskConfig(value); })
+      .catch(() => { if (active) setAiConfigFailed(true); });
+    return () => { active = false; };
+  }, []);
+  const showIntent = (value) => {
+    invalidateAnswer();
+    if (value === "ask") setAskQuestion(query);
+    setIntent(value);
+    if (value === "search") requestAnimationFrame(() => document.getElementById("library-search-query")?.focus());
   };
   const scopedParams = (scope = attachment?.scopeId) => {
     const params = new URLSearchParams();
@@ -1281,6 +1297,16 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       const top = target.getBoundingClientRect().top;
       if (top < bottom) bar.closest("main").scrollBy({ top: top - bottom });
     }}>
+      <header className="library-search-heading">
+        <div className="library-search-title">
+          <button type="button" className="library-back" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
+            {text("Retour au classeur", "Back to workbook")}
+          </button>
+          <h2>{text("Rechercher", "Search")}</h2>
+        </div>
+        <p>{text("Retrouvez une valeur, une cellule ou un libellé dans les classeurs importés.", "Find a value, cell or label in imported workbooks.")}</p>
+      </header>
       <section ref={traceSummary} className="library-trace-summary" aria-live="polite">
         <strong>{text("Dernière opération", "Latest operation")}</strong>
         <span>{intent === "ask" ? askRun?.status === "running" ? text("Question en cours · trace disponible", "Question running · trace available") : askRun ? text("Question terminée · consultez la trace", "Question finished · see trace") : text("Aucune question exécutée.", "No question run yet.") : latestTraceSummary}</span>
@@ -1294,36 +1320,24 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           });
         }}>{text("Trace détaillée", "Detailed trace")}</a>
       </section>
-      <header className="library-search-heading">
-        <div><p className="section-label">{text("Bibliothèque de classeurs", "Workbook library")}</p><h2>{text("Rechercher", "Search")}</h2></div>
-        <p>{text("La valeur et la piste proviennent des index chargés. Leur pertinence reste à confirmer.", "Values and trails come from loaded indexes. Relevance still needs confirmation.")}</p>
-      </header>
-      <section className="library-catalog-state" aria-live="polite">
-        <strong>{text("Catalogue", "Catalog")}</strong>
-        <span>{({
-          queued: text("Mise à jour en attente", "Update queued"),
-          building: text("Mise à jour en cours", "Update in progress"),
-          failed: text("Mise à jour échouée", "Update failed"),
-          ready: status?.stale || status?.pending ? text("Mise à jour en attente", "Update pending") : text("À jour", "Up to date"),
-        })[status?.buildState?.status] || text("État inconnu", "Unknown state")}</span>
-        {status?.stale && <span>{text("Les résultats peuvent être incomplets pendant la mise à jour.", "Results may be incomplete while the index updates.")}</span>}
-        {status?.buildState?.status === "failed" && <span>{catalogFailureReason} {text("Vérifiez l’espace disponible.", "Check available storage.")}</span>}
-        {catalogPollTimedOut && <span>{text("La mise à jour prend trop de temps.", "The update is taking too long.")}</span>}
-        {(status?.buildState?.status === "failed" || catalogPollTimedOut) && <button type="button" onClick={() => document.getElementById("library-attach-file")?.click()}>{text("Choisir un classeur pour reconstruire l’index", "Choose a workbook to rebuild the index")}</button>}
-      </section>
       <section className="library-search-controls" aria-label={text("Recherche dans la bibliothèque", "Search the library")}>
-        <nav className="library-ask-actions" aria-label={text("Mode de recherche", "Search mode")}>
-          <button type="button" aria-pressed={intent === "search"} onClick={() => { invalidateAnswer(); setIntent("search"); }}>{text("Rechercher", "Search")}</button>
-          <button type="button" aria-pressed={intent === "ask"} onClick={() => { invalidateAnswer(); setIntent("ask"); }}>{text("Poser une question", "Ask a question")}</button>
-        </nav>
-        {intent === "ask" && <AskQuestion key={`${apiScope().toString()}:${askEpoch}`} request={request} scope={Object.fromEntries(apiScope())} english={english} onRun={setAskRun} onClear={() => { setSearch(null); setSelected(null); setLineage(null); }} onEvidence={(answer, index = 0) => { setSelected(answer.cells[index]); setLineage(answer.lineages[index]); setDirection("upstream"); setExpandedRevision(null); }} />}
+        {intent === "ask" && <>
+          <button type="button" className="library-search-return" onClick={() => showIntent("search")}>{text("Retour à la recherche", "Back to search")}</button>
+          <AskQuestion key={`${apiScope().toString()}:${askEpoch}`} config={askConfig} initialQuestion={query} draftQuestion={askQuestion} onQuestionChange={setAskQuestion} sourceOptions={revisions} sourceProjectId={apiScope().get("project") || ""} sourceLocked={mode === "revision" || mode === "attachment"} onSourceChange={(value) => changeScope(() => { setProjectId(value); setMode(value ? "project" : "library"); })} request={request} scope={Object.fromEntries(apiScope())} english={english} onRun={setAskRun} onClear={() => { setSearch(null); setSelected(null); setLineage(null); }} onEvidence={(answer, index = 0) => { setSelected(answer.cells[index]); setLineage(answer.lineages[index]); setDirection("upstream"); setExpandedRevision(null); }} />
+        </>}
         {intent === "search" && <form onSubmit={(event) => { event.preventDefault(); performSearch(); }}>
-          <label htmlFor="library-search-query">{text("Requête", "Query")}</label>
+          <label htmlFor="library-search-query">{text("Valeur, cellule ou libellé", "Value, cell or label")}</label>
           <div className="library-search-form-row">
-            <input id="library-search-query" type="search" value={query} onChange={(event) => { setQuery(event.target.value); invalidateAnswer(); setError(""); }} />
+            <input id="library-search-query" type="search" placeholder={text("Ex. : chiffre d’affaires, A12, 42", "E.g. revenue, A12, 42")} aria-describedby="library-search-help" value={query} onChange={(event) => { setQuery(event.target.value); invalidateAnswer(); setError(""); }} />
             <button type="submit" className="primary" disabled={busy}>{text("Rechercher", "Search")}</button>
+            {askConfig?.available && <button type="button" className="library-ask-entry" onClick={() => showIntent("ask")}>{text("Poser une question à l’IA", "Ask AI a question")}</button>}
           </div>
+          <p id="library-search-help" className="help">{text("Recherche sans IA · tous les termes doivent correspondre.", "Search without AI · all terms must match.")}</p>
+          {aiConfigFailed && <p className="help" role="status">{text("La configuration IA est indisponible. Vous pouvez continuer la recherche sans IA.", "AI configuration is unavailable. You can continue searching without AI.")}</p>}
         </form>}
+        <details className="library-advanced">
+          <summary>{text("Recherche avancée", "Advanced search")}<span>{mode === "attachment" ? attachment?.project.filename : mode === "project" ? projects.find(project => project.id === projectId)?.filename || text("Choisir un classeur", "Choose a workbook") : mode === "revision" ? text("Une révision", "One revision") : text("Toute la bibliothèque", "Whole library")}{intent === "search" && kinds.length !== 5 ? ` · ${kinds.length} ${kinds.length === 1 ? text("type sélectionné", "selected kind") : text("types sélectionnés", "selected kinds")}` : ""}</span></summary>
+          <div className="library-advanced-content">
         <fieldset className="library-scope">
           <legend>{text("Portée", "Scope")}</legend>
           {[
@@ -1350,6 +1364,21 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           {attachment && <div className="library-attachment-actions"><button type="button" onClick={keepAttachment}>{text("Conserver dans la bibliothèque", "Keep in library")}</button><button type="button" onClick={removeAttachment}>{text("Retirer le fichier joint", "Remove attached file")}</button></div>}
           {recoverableAttachments.length > 0 && <div className="library-recoverable-attachments"><strong>{text("Fichiers temporaires récupérables (expiration après 24 h)", "Recoverable temporary files (expire after 24 h)")}</strong>{recoverableAttachments.map((item) => <div key={item.scopeId}><button type="button" onClick={() => changeScope(() => { setAttachment({ project: item.project, scopeId: item.scopeId }); setProjectId(item.project.id); setMode("attachment"); })}>{text("Récupérer", "Recover")} · {item.project.filename} · {item.project.id.slice(0, 8)}</button>{attachment?.scopeId !== item.scopeId && <button type="button" onClick={async () => { try { await request(`library/attachments/${item.scopeId}`, { method: "DELETE", body: "{}" }); setRecoverableAttachments((items) => items.filter((entry) => entry.scopeId !== item.scopeId)); } catch (cause) { setError(cause.message); } }}>{text("Supprimer", "Remove")}</button>}</div>)}</div>}
         </div>
+          </div>
+        </details>
+      </section>
+      <section className="library-catalog-state" aria-live="polite">
+        <strong>{text("Catalogue", "Catalog")}</strong>
+        <span>{({
+          queued: text("Mise à jour en attente", "Update queued"),
+          building: text("Mise à jour en cours", "Update in progress"),
+          failed: text("Mise à jour échouée", "Update failed"),
+          ready: status?.stale || status?.pending ? text("Mise à jour en attente", "Update pending") : text("À jour", "Up to date"),
+        })[status?.buildState?.status] || text("État inconnu", "Unknown state")}</span>
+        {status?.stale && <span>{text("Les résultats peuvent être incomplets pendant la mise à jour.", "Results may be incomplete while the index updates.")}</span>}
+        {status?.buildState?.status === "failed" && <span>{catalogFailureReason} {text("Vérifiez l’espace disponible.", "Check available storage.")}</span>}
+        {catalogPollTimedOut && <span>{text("La mise à jour prend trop de temps.", "The update is taking too long.")}</span>}
+        {(status?.buildState?.status === "failed" || catalogPollTimedOut) && <button type="button" onClick={() => document.getElementById("library-attach-file")?.click()}>{text("Choisir un classeur pour reconstruire l’index", "Choose a workbook to rebuild the index")}</button>}
       </section>
       {error && <p className="notice error" role="alert">{error}</p>}
 
@@ -1513,7 +1542,7 @@ export function mountLibrarySearch(element, options = {}) {
   function SearchRoot() {
     const [language, setLanguage] = useState(options.language || "fr");
     update = setLanguage;
-    return <LibrarySearch apiBase={options.apiBase} language={language} />;
+    return <LibrarySearch apiBase={options.apiBase} language={language} onClose={options.onClose} />;
   }
   flushSync(() => root.render(<SearchRoot />));
   return {

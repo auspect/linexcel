@@ -1,6 +1,8 @@
 # Search, follow links and ask questions
 
-Open **Library search** to search the loaded workbook library. Search and lineage
+Use **Search** to search the loaded workbook library. The search field is ready
+immediately; **Advanced search** reveals scope and object-type filters. Use
+**Back to workbook** to return to the application workspace. Search and lineage
 work without an AI provider. Import the workbooks first, then search their labels,
 sheet names, names, table columns or labelled numbers. Accents and case are folded;
 all search terms must match. Try a short label if a sentence finds nothing.
@@ -19,13 +21,36 @@ references, macros, Power Query, cycles and budgets can stop traversal. A comple
 supported lineage describes loaded evidence, not every source that ever existed.
 Large graphs need zoom; the relationship list is an accessible alternative.
 
-Choose **Ask a question** only if you want the optional model to search those same
-sources. The interface discloses the configured endpoint, model, question, scope
+When a provider is enabled, **Ask AI a question** appears beside direct search.
+It carries your search text into an editable question; opening it sends nothing
+to a model. **Back to search** returns to direct search. Without AI configuration,
+direct search remains available and the AI action is hidden.
+
+Choose a workbook in **Authorized question sources** to constrain the question.
+The existing revision and attachment scopes remain authoritative. A literal
+workbook filename in the question also narrows the scope before any model call:
+for example, `Use Budget FY26.xlsx only`. Case and Unicode composition are
+normalized; accents remain significant. Multiple named files form an explicit
+allowlist. An unknown filename, a conflicting selected source or a duplicate
+filename stops preparation and asks you to choose a source. The resolver matches
+literal filenames; it does not interpret natural-language exclusions or infer
+which unnamed workbook you meant. Use the selector for those cases.
+
+The question uses the same sources and the chosen scope. The interface discloses
+the configured endpoint, model, question, scope
 and categories of workbook data. Remote processing requires consent for each
 question. All AI clients refuse HTTP redirects: configure the final endpoint URL.
 The model cannot load files, choose a pin, execute code or widen the scope. Attach
 an additional workbook yourself if needed; question attachments remain scoped to
 that question unless you add them to the library.
+
+The model follows the application's workbook-evidence instructions and calls
+bounded tools: catalog and value search, small range reads, source-cell checks,
+lineage traversal and arithmetic. It must submit source handles rather than
+invent an answer. **How AI searches** explains this workflow in the interface;
+the trace records the actual operations. This does not require an external skill
+installation. The configured model must support structured tool calls; a
+text-only response fails explicitly.
 
 A **Proposed answer** contains server-read cells and server-computed lineage. The
 saved value and formula can be correct while the selected cell answers the wrong
@@ -34,6 +59,23 @@ No workbook formula is recalculated by the question tool. Arithmetic uses the
 bounded `compute` tool and produces a synthetic result with all operands, units
 and periods still requiring review. A model rationale is unverified, even if it
 contains no digits. No proposal is shown after an invalid call or provider failure.
+
+Every proposed cell shows its directed dependency relationships, saved values,
+formulas, provenance, origins and traversal limits beside the answer. Arrows run
+from a source to the cell that uses it. This lineage is recomputed by linexcel
+from its database and graph, independently of the model's search steps. The
+operation trace describes how the model searched; the dependency proof describes
+where the selected value comes from. Neither establishes relevance.
+
+For a new calculation, **Calculation code and sources** shows the typed
+operation, verified operand snapshots, a versioned Python recipe and its digest.
+Linexcel authors this recipe and computes the result; the model supplies only a
+tool call selecting an allowed operation and previously returned sources.
+The recipe calls the same allowlisted arithmetic implementation and can be
+replayed with `linexcel.ask_tools.replay_computation`. Replay uses the recorded
+saved-value snapshots; it does not reopen or authorize current workbooks.
+No arbitrary model-generated code is executed. An optional AI comment remains
+separate from the source facts and calculation proof.
 
 The operation trace is always available, including on failure or abstention. It
 shows counts, budgets, durations, finish reasons and omissions. A completed search

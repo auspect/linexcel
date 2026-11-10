@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Show each AI proposal's source graph beside its cells: directed dependencies,
+  saved values, formulas, provenance and stop boundaries are recomputed by
+  linexcel. New calculations include a versioned server-authored Python recipe,
+  operand snapshots and a code digest; the model cannot supply result numbers
+  or executable code.
+- Freeze questions to a user-selected workbook/revision or exact filenames
+  named in the question. A missing, duplicate or conflicting name requires a
+  selection before any model request. Once a source is selected, a name absent
+  from the library, such as an external link target, is only text and never
+  widens the selection. Short run-local cell IDs let the model refer to
+  evidence without recopying canonical revision handles.
+- Open library search directly in its query field, with scope, object types and
+  temporary attachments under **Advanced search**. The collapsed summary keeps
+  the selected scope visible. An explicit **Back to workbook** button and Escape
+  return to the previous workbook view without losing its selected tab.
+- Show **Ask AI a question** beside direct search only when an AI provider is
+  configured. It carries the query into an editable question without sending it,
+  explains the bounded evidence tools, and provides a clear return to search.
+  Direct search continues to work without AI.
+
+### Fixed
+
+- Distinguish a source reference invented or altered by the question model from
+  a changed workbook or scope. Unissued references still stop the question
+  without a proposal; the trace explains the invalid model reference and the
+  evidence instructions require handles to be copied exactly.
+
 ## [1.18.1] — 2026-11-10
 
 ### Fixed

@@ -15,6 +15,10 @@ from linexcel.lazy_store import WorkbookIndex
 from linexcel.refs import parse_ref
 
 
+class UnissuedHandleError(KeyError):
+    """The model supplied a handle that no successful tool result returned."""
+
+
 def string(limit=256, **extra):
     return {"type": "string", "maxLength": limit, **extra}
 
@@ -32,7 +36,10 @@ def obj(properties, required=None):
     }
 
 
-HANDLE = string(4096)
+HANDLE = string(
+    4096,
+    description="Copy an exact source handle alias (e.g. c1) from this run's tools.",
+)
 PROJECT = string(32, pattern=r"^[a-f0-9]{32}$")
 TOOLS = {
     "list_workbooks": ("List the frozen authorized workbook revisions.", obj({})),
@@ -220,7 +227,7 @@ class QuestionTools:
 
     def require_handle(self, handle):
         if handle not in self.issued:
-            raise KeyError("Handle was not issued in this run")
+            raise UnissuedHandleError("Handle was not issued in this run")
         pid, sha, nid = parse_handle(handle)
         if not any(
             r["projectId"] == pid and r["sha256"] == sha
@@ -252,6 +259,11 @@ class QuestionTools:
             "valueProvenance": raw.get("provenance", "unknown"),
             "formula": raw.get("formula"),
             "cacheStatus": raw.get("cache_status"),
+            **(
+                {"sourceValueProvenance": raw["sourceValueProvenance"]}
+                if "sourceValueProvenance" in raw
+                else {}
+            ),
         }
 
     def lineage(self, sources, handle, direction="upstream", depth=None):
@@ -474,7 +486,147 @@ class QuestionTools:
         )
 
 
+COMPUTE_SCHEMA_VERSION = "linexcel.compute.v1"
+COMPUTE_ENGINE_VERSION = 1
+COMPUTE_OPERATIONS = frozenset(
+    {"sum", "difference", "ratio", "min", "max", "mean", "count"}
+)
+COMPUTE_OPERAND_FIELDS = (
+    "handle",
+    "revision",
+    "filename",
+    "sheet",
+    "address",
+    "value",
+    "formula",
+    "valueProvenance",
+    "cacheStatus",
+    "sourceValueProvenance",
+)
+
+
+def _snapshot_value(value):
+    # Nonfinite inputs must remain reproducible errors, not JSON's nonstandard
+    # NaN/Infinity tokens or an apparent blank.
+    if type(value) is float and not math.isfinite(value):
+        return {
+            "nonFinite": "nan" if math.isnan(value) else "inf" if value > 0 else "-inf"
+        }
+    return value
+
+
+def _receipt_payload(op, operands):
+    return {
+        "schemaVersion": COMPUTE_SCHEMA_VERSION,
+        "engine": "linexcel.ask_tools.calculate",
+        "engineVersion": COMPUTE_ENGINE_VERSION,
+        "operation": op,
+        "operands": [
+            {
+                key: _snapshot_value(cell[key])
+                for key in COMPUTE_OPERAND_FIELDS
+                if key in cell
+            }
+            for cell in operands
+        ],
+    }
+
+
+def _receipt_code(payload):
+    blob = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    )
+    # Only JSON data is interpolated, inside a quoted Python string literal.
+    # This code is evidence for the reader; production never executes it.
+    return (
+        "import json\n"
+        "from linexcel.ask_tools import replay_computation\n\n"
+        f"receipt = json.loads({blob!r})\n"
+        "result = replay_computation(receipt)\n"
+        "print(json.dumps(result, ensure_ascii=False, allow_nan=False))\n"
+    )
+
+
+def replay_computation(receipt):
+    """Reproduce the versioned allowlisted calculation; never execute code text.
+
+    This replays a saved operand snapshot. It does not establish source identity,
+    current authorization, units or relevance; question submission rereads those
+    sources separately before generating its final receipt.
+    """
+    allowed = {
+        "schemaVersion",
+        "engine",
+        "engineVersion",
+        "operation",
+        "operands",
+        "code",
+        "codeSha256",
+    }
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) - allowed
+        or receipt.get("schemaVersion") != COMPUTE_SCHEMA_VERSION
+        or receipt.get("engine") != "linexcel.ask_tools.calculate"
+        or type(receipt.get("engineVersion")) is not int
+        or receipt["engineVersion"] != COMPUTE_ENGINE_VERSION
+        or not isinstance(receipt.get("operation"), str)
+        or receipt.get("operation") not in COMPUTE_OPERATIONS
+        or not isinstance(receipt.get("operands"), list)
+        or len(receipt["operands"]) > 10
+    ):
+        raise ValueError("Unsupported computation receipt")
+    operands = []
+    for snapshot in receipt["operands"]:
+        if (
+            not isinstance(snapshot, dict)
+            or "value" not in snapshot
+            or set(snapshot) - set(COMPUTE_OPERAND_FIELDS)
+        ):
+            raise ValueError("Invalid computation operand snapshot")
+        cell = dict(snapshot)
+        value = cell["value"]
+        if isinstance(value, dict):
+            if set(value) != {"nonFinite"} or value["nonFinite"] not in {
+                "nan",
+                "inf",
+                "-inf",
+            }:
+                raise ValueError("Invalid computation operand value")
+            cell["value"] = float(value["nonFinite"])
+        elif value is not None and type(value) not in {int, float, str, bool}:
+            raise ValueError("Invalid computation operand value")
+        operands.append(cell)
+    payload = _receipt_payload(receipt["operation"], operands)
+    code = _receipt_code(payload)
+    if ("code" in receipt and receipt["code"] != code) or (
+        "codeSha256" in receipt
+        and receipt["codeSha256"] != hashlib.sha256(code.encode()).hexdigest()
+    ):
+        raise ValueError("Computation recipe does not match its snapshot")
+    result = _calculate(receipt["operation"], operands)
+    return {
+        key: result[key]
+        for key in ("op", "value", "error", "blanks", "missingSavedValues")
+    }
+
+
 def calculate(op, operands):
+    """Return deterministic arithmetic with a reproducible, server-authored recipe."""
+    if op not in COMPUTE_OPERATIONS:
+        raise ValueError("Unsupported computation operation")
+    result = _calculate(op, operands)
+    payload = _receipt_payload(op, operands)
+    code = _receipt_code(payload)
+    result["receipt"] = {
+        **payload,
+        "code": code,
+        "codeSha256": hashlib.sha256(code.encode()).hexdigest(),
+    }
+    return result
+
+
+def _calculate(op, operands):
     """Saved values only; never evaluate model expressions or ignore source errors."""
     values = [c["value"] for c in operands]
     numbers = [v for v in values if type(v) in (int, float) and math.isfinite(v)]

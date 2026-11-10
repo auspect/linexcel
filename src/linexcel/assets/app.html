@@ -1327,6 +1327,8 @@ initializeApplication().then(async()=>{const params=new URLSearchParams(location
   const open = document.createElement("button");
   open.type = "button";
   open.className = "library-search-trigger";
+  open.setAttribute("aria-controls", "library-search-view");
+  open.setAttribute("aria-expanded", "false");
   open.textContent = document.documentElement.lang === "en" ? "Search" : "Rechercher";
   nav.append(open);
   header.insertBefore(nav, controls);
@@ -1350,15 +1352,27 @@ initializeApplication().then(async()=>{const params=new URLSearchParams(location
       document.getElementById("workspace-menu").setAttribute("aria-expanded", String(!document.body.classList.contains("sidebar-collapsed")));
     }
     open.setAttribute("aria-current", active ? "page" : "false");
+    open.setAttribute("aria-expanded", String(active));
     if (active && !search) {
       search = window.LinexcelGraph.mountLibrarySearch(root, {
         apiBase: "api/",
         language: document.getElementById("ui-language").value,
+        onClose: () => toggle(false),
       });
     }
-    if (active) view.focus();
+    if (active) requestAnimationFrame(() => {
+      const field = view.querySelector("#library-search-query, #library-ask-question");
+      (field || view).focus({ preventScroll: true });
+    });
+    else open.focus({ preventScroll: true });
   };
   open.onclick = () => toggle(open.getAttribute("aria-current") !== "page");
+  view.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !event.defaultPrevented && !document.getElementById("workspace-sidebar").classList.contains("is-open")) {
+      event.preventDefault();
+      toggle(false);
+    }
+  });
   document.getElementById("ui-language").addEventListener("change", (event) => {
     const english = event.target.value === "en";
     open.textContent = english ? "Search" : "Rechercher";

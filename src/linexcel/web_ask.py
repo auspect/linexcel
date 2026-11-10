@@ -20,6 +20,7 @@ from linexcel.ask_provider import OpenAIToolProvider, QuestionConfigurationChang
 from linexcel.ask_tools import QuestionTools
 from linexcel.catalog import revision
 from linexcel.lazy_store import WorkbookIndex
+from linexcel.question_sources import SourceSelectionError, select_question_sources
 
 CATEGORIES = ["question", "values", "formulas", "labels", "sheet and workbook names"]
 
@@ -153,10 +154,29 @@ class AskService:
         with self.store.library.mutation(owner), self.store.lock:
             self.cleanup(owner)
             sources = self.store.library.sources(owner, body.get("scope") or None)
+            # Resolve names against inventory first. An explicitly selected
+            # workbook never requires opening another workbook's source index.
+            try:
+                inventory, _ = select_question_sources(
+                    [
+                        {
+                            "projectId": item.project_id,
+                            "id": item.project_id,
+                            "filename": item.filename,
+                        }
+                        for item in sources
+                    ],
+                    body["question"],
+                    project=body.get("project")
+                    or (body.get("revision") or "").split(":", 1)[0]
+                    or None,
+                )
+            except SourceSelectionError as exc:
+                raise APIError(409, str(exc)) from None
+            selected_ids = {item["projectId"] for item in inventory}
+            sources = [item for item in sources if item.project_id in selected_ids]
             revisions = []
             for source in sources:
-                if body.get("project") and source.project_id != body["project"]:
-                    continue
                 with WorkbookIndex(source.path) as index:
                     sha = index.meta.get("sha256")
                     if not isinstance(sha, str) or not re.fullmatch(
@@ -164,8 +184,6 @@ class AskService:
                     ):
                         continue
                     rev = revision(source.project_id, sha)
-                    if body.get("revision") and rev["id"] != body["revision"]:
-                        continue
                     revisions.append(
                         {
                             **rev,
@@ -173,8 +191,15 @@ class AskService:
                             "sheets": index.meta.get("sheets", []),
                         }
                     )
-            if not revisions:
-                raise APIError(409, "Aucune révision importée dans cette portée")
+            try:
+                revisions, source_selection = select_question_sources(
+                    revisions,
+                    body["question"],
+                    project=body.get("project"),
+                    revision_id=body.get("revision"),
+                )
+            except SourceSelectionError as exc:
+                raise APIError(409, str(exc)) from None
             if (
                 len(revisions) > 32
                 or len(encoded(revisions).encode("utf-8")) > 64 * 1024
@@ -189,6 +214,7 @@ class AskService:
                 "scope": {
                     "attachment": body.get("scope") or None,
                     "revisions": revisions,
+                    "sourceSelection": source_selection,
                 },
                 "expires": time.time() + 600,
                 "endpoint": self.store.config.ai_base_url,
@@ -207,6 +233,7 @@ class AskService:
                 "model": prepared["model"],
                 "local": prepared["local"],
                 "revisions": revisions,
+                "sourceSelection": source_selection,
                 "categories": CATEGORIES,
                 "expiresAt": prepared["expires"],
             }

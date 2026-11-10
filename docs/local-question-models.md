@@ -7,6 +7,13 @@ tool call exists. The model trace records the finish reason and content/reasonin
 byte counts, without retaining that text. Failed HTTP calls record a bounded
 HTTP status and timeout flag when available through the exception chain.
 
+Cell handles are opaque source references and must be copied exactly from tool
+results. An unissued handle in `get_cell`, `trace_lineage` or `compute` fails with
+`invalid_source_handle`, without displaying a proposal. This is an invalid model
+reference; it does not establish that the workbook or question scope changed.
+An invalid terminal proposal still returns `not_found`, with its rejection in
+the trace and no displayed answer.
+
 The cumulative token allowance in `AskLimits` is **not the model context window**.
 Each successive request includes history, tool schemas and source evidence. A
 local runtime with a smaller context may truncate history, exhaust generation

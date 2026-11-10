@@ -205,6 +205,37 @@ def test_text_only_and_truncated_endpoint(tools, finish, calls, reason):
     assert result["status"] == "failed" and result["trace"]["reason"] == reason
 
 
+@pytest.mark.parametrize("tool", ["get_cell", "trace_lineage", "compute"])
+def test_altered_source_handle_fails_without_claiming_source_change(tools, tool):
+    engine, source = tools
+    altered = None
+
+    def use_altered_handle(messages):
+        nonlocal altered
+        # A padding character is still an unauthorized, unissued string even
+        # when a decoder could map it to the same revision and cell.
+        altered = select_handle(messages) + "="
+        args = {
+            "get_cell": {"handle": altered},
+            "trace_lineage": {
+                "handle": altered,
+                "direction": "upstream",
+                "depth": 2,
+            },
+            "compute": {"op": "sum", "operands": [altered]},
+        }[tool]
+        return [call(tool, args, "altered")]
+
+    result, provider = run(engine, [read(source), use_altered_handle])
+    assert result["status"] == "failed" and result["answer"] is None
+    assert result["trace"]["reason"] == "invalid_source_handle"
+    assert result["trace"]["state"] == "terminal"
+    assert result["trace"]["steps"][-1]["summary"]["truncated"] is True
+    assert len(provider.messages) == 2  # Invalid calls terminate; no guessing.
+    assert altered not in engine.issued
+    assert altered not in encoded(result["trace"])
+
+
 @pytest.mark.parametrize("candidate", ["forged", "foreign", "never_issued", "stale"])
 def test_answer_handles_must_be_issued_current_and_owned(tools, candidate):
     engine, source = tools
@@ -247,6 +278,8 @@ def test_answer_handles_must_be_issued_current_and_owned(tools, candidate):
         )
     result, _ = run(engine, responses)
     assert result["status"] in {"not_found", "failed"} and result["answer"] is None
+    if candidate == "stale":
+        assert result["trace"]["reason"] == "scope_or_source_changed"
 
 
 def test_duplicate_ids_across_rounds(tools):
