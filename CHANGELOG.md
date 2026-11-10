@@ -28,13 +28,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured. It carries the query into an editable question without sending it,
   explains the bounded evidence tools, and provides a clear return to search.
   Direct search continues to work without AI.
-
+- Give library questions their own cumulative token allowance,
+  `linexcel serve --ai-question-token-budget` (default 64,000). The 16,000-token
+  documentation budget no longer applies to questions. Every tool step resends
+  the history, so in a real-user trial that budget stopped four of eight
+  questions without an answer after three to seven steps.
+- While a question runs, show the elapsed time and what it waits for: the
+  model's first response or the latest tool step. When a search stops on a
+  token, step, time or result limit, name that limit and state that this does
+  not prove absence.
+- Format displayed numbers to Excel's 15 significant digits, so a saved
+  `6600.000000000001` reads as `6600`. Exports and calculation receipts keep
+  the stored value.
 - Lock formualizer 0.14.0. A saved dynamic-array spill is now recalculated,
   where 0.13.0 read it back as `#SPILL!` and linexcel kept the saved value. The
   declared minimum stays 0.10.1.
 
 ### Fixed
 
+- Return a clear conflict that names the workbook when a question targets one
+  whose import is still writing its index. The server answered with an internal
+  error.
+- Accept questions that name a reference attached to a workbook in scope, or an
+  external link target it declares, such as `consolidation.xlsx` behind
+  `rapport.xlsx`. Those names were rejected as missing workbooks even though
+  lineage reaches them. They remain text and never select a source.
+- Lead an answer with its lineage limits, such as an external workbook that
+  could not be found or a cache-only value, instead of "lineage verified"
+  above evidence that contradicted it.
+- Open the selected cell's neighbourhood from **See in graph**. When the
+  workbook overview was showing, it collapsed the precedents into
+  "Rest of workbook".
+- Leave search with Escape after a click on plain text moved focus to the page,
+  and translate server messages in the English search and question views.
 - Show the remote AI consent step right below the question and move focus to
   it, without selecting its Allow button. It appeared below the help text,
   often out of view, while the search button was already disabled.

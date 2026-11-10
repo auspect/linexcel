@@ -619,7 +619,7 @@ function provenanceLabel(value, english) {
   return searchText(labels[value] || ["origine enregistrée", "saved provenance"], english);
 }
 
-function LibrarySearch({ apiBase = "api/", language = "fr", onClose }) {
+function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate = (message) => message }) {
   const english = language === "en";
   const text = (fr, en) => (english ? en : fr);
   const [query, setQuery] = useState("");
@@ -697,7 +697,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose }) {
     } catch {
       throw new Error(text("Réponse du serveur illisible.", "Unreadable server response."));
     }
-    if (!response.ok) throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
+    if (!response.ok) throw new Error(translate(data.error?.message || data.message || `HTTP ${response.status}`));
     return data;
   };
   useEffect(() => {
@@ -1543,7 +1543,7 @@ export function mountLibrarySearch(element, options = {}) {
   function SearchRoot() {
     const [language, setLanguage] = useState(options.language || "fr");
     update = setLanguage;
-    return <LibrarySearch apiBase={options.apiBase} language={language} onClose={options.onClose} />;
+    return <LibrarySearch apiBase={options.apiBase} language={language} onClose={options.onClose} translate={options.translate} />;
   }
   flushSync(() => root.render(<SearchRoot />));
   return {

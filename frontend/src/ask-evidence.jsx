@@ -31,9 +31,31 @@ const boundaryNames = {
   index_rebuild_required: ["Réindexation requise", "Index rebuild required"],
 };
 
+// Excel shows at most 15 significant digits. Display only: receipts keep exact values.
+export function displayValue(value) {
+  return typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value) ? String(Number(value.toPrecision(15))) : String(value);
+}
+
+// Stops that leave a proposal's lineage short of its sources. Reaching an input is an origin, not a limit.
+export function lineageLimits(lineages, cells, english) {
+  const labels = [];
+  const add = label => { if (!labels.includes(label)) labels.push(label); };
+  (cells || []).forEach((cell, index) => {
+    const lineage = lineages?.[index];
+    if (!lineage) { add(english ? "lineage unavailable" : "lignage indisponible"); return; }
+    for (const boundary of lineage.boundaries || []) {
+      if (boundary.reason === "input_constant") continue;
+      add((boundaryNames[boundary.reason] || ["Autre arrêt du parcours", "Other traversal stop"])[english ? 1 : 0]);
+    }
+    for (const reason of lineage.coverage?.capsHit || []) add((boundaryNames[reason] || ["Limite de traitement", "Processing limit"])[english ? 1 : 0]);
+    if (lineage.coverage?.complete !== true && !labels.length) add(english ? "coverage not established" : "couverture non établie");
+  });
+  return labels;
+}
+
 function valueText(value, english) {
   if (value == null) return english ? "no saved value" : "aucune valeur enregistrée";
-  return typeof value === "object" ? JSON.stringify(value) : String(value);
+  return typeof value === "object" ? JSON.stringify(value) : displayValue(value);
 }
 
 export function sourceProvenanceLabel(node, english) {

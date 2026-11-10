@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -329,6 +330,20 @@ def test_real_question_states_and_inert_workbook_text(
             )
             assert "Lignage vérifié par linexcel" in proofs.first.inner_text()
             assert "Origine atteinte : donnée source" in proofs.first.inner_text()
+            headline = page.locator(".library-answer-headline")
+            ask_task = next(
+                t for t in app.store.tasks.values() if t["operation"] == "ask"
+            )
+            lineages = page.request.get(
+                f"{url}/api/library/ask/{ask_task['id']}"
+            ).json()["run"]["answer"]["lineages"]
+            limited = "is-limited" in (headline.get_attribute("class") or "")
+            assert limited == any(
+                not lineage
+                or lineage["coverage"].get("complete") is not True
+                or any(b["reason"] != "input_constant" for b in lineage["boundaries"])
+                for lineage in lineages
+            )
             assert page.locator(".library-ask-answer img").count() == 0
             assert not page.evaluate("window.injected || false")
             page.locator(".library-ask-answer").scroll_into_view_if_needed()
@@ -417,6 +432,11 @@ def test_zero_step_busy_status_uses_french_singular(browser, live_library):
         )
         status.wait_for()
         assert "0 étape effectuée" in status.inner_text()
+        # A long first model call shows time passing and what it waits for.
+        playwright.expect(status).to_contain_text(
+            "En attente de la première réponse du modèle"
+        )
+        playwright.expect(status).to_contain_text(re.compile(r"· [1-9]\d* s\."))
         page.locator("#ui-language").select_option("en")
         english_status = page.locator(".library-ask-state [role=status]").filter(
             has_text="Searching"
@@ -658,6 +678,15 @@ def test_selected_source_proof_stops_before_another_loaded_workbook(
         playwright.expect(proof.locator(".library-proof-boundaries")).to_contain_text(
             "Classeur externe hors des sources consultables ou introuvable"
         )
+        # The headline names the limit beside the claim instead of announcing a
+        # verified lineage that the evidence below contradicts.
+        headline = page.locator(".library-answer-headline")
+        playwright.expect(headline).to_have_class(re.compile(r"\bis-limited\b"))
+        playwright.expect(headline).to_contain_text("lignage incomplet")
+        playwright.expect(headline).to_contain_text(
+            "Classeur externe hors des sources consultables ou introuvable"
+        )
+        assert "lignage vérifiés" not in headline.inner_text()
         assert "987654321" not in proof.inner_text()
         task = next(t for t in app.store.tasks.values() if t["operation"] == "ask")
         run = page.request.get(f"{url}/api/library/ask/{task['id']}").json()["run"]
@@ -711,5 +740,30 @@ def test_range_proof_preserves_qualified_address_and_range_semantics(
         playwright.expect(proof).to_contain_text("Plage source, sans valeur scalaire.")
         proof.scroll_into_view_if_needed()
         capture(page, f"answer-range-proof-{width}")
+    finally:
+        page.close()
+
+
+def test_budget_stop_is_named_and_never_reads_as_absence(browser, live_library):
+    from linexcel.ask import AskLimits
+
+    app, url, upload = live_library
+    upload("budget.xlsx", book_bytes())
+    # A budget smaller than the first prompt stops before any model request.
+    app.store.config = replace(
+        app.store.config, ai_enabled=True, ask_limits=AskLimits(tokens=200)
+    )
+    app.store.ask.provider_factory = lambda _: FakeProvider([])
+    page = open_search(browser, url, 1440)
+    try:
+        scope_ready(page, url)
+        page.get_by_role("button", name="Poser une question à l’IA", exact=True).click()
+        page.locator("#library-ask-question").fill("Quel est le montant ?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        status = page.locator(".library-ask-state [role=status]").filter(
+            has_text="Aucune réponse proposée"
+        )
+        playwright.expect(status).to_contain_text("limite de jetons de la question")
+        playwright.expect(status).to_contain_text("pas une preuve d’absence")
     finally:
         page.close()

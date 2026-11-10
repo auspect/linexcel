@@ -43,6 +43,7 @@
 .library-proof-status { padding: 8px 10px; margin: 8px 0; border-radius: var(--r-xs); }
 .library-proof-status.is-complete { color: var(--ok); background: var(--ok-tint); }
 .library-proof-status.is-incomplete { color: var(--warn); background: var(--warn-tint); }
+.library-answer-headline.is-limited { color: var(--warn); background: var(--warn-tint); padding: 8px 10px; border-radius: var(--r-xs); }
 .library-proof-nodes,
 .library-proof-edges,
 .library-proof-boundaries {

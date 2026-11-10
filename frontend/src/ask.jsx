@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { AnswerLineage, CalculationReceipt, sourceProvenanceLabel } from "./ask-evidence.jsx";
+import { AnswerLineage, CalculationReceipt, displayValue, lineageLimits, sourceProvenanceLabel } from "./ask-evidence.jsx";
 
 const failures = {
   endpoint_redirect_refused: ["La redirection du fournisseur a été refusée. Aucun contenu n’a été transmis à cette destination.", "The provider redirect was refused. No content was forwarded to that destination."],
@@ -12,6 +12,13 @@ const failures = {
   scope_or_source_changed: ["La portée ou une révision a changé. Relancez la question.", "The scope or a revision changed. Ask again."],
   cancelled: ["Question annulée.", "Question cancelled."],
   interrupted: ["Question interrompue au redémarrage.", "Question interrupted by a restart."],
+};
+// Budget stops end a search early; they never establish that the answer is absent.
+const budgetStops = {
+  token_budget: ["La recherche a atteint la limite de jetons de la question avant de proposer une réponse.", "The search reached the question's token limit before proposing an answer."],
+  step_budget: ["La recherche a atteint la limite d’étapes de la question avant de proposer une réponse.", "The search reached the question's step limit before proposing an answer."],
+  time_budget: ["La recherche a atteint la limite de durée de la question avant de proposer une réponse.", "The search reached the question's time limit before proposing an answer."],
+  result_bytes: ["La recherche a atteint le volume maximal de résultats avant de proposer une réponse.", "The search reached the result size limit before proposing an answer."],
 };
 const toolNames = {
   list_workbooks: ["Classeurs autorisés", "Authorized workbooks"],
@@ -91,6 +98,15 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
   const [preparedScope, setPreparedScope] = useState(null);
   const [run, setRun] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [busySince, setBusySince] = useState(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    // A long wait for the model must show time passing, not a frozen "0 steps".
+    if (!busy) { setBusySince(null); return undefined; }
+    setBusySince(value => value ?? Date.now());
+    const handle = setInterval(() => setTick(value => value + 1), 1000);
+    return () => clearInterval(handle);
+  }, [busy]);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState(null);
   const identity = useRef(0), activeTask = useRef(null), timer = useRef(null), mounted = useRef(true);
@@ -188,8 +204,14 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
       <textarea id="library-ask-question" rows={2} maxLength={2000} value={question} disabled={!config?.available} aria-describedby="library-ask-help" placeholder={text("Ex. : D’où vient le montant de la marge ?", "E.g. Where does the margin amount come from?")} autoFocus onChange={event => { clear(); setQuestion(event.target.value); }} />
       <div className="library-ask-actions"><button type="submit" className={disclosure ? "" : "primary"} disabled={!config?.available || busy || !question.trim() || Boolean(disclosure)}>{text("Chercher une réponse", "Search for an answer")}</button>{busy && <button type="button" onClick={cancel}>{text("Annuler", "Cancel")}</button>}</div>
     </form>
-    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 0 || busySteps === 1 ? "effectuée. La trace est disponible ci-dessus." : "effectuées. La trace est disponible ci-dessus.", "completed. The trace is accessible above.")}</p>}
-    {run?.status === "not_found" && <p role="status">{text("Aucune réponse proposée dans cette recherche. Consultez la trace pour voir les sources consultées et les limites rencontrées, ou précisez votre question.", "No answer proposed in this search. Check the trace for consulted sources and encountered limits, or refine your question.")}</p>}
+    {busy && <p role="status">{text("Recherche en cours", "Searching")} · {countText(busySteps, "steps", english)} {text(busySteps === 0 || busySteps === 1 ? "effectuée" : "effectuées", "completed")}{busySince ? ` · ${Math.max(0, Math.round((Date.now() - busySince) / 1000))} s` : ""}. {(() => {
+      const steps = run?.trace?.steps || [];
+      const last = steps[steps.length - 1];
+      return !run ? text("Préparation de la question…", "Preparing the question…")
+        : !last ? text("En attente de la première réponse du modèle ; cela peut prendre une minute.", "Waiting for the model’s first response; this can take a minute.")
+        : `${text("Dernière étape : ", "Latest step: ")}${(toolNames[last.tool] || [last.tool, last.tool])[english ? 1 : 0]}.`;
+    })()} {text("La trace est disponible ci-dessus.", "The trace is accessible above.")}</p>}
+    {run?.status === "not_found" && <p role="status">{text("Aucune réponse proposée dans cette recherche.", "No answer proposed in this search.")} {budgetStops[run.trace?.reason] ? `${budgetStops[run.trace.reason][english ? 1 : 0]} ${text("Ce n’est pas une preuve d’absence. Précisez la question (classeur, feuille ou cellule) pour une recherche plus courte.", "This does not prove absence. Narrow the question (workbook, sheet or cell) for a shorter search.")}` : text("Consultez la trace pour voir les sources consultées et les limites rencontrées, ou précisez votre question.", "Check the trace for consulted sources and encountered limits, or refine your question.")}</p>}
     {run?.status === "failed" && <p role="status">{text("La recherche IA n’a pas abouti. La trace indique la cause ; vous pouvez revenir à la recherche sans IA.", "The AI search did not complete. The trace explains why; you can return to search without AI.")}</p>}
     {error && <p role="alert">{error}</p>}
     {disclosure && <section ref={consentRef} tabIndex={-1} className="library-ask-consent" aria-label={text("Autorisation distante", "Remote consent")}>
@@ -202,11 +224,16 @@ export function AskQuestion({ request, scope, english, onRun, onEvidence, onClea
     <details className="library-technical-trace"><summary>{text("Comment l’IA recherche", "How AI searches")}</summary><p>{text("Elle utilise des outils de recherche, de lecture des cellules et de parcours du lignage, dans le périmètre choisi. Chaque opération apparaît dans la trace. Les valeurs sont celles enregistrées dans les classeurs ; les formules ne sont pas recalculées.", "It uses search, cell-reading and lineage tools within the selected scope. Every operation appears in the trace. Values are those saved in the workbooks; formulas are not recalculated.")}</p></details>
     {answer && <section className="library-ask-answer" aria-label={text("Réponse proposée", "Proposed answer")}>
       <h3>{text("Réponse proposée", "Proposed answer")}</h3>
-      <p><strong>{text("Valeurs, formules et lignage vérifiés dans les index.", "Values, formulas and lineage verified in the indexes.")}</strong> {text("Pertinence à confirmer. Les libellés inférés restent heuristiques ; les limites du lignage sont indiquées ci-dessous.", "Relevance to confirm. Inferred labels remain heuristic; lineage limits are shown below.")}</p>
-      {answer.computation && <article className="library-calculation" data-node-id={answer.computation.id}><h4>{text("Calculé par linexcel pour cette réponse, présent dans aucun classeur", "Calculated by linexcel for this answer, present in no workbook")}</h4><p>{operationNames[answer.computation.op]?.[english ? 1 : 0]} · {answer.computation.error ? text("Calcul indisponible : vérifiez les valeurs et erreurs des opérandes.", "Calculation unavailable: check operand values and errors.") : String(answer.computation.value)}</p><p>{text("Opérandes", "Operands")}: {answer.computation.operands.map(cell => `${cell.filename} · ${cell.sheet}!${cell.address}`).join(" ; ")}</p><p>{text("Un calcul valide ne prouve pas qu’il répond à la question.", "Valid arithmetic does not prove that it answers the question.")}</p><CalculationReceipt receipt={answer.computation.receipt} english={english} /></article>}
+      {(() => {
+        const limits = lineageLimits(answer.lineages, answer.cells, english);
+        return limits.length
+          ? <p className="library-answer-headline is-limited"><strong>{text("Valeurs et formules relues dans les index ; lignage incomplet.", "Values and formulas reread from the indexes; lineage incomplete.")}</strong> {text("Limites : ", "Limits: ")}{limits.join(" · ")}. {text("Pertinence à confirmer.", "Relevance to confirm.")}</p>
+          : <p className="library-answer-headline"><strong>{text("Valeurs, formules et lignage vérifiés dans les index.", "Values, formulas and lineage verified in the indexes.")}</strong> {text("Pertinence à confirmer. Les libellés inférés restent heuristiques.", "Relevance to confirm. Inferred labels remain heuristic.")}</p>;
+      })()}
+      {answer.computation && <article className="library-calculation" data-node-id={answer.computation.id}><h4>{text("Calculé par linexcel pour cette réponse, présent dans aucun classeur", "Calculated by linexcel for this answer, present in no workbook")}</h4><p>{operationNames[answer.computation.op]?.[english ? 1 : 0]} · {answer.computation.error ? text("Calcul indisponible : vérifiez les valeurs et erreurs des opérandes.", "Calculation unavailable: check operand values and errors.") : displayValue(answer.computation.value)}</p><p>{text("Opérandes", "Operands")}: {answer.computation.operands.map(cell => `${cell.filename} · ${cell.sheet}!${cell.address}`).join(" ; ")}</p><p>{text("Un calcul valide ne prouve pas qu’il répond à la question.", "Valid arithmetic does not prove that it answers the question.")}</p><CalculationReceipt receipt={answer.computation.receipt} english={english} /></article>}
       {answer.cells.map((cell, index) => <article className="library-ask-cell" key={cell.handle}>
         <strong>{cell.filename} · {cell.sheet}!{cell.address}</strong><small>{cell.revision.projectId.slice(0, 8)} · {cell.revision.sha256.slice(0, 8)}</small>
-        <span>{text("Valeur enregistrée", "Saved value")}: {cell.value == null ? text("aucune valeur enregistrée", "no saved value") : String(cell.value)}</span>
+        <span>{text("Valeur enregistrée", "Saved value")}: {cell.value == null ? text("aucune valeur enregistrée", "no saved value") : displayValue(cell.value)}</span>
         <span>{text("Provenance", "Provenance")}: {sourceProvenanceLabel(cell, english)}</span>
         {cell.formula && <code>{cell.formula}</code>}
         {(cell.labels || []).map((label, i) => <span key={i}>{label.text} · {label.sourceSheet || label.sheet}!{label.sourceCell || label.cell} · {(labelNames[label.method] || ["contexte inféré, à vérifier", "inferred context, to verify"])[english ? 1 : 0]}</span>)}
