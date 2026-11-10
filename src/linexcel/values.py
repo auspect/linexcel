@@ -54,9 +54,10 @@ class SpreadsheetError(str):
 #: ``Circ`` a reference cycle, which Excel resolves by convention rather than by
 #: computing. Neither may be shown as "the value linexcel recalculated", because
 #: linexcel recalculated nothing; the cell falls back to what the file stores.
-#: ``Spill`` is here too: formualizer does not compute dynamic-array overflow, so
-#: a spilled formula reads back as #SPILL! even when Excel stored a real value;
-#: treat it as uncomputed and keep the file's value instead of the error text.
+#: ``Spill`` is here too. formualizer 0.13.0 read a saved spill back as #SPILL!
+#: because the file's cached members blocked the anchor; 0.14.0 recalculates it
+#: (tests/test_formualizer_release_contracts.py). A #SPILL! that remains is still
+#: not a recalculated value, so the cell keeps the file's value, as Excel shows it.
 UNCOMPUTED_ERROR_KINDS = frozenset({"NImpl", "Cancelled", "Circ", "Spill"})
 
 

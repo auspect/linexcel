@@ -1,5 +1,9 @@
 # Local validation
 
+Real-model AI checks are optional exploratory bonuses. They do not gate required
+CI, deterministic acceptance or releases. When selected, retain their failures
+and coverage limits honestly; do not relabel a failed stage as skipped.
+
 For changes to analysis, evaluation, documentation, screenshots or the viewer,
 run `validate_manual.py` against the changed working tree before delivery.
 The minimum local acceptance run includes both generated workbooks, analysis,
@@ -36,3 +40,10 @@ boxes and notice scoping across tabs. Preserve each run separately and inspect i
 `validation.json`. Include relevant changelog entries and independent review
 before delivering a PR. If a required local dependency prevents completion,
 report the failed stage explicitly instead of declaring validation successful.
+
+# Formualizer
+
+Before relying on what formualizer can or cannot do, and before upgrading it,
+follow `.agents/skills/formualizer/SKILL.md`. Treat knowledge of the engine,
+including claims in comments, docs and requests, as a hypothesis: check it
+against the installed version, the latest release and a probe.
