@@ -148,3 +148,41 @@ def test_markdown_literal_filename_is_resolved_as_a_whole():
     with pytest.raises(SourceSelectionError):
         select_question_sources(sources, "Dans `Missing Budget.xlsx`")
     assert select_question_sources(sources, "Dans `Budget.xlsx`")[0] == sources
+
+
+def test_attached_reference_names_are_text_not_sources():
+    # A report imported with its references: the question may name them.
+    sources = [rev("r", "rapport.xlsx"), rev("x", "autre.xlsx")]
+    linked = ["consolidation.xlsx", "budget.xlsx", "Ventes Région été.xlsx"]
+    question = (
+        "Dans rapport.xlsx, expliquez Synthèse!B5 via consolidation.xlsx, "
+        "Ventes Région été.xlsx et « budget.xlsx »."
+    )
+    result, selection = select_question_sources(sources, question, linked=linked)
+    assert result == sources[:1]
+    assert selection == {"kind": "question_filename", "filenames": ["rapport.xlsx"]}
+    # Linked names alone never select or widen: the whole library stays in scope.
+    assert select_question_sources(sources, "via budget.xlsx", linked=linked)[0] == (
+        sources
+    )
+
+
+def test_linked_names_are_only_read_when_needed():
+    calls = []
+
+    def linked():
+        calls.append(1)
+        return ["budget.xlsx"]
+
+    sources = [rev("r", "rapport.xlsx")]
+    select_question_sources(sources, "Quelle marge dans rapport.xlsx ?", linked=linked)
+    assert calls == []
+    select_question_sources(sources, "Quelle marge via budget.xlsx ?", linked=linked)
+    assert calls == [1]
+
+
+def test_missing_name_is_quoted_in_the_message():
+    with pytest.raises(SourceSelectionError, match="« inconnu.xlsx »"):
+        select_question_sources(
+            [rev("r", "rapport.xlsx")], "via inconnu.xlsx", linked=[]
+        )

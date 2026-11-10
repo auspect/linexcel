@@ -423,3 +423,58 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
     assert changed["status"] == "failed" and changed["answer"] is None
     assert changed["trace"]["reason"] == "lineage_state_changed"
     assert not changed["trace"]["steps"][-1]["summary"]["searchCompleted"]
+
+
+def test_question_budget_is_not_capped_by_the_documentation_budget(tmp_path):
+    # 2026-11-10 trial: a 16k documentation budget stopped real questions after
+    # three or four tool steps with "token_budget", since each step resends the
+    # history. Questions now use their own cumulative budget.
+    from linexcel.ask import AskLimits
+    from linexcel.cli import _build_parser
+
+    args = _build_parser().parse_args(["serve"])
+    assert args.ai_question_token_budget == AskLimits().tokens == 64000
+    instance = create_app(
+        tmp_path / "data",
+        resolve_user=lambda env: env.get("user"),
+        ai_enabled=True,
+        ai_token_budget=50,
+        ask_limits=AskLimits(tokens=64000),
+    )
+    try:
+        seen = []
+        original = instance.store.ask.run
+
+        def spy(task, event):
+            import linexcel.web_ask as web_ask
+
+            real = web_ask.QuestionRun
+
+            class Recording(real):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    seen.append(self.limits.tokens)
+
+            web_ask.QuestionRun = Recording
+            try:
+                return original(task, event)
+            finally:
+                web_ask.QuestionRun = real
+
+        instance.store.ask.run = spy
+        find_spec = importlib.util.find_spec
+        importlib.util.find_spec = lambda name, *a: (
+            object() if name == "openai" else find_spec(name, *a)
+        )
+        try:
+            project = imported(instance)
+            instance.store.ask.provider_factory = lambda _: proposal(project)
+            result = finished(
+                instance, start(instance, prepare(instance, project=project["id"]))
+            )
+        finally:
+            importlib.util.find_spec = find_spec
+        assert seen == [64000]
+        assert result["run"]["status"] == "answer_proposed"
+    finally:
+        instance.close()

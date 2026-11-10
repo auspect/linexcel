@@ -14,7 +14,11 @@ reference; it does not establish that the workbook or question scope changed.
 An invalid terminal proposal still returns `not_found`, with its rejection in
 the trace and no displayed answer.
 
-The cumulative token allowance in `AskLimits` is **not the model context window**.
+The cumulative token allowance in `AskLimits` (64,000 by default, set with
+`linexcel serve --ai-question-token-budget`) is **not the model context window**.
+It is also separate from `--ai-token-budget`, which bounds documentation tasks.
+Before 1.19.0 that documentation budget (16,000 by default) also capped
+questions, and stopped real searches after three or four tool steps.
 Each successive request includes history, tool schemas and source evidence. A
 local runtime with a smaller context may truncate history, exhaust generation
 space, or reject the request before the application's cumulative budget is used.

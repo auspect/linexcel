@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -119,3 +120,43 @@ def test_explicit_project_disambiguates_duplicate_filename(app):
     prepared = json.loads(raw)
     assert prepared["sourceSelection"]["kind"] == "explicit"
     assert [item["projectId"] for item in prepared["revisions"]] == [chosen["id"]]
+
+
+def test_attached_reference_name_does_not_block_the_question(app):
+    report = add(app, "rapport.xlsx")
+    add(app, "autre.xlsx")
+    owner = hashlib.sha256(b"alice").hexdigest()
+    references = app.store.project_path(owner, report["id"]) / "references"
+    references.mkdir(exist_ok=True)
+    (references / "budget.xlsx").write_bytes(b"attached reference")
+    code, raw, _ = request(
+        app,
+        "POST",
+        "/api/library/ask/prepare",
+        {"question": "Dans rapport.xlsx, d’où vient B5 via budget.xlsx ?"},
+    )
+    assert code == 200, raw
+    prepared = json.loads(raw)
+    assert [item["projectId"] for item in prepared["revisions"]] == [report["id"]]
+
+
+def test_index_still_being_written_is_a_clear_conflict(app, monkeypatch):
+    pending = add(app, "pending.xlsx")
+
+    def still_building(path, *args, **kwargs):
+        # What a live import produced on 2026-11-10: the source was listed
+        # while its index could not be opened yet.
+        if Path(path).parent.name == pending["id"]:
+            raise sqlite3.OperationalError("unable to open database file")
+        return WorkbookIndex(path, *args, **kwargs)
+
+    monkeypatch.setattr("linexcel.web_ask.WorkbookIndex", still_building)
+    code, raw, _ = request(
+        app,
+        "POST",
+        "/api/library/ask/prepare",
+        {"question": "Dans pending.xlsx, quelle est la valeur ?"},
+    )
+    assert code == 409, raw
+    assert "« pending.xlsx »" in json.loads(raw)["error"]["message"]
+    assert not app.store.ask.prepared

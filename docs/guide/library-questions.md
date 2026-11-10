@@ -78,7 +78,12 @@ No arbitrary model-generated code is executed. An optional AI comment remains
 separate from the source facts and calculation proof.
 
 The operation trace is always available, including on failure or abstention. It
-shows counts, budgets, durations, finish reasons and omissions. A completed search
+shows counts, budgets, durations, finish reasons and omissions. When a question
+stops on its token, step, time or result-size limit, the answer area names that
+limit. Such a stop never establishes that the information is absent. A server
+started with `linexcel serve` gives each question 64,000 cumulative tokens by
+default. Every tool step resends the history. Change the allowance with
+`--ai-question-token-budget`. A completed search
 is not proof that no answer exists. Stored proposals are checked against current
 source content and freshly traversed link state on read. An unrelated pin or an
 equivalent catalog rebuild preserves a valid proposal; relevant changes suppress

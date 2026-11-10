@@ -25,6 +25,42 @@ from linexcel.question_sources import SourceSelectionError, select_question_sour
 CATEGORIES = ["question", "values", "formulas", "labels", "sheet and workbook names"]
 
 
+def attached_names(sources):
+    """Names of references attached to, or external books declared by, sources.
+
+    Lineage reaches these files through their workbook, so a question may name
+    them without importing them. An index still being written is skipped here;
+    question preparation reports it separately when that source is selected.
+    """
+    names = set()
+    for source in sources:
+        references = source.path.parent / "references"
+        if references.is_dir():
+            names.update(item.name for item in references.iterdir() if item.is_file())
+        try:
+            with WorkbookIndex(source.path) as index:
+                books = index.meta.get("externalBooks") or []
+        except (sqlite3.Error, OSError):
+            continue
+        names.update(
+            book["filename"]
+            for book in books
+            if isinstance(book, dict) and isinstance(book.get("filename"), str)
+        )
+    return names
+
+
+def index_unavailable(filename):
+    from linexcel.web import APIError
+
+    return APIError(
+        409,
+        f"« {filename} » est encore en cours d’import ou son index est "
+        "indisponible. Réessayez quand l’import est terminé, ou choisissez une "
+        "autre source.",
+    )
+
+
 def local_endpoint(endpoint):
     host = urlsplit(endpoint).hostname
     if host == "localhost":
@@ -154,6 +190,14 @@ class AskService:
         with self.store.library.mutation(owner), self.store.lock:
             self.cleanup(owner)
             sources = self.store.library.sources(owner, body.get("scope") or None)
+            library_sources = sources
+            linked_cache = []
+
+            def linked():
+                if not linked_cache:
+                    linked_cache.append(attached_names(library_sources))
+                return linked_cache[0]
+
             # Resolve names against inventory first. An explicitly selected
             # workbook never requires opening another workbook's source index.
             try:
@@ -170,6 +214,7 @@ class AskService:
                     project=body.get("project")
                     or (body.get("revision") or "").split(":", 1)[0]
                     or None,
+                    linked=linked,
                 )
             except SourceSelectionError as exc:
                 raise APIError(409, str(exc)) from None
@@ -177,7 +222,11 @@ class AskService:
             sources = [item for item in sources if item.project_id in selected_ids]
             revisions = []
             for source in sources:
-                with WorkbookIndex(source.path) as index:
+                try:
+                    opened = WorkbookIndex(source.path)
+                except (sqlite3.Error, OSError):
+                    raise index_unavailable(source.filename) from None
+                with opened as index:
                     sha = index.meta.get("sha256")
                     if not isinstance(sha, str) or not re.fullmatch(
                         r"[a-f0-9]{64}", sha
@@ -197,6 +246,7 @@ class AskService:
                     body["question"],
                     project=body.get("project"),
                     revision_id=body.get("revision"),
+                    linked=linked,
                 )
             except SourceSelectionError as exc:
                 raise APIError(409, str(exc)) from None
@@ -324,10 +374,10 @@ class AskService:
                 ai_base_url=prepared["endpoint"],
                 ai_model=prepared["model"],
             )
-        limits = replace(
-            self.store.config.ask_limits,
-            tokens=min(self.store.config.ask_limits.tokens, task["budget"]["tokens"]),
-        )
+        # Questions have their own cumulative budget (ask_limits.tokens). The
+        # documentation budget is per call and was cutting questions short after
+        # three or four tool steps, since every step resends the history.
+        limits = self.store.config.ask_limits
         tools = QuestionTools(
             self.store,
             task["owner"],

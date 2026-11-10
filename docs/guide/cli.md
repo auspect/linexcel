@@ -175,6 +175,10 @@ linexcel serve --ai --ai-base-url https://gateway.example/v1 \
     --ai-token-budget 100000 --ai-max-tokens 12000
 ```
 
+`--ai-token-budget` bounds each documentation task. Library questions have a
+separate cumulative allowance, `--ai-question-token-budget` (default 64000),
+because every tool step resends the question's history.
+
 `LINEXCEL_AI_API_KEY` supplies the credential. For a remote endpoint,
 `OPENAI_API_KEY` is also accepted; this generic key is withheld from loopback
 endpoints. The server does not load `.env` automatically. Set its environment
