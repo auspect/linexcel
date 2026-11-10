@@ -476,8 +476,15 @@
   left: 48px;
   bottom: 0;
   margin: 6px;
-  max-width: calc(100% - 210px);
+  /* Leave the vertical zoom controls (left) and the 200 px minimap (right, 15 px margin) visible. */
+  max-width: calc(100% - 48px - 12px - 223px);
   pointer-events: none;
+}
+/* Narrow canvases lay the zoom controls out horizontally: sit above them instead. */
+.react-flow.flow-portrait .react-flow__panel.graph-status-panel {
+  left: 0;
+  bottom: 64px;
+  max-width: calc(100% - 12px - 223px);
 }
 .graph-status-panel #graph-notice {
   margin: 0;

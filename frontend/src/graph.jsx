@@ -300,6 +300,7 @@ export function mount(element, options) {
     }, [model]);
     return (
       <ReactFlow
+        className={model.portrait ? "flow-portrait" : undefined}
         nodes={model.nodes}
         edges={model.edges}
         nodeTypes={nodeTypes}
