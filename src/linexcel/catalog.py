@@ -100,6 +100,11 @@ class CatalogLimits:
             raise ValueError("connections must be >=1 and response_bytes >=4096")
 
 
+def brief(value, limit=120):
+    """A saved value short enough to sit beside an occurrence's address."""
+    return value[:limit] if isinstance(value, str) else value
+
+
 def revision(project_id: str, sha256: str) -> dict:
     return {"id": f"{project_id}:{sha256}", "projectId": project_id, "sha256": sha256}
 
@@ -908,7 +913,8 @@ class Catalog:
                 count_complete,
             ) in rows[offset : min(offset + limit, self.limits.hits)]:
                 item = rev_map[pid]
-                node = pool.get(source_map[pid].path)[nid] if nid else None
+                index = pool.get(source_map[pid].path)
+                node = index[nid] if nid else None
                 hit = {
                     "kind": kind,
                     "occurrenceCount": occurrence_count,
@@ -916,10 +922,18 @@ class Catalog:
                     "occurrenceScope": (
                         "indexed cells; unassessed/unscanned cells are excluded"
                     ),
+                    # Each occurrence carries its own saved value: a label and
+                    # the number it labels share one group, and the number is
+                    # what the reader was looking for.
                     "occurrences": [
                         {
                             "address": ref["address"],
                             "handle": cell_handle(item["revision"], ref["node"]),
+                            "value": brief(
+                                index[ref["node"]].get("value")
+                                if ref["node"] in index
+                                else None
+                            ),
                         }
                         for ref in json.loads(occurrences)
                         if ref.get("node")

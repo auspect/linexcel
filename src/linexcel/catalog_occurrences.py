@@ -40,7 +40,7 @@ def source_rows(index, sheet, after, limits, deadline, caps):
 
 
 def occurrences(catalog, sources, *, generation, group, after=0, limit=50):
-    from linexcel.catalog import _json, cell_handle, normalize, revision
+    from linexcel.catalog import _json, brief, cell_handle, normalize, revision
 
     limits = catalog.limits
     if (
@@ -164,7 +164,11 @@ def occurrences(catalog, sources, *, generation, group, after=0, limit=50):
                         coverage["capsHit"].append("page_limit")
                         exhausted = False
                         break
-                    hit = {"address": node.get("cell"), "handle": cell_handle(rev, nid)}
+                    hit = {
+                        "address": node.get("cell"),
+                        "handle": cell_handle(rev, nid),
+                        "value": brief(value),
+                    }
                     result["results"].append(hit)
                     # Reserve the continuation envelope before committing a hit.
                     result["pagination"]["nextAfter"] = seq

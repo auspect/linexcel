@@ -39,6 +39,17 @@ const Card = memo(({ data, selected }) => (
   </article>
 ));
 const nodeTypes = { cell: Card, formulaGroup: Card, sheet: Card, cellGroup: Card };
+// A cell's coordinate. A range address already carries its sheet.
+function coordinate(node) {
+  const address = node.address || node.cell || "";
+  return address.includes("!") ? address : [node.sheet, address].filter(Boolean).join("!");
+}
+// The saved value beside an occurrence, when it says more than the card's headline.
+function occurrenceValue(occurrence, hit, english) {
+  if (occurrence.value === undefined || occurrence.value === null || occurrence.value === hit.value) return "";
+  const shown = searchText(occurrence.value, english);
+  return ` · ${shown.length > 40 ? `${shown.slice(0, 40)}…` : shown}`;
+}
 function countLabel(count, english, french, en) {
   const forms = english ? en : french;
   const singular = Number(count) === 1 || (!english && Number(count) === 0);
@@ -1243,7 +1254,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
     [
       node.filename || node.revision?.projectId || node.projectId,
       node.revision?.sha256?.slice(0, 8),
-      node.sheet && `${node.sheet}!${node.address || node.cell || ""}`,
+      node.sheet && coordinate(node),
       searchText(SEARCH_KIND_LABELS[node.kind] || node.kind, english),
     ].filter(Boolean).join(" · "),
   ]));
@@ -1417,8 +1428,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
               })}</ul>}
               {hit.occurrenceCount !== undefined && <div className="library-occurrences">
                 <span>{hit.occurrenceCount} {hit.occurrenceCount === 1 ? text("occurrence", "occurrence") : text("occurrences", "occurrences")} · {hit.occurrenceCountComplete ? text("comptage complet", "complete count") : text("comptage partiel", "partial count")}</span>
-                {shownOccurrences.map((occurrence) => <button key={occurrence.handle || occurrence.address} type="button" onClick={() => selectResult({ ...hit, handle: occurrence.handle, sheet: occurrence.sheet || hit.sheet, address: occurrence.address })}>{occurrence.sheet || hit.sheet}!{occurrence.address}</button>)}
-                {hit.occurrenceGroup && !occurrenceState?.done && <button type="button" onClick={() => addOccurrences(hit)}>{text("Afficher la page suivante", "Show next page")}</button>}
+                {shownOccurrences.map((occurrence) => <button key={occurrence.handle || occurrence.address} type="button" onClick={() => selectResult({ ...hit, handle: occurrence.handle, sheet: occurrence.sheet || hit.sheet, address: occurrence.address })}>{occurrence.sheet || hit.sheet}!{occurrence.address}{occurrenceValue(occurrence, hit, english)}</button>)}
+                {hit.occurrenceGroup && !occurrenceState?.done && (hit.occurrencesOmitted > 0 || !hit.occurrenceCountComplete) && <button type="button" onClick={() => addOccurrences(hit)}>{text("Afficher la page suivante", "Show next page")}</button>}
               </div>}
             </article>;
           })}
@@ -1445,7 +1456,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
               {graphView.expandedRevision && <button type="button" onClick={() => setExpandedRevision(null)}>{text("Vue des classeurs", "Workbook overview")}</button>}
               {graphView.groups.map(group => <div key={group.id}>
                 <button type="button" aria-pressed={graphView.expandedRevision === group.id} onClick={() => setExpandedRevision(group.id)}>{text("Développer", "Expand")} · {group.filename} · {group.revision.projectId?.slice(0, 8)} · {group.revision.sha256?.slice(0, 8)}</button>
-                <span>{group.members.map(node => `${node.sheet}!${node.address || node.cell || ""}`).join(", ")}</span>
+                <span>{group.members.slice(0, 12).map(coordinate).join(", ")}{group.members.length > 12 ? ` ${text("et", "and")} ${countLabel(group.members.length - 12, english, ["autre cellule", "autres cellules"], ["other cell", "other cells"])}` : ""}</span>
                 {!!group.boundaries.length && <span className="library-boundary-summary">{boundaryText(group.boundaries)}</span>}
               </div>)}
             </nav>

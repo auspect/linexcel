@@ -664,6 +664,37 @@ pre {
   border-radius: var(--r-md);
   box-shadow: var(--shadow-pop);
 }
+/* Wider than a phone, the open options float below their button. Inside the
+   toolbar row they stretched it to their own height, covered the top of the
+   graph and shrank the area a fit works with. The phone keeps its sheet. */
+@media (min-width: 651px) {
+  .graph-hud #graph-options {
+    position: relative;
+  }
+  .graph-hud #graph-options[open] {
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .graph-hud #graph-options > .graph-options-body {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 3;
+    width: min(440px, calc(100cqw - 36px));
+    max-height: min(55vh, 420px);
+    overflow: auto;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop);
+  }
+}
 .graph-hud .graph-toolbar input {
   min-height: var(--h-md);
 }
