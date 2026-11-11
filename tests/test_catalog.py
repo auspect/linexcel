@@ -235,7 +235,14 @@ def test_numeric_long_column_coverage_is_explicit(tmp_path):
     book.save(item.path.parent / "workbook.xlsx")
     build_index(item.path.parent / "workbook.xlsx", item.path)
     result = Catalog(tmp_path / "catalog").search([item], "12")
-    assert result["results"] == []
+    # The number is still found, read from the workbook index, and claims no label.
+    assert [(hit["address"], hit["value"]) for hit in result["results"]] == [
+        ("B12", 12)
+    ]
+    assert result["results"][0]["matchedBy"] == "number"
+    assert result["results"][0]["labels"] == []
+    assert result["trace"]["numericMatch"]["labelled"] == 0
+    assert result["trace"]["numericMatch"]["readFromWorkbookIndexes"] == 1
     assert result["coverage"]["numericObserved"] == 11
     assert result["coverage"]["numericLabelled"] == 0
 

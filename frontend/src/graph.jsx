@@ -1394,7 +1394,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
             {!!caps.length && <span> {caps.map(capLabel).join(" · ")}</span>}
             {search.pagination?.hasMore && <span> {text("D’autres résultats sont disponibles.", "More results are available.")}</span>}
           </p>}
-          {search?.trace?.numericMatch && <p className="help library-result-rule">{text("Nombres enregistrés qui s’affichent ainsi, arrondis au nombre de décimales saisi.", "Saved numbers that display this way, rounded to the decimals typed.")}</p>}
+          {search?.trace?.numericMatch && <p className="help library-result-rule">{text("Nombres enregistrés qui s’affichent ainsi, arrondis au nombre de décimales saisi. Ceux qui n’ont pas de libellé indexé sont lus directement dans les classeurs, sans libellé.", "Saved numbers that display this way, rounded to the decimals typed. Those without an indexed label are read straight from the workbooks, without a label.")}</p>}
           {search?.trace?.addressMatch && <p className="help library-result-rule">{text(`Aucun texte ne correspond : cellules situées à l’adresse ${search.trace.addressMatch.address}.`, `No text matches: cells located at address ${search.trace.addressMatch.address}.`)}</p>}
           {search && results.length === 0 && <p className="library-empty">{text("Aucun résultat affiché pour cette requête et cette portée.", "No results are displayed for this query and scope.")}</p>}
           {results.slice(0, visibleResultCount).map((hit) => {

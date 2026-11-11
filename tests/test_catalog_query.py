@@ -137,3 +137,78 @@ def test_text_that_looks_like_an_address_is_still_searched_as_text(report):
     # The label cell A7 holds the text "Q4"; cell Q4 of each sheet is empty.
     assert cells(found) == [("Synthèse", "A7")]
     assert "addressMatch" not in found["trace"]
+
+
+@pytest.fixture
+def wide_table(tmp_path):
+    # A statistical table: the row label is ten columns left of the value, too
+    # far for the label heuristics, so the catalog's numeric index skips it.
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "EA"
+    sheet["B5"] = "Exportations de biens et de services"
+    sheet["L5"] = 967.538
+    sheet["B6"] = "Importations"
+    sheet["L6"] = 1023.973
+    sheet["M6"] = "967.5"
+    sheet["N6"] = "12 rue"
+    book.save(tmp_path / "tee.xlsx")
+    build_index(tmp_path / "tee.xlsx", tmp_path / "index.sqlite", filename="tee.xlsx")
+    return Catalog(tmp_path / "catalog"), [
+        Source("2" * 32, "tee.xlsx", tmp_path / "index.sqlite", 1)
+    ]
+
+
+def test_a_number_without_an_indexed_label_is_still_found(wide_table):
+    catalog, sources = wide_table
+    found = catalog.search(sources, "967,5")
+    assert cells(found) == [("EA", "L5")]
+    hit = found["results"][0]
+    assert hit["value"] == 967.538 and hit["matchedBy"] == "number"
+    assert hit["labels"] == []
+    assert found["coverage"]["numericLabelled"] == 0
+    assert found["trace"]["numericMatch"]["readFromWorkbookIndexes"] == 1
+    assert found["pagination"] == {
+        "offset": 0,
+        "limit": 50,
+        "matched": 1,
+        "hasMore": False,
+    }
+    assert catalog.lineage(sources, hit["handle"])["graph"]["nodes"]
+    # Text that looks like a number, or starts with one, is not a saved number.
+    assert cells(catalog.search(sources, "12")) == []
+    assert cells(catalog.search(sources, "1 024")) == [("EA", "L6")]
+    assert cells(catalog.search(sources, "967,5", kinds=["sheet"])) == []
+
+
+def test_labelled_and_unlabelled_numbers_page_together(tmp_path):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = "Montant"
+    sheet["B1"] = 42
+    for column in range(12, 16):
+        sheet.cell(9, column, 42)
+    book.save(tmp_path / "mix.xlsx")
+    build_index(tmp_path / "mix.xlsx", tmp_path / "index.sqlite", filename="mix.xlsx")
+    catalog = Catalog(tmp_path / "catalog")
+    sources = [Source("3" * 32, "mix.xlsx", tmp_path / "index.sqlite", 1)]
+    everything = catalog.search(sources, "42")
+    assert cells(everything) == [("S", a) for a in ("B1", "L9", "M9", "N9", "O9")]
+    assert [hit.get("matchedBy") for hit in everything["results"]] == [
+        None,
+        "number",
+        "number",
+        "number",
+        "number",
+    ]
+    assert everything["pagination"]["matched"] == 5
+    paged = [
+        cells(catalog.search(sources, "42", offset=offset, limit=2))
+        for offset in (0, 2, 4)
+    ]
+    assert paged == [
+        [("S", "B1"), ("S", "L9")],
+        [("S", "M9"), ("S", "N9")],
+        [("S", "O9")],
+    ]

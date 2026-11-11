@@ -186,3 +186,40 @@ def test_missing_name_is_quoted_in_the_message():
         select_question_sources(
             [rev("r", "rapport.xlsx")], "via inconnu.xlsx", linked=[]
         )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # A real-user question ended on the third file's name: it was dropped
+        # from the sources and the lineage stopped one workbook short.
+        "La chaîne de rapport.xlsx via consolidation.xlsx jusqu’à budget.xlsx.",
+        "De rapport.xlsx, consolidation.xlsx, puis budget.xlsx ?",
+        "La chaîne (rapport.xlsx, consolidation.xlsx et budget.xlsx)...",
+        "Compare rapport.xlsx; consolidation.xlsx; budget.xlsx!",
+    ],
+)
+def test_sentence_punctuation_after_a_name_does_not_hide_it(question):
+    chain = [
+        rev("r", "rapport.xlsx"),
+        rev("c", "consolidation.xlsx"),
+        rev("b", "budget.xlsx"),
+        rev("o", "other.xlsx"),
+    ]
+    result, selection = select_question_sources(chain, question)
+    assert {item["projectId"] for item in result} == {"r", "c", "b"}
+    assert selection["kind"] == "question_filename"
+
+
+def test_a_missing_name_before_a_full_stop_is_still_refused(sources):
+    with pytest.raises(SourceSelectionError, match="inconnu.xlsx"):
+        select_question_sources(sources, "Que contient inconnu.xlsx. Merci")
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["Lis other.xlsx.bak", "Lis other.xlsx-old", "Lis archive.other.xlsx.zip"],
+)
+def test_a_longer_name_is_not_read_as_the_known_workbook(sources, question):
+    result, selection = select_question_sources(sources, question)
+    assert selection["kind"] == "library" and len(result) == 3

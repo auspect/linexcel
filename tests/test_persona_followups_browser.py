@@ -125,3 +125,22 @@ def test_data_grid_and_its_scrollbars_fit_in_the_panel(browser, live_library, si
         assert box["top"] >= 0 and box["bottom"] <= box["viewport"]
     finally:
         page.close()
+
+
+def test_retention_line_follows_the_interface_language(browser, live_library):
+    app, url, upload = live_library
+    project = upload("alpha.xlsx", book_bytes())
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        page.goto(f"{url}/?project={project['id']}")
+        retention = page.locator("#retention")
+        playwright.expect(retention).to_contain_text("Limite des fichiers importés : ")
+        page.locator("#ui-language").select_option("en")
+        # The line is composed from numbers, so the page dictionary cannot
+        # retranslate it: it stayed French until the page was reloaded.
+        playwright.expect(retention).to_contain_text("Upload limit: ")
+        assert "Limite" not in retention.text_content()
+        page.locator("#ui-language").select_option("fr")
+        playwright.expect(retention).to_contain_text("Limite des fichiers importés : ")
+    finally:
+        page.close()

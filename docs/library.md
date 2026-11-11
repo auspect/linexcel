@@ -261,13 +261,18 @@ When unavailable, the reported backend is `like`, with matching over a bounded
 prefix of catalog entries and a token-boundary check after the LIKE filter.
 Underscores are separators in both modes. Punctuation and SQL/FTS syntax are
 never executable.
-A numeric query matches the labelled cells whose saved number rounds to the
-query at the number of decimals typed: `6600` finds a saved
-`6600.000000000001` and `967.5` finds `967.538`, while `967.60` does not.
+A numeric query matches the cells whose saved number rounds to the query at
+the number of decimals typed: `6600` finds a saved `6600.000000000001` and
+`967.5` finds `967.538`, while `967.60` does not. Labelled numbers come from
+the catalog with their labels. The others are read from the workbook indexes in
+one bounded pass, listed after them with `matchedBy: "number"` and no label:
+in a wide table most values sit too far from their row label to be indexed
+with it, and a lone title above a column does not prove what it measures.
 Spaces, apostrophes, dots or commas group thousands; a comma or a dot is the
 decimal separator, whichever comes last. `1,234` is ambiguous and matches both
 1.234 and 1234. `34.3%` matches 34.3 and 0.343. Other spellings Python reads,
-such as `1e6`, match exactly. The trace reports the bounds as `numericMatch`.
+such as `1e6`, match exactly. The trace reports the bounds and both counts as
+`numericMatch`.
 Number formats are not applied, and computed values are outside this version.
 
 A query that is one cell address, such as `B5`, `$B$5` or `Synthèse!B5`, is

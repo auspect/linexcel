@@ -25,7 +25,12 @@ from typing import Any
 from urllib.parse import quote
 
 from linexcel.catalog_build import WorkbookBuilder, schema
-from linexcel.catalog_query import cell_address, displayed_numbers
+from linexcel.catalog_query import (
+    cell_address,
+    cells_at,
+    displayed_numbers,
+    numbers_in,
+)
 from linexcel.lazy_store import WorkbookIndex, graph_neighborhood
 from linexcel.limits import validate_limits
 
@@ -849,67 +854,46 @@ class Catalog:
             matched = min(len(rows), self.limits.hits)
             hits = []
             evidence_bytes = 0
-            located = []
-            address_match = None
-            if address and not rows and (not kinds or "cell" in kinds):
-                # No text matches "B5": show the cell at that address instead.
+            # Cells read straight from the source indexes, after the catalog's
+            # own rows: the cell at a queried address when no text matched, or
+            # saved numbers the labelled index does not hold.
+            located, located_by, address_match = [], "", None
+            cells_wanted = not kinds or "cell" in kinds
+            row_count = min(len(rows), self.limits.hits)
+
+            def index_of(item):
+                return pool.get(source_map[item["projectId"]].path)
+
+            if address and not rows and cells_wanted:
                 # Text comes first because Q4 or FY26 are labels far more often.
-                wanted, row, column, a1 = address
+                located_by = "address"
                 address_match = {
                     "rule": "no text matched; cells at the queried address",
-                    "address": a1,
-                    "sheet": wanted,
+                    "address": address[3],
+                    "sheet": address[0],
                 }
-                for item in revisions:
-                    if not item["revision"] or item["rebuildRequired"]:
-                        continue
-                    index = pool.get(source_map[item["projectId"]].path)
-                    for sheet in index.meta.get("sheets", []):
-                        if wanted is not None and normalize(sheet) != normalize(wanted):
-                            continue
-                        if time.monotonic() >= deadline:
-                            caps.add("query_ms")
-                            break
-                        for nid in index.range_members(
-                            sheet, (row, column, row, column)
-                        ):
-                            located.append((item, sheet, a1, nid, index[nid]))
-                    if len(located) > self.limits.hits:
-                        caps.add("hits")
-                        break
-                matched = min(len(located), self.limits.hits)
-            for item, sheet, a1, nid, node in located[
-                offset : min(offset + limit, self.limits.hits)
-            ]:
-                handle = cell_handle(item["revision"], nid)
-                hit = {
-                    "kind": "cell",
-                    "matchedBy": "address",
-                    "occurrenceCount": 1,
-                    "occurrenceCountComplete": True,
-                    "occurrenceScope": "the cell at the queried address",
-                    "occurrences": [{"address": a1, "handle": handle}],
-                    "occurrencesOmitted": 0,
-                    "revision": item["revision"],
-                    "filename": item["filename"],
-                    "sheet": sheet,
-                    "address": a1,
-                    "labels": node.get("cellLabels", []),
-                    "handle": handle,
-                    "objectId": nid,
-                    "name": node.get("name"),
-                    "value": node.get("value"),
-                    "valueProvenance": node.get("provenance", "unknown"),
-                    "cacheStatus": node.get("cache_status"),
-                    "formula": node.get("formula"),
-                    "untrustedContent": True,
-                }
-                size = len(_json(hit).encode())
-                if evidence_bytes + size > self.limits.response_bytes:
-                    caps.add("response_bytes")
-                    break
-                hits.append(hit)
-                evidence_bytes += size
+                located = cells_at(
+                    revisions,
+                    index_of,
+                    address,
+                    normalize,
+                    deadline,
+                    self.limits.hits,
+                    caps,
+                )
+            elif ranges and cells_wanted and row_count < self.limits.hits:
+                located_by = "number"
+                located = numbers_in(
+                    revisions,
+                    index_of,
+                    ranges,
+                    {(row[1], row[3]) for row in rows},
+                    deadline,
+                    self.limits.hits - row_count,
+                    caps,
+                )
+            if located:
+                matched = min(row_count + len(located), self.limits.hits)
             for (
                 entry_id,
                 pid,
@@ -979,6 +963,47 @@ class Catalog:
                     break
                 hits.append(hit)
                 evidence_bytes += size
+            window = min(offset + limit, self.limits.hits)
+            for item, sheet, a1, nid, node in located[
+                max(0, offset - row_count) : max(0, window - row_count)
+            ]:
+                handle = cell_handle(item["revision"], nid)
+                hit = {
+                    "kind": "cell",
+                    "matchedBy": located_by,
+                    "occurrenceCount": 1,
+                    "occurrenceCountComplete": True,
+                    "occurrenceScope": (
+                        "the cell at the queried address"
+                        if located_by == "address"
+                        else "a saved number read from the workbook index"
+                    ),
+                    "occurrences": [{"address": a1, "handle": handle}],
+                    "occurrencesOmitted": 0,
+                    "revision": item["revision"],
+                    "filename": item["filename"],
+                    "sheet": sheet,
+                    "address": a1,
+                    # A number found without an indexed label claims none: a
+                    # lone title above a column does not prove what it measures.
+                    "labels": node.get("cellLabels", [])
+                    if located_by == "address"
+                    else [],
+                    "handle": handle,
+                    "objectId": nid,
+                    "name": node.get("name"),
+                    "value": node.get("value"),
+                    "valueProvenance": node.get("provenance", "unknown"),
+                    "cacheStatus": node.get("cache_status"),
+                    "formula": node.get("formula"),
+                    "untrustedContent": True,
+                }
+                size = len(_json(hit).encode())
+                if evidence_bytes + size > self.limits.response_bytes:
+                    caps.add("response_bytes")
+                    break
+                hits.append(hit)
+                evidence_bytes += size
             result: dict[str, Any] = {
                 "generation": current["generation"],
                 "results": hits,
@@ -1021,6 +1046,8 @@ class Catalog:
                 result["trace"]["numericMatch"] = {
                     "rule": "saved numbers that round to the query as typed",
                     "ranges": [list(item) for item in ranges],
+                    "labelled": min(len(rows), self.limits.hits),
+                    "readFromWorkbookIndexes": len(located),
                 }
             if located and address_match:
                 result["trace"]["addressMatch"] = address_match

@@ -888,3 +888,59 @@ def test_library_update_wait_and_corrected_call_are_named(browser, live_library)
         if worker.is_alive():
             worker.join()
         page.close()
+
+
+@pytest.mark.parametrize("address,warned", [("B3", True), ("B1", False)])
+def test_formula_answers_say_their_values_are_saved_not_recalculated(
+    browser, live_library, address, warned
+):
+    # A real-user trial compared an answer with Excel, which had recalculated a
+    # stale saved value on opening. The answer must say which one it shows.
+    book = Workbook()
+    book.active.title = "S"
+    book.active["A1"], book.active["B1"] = "Ventes", 100
+    book.active["A2"], book.active["B2"] = "Coûts", 40
+    book.active["A3"], book.active["B3"] = "Marge", "=B1-B2"
+    output = io.BytesIO()
+    book.save(output)
+    app, url, upload = live_library
+    project = upload("marge.xlsx", output.getvalue())
+    app.store.config = replace(app.store.config, ai_enabled=True)
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            [
+                call(
+                    "read_range",
+                    {"project": project["id"], "sheet": "S", "range": "A1:B3"},
+                    "read",
+                )
+            ],
+            lambda messages: [
+                call(
+                    "submit_answer",
+                    {
+                        "status": "proposed",
+                        "handles": [select_handle(messages, address)],
+                    },
+                    "end",
+                )
+            ],
+        ]
+    )
+    page = open_search(browser, url, 1440)
+    try:
+        scope_ready(page, url)
+        page.get_by_role("button", name="Poser une question à l’IA", exact=True).click()
+        page.locator("#library-ask-question").fill("Quelle est la marge ?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        playwright.expect(page.locator(".library-ask-answer")).to_be_visible()
+        notice = page.locator(".library-answer-cache")
+        if warned:
+            playwright.expect(notice).to_contain_text(
+                "celles enregistrées dans le fichier, sans recalcul"
+            )
+            capture(page, "formula-answer-saved-values-1440")
+        else:
+            playwright.expect(notice).to_have_count(0)
+    finally:
+        page.close()

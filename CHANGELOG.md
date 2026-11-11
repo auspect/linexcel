@@ -73,8 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Find a saved number by the value the sheet displays. `6600` finds a cell
   saved as `6600.000000000001`, and `967.5` or `967,5` finds `967.538`: a number
   matches the saved values that round to it at the decimals typed. Thousands
-  separators are accepted. Search required exact equality and reported a
-  complete search with no result.
+  separators are accepted. Numbers without an indexed label are found too, read
+  from the workbooks and listed without a label; in a wide statistical table
+  that is most of them. Search required exact equality on labelled numbers and
+  reported a complete search with no result.
 - Find a cell by its address. `B5` or `Synthèse!B5` lists that cell when no
   text matches the query, so labels such as `Q4` are still searched as text.
 - Name the sheet groups of a large workbook's overview by their sheets. A sheet
@@ -92,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the named file must be imported and be among the question's sources.
 - Translate a sheet's hidden state in static reports, where a French report
   read `Visibilité: hidden`, and use each language's label separator.
+- Select every workbook a question names, including one followed by the full
+  stop that ends the sentence. "… via consolidation.xlsx jusqu’à budget.xlsx."
+  froze two of the three files, so the lineage stopped one workbook short.
+- Say, above an answer that cites formula cells, that their values are those
+  saved in the file and that Excel may show others after recalculating.
 - Return a clear conflict that names the workbook when a question targets one
   whose import is still writing its index. The server answered with an internal
   error.
@@ -106,7 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workbook overview was showing, it collapsed the precedents into
   "Rest of workbook".
 - Leave search with Escape after a click on plain text moved focus to the page,
-  and translate server messages in the English search and question views.
+  and translate server messages in the English search and question views. The
+  workspace retention line now follows a change of interface language.
 - Show the remote AI consent step right below the question and move focus to
   it, without selecting its Allow button. It appeared below the help text,
   often out of view, while the search button was already disabled.

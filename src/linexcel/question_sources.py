@@ -58,6 +58,10 @@ def select_question_sources(
         by_name.setdefault(normalized_name(item["filename"]), []).append(item)
     spans, mentioned = [], []
     extension = r"\.(?:xlsx|xlsm|xlsb|xlam|xla|xls)"
+    # A name ends where a longer name would not continue. A full stop or hyphen
+    # counts as continuation only before another word character, so the full
+    # stop that ends "... jusqu’à budget.xlsx." does not hide the name.
+    name_end = r"(?!\w|[.-]\w)"
     quoted_names = []
     for opening, closing in [
         ('"', '"'),
@@ -108,7 +112,7 @@ def select_question_sources(
         if name not in mentioned:
             mentioned.append(name)
     for name in sorted(by_name, key=len, reverse=True):
-        pattern = r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])"
+        pattern = r"(?<![\w.-])" + re.escape(name) + name_end
         for match in re.finditer(pattern, text):
             if any(
                 start <= match.start() and match.end() <= end for start, end in spans
@@ -126,12 +130,12 @@ def select_question_sources(
             chars[start:end] = " " * (end - start)
         return "".join(chars)
 
-    bare = r"(?<![\w.-])[\w.-]+" + extension + r"(?![\w.-])"
+    bare = r"(?<![\w.-])[\w.-]+" + extension + name_end
     if not explicit and re.search(bare, blank()):
         # Linked names may contain spaces, so match them whole before the
         # remaining tokens are judged missing.
         for name in sorted(linked_set(), key=len, reverse=True):
-            pattern = r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])"
+            pattern = r"(?<![\w.-])" + re.escape(name) + name_end
             for match in re.finditer(pattern, text):
                 if not any(
                     start <= match.start() and match.end() <= end

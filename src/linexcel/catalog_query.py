@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 import re
+import sqlite3
+import time
 
 _GROUP = re.compile(r"(?<=\d)[   '’](?=\d{3}(?!\d))")
 _PLAIN = re.compile(r"[+-]?\d+(?:\.(\d+))?")
@@ -109,3 +111,83 @@ def cell_address(query: str) -> tuple[str | None, int, int, str] | None:
         return None
     sheet = quoted.replace("''", "'") if quoted else bare
     return sheet, row, column, f"{letters.upper()}{row}"
+
+
+CELL_KINDS = "kind IN ('cell','input','array_result')"
+
+
+def cells_at(revisions, index_of, address, fold, deadline, limit, caps):
+    """Cells at one address in each scoped sheet, read from the source indexes.
+
+    Returns ``(revision item, sheet, A1, node id, node)`` tuples. ``index_of``
+    opens the index of a revision item, ``fold`` is the search's own text
+    normalization and ``caps`` collects the limits reached.
+    """
+    wanted, row, column, a1 = address
+    folded = fold(wanted) if wanted is not None else None
+    found = []
+    for item in revisions:
+        if not item["revision"] or item["rebuildRequired"]:
+            continue
+        index = index_of(item)
+        for sheet in index.meta.get("sheets", []):
+            if folded is not None and fold(sheet) != folded:
+                continue
+            if time.monotonic() >= deadline:
+                caps.add("query_ms")
+                return found
+            for nid in index.range_members(sheet, (row, column, row, column)):
+                found.append((item, sheet, a1, nid, index[nid]))
+        if len(found) > limit:
+            caps.add("hits")
+            break
+    return found
+
+
+def numbers_in(revisions, index_of, ranges, seen, deadline, limit, caps):
+    """Saved numbers inside ``ranges`` that the labelled index did not return.
+
+    The catalog indexes numbers that have a label. In a wide table most values
+    sit too far from their row label to get one, and a reader still searches the
+    number the sheet shows. One pass over each source index finds them; the
+    time budget of the query bounds it.
+    """
+    bounds = [bound for item in ranges for bound in item]
+    clause = " OR ".join("CAST(search_value AS REAL) BETWEEN ? AND ?" for _ in ranges)
+    found = []
+    for item in revisions:
+        if not item["revision"] or item["rebuildRequired"]:
+            continue
+        if len(found) > limit:
+            caps.add("hits")
+            break
+        index = index_of(item)
+        index.db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        try:
+            # Digits and number punctuation only: a text such as "12 rue" casts
+            # to 12 and must not be read as a number.
+            cursor = index.db.execute(
+                f"SELECT id FROM nodes WHERE {CELL_KINDS} "
+                "AND search_value GLOB '*[0-9]*' "
+                "AND search_value NOT GLOB '*[^0-9.eE+-]*' "
+                f"AND ({clause}) ORDER BY seq LIMIT ?",
+                (*bounds, limit + 1),
+            )
+            for (nid,) in cursor.fetchall():
+                if (item["projectId"], nid) in seen:
+                    continue
+                node = index[nid]
+                value = node.get("value")
+                if type(value) not in (int, float) or not any(
+                    low <= value <= high for low, high in ranges
+                ):
+                    continue
+                address = node.get("cell") or node.get("reference")
+                found.append((item, node.get("sheet"), address, nid, node))
+        except sqlite3.OperationalError as error:
+            if "interrupt" not in str(error):
+                raise
+            caps.add("query_ms")
+        finally:
+            index.db.set_progress_handler(None, 0)
+    return found
