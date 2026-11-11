@@ -335,7 +335,9 @@ def test_group_membership_counts_null_evidence_and_current_pin_confirmation(
         assert (
             "cache enregistré" in page.locator(".library-accessible-graph").inner_text()
         )
-        assert "Formule:" in page.locator(".library-accessible-graph").inner_text()
+        assert (
+            "Formule\u00a0:" in page.locator(".library-accessible-graph").inner_text()
+        )
         assert (
             reader["workbookRevision"]["sha256"][:8]
             in page.locator(".library-accessible-graph").inner_text()

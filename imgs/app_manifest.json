@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-11T09:39:15.037683+00:00",
+  "capturedAt": "2026-11-11T10:21:35.301747+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -16,14 +16,14 @@
   },
   "sources": {
     "src/linexcel/assets/app.html": "57af1fef56b1e6280318f4d52c908b17afa311e18aa5145f23b6508c80197c84",
-    "src/linexcel/assets/app-graph.js": "30ece27b2b17f11209992a3d27c95a77d2bd1aa53ce534f292c4ef2eddb5124c",
+    "src/linexcel/assets/app-graph.js": "eb2785da5acaf4f3c9eb4ed247ef72f84b733adfe0cfa32a52a22a02adaa103c",
     "src/linexcel/assets/app-graph.css": "0ef0d478f4eae2a11edc174a90a0b6ff8c9d428c74df53cef39fc2ca18949dcd",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "scripts/capture_app.py": "d9260788fd32b83367888897bc682be2dc07b3de6220732ac23f2d864609caa3"
   },
   "fixture": {
     "name": "fy26_commercial_review.xlsx",
-    "sha256": "0feb65b066cde8b4c0b10c18440242de48046cfc2553b8a5e529714445638620",
+    "sha256": "fdda5bb0901280344723cfea9ae455a2a749a6e9e984081cfe8d796b94dc1ee2",
     "generator": "validation_workbooks.build_sales_workbook",
     "generatorSha256": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
@@ -31,7 +31,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "0f7016736ade27d8c90e91293939478034f183a7d53b04962345cda81a0d38c4",
+      "sha256": "621d3fd13362a9f1ed73467fe9931f9a911c7a67bddde2eb25e58a11df891abc",
       "pixels": [
         2880,
         1800
@@ -39,7 +39,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
-      "sha256": "f61766541925fd1a660bf8259d174540578eff3ee7987c8235f4031b9fe5a4e2",
+      "sha256": "3c2afd03b10733d5a99878c33916243ea5955cd4c8a504d9c8320dd77575548b",
       "pixels": [
         2880,
         1800
@@ -47,7 +47,7 @@
     },
     "app_node_documented.png": {
       "caption": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
-      "sha256": "d33a9011be5aff624bc216a9fdccb63688879e313097a7badf61a47cc061bacf",
+      "sha256": "7b0282e3045b637f8427440fea3d706b39ecdd6218e45d3ca52fc2def2b53c8f",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "9c6eeb5f7a7038b4f07ae44b9ac75b702efadc3f75156178cd063d8e2ffdd0bc",
+      "sha256": "c9e36f4694eff785bdf8a905245b3c9091f55216dfe5fede0e816b4b3ec2e9b9",
       "pixels": [
         2880,
         1800
@@ -63,7 +63,7 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "615036d076408d083d12e242213dbf42657bdac50f2d6e24176e78dc84da28d8",
+      "sha256": "ac2b39fd16d4ef26dda74b339f3e6c2fdf4e0c61f45b777b20ed96ce04dc5920",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "d25b27ec81cc4d80a9fca38b5ed4daa5",
+    "taskId": "96a11ac4975440119d45b110a9658fd0",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0

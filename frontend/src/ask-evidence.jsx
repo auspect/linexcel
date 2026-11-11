@@ -82,9 +82,9 @@ function SourceFacts({ node, english }) {
   return <>
     <strong>{nodeLabel(node, english)}</strong>
     {(revision.projectId || revision.sha256) && <small>{text("Révision", "Revision")} · {revision.projectId?.slice(0, 8)} · {revision.sha256?.slice(0, 8)}</small>}
-    {node.kind === "range" ? <span>{text("Plage source, sans valeur scalaire.", "Source range, without a scalar value.")}</span> : <span>{text("Valeur enregistrée", "Saved value")}: {valueText(node.value, english)} · {sourceProvenanceLabel(node, english)}</span>}
+    {node.kind === "range" ? <span>{text("Plage source, sans valeur scalaire.", "Source range, without a scalar value.")}</span> : <span>{text("Valeur enregistrée\u00a0:", "Saved value:")} {valueText(node.value, english)} · {sourceProvenanceLabel(node, english)}</span>}
     {node.formula && <code>{node.formula}</code>}
-    {(node.labels || []).map((label, index) => <span key={index}>{text("Contexte", "Context")}: {label.text} · {[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).join("!")} · {["table_column", "defined_name"].includes(label.method) ? text("déclaré dans le classeur", "declared in the workbook") : text("inféré, à vérifier", "inferred, to verify")}</span>)}
+    {(node.labels || []).map((label, index) => <span key={index}>{text("Contexte\u00a0:", "Context:")} {label.text} · {[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).join("!")} · {["table_column", "defined_name"].includes(label.method) ? text("déclaré dans le classeur", "declared in the workbook") : text("inféré, à vérifier", "inferred, to verify")}</span>)}
     {node.sourceValueProvenance && <details className="library-technical-trace"><summary>{text("Provenance de la valeur enregistrée", "Saved-value provenance")}</summary><pre>{JSON.stringify(node.sourceValueProvenance, null, 2)}</pre></details>}
   </>;
 }
@@ -122,7 +122,7 @@ export function AnswerLineage({ root, lineage, english }) {
         {boundary.reason === "unresolved_external" && linkedFilename(boundary.relationshipPath) && <span className="library-proof-action">{text(`Pour suivre ce lien, « ${linkedFilename(boundary.relationshipPath)} » doit être importé dans la bibliothèque et faire partie des sources de la question.`, `To follow this link, “${linkedFilename(boundary.relationshipPath)}” must be imported into the library and be among the question’s sources.`)}</span>}
         {boundary.stalePin && <span>{text("La cible épinglée n’est plus à jour.", "The pinned target is no longer current.")}</span>}
       </li>)}</ul> : <p>{text("Aucune origine ou frontière supplémentaire signalée.", "No additional origin or boundary reported.")}</p>}
-      {!!coverage?.capsHit?.length && <p>{text("Limites atteintes", "Limits reached")}: {coverage.capsHit.map(reason => (boundaryNames[reason] || ["Limite de traitement", "Processing limit"])[english ? 1 : 0]).join(" · ")}</p>}
+      {!!coverage?.capsHit?.length && <p>{text("Limites atteintes\u00a0:", "Limits reached:")} {coverage.capsHit.map(reason => (boundaryNames[reason] || ["Limite de traitement", "Processing limit"])[english ? 1 : 0]).join(" · ")}</p>}
     </>}
   </details>;
 }
@@ -133,7 +133,7 @@ export function CalculationReceipt({ receipt, english }) {
   return <details className="library-calculation-receipt" open>
     <summary>{text("Code et sources du calcul", "Calculation code and sources")}</summary>
     <p>{text("Ce code est produit par linexcel à partir de l’opération et des valeurs figées ci-dessous. Il est affiché sans être exécuté dans le navigateur.", "Linexcel produces this code from the operation and saved snapshot below. It is displayed without executing it in the browser.")}</p>
-    <p>{text("Moteur", "Engine")}: <code>{receipt.engine}</code> · {text("version", "version")} {receipt.engineVersion}</p>
+    <p>{text("Moteur\u00a0:", "Engine:")} <code>{receipt.engine}</code> · {text("version", "version")} {receipt.engineVersion}</p>
     <pre className="library-receipt-code"><code>{receipt.code}</code></pre>
     <p>SHA-256 : <code>{receipt.codeSha256}</code></p>
     <h5>{text("Sources figées du calcul", "Frozen calculation sources")}</h5>

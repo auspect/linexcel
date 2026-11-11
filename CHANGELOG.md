@@ -114,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Rest of workbook".
 - Leave search with Escape after a click on plain text moved focus to the page,
   and translate server messages in the English search and question views. The
-  workspace retention line now follows a change of interface language.
+  workspace retention line now follows a change of interface language, and
+  French labels in the search and question views take a space before a colon.
 - Show the remote AI consent step right below the question and move focus to
   it, without selecting its Allow button. It appeared below the help text,
   often out of view, while the search button was already disabled.
@@ -125,6 +126,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a changed workbook or scope. Unissued references still stop the question
   without a proposal; the trace explains the invalid model reference and the
   evidence instructions require handles to be copied exactly.
+
+### Documentation
+
+- Add a formualizer skill for coding agents in `.agents/skills/formualizer/`.
+  A belief about the engine is written down and checked against the installed
+  version, its type stubs, the upstream changelog and a probe before it
+  justifies code or a workaround. Its inventory script lists the engine APIs
+  linexcel does not use and the comments that assert an engine limit. Its first
+  use corrected a comment about saved dynamic-array spills and led to the
+  0.14.0 lock.
+- Record the November 2026 trial of library questions with `gpt-6.1-terra`,
+  one run per question, in the question-model notes.
 
 ## [1.18.1] — 2026-11-10
 

@@ -1407,8 +1407,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
                 <span>{revisionLabel({ filename: hit.filename, projectId: hit.revision?.projectId, sha256: hit.revision?.sha256 })}</span>
                 <span>{hit.sheet}{hit.address ? `!${hit.address}` : ""} · {kindLabel(hit.kind)}</span>
               </button>
-              {hit.formula && <p className="library-evidence">{text("Formule enregistrée", "Saved formula")}: <code>{hit.formula}</code></p>}
-              {hit.valueProvenance && <p className="library-evidence">{text("Origine de la valeur", "Value source")}: {provenanceLabel(hit.valueProvenance, english)}{hit.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</p>}
+              {hit.formula && <p className="library-evidence">{text("Formule enregistrée\u00a0:", "Saved formula:")} <code>{hit.formula}</code></p>}
+              {hit.valueProvenance && <p className="library-evidence">{text("Origine de la valeur\u00a0:", "Value source:")} {provenanceLabel(hit.valueProvenance, english)}{hit.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</p>}
               {!!labels.length && <ul className="library-labels">{labels.map((label, index) => {
                 const declared = ["table_column", "defined_name"].includes(label.method) || ["table_column", "defined_name"].includes(label.role);
                 const heuristic = label.certainty === "heuristic" || !declared;
@@ -1432,8 +1432,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
           {selected && lineageCoverage && <p className={`library-verdict ${lineageCoverage.complete ? "is-complete" : "is-incomplete"}`} role="status">
             {lineageCoverage.exhaustive ? text("Parcours exhaustif dans le périmètre chargé.", "Traversal exhaustive within the loaded scope.") : text("Parcours non exhaustif.", "Traversal is not exhaustive.")}
             {" "}{lineageCoverage.complete ? text("Lignage complet.", "Lineage complete.") : text("Lignage incomplet.", "Lineage incomplete.")}
-            {lineageCoverage.boundaries?.length > 0 && ` ${text("Arrêts", "Stops")}: ${lineageCoverage.boundaries.map((reason) => searchText(SEARCH_BOUNDARY_LABELS[reason] || reason, english)).join(", ")}.`}
-            {lineageCoverage.capsHit?.length > 0 && ` ${text("Limites", "Limits")}: ${lineageCoverage.capsHit.map(capLabel).join(", ")}.`}
+            {lineageCoverage.boundaries?.length > 0 && ` ${text("Arrêts\u00a0:", "Stops:")} ${lineageCoverage.boundaries.map((reason) => searchText(SEARCH_BOUNDARY_LABELS[reason] || reason, english)).join(", ")}.`}
+            {lineageCoverage.capsHit?.length > 0 && ` ${text("Limites\u00a0:", "Limits:")} ${lineageCoverage.capsHit.map(capLabel).join(", ")}.`}
             {lineageBoundaries.some((boundary) => boundary.stalePin) && ` ${text("Une épingle périmée empêche de confirmer la cible.", "A stale pin prevents confirmation of the target.")}`}
           </p>}
           {lineage && <div className="library-diagnostics">
@@ -1455,8 +1455,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
               <summary>{text("Preuves détaillées par classeur et révision", "Evidence grouped by workbook revision")}</summary>
               {lineageGroups.map((group) => <section key={group.key} className="library-revision-group"><h4>{group.title || text("Révision inconnue", "Unknown revision")}</h4><ul>
                 {group.nodes.map((node) => <li key={node.id}><strong>{lineageNodeLabels.get(node.id)}</strong>
-                  <span>{text("Valeur", "Value")}: {node.value == null ? text("aucune valeur enregistrée", "no saved value") : searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>
-                  {node.formula && <span>{text("Formule", "Formula")}: <code>{node.formula}</code></span>}
+                  <span>{text("Valeur\u00a0:", "Value:")} {node.value == null ? text("aucune valeur enregistrée", "no saved value") : searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>
+                  {node.formula && <span>{text("Formule\u00a0:", "Formula:")} <code>{node.formula}</code></span>}
                   {(node.labels || []).map((label, index) => <span key={`${node.id}:label:${index}`}>{roleLabel(label.role || label.method)} · {label.text} · {label.certainty === "heuristic" || !["table_column", "defined_name"].includes(label.method) ? text("inféré · certitude indicative", "inferred · indicative certainty") : text("déclaré", "declared")}{[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).length ? ` · ${text("source", "source")} ${[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).join("!")}` : ""}</span>)}
                 </li>)}
               </ul></section>)}
@@ -1490,7 +1490,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
               <span>{text("Cellule source", "Source cell")} · {link.sourceNode || text("non précisée", "not specified")}</span>
               <span>{link.reference || link.relationshipPath || text("Référence externe indisponible", "External reference unavailable")}</span>
               <span>{statusLabel(link.status)}{link.stalePin ? ` · ${text("épingle périmée", "stale pin")}` : ""}</span>
-              {!!link.candidates?.length && <span>{text("Cibles possibles", "Possible targets")}: {link.candidates.map((candidate) => {
+              {!!link.candidates?.length && <span>{text("Cibles possibles\u00a0:", "Possible targets:")} {link.candidates.map((candidate) => {
                 const candidateProject = revisions.find((item) => item.projectId === candidate.projectId);
                 return revisionLabel({ filename: candidateProject?.filename, projectId: candidate.projectId, sha256: candidate.sha256 });
               }).join(" · ")}</span>}
@@ -1524,15 +1524,15 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
           return <li key={`${event.type}:${index}`}>
             <strong>{operation}{eventStatus ? ` · ${eventStatus}` : ""}</strong>
             <span>{event.type === "search"
-              ? `${text("Requête", "Query")}: ${event.queryText} · ${text("Termes normalisés", "Normalized terms")}: ${(trace.terms || []).join(", ")} · ${text("Portée", "Scope")}: ${event.scopeLabel} · ${text("types", "types")}: ${(scope.kinds || []).map(kindLabel).join(", ")}`
+              ? `${text("Requête\u00a0:", "Query:")} ${event.queryText} · ${text("Termes normalisés\u00a0:", "Normalized terms:")} ${(trace.terms || []).join(", ")} · ${text("Portée\u00a0:", "Scope:")} ${event.scopeLabel} · ${text("types\u00a0:", "types:")} ${(scope.kinds || []).map(kindLabel).join(", ")}`
               : event.type === "lineage"
-                ? `${directionName} · ${text("révisions consultées", "revisions consulted")}: ${revisionsInTrace.join(", ") || text("en attente", "pending")}`
+                ? `${directionName} · ${text("révisions consultées\u00a0:", "revisions consulted:")} ${revisionsInTrace.join(", ") || text("en attente", "pending")}`
                 : event.detail}</span>
-            {event.error && <p className="library-trace-error">{text("Échec", "Failure")}: {event.error}</p>}
-            {trace.normalization && <span>{text("Normalisation", "Normalization")}: {text("accents neutralisés, minuscules, tous les termes doivent correspondre", "accents folded, lower case, all terms must match")}</span>}
-            {trace.scope?.scope && <span>{text("Périmètre", "Scope")}: {trace.scope.scope}</span>}
-            {trace.limits && <span>{text("Budgets", "Budgets")}: {Object.entries(trace.limits).filter(([key]) => SEARCH_BUDGET_LABELS[key]).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key], english)}: ${value}`).join(" · ")}</span>}
-            <small>{trace.durationMs !== undefined ? traceTime(trace.durationMs) : ""}{trace.backend ? ` · ${trace.backend === "fts5" ? "FTS5" : text("recherche de secours", "fallback search")}` : ""}{trace.tool ? ` · ${operation}` : ""}{trace.capsHit?.length ? ` · ${text("arrêts", "stops")}: ${trace.capsHit.map(capLabel).join(", ")}` : ""}{trace.complete !== undefined ? ` · ${trace.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : event.complete !== undefined ? ` · ${event.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : ""}{trace.exhaustive !== undefined ? ` · ${trace.exhaustive ? text("parcours exhaustif", "exhaustive traversal") : text("parcours non exhaustif", "non-exhaustive traversal")}` : ""}</small>
+            {event.error && <p className="library-trace-error">{text("Échec\u00a0:", "Failure:")} {event.error}</p>}
+            {trace.normalization && <span>{text("Normalisation\u00a0:", "Normalization:")} {text("accents neutralisés, minuscules, tous les termes doivent correspondre", "accents folded, lower case, all terms must match")}</span>}
+            {trace.scope?.scope && <span>{text("Périmètre\u00a0:", "Scope:")} {trace.scope.scope}</span>}
+            {trace.limits && <span>{text("Budgets\u00a0:", "Budgets:")} {Object.entries(trace.limits).filter(([key]) => SEARCH_BUDGET_LABELS[key]).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key], english)}: ${value}`).join(" · ")}</span>}
+            <small>{trace.durationMs !== undefined ? traceTime(trace.durationMs) : ""}{trace.backend ? ` · ${trace.backend === "fts5" ? "FTS5" : text("recherche de secours", "fallback search")}` : ""}{trace.tool ? ` · ${operation}` : ""}{trace.capsHit?.length ? ` · ${text("arrêts\u00a0:", "stops:")} ${trace.capsHit.map(capLabel).join(", ")}` : ""}{trace.complete !== undefined ? ` · ${trace.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : event.complete !== undefined ? ` · ${event.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : ""}{trace.exhaustive !== undefined ? ` · ${trace.exhaustive ? text("parcours exhaustif", "exhaustive traversal") : text("parcours non exhaustif", "non-exhaustive traversal")}` : ""}</small>
             <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ error: event.technicalError, generation: trace.generation, scope, revisions: trace.revisions, counts, limits: trace.limits, capsHit: trace.capsHit, direction: trace.direction }, null, 2)}</pre></details>
           </li>;
         })}</ol>
