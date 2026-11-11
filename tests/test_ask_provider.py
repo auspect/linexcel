@@ -365,6 +365,7 @@ def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
         deadline=__import__("time").monotonic() + 10,
         scope={},
         issued=set(),
+        computations={},
         execute=lambda name, args: {
             "data": {"status": "not_found"}
             if name == "submit_answer"

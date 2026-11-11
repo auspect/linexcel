@@ -7,7 +7,22 @@ tool call exists. The model trace records the finish reason and content/reasonin
 byte counts, without retaining that text. Failed HTTP calls record a bounded
 HTTP status and timeout flag when available through the exception chain.
 
-The cumulative token allowance in `AskLimits` is **not the model context window**.
+Cell handles are opaque source references and must be copied exactly from tool
+results. An unissued handle in `get_cell`, `trace_lineage` or `compute` fails with
+`invalid_source_handle`, without displaying a proposal. This is an invalid model
+reference; it does not establish that the workbook or question scope changed.
+A terminal proposal that cites an unissued handle, or something other than a
+cell, is rejected in the trace with no displayed answer. The model receives a
+fixed code and hint and may propose again, as it may after naming an unknown
+sheet or asking for more than 25 cells. Three such corrections are allowed per
+question; the search then ends with `not_found` or
+`invalid_or_unavailable_tool_provider`.
+
+The cumulative token allowance in `AskLimits` (64,000 by default, set with
+`linexcel serve --ai-question-token-budget`) is **not the model context window**.
+It is also separate from `--ai-token-budget`, which bounds documentation tasks.
+Before 1.19.0 that documentation budget (16,000 by default) also capped
+questions, and stopped real searches after three or four tool steps.
 Each successive request includes history, tool schemas and source evidence. A
 local runtime with a smaller context may truncate history, exhaust generation
 space, or reject the request before the application's cumulative budget is used.
@@ -33,6 +48,19 @@ The historical plain-text reply had `stop` and no calls. The historical generic
 `AiDocError` retained no underlying provider payload; its precise cause cannot
 be established retroactively. A replay succeeded, so it is not labelled fixed.
 New diagnostics preserve content-free failure distinctions for future runs.
+
+The November 2026 trial with `gpt-6.1-terra` at medium reasoning asked six
+questions once each, through the question service, on four workbooks: a
+four-sheet planning model, a public statistical table, a 122-sheet transport
+data book of 125,365 nodes and a report with external links. Before tool
+results were shortened for the model, the same questions in a browser trial gave
+one cache-limited proposal, three stops on tokens or result size and one failed
+call out of five; two requests used about 80,000 and 102,000 tokens. Afterwards
+all six ended with a proposal whose cells were reread by linexcel, using 7,357
+to 27,427 tokens in 8 to 25 seconds. One proposal stayed limited to a cached
+value, because the linked workbook was not in the library, and three cited
+cells in two proposals had a lineage cut at the 200-node limit. One run per question is an observation, not a
+reliability figure, and a reread cell is not proof that it answers the question.
 
 These diagnostics do not establish model reliability. Compare a frozen question
 set against a deterministic catalog baseline, keep failures in denominators,

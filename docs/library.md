@@ -14,13 +14,37 @@ path, URL, SQL expression or another owner's source index.
 
 ## Optional questions
 
-Search works with no AI configuration. The adjacent **Poser une question** mode
-requires the server's existing AI configuration and the `ai` extra. The endpoint
-and model are named in the view. The separate `ask_provider.ToolProvider`
+Before preparation, workbook/revision selections are intersected with literal
+workbook filenames in the question. Matching uses NFC and case folding, exact
+filename boundaries and longest-name precedence. Quoted and Excel-bracketed
+filenames are resolved as whole names before recognizing known substrings.
+Unknown quoted names and bare
+filename tokens, duplicate names and conflicts fail with HTTP 409 before creating
+a token or task. A structured project/revision choice disambiguates same-name
+files. No natural-language intent classifier or model chooses this boundary.
+An explicit or named workbook is resolved from the owner-local inventory before
+opening its index; other workbook indexes are not opened by preparation. The
+frozen scope and preparation response expose
+`sourceSelection: {kind: "explicit"|"question_filename"|"library", filenames}`.
+Only these revisions enter the tools' private catalog and directed graph;
+unloaded or excluded external sources remain lineage boundaries.
+
+Direct search works with no AI configuration. **Recherche avancée** progressively
+reveals scope and object-type filters. The adjacent **Poser une question à l’IA**
+action appears only when the server's existing AI configuration and the `ai`
+extra are available. It carries the direct query into an editable question and
+does not contact the model until submission. **Retour à la recherche** restores
+direct search; **Retour au classeur** restores the application workspace.
+The endpoint and model are named in the question view. The separate `ask_provider.ToolProvider`
 protocol returns structured tool calls; it does not implement `aidoc.LLMProvider`.
 Its OpenAI-compatible adapter reuses the documentation client's HTTP connection
 setup and M0 parameter negotiation. A text-only or tool-rejecting endpoint fails
 explicitly, with a trace and no prose fallback.
+
+The application's evidence-search instructions and strict tool schemas guide
+the model; no externally installed skill is needed. The question interface
+explains this under **Comment l’IA recherche**. Opening this view, inspecting
+configuration and deterministic search do not themselves make a model request.
 
 Questions are prepared through `POST /api/library/ask/prepare` with
 `{question, project?, revision?, scope?}`. The response discloses the exact
@@ -90,8 +114,8 @@ of every cell or proof of relevance.
 The **Réponse proposée** card marks source facts as verified while keeping
 relevance **à confirmer**, shows source revision/coordinates, heuristic label
 provenance, saved values/formulas and source lineage with its boundaries. No
-formula is recalculated. A short rationale is shown only as **le raisonnement du
-modèle, non vérifié**. Any rationale containing a digit is omitted. Digit-free
+formula is recalculated. A short rationale is shown only as **Commentaire de l’IA,
+non vérifié**. Any rationale containing a digit is omitted. Digit-free
 text can still contain false claims, including numbers written as words. This
 presentation rule does not validate numbers, units, meaning or relevance and is
 not a defense against laundering claims. Rationale text is never retained in
@@ -109,14 +133,61 @@ réponse, présent dans aucun classeur**. Their operands retain server-computed
 source lineage. Arithmetic correctness does not establish that a calculation
 answers the question, matches units or uses the right period.
 
+Each calculation includes a `linexcel.compute.v1` receipt: allowlisted engine and
+version, operation, canonical operand snapshots (revision, coordinates, saved
+value, formula and provenance), executable Python and `codeSha256`. The server
+authors this recipe, never the model. `replay_computation` validates the version,
+operation and recipe/snapshot consistency and reproduces the same arithmetic,
+including blank, source-error and missing-cache outcomes. Production computes
+through the typed function; it never evaluates model code. An offline replay
+uses historical snapshots and does not confer current source authorization.
+
+The model transport replaces canonical cell handles with short run-local IDs
+such as `c1`. Only evidence actually delivered by a successful tool call creates
+these capabilities. Incoming aliases must match exactly; they resolve to the
+canonical handles before authorization and computation. Workbook text is never
+rewritten as an alias. Published answers, graphs, receipts and evidence signatures
+retain canonical revision/cell identities; aliases are not persisted or shared
+between questions.
+
+Each proposed cell has its own visible source graph, relationships and traversal
+boundaries. Source-to-reader arrows follow the stored graph direction. The
+model's operation trace is distinct from this server-computed dependency proof.
+
 `WebConfig(ask_limits=AskLimits(...))` configures default ceilings: 16 tool steps,
-64,000 tokens (further limited by the task/server AI token budget), 120 seconds,
-512 KiB cumulative tool-result bytes, 2,048 output tokens per call and 30 seconds
-per HTTP call. Context preflight includes tool schemas; observed or estimated
-provider usage includes parameter-negotiation attempts. Oversized results are
-discarded before issuing their handles. Each trace is bounded to 256 KiB, with
-argument/handle-detail omissions disclosed if necessary. Provider prose and
-reasoning streams are neither answers nor trace content.
+64,000 cumulative tokens, 120 seconds, 512 KiB of tool results delivered to the
+model, 2,048 output tokens per call and 30 seconds per HTTP call.
+`linexcel serve --ai-question-token-budget` sets the token ceiling. Each request
+is estimated before it is sent, at no less than one token per three bytes of
+context and tool schemas, then corrected by the provider's count for the
+previous request. A request that would pass the ceiling is not made. Observed
+or estimated provider usage includes parameter-negotiation attempts. Each trace
+is bounded to 256 KiB, with argument/handle-detail omissions disclosed if
+necessary. Provider prose and reasoning streams are neither answers nor trace
+content.
+
+The model receives a compact view of each tool result, at most 24 KiB: cell
+identity, sheet, address, kind, saved value, formula, up to four labels and the
+value's provenance. Revision hashes, XML provenance, per-sheet catalog coverage
+and the path an external link had on its author's machine are not sent. Text is
+cut at 300 characters, a formula at 600 and a lineage at its 60 nearest nodes.
+A shortened result states what was left out, the trace records it, and the
+search is then reported as incomplete. Only handles in the delivered view
+become capabilities. The verified answer is read again in full from the source
+indexes. It never returns to the model, so it does not count against the
+512 KiB; it is refused above 8 MiB.
+
+A call that names an unknown sheet, asks for more than 25 cells, or proposes
+something other than a cell is answered with a fixed code and hint, and the
+model may correct it. The fourth such call ends the search. Every other invalid
+call still ends it at once: an unknown tool or argument, malformed JSON, a
+project outside the scope, or an unissued handle in a read, lineage or
+calculation.
+
+A catalog rebuild after an import holds the owner's library gate, for up to two
+minutes on a large workbook. Preparing a question does not wait for it. A
+submitted question waits before its 120 seconds start, and reading the run
+meanwhile returns `libraryBusy: true` instead of blocking.
 
 Runs persist under the private owner's `ask/RUN_ID/`, separately from source
 indexes. `linexcel.ask.v1` records scope/revisions, tool and argument metadata, bounded
@@ -190,8 +261,25 @@ When unavailable, the reported backend is `like`, with matching over a bounded
 prefix of catalog entries and a token-boundary check after the LIKE filter.
 Underscores are separators in both modes. Punctuation and SQL/FTS syntax are
 never executable.
-A complete finite numeric query uses exact numeric equality, exclusively on
-labelled cells. Decimal tolerance and computed values are outside this version.
+A numeric query matches the cells whose saved number rounds to the query at
+the number of decimals typed: `6600` finds a saved `6600.000000000001` and
+`967.5` finds `967.538`, while `967.60` does not. Labelled numbers come from
+the catalog with their labels. The others are read from the workbook indexes in
+one bounded pass, listed after them with `matchedBy: "number"` and no label:
+in a wide table most values sit too far from their row label to be indexed
+with it, and a lone title above a column does not prove what it measures.
+Spaces, apostrophes, dots or commas group thousands; a comma or a dot is the
+decimal separator, whichever comes last. `1,234` is ambiguous and matches both
+1.234 and 1234. `34.3%` matches 34.3 and 0.343. Other spellings Python reads,
+such as `1e6`, match exactly. The trace reports the bounds and both counts as
+`numericMatch`.
+Number formats are not applied, and computed values are outside this version.
+
+A query that is one cell address, such as `B5`, `$B$5` or `Synthèse!B5`, is
+searched as text first, because `Q4` or `FY26` are labels far more often than
+addresses. When no text matches, the result lists the cell at that address in
+each scoped sheet, or in the named sheet. Those hits carry `matchedBy:
+"address"` and the trace reports `addressMatch`. Empty cells are not listed.
 
 Results include revision, filename, kind, sheet, address, labels (text, method,
 source sheet/cell, and geometry), value, value provenance, cache status, formula,

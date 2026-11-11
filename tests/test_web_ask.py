@@ -232,11 +232,21 @@ def test_actual_foreign_owner_handle_cannot_enter_question_scope(app):
         foreign_handle = cell_handle(
             revision(foreign["id"], index.meta["sha256"]), "Sheet!A1"
         )
+    proposal_with_foreign_handle = [
+        call("submit_answer", {"status": "proposed", "handles": [foreign_handle]}, cid)
+        for cid in ("first", "second", "third", "fourth")
+    ]
+    # However often the model insists, a foreign handle never becomes an answer.
     app.store.ask.provider_factory = lambda _: FakeProvider(
-        [[call("submit_answer", {"status": "proposed", "handles": [foreign_handle]})]]
+        [[attempt] for attempt in proposal_with_foreign_handle]
     )
     run = finished(app, start(app, prepare(app)))["run"]
     assert run["status"] == "not_found" and run["answer"] is None
+    assert [
+        step["verdict"]
+        for step in run["trace"]["steps"]
+        if step["tool"] == "submit_answer"
+    ] == ["rejected", "rejected", "rejected", "completed"]
     assert foreign["id"] not in encoded(run["trace"]["scope"])
     app.store.ask.provider_factory = lambda _: FakeProvider(
         [
@@ -423,3 +433,126 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
     assert changed["status"] == "failed" and changed["answer"] is None
     assert changed["trace"]["reason"] == "lineage_state_changed"
     assert not changed["trace"]["steps"][-1]["summary"]["searchCompleted"]
+
+
+def test_question_budget_is_not_capped_by_the_documentation_budget(tmp_path):
+    # 2026-11-10 trial: a 16k documentation budget stopped real questions after
+    # three or four tool steps with "token_budget", since each step resends the
+    # history. Questions now use their own cumulative budget.
+    from linexcel.ask import AskLimits
+    from linexcel.cli import _build_parser
+
+    args = _build_parser().parse_args(["serve"])
+    assert args.ai_question_token_budget == AskLimits().tokens == 64000
+    instance = create_app(
+        tmp_path / "data",
+        resolve_user=lambda env: env.get("user"),
+        ai_enabled=True,
+        ai_token_budget=50,
+        ask_limits=AskLimits(tokens=64000),
+    )
+    try:
+        seen = []
+        original = instance.store.ask.run
+
+        def spy(task, event):
+            import linexcel.web_ask as web_ask
+
+            real = web_ask.QuestionRun
+
+            class Recording(real):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    seen.append(self.limits.tokens)
+
+            web_ask.QuestionRun = Recording
+            try:
+                return original(task, event)
+            finally:
+                web_ask.QuestionRun = real
+
+        instance.store.ask.run = spy
+        find_spec = importlib.util.find_spec
+        importlib.util.find_spec = lambda name, *a: (
+            object() if name == "openai" else find_spec(name, *a)
+        )
+        try:
+            project = imported(instance)
+            instance.store.ask.provider_factory = lambda _: proposal(project)
+            result = finished(
+                instance, start(instance, prepare(instance, project=project["id"]))
+            )
+        finally:
+            importlib.util.find_spec = find_spec
+        assert seen == [64000]
+        assert result["run"]["status"] == "answer_proposed"
+    finally:
+        instance.close()
+
+
+def test_consent_and_polling_do_not_wait_behind_a_catalog_rebuild(app):
+    project = imported(app)
+    owner = hashlib.sha256(b"alice").hexdigest()
+    app.store.ask.provider_factory = lambda _: proposal(project)
+    gate = app.store.library.mutation(owner)
+    held, release = threading.Event(), threading.Event()
+
+    def rebuild():
+        # A catalog rebuild keeps the owner's mutation gate until it ends.
+        with gate:
+            held.set()
+            release.wait(30)
+
+    worker = threading.Thread(target=rebuild)
+    worker.start()
+    assert held.wait(10)
+    try:
+        started = time.monotonic()
+        prepared = prepare(app, project=project["id"])
+        task = start(app, prepared)
+        code, raw, _ = request(app, "GET", f"/api/library/ask/{task['id']}")
+        assert code == 200, raw
+        polled = json.loads(raw)["run"]
+        assert time.monotonic() - started < 5
+        assert polled["libraryBusy"] is True
+        assert polled["status"] == "running" and polled["answer"] is None
+        # The question's clock has not started: nothing ran against the model.
+        assert polled["trace"]["steps"] == []
+        assert polled["trace"]["budgetUse"]["tokens"] == 0
+    finally:
+        release.set()
+        worker.join()
+    result = finished(app, task)
+    assert result["run"]["status"] == "answer_proposed"
+    assert "libraryBusy" not in result["run"]
+
+
+def test_a_run_whose_source_was_deleted_is_not_shown_while_the_library_is_busy(app):
+    project = imported(app)
+    owner = hashlib.sha256(b"alice").hexdigest()
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [[call("submit_answer", {"status": "not_found"}, "end")]]
+    )
+    task = start(app, prepare(app, project=project["id"]))
+    assert finished(app, task)["run"]["status"] == "not_found"
+    app.store.delete(owner, project["id"])
+    gate = app.store.library.mutation(owner)
+    held, release = threading.Event(), threading.Event()
+
+    def rebuild():
+        with gate:
+            held.set()
+            release.wait(30)
+
+    worker = threading.Thread(target=rebuild)
+    worker.start()
+    assert held.wait(10)
+    try:
+        code, raw, _ = request(app, "GET", f"/api/library/ask/{task['id']}")
+    finally:
+        release.set()
+        worker.join()
+    assert code == 200, raw
+    run = json.loads(raw)["run"]
+    assert run["status"] == "failed" and "libraryBusy" not in run
+    assert run["trace"]["reason"] == "scope_or_source_changed"

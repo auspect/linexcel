@@ -1,5 +1,15 @@
 # Agent workflow proposals using linexcel
 
+!!! note "Installed skill for contributors"
+    Coding agents that change linexcel itself have one installed skill:
+    `.agents/skills/formualizer/SKILL.md`, with a Claude Code pointer in
+    `.claude/skills/formualizer/`. It makes the agent treat what it knows about
+    the formualizer engine as a hypothesis. It compares installed, locked and
+    published versions with
+    `uv run python .agents/skills/formualizer/scripts/inventory.py --online`,
+    probes behaviour on both versions, and lists the engine APIs that linexcel
+    never mentions.
+
 These are proposed complementary skills, not installed integrations. Each skill
 should start with a concrete user objective, work on immutable input copies,
 retain private evidence outside Git, and distinguish source facts, engine

@@ -32,9 +32,12 @@ def test_single_revenue_title_does_not_prove_a_column_label(tmp_path, declared):
     cat = Catalog(tmp_path / "catalog")
     for value in (100, 120, 130):
         hits = cat.search([item], str(value))["results"]
-        assert bool(hits) is declared
+        assert [hit["value"] for hit in hits] == [value]
         if declared:
             assert {label["method"] for label in hits[0]["labels"]} == {"table_column"}
+        else:
+            # Found as a saved number, without the label the title does not prove.
+            assert hits[0]["matchedBy"] == "number" and hits[0]["labels"] == []
 
 
 @pytest.mark.parametrize("declared", [False, True])

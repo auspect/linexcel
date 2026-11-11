@@ -6,6 +6,30 @@
 > [local acceptance](manual_validation.md) and the
 > [continuous improvement plan](continuous_improvement_plan.md).
 
+## Addendum du 10 novembre 2026 : verrou sur formualizer 0.14.0
+
+Le skill `.agents/skills/formualizer/` a comparé le verrou (0.13.0) à la
+dernière version publiée (0.14.0). Avec `inventory.py --compare 0.14.0`, la
+0.14.0 n'enlève aucune API publique. Elle ajoute les familles `Recalc*`
+(recalcul par étapes, annulable), `Source*` (preuves de dépendance et
+politique de calcul des sources) ainsi que `Workbook.recalc`,
+`evaluate_async` et `pending_cells_in_rect`. linexcel n'en utilise encore
+aucune.
+
+Une sonde sur un classeur enregistré avec un tableau dynamique
+(`SEQUENCE(3)` en A1:A3, `SUM(A1#)` en C1) a réfuté un commentaire de
+`values.py`. En 0.13.0, `evaluate_all` relit `#SPILL!` en A1 et `#REF!` en C1,
+car les membres mis en cache bloquent l'ancre. En 0.14.0, le recalcul donne
+1, 2, 3 et 6. Le test `test_saved_dynamic_spill_recalculates`, ignoré
+avant 0.14.0, fixe ce comportement. `Spill` reste parmi les erreurs non
+calculées : un `#SPILL!` restant conserve la valeur du fichier.
+
+Avant la mise à jour du verrou, les contrats de la CI de compatibilité
+passaient sous 0.14.0 en environnement superposé (2 359 tests). Le plancher
+déclaré reste `>=0.10.1`, car aucune API nouvelle n'est appelée. Les
+résultats de la suite complète sur le verrou 0.14.0 figurent dans la PR qui
+le met à jour.
+
 ## Addendum du 7 octobre 2026 : CI sur formualizer 0.11.0
 
 Le workflow de veille a résolu formualizer 0.11.0, publié sous le tag amont

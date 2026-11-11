@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useState, useRef } from "react";
 import { AskQuestion, AskTrace } from "./ask.jsx";
+import { displayValue } from "./ask-evidence.jsx";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
@@ -300,6 +301,7 @@ export function mount(element, options) {
     }, [model]);
     return (
       <ReactFlow
+        className={model.portrait ? "flow-portrait" : undefined}
         nodes={model.nodes}
         edges={model.edges}
         nodeTypes={nodeTypes}
@@ -605,6 +607,8 @@ const SEARCH_BUDGET_LABELS = {
 function searchText(value, english) {
   if (Array.isArray(value)) return value[english ? 1 : 0];
   if (value && typeof value === "object") return JSON.stringify(value);
+  // Saved numbers read as Excel shows them: 6600, not 6600.000000000001.
+  if (typeof value === "number") return displayValue(value);
   return value == null ? "" : String(value);
 }
 
@@ -618,13 +622,16 @@ function provenanceLabel(value, english) {
   return searchText(labels[value] || ["origine enregistrée", "saved provenance"], english);
 }
 
-function LibrarySearch({ apiBase = "api/", language = "fr" }) {
+function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate = (message) => message }) {
   const english = language === "en";
   const text = (fr, en) => (english ? en : fr);
   const [query, setQuery] = useState("");
   const [intent, setIntent] = useState("search");
   const [askRun, setAskRun] = useState(null);
   const [askEpoch, setAskEpoch] = useState(0);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askConfig, setAskConfig] = useState(null);
+  const [aiConfigFailed, setAiConfigFailed] = useState(false);
   const [mode, setMode] = useState("library");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
@@ -693,8 +700,21 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
     } catch {
       throw new Error(text("Réponse du serveur illisible.", "Unreadable server response."));
     }
-    if (!response.ok) throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
+    if (!response.ok) throw new Error(translate(data.error?.message || data.message || `HTTP ${response.status}`));
     return data;
+  };
+  useEffect(() => {
+    let active = true;
+    request("library/ask/config")
+      .then(value => { if (active) setAskConfig(value); })
+      .catch(() => { if (active) setAiConfigFailed(true); });
+    return () => { active = false; };
+  }, []);
+  const showIntent = (value) => {
+    invalidateAnswer();
+    if (value === "ask") setAskQuestion(query);
+    setIntent(value);
+    if (value === "search") requestAnimationFrame(() => document.getElementById("library-search-query")?.focus());
   };
   const scopedParams = (scope = attachment?.scopeId) => {
     const params = new URLSearchParams();
@@ -1281,6 +1301,16 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
       const top = target.getBoundingClientRect().top;
       if (top < bottom) bar.closest("main").scrollBy({ top: top - bottom });
     }}>
+      <header className="library-search-heading">
+        <div className="library-search-title">
+          <button type="button" className="library-back" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14" /></svg>
+            {text("Retour au classeur", "Back to workbook")}
+          </button>
+          <h2>{text("Rechercher", "Search")}</h2>
+        </div>
+        <p>{text("Retrouvez une valeur, une cellule ou un libellé dans les classeurs importés.", "Find a value, cell or label in imported workbooks.")}</p>
+      </header>
       <section ref={traceSummary} className="library-trace-summary" aria-live="polite">
         <strong>{text("Dernière opération", "Latest operation")}</strong>
         <span>{intent === "ask" ? askRun?.status === "running" ? text("Question en cours · trace disponible", "Question running · trace available") : askRun ? text("Question terminée · consultez la trace", "Question finished · see trace") : text("Aucune question exécutée.", "No question run yet.") : latestTraceSummary}</span>
@@ -1294,36 +1324,24 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           });
         }}>{text("Trace détaillée", "Detailed trace")}</a>
       </section>
-      <header className="library-search-heading">
-        <div><p className="section-label">{text("Bibliothèque de classeurs", "Workbook library")}</p><h2>{text("Rechercher", "Search")}</h2></div>
-        <p>{text("La valeur et la piste proviennent des index chargés. Leur pertinence reste à confirmer.", "Values and trails come from loaded indexes. Relevance still needs confirmation.")}</p>
-      </header>
-      <section className="library-catalog-state" aria-live="polite">
-        <strong>{text("Catalogue", "Catalog")}</strong>
-        <span>{({
-          queued: text("Mise à jour en attente", "Update queued"),
-          building: text("Mise à jour en cours", "Update in progress"),
-          failed: text("Mise à jour échouée", "Update failed"),
-          ready: status?.stale || status?.pending ? text("Mise à jour en attente", "Update pending") : text("À jour", "Up to date"),
-        })[status?.buildState?.status] || text("État inconnu", "Unknown state")}</span>
-        {status?.stale && <span>{text("Les résultats peuvent être incomplets pendant la mise à jour.", "Results may be incomplete while the index updates.")}</span>}
-        {status?.buildState?.status === "failed" && <span>{catalogFailureReason} {text("Vérifiez l’espace disponible.", "Check available storage.")}</span>}
-        {catalogPollTimedOut && <span>{text("La mise à jour prend trop de temps.", "The update is taking too long.")}</span>}
-        {(status?.buildState?.status === "failed" || catalogPollTimedOut) && <button type="button" onClick={() => document.getElementById("library-attach-file")?.click()}>{text("Choisir un classeur pour reconstruire l’index", "Choose a workbook to rebuild the index")}</button>}
-      </section>
       <section className="library-search-controls" aria-label={text("Recherche dans la bibliothèque", "Search the library")}>
-        <nav className="library-ask-actions" aria-label={text("Mode de recherche", "Search mode")}>
-          <button type="button" aria-pressed={intent === "search"} onClick={() => { invalidateAnswer(); setIntent("search"); }}>{text("Rechercher", "Search")}</button>
-          <button type="button" aria-pressed={intent === "ask"} onClick={() => { invalidateAnswer(); setIntent("ask"); }}>{text("Poser une question", "Ask a question")}</button>
-        </nav>
-        {intent === "ask" && <AskQuestion key={`${apiScope().toString()}:${askEpoch}`} request={request} scope={Object.fromEntries(apiScope())} english={english} onRun={setAskRun} onClear={() => { setSearch(null); setSelected(null); setLineage(null); }} onEvidence={(answer, index = 0) => { setSelected(answer.cells[index]); setLineage(answer.lineages[index]); setDirection("upstream"); setExpandedRevision(null); }} />}
+        {intent === "ask" && <>
+          <button type="button" className="library-search-return" onClick={() => showIntent("search")}>{text("Retour à la recherche", "Back to search")}</button>
+          <AskQuestion key={`${apiScope().toString()}:${askEpoch}`} config={askConfig} initialQuestion={query} draftQuestion={askQuestion} onQuestionChange={setAskQuestion} sourceOptions={revisions} sourceProjectId={apiScope().get("project") || ""} sourceLocked={mode === "revision" || mode === "attachment"} onSourceChange={(value) => changeScope(() => { setProjectId(value); setMode(value ? "project" : "library"); })} request={request} scope={Object.fromEntries(apiScope())} english={english} onRun={setAskRun} onClear={() => { setSearch(null); setSelected(null); setLineage(null); }} onEvidence={(answer, index = 0) => { setSelected(answer.cells[index]); setLineage(answer.lineages[index]); setDirection("upstream"); setExpandedRevision(null); }} />
+        </>}
         {intent === "search" && <form onSubmit={(event) => { event.preventDefault(); performSearch(); }}>
-          <label htmlFor="library-search-query">{text("Requête", "Query")}</label>
+          <label htmlFor="library-search-query">{text("Valeur, cellule ou libellé", "Value, cell or label")}</label>
           <div className="library-search-form-row">
-            <input id="library-search-query" type="search" value={query} onChange={(event) => { setQuery(event.target.value); invalidateAnswer(); setError(""); }} />
+            <input id="library-search-query" type="search" placeholder={text("Ex. : chiffre d’affaires, A12, 42", "E.g. revenue, A12, 42")} aria-describedby="library-search-help" value={query} onChange={(event) => { setQuery(event.target.value); invalidateAnswer(); setError(""); }} />
             <button type="submit" className="primary" disabled={busy}>{text("Rechercher", "Search")}</button>
+            {askConfig?.available && <button type="button" className="library-ask-entry" onClick={() => showIntent("ask")}>{text("Poser une question à l’IA", "Ask AI a question")}</button>}
           </div>
+          <p id="library-search-help" className="help">{text("Recherche sans IA · tous les termes doivent correspondre.", "Search without AI · all terms must match.")}</p>
+          {aiConfigFailed && <p className="help" role="status">{text("La configuration IA est indisponible. Vous pouvez continuer la recherche sans IA.", "AI configuration is unavailable. You can continue searching without AI.")}</p>}
         </form>}
+        <details className="library-advanced">
+          <summary>{text("Recherche avancée", "Advanced search")}<span>{mode === "attachment" ? attachment?.project.filename : mode === "project" ? projects.find(project => project.id === projectId)?.filename || text("Choisir un classeur", "Choose a workbook") : mode === "revision" ? text("Une révision", "One revision") : text("Toute la bibliothèque", "Whole library")}{intent === "search" && kinds.length !== 5 ? ` · ${kinds.length} ${kinds.length === 1 ? text("type sélectionné", "selected kind") : text("types sélectionnés", "selected kinds")}` : ""}</span></summary>
+          <div className="library-advanced-content">
         <fieldset className="library-scope">
           <legend>{text("Portée", "Scope")}</legend>
           {[
@@ -1350,6 +1368,21 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           {attachment && <div className="library-attachment-actions"><button type="button" onClick={keepAttachment}>{text("Conserver dans la bibliothèque", "Keep in library")}</button><button type="button" onClick={removeAttachment}>{text("Retirer le fichier joint", "Remove attached file")}</button></div>}
           {recoverableAttachments.length > 0 && <div className="library-recoverable-attachments"><strong>{text("Fichiers temporaires récupérables (expiration après 24 h)", "Recoverable temporary files (expire after 24 h)")}</strong>{recoverableAttachments.map((item) => <div key={item.scopeId}><button type="button" onClick={() => changeScope(() => { setAttachment({ project: item.project, scopeId: item.scopeId }); setProjectId(item.project.id); setMode("attachment"); })}>{text("Récupérer", "Recover")} · {item.project.filename} · {item.project.id.slice(0, 8)}</button>{attachment?.scopeId !== item.scopeId && <button type="button" onClick={async () => { try { await request(`library/attachments/${item.scopeId}`, { method: "DELETE", body: "{}" }); setRecoverableAttachments((items) => items.filter((entry) => entry.scopeId !== item.scopeId)); } catch (cause) { setError(cause.message); } }}>{text("Supprimer", "Remove")}</button>}</div>)}</div>}
         </div>
+          </div>
+        </details>
+      </section>
+      <section className="library-catalog-state" aria-live="polite">
+        <strong>{text("Catalogue", "Catalog")}</strong>
+        <span>{({
+          queued: text("Mise à jour en attente", "Update queued"),
+          building: text("Mise à jour en cours", "Update in progress"),
+          failed: text("Mise à jour échouée", "Update failed"),
+          ready: status?.stale || status?.pending ? text("Mise à jour en attente", "Update pending") : text("À jour", "Up to date"),
+        })[status?.buildState?.status] || text("État inconnu", "Unknown state")}</span>
+        {status?.stale && <span>{text("Les résultats peuvent être incomplets pendant la mise à jour.", "Results may be incomplete while the index updates.")}</span>}
+        {status?.buildState?.status === "failed" && <span>{catalogFailureReason} {text("Vérifiez l’espace disponible.", "Check available storage.")}</span>}
+        {catalogPollTimedOut && <span>{text("La mise à jour prend trop de temps.", "The update is taking too long.")}</span>}
+        {(status?.buildState?.status === "failed" || catalogPollTimedOut) && <button type="button" onClick={() => document.getElementById("library-attach-file")?.click()}>{text("Choisir un classeur pour reconstruire l’index", "Choose a workbook to rebuild the index")}</button>}
       </section>
       {error && <p className="notice error" role="alert">{error}</p>}
 
@@ -1361,6 +1394,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
             {!!caps.length && <span> {caps.map(capLabel).join(" · ")}</span>}
             {search.pagination?.hasMore && <span> {text("D’autres résultats sont disponibles.", "More results are available.")}</span>}
           </p>}
+          {search?.trace?.numericMatch && <p className="help library-result-rule">{text("Nombres enregistrés qui s’affichent ainsi, arrondis au nombre de décimales saisi. Ceux qui n’ont pas de libellé indexé sont lus directement dans les classeurs, sans libellé.", "Saved numbers that display this way, rounded to the decimals typed. Those without an indexed label are read straight from the workbooks, without a label.")}</p>}
+          {search?.trace?.addressMatch && <p className="help library-result-rule">{text(`Aucun texte ne correspond : cellules situées à l’adresse ${search.trace.addressMatch.address}.`, `No text matches: cells located at address ${search.trace.addressMatch.address}.`)}</p>}
           {search && results.length === 0 && <p className="library-empty">{text("Aucun résultat affiché pour cette requête et cette portée.", "No results are displayed for this query and scope.")}</p>}
           {results.slice(0, visibleResultCount).map((hit) => {
             const labels = hit.labels || [];
@@ -1372,8 +1407,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
                 <span>{revisionLabel({ filename: hit.filename, projectId: hit.revision?.projectId, sha256: hit.revision?.sha256 })}</span>
                 <span>{hit.sheet}{hit.address ? `!${hit.address}` : ""} · {kindLabel(hit.kind)}</span>
               </button>
-              {hit.formula && <p className="library-evidence">{text("Formule enregistrée", "Saved formula")}: <code>{hit.formula}</code></p>}
-              {hit.valueProvenance && <p className="library-evidence">{text("Origine de la valeur", "Value source")}: {provenanceLabel(hit.valueProvenance, english)}{hit.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</p>}
+              {hit.formula && <p className="library-evidence">{text("Formule enregistrée\u00a0:", "Saved formula:")} <code>{hit.formula}</code></p>}
+              {hit.valueProvenance && <p className="library-evidence">{text("Origine de la valeur\u00a0:", "Value source:")} {provenanceLabel(hit.valueProvenance, english)}{hit.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</p>}
               {!!labels.length && <ul className="library-labels">{labels.map((label, index) => {
                 const declared = ["table_column", "defined_name"].includes(label.method) || ["table_column", "defined_name"].includes(label.role);
                 const heuristic = label.certainty === "heuristic" || !declared;
@@ -1397,8 +1432,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           {selected && lineageCoverage && <p className={`library-verdict ${lineageCoverage.complete ? "is-complete" : "is-incomplete"}`} role="status">
             {lineageCoverage.exhaustive ? text("Parcours exhaustif dans le périmètre chargé.", "Traversal exhaustive within the loaded scope.") : text("Parcours non exhaustif.", "Traversal is not exhaustive.")}
             {" "}{lineageCoverage.complete ? text("Lignage complet.", "Lineage complete.") : text("Lignage incomplet.", "Lineage incomplete.")}
-            {lineageCoverage.boundaries?.length > 0 && ` ${text("Arrêts", "Stops")}: ${lineageCoverage.boundaries.map((reason) => searchText(SEARCH_BOUNDARY_LABELS[reason] || reason, english)).join(", ")}.`}
-            {lineageCoverage.capsHit?.length > 0 && ` ${text("Limites", "Limits")}: ${lineageCoverage.capsHit.map(capLabel).join(", ")}.`}
+            {lineageCoverage.boundaries?.length > 0 && ` ${text("Arrêts\u00a0:", "Stops:")} ${lineageCoverage.boundaries.map((reason) => searchText(SEARCH_BOUNDARY_LABELS[reason] || reason, english)).join(", ")}.`}
+            {lineageCoverage.capsHit?.length > 0 && ` ${text("Limites\u00a0:", "Limits:")} ${lineageCoverage.capsHit.map(capLabel).join(", ")}.`}
             {lineageBoundaries.some((boundary) => boundary.stalePin) && ` ${text("Une épingle périmée empêche de confirmer la cible.", "A stale pin prevents confirmation of the target.")}`}
           </p>}
           {lineage && <div className="library-diagnostics">
@@ -1420,8 +1455,8 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
               <summary>{text("Preuves détaillées par classeur et révision", "Evidence grouped by workbook revision")}</summary>
               {lineageGroups.map((group) => <section key={group.key} className="library-revision-group"><h4>{group.title || text("Révision inconnue", "Unknown revision")}</h4><ul>
                 {group.nodes.map((node) => <li key={node.id}><strong>{lineageNodeLabels.get(node.id)}</strong>
-                  <span>{text("Valeur", "Value")}: {node.value == null ? text("aucune valeur enregistrée", "no saved value") : searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>
-                  {node.formula && <span>{text("Formule", "Formula")}: <code>{node.formula}</code></span>}
+                  <span>{text("Valeur\u00a0:", "Value:")} {node.value == null ? text("aucune valeur enregistrée", "no saved value") : searchText(node.value, english)} · {provenanceLabel(node.valueProvenance, english)}{node.valueProvenance === "saved_cache" && ` · ${text("aucune formule n’a été recalculée", "no formula was recalculated")}`}</span>
+                  {node.formula && <span>{text("Formule\u00a0:", "Formula:")} <code>{node.formula}</code></span>}
                   {(node.labels || []).map((label, index) => <span key={`${node.id}:label:${index}`}>{roleLabel(label.role || label.method)} · {label.text} · {label.certainty === "heuristic" || !["table_column", "defined_name"].includes(label.method) ? text("inféré · certitude indicative", "inferred · indicative certainty") : text("déclaré", "declared")}{[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).length ? ` · ${text("source", "source")} ${[label.sourceSheet || label.sheet, label.sourceCell || label.cell].filter(Boolean).join("!")}` : ""}</span>)}
                 </li>)}
               </ul></section>)}
@@ -1455,7 +1490,7 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
               <span>{text("Cellule source", "Source cell")} · {link.sourceNode || text("non précisée", "not specified")}</span>
               <span>{link.reference || link.relationshipPath || text("Référence externe indisponible", "External reference unavailable")}</span>
               <span>{statusLabel(link.status)}{link.stalePin ? ` · ${text("épingle périmée", "stale pin")}` : ""}</span>
-              {!!link.candidates?.length && <span>{text("Cibles possibles", "Possible targets")}: {link.candidates.map((candidate) => {
+              {!!link.candidates?.length && <span>{text("Cibles possibles\u00a0:", "Possible targets:")} {link.candidates.map((candidate) => {
                 const candidateProject = revisions.find((item) => item.projectId === candidate.projectId);
                 return revisionLabel({ filename: candidateProject?.filename, projectId: candidate.projectId, sha256: candidate.sha256 });
               }).join(" · ")}</span>}
@@ -1489,15 +1524,15 @@ function LibrarySearch({ apiBase = "api/", language = "fr" }) {
           return <li key={`${event.type}:${index}`}>
             <strong>{operation}{eventStatus ? ` · ${eventStatus}` : ""}</strong>
             <span>{event.type === "search"
-              ? `${text("Requête", "Query")}: ${event.queryText} · ${text("Termes normalisés", "Normalized terms")}: ${(trace.terms || []).join(", ")} · ${text("Portée", "Scope")}: ${event.scopeLabel} · ${text("types", "types")}: ${(scope.kinds || []).map(kindLabel).join(", ")}`
+              ? `${text("Requête\u00a0:", "Query:")} ${event.queryText} · ${text("Termes normalisés\u00a0:", "Normalized terms:")} ${(trace.terms || []).join(", ")} · ${text("Portée\u00a0:", "Scope:")} ${event.scopeLabel} · ${text("types\u00a0:", "types:")} ${(scope.kinds || []).map(kindLabel).join(", ")}`
               : event.type === "lineage"
-                ? `${directionName} · ${text("révisions consultées", "revisions consulted")}: ${revisionsInTrace.join(", ") || text("en attente", "pending")}`
+                ? `${directionName} · ${text("révisions consultées\u00a0:", "revisions consulted:")} ${revisionsInTrace.join(", ") || text("en attente", "pending")}`
                 : event.detail}</span>
-            {event.error && <p className="library-trace-error">{text("Échec", "Failure")}: {event.error}</p>}
-            {trace.normalization && <span>{text("Normalisation", "Normalization")}: {text("accents neutralisés, minuscules, tous les termes doivent correspondre", "accents folded, lower case, all terms must match")}</span>}
-            {trace.scope?.scope && <span>{text("Périmètre", "Scope")}: {trace.scope.scope}</span>}
-            {trace.limits && <span>{text("Budgets", "Budgets")}: {Object.entries(trace.limits).filter(([key]) => SEARCH_BUDGET_LABELS[key]).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key], english)}: ${value}`).join(" · ")}</span>}
-            <small>{trace.durationMs !== undefined ? traceTime(trace.durationMs) : ""}{trace.backend ? ` · ${trace.backend === "fts5" ? "FTS5" : text("recherche de secours", "fallback search")}` : ""}{trace.tool ? ` · ${operation}` : ""}{trace.capsHit?.length ? ` · ${text("arrêts", "stops")}: ${trace.capsHit.map(capLabel).join(", ")}` : ""}{trace.complete !== undefined ? ` · ${trace.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : event.complete !== undefined ? ` · ${event.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : ""}{trace.exhaustive !== undefined ? ` · ${trace.exhaustive ? text("parcours exhaustif", "exhaustive traversal") : text("parcours non exhaustif", "non-exhaustive traversal")}` : ""}</small>
+            {event.error && <p className="library-trace-error">{text("Échec\u00a0:", "Failure:")} {event.error}</p>}
+            {trace.normalization && <span>{text("Normalisation\u00a0:", "Normalization:")} {text("accents neutralisés, minuscules, tous les termes doivent correspondre", "accents folded, lower case, all terms must match")}</span>}
+            {trace.scope?.scope && <span>{text("Périmètre\u00a0:", "Scope:")} {trace.scope.scope}</span>}
+            {trace.limits && <span>{text("Budgets\u00a0:", "Budgets:")} {Object.entries(trace.limits).filter(([key]) => SEARCH_BUDGET_LABELS[key]).map(([key, value]) => `${searchText(SEARCH_BUDGET_LABELS[key], english)}: ${value}`).join(" · ")}</span>}
+            <small>{trace.durationMs !== undefined ? traceTime(trace.durationMs) : ""}{trace.backend ? ` · ${trace.backend === "fts5" ? "FTS5" : text("recherche de secours", "fallback search")}` : ""}{trace.tool ? ` · ${operation}` : ""}{trace.capsHit?.length ? ` · ${text("arrêts\u00a0:", "stops:")} ${trace.capsHit.map(capLabel).join(", ")}` : ""}{trace.complete !== undefined ? ` · ${trace.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : event.complete !== undefined ? ` · ${event.complete ? text("couverture complète", "complete coverage") : text("couverture incomplète", "incomplete coverage")}` : ""}{trace.exhaustive !== undefined ? ` · ${trace.exhaustive ? text("parcours exhaustif", "exhaustive traversal") : text("parcours non exhaustif", "non-exhaustive traversal")}` : ""}</small>
             <details className="library-technical-trace"><summary>{text("Détails techniques", "Technical details")}</summary><pre>{JSON.stringify({ error: event.technicalError, generation: trace.generation, scope, revisions: trace.revisions, counts, limits: trace.limits, capsHit: trace.capsHit, direction: trace.direction }, null, 2)}</pre></details>
           </li>;
         })}</ol>
@@ -1513,7 +1548,7 @@ export function mountLibrarySearch(element, options = {}) {
   function SearchRoot() {
     const [language, setLanguage] = useState(options.language || "fr");
     update = setLanguage;
-    return <LibrarySearch apiBase={options.apiBase} language={language} />;
+    return <LibrarySearch apiBase={options.apiBase} language={language} onClose={options.onClose} translate={options.translate} />;
   }
   flushSync(() => root.render(<SearchRoot />));
   return {

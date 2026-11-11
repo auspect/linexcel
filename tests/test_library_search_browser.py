@@ -497,6 +497,7 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
         )
         assert summary.locator("a").is_visible()
         if viewport[0] == 390:
+            page.locator(".library-advanced > summary").click()
             main = page.locator(".workspace > main")
             assert (
                 summary.evaluate("element => getComputedStyle(element).position")
@@ -515,6 +516,7 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
                 summary_box["y"] >= filter_box["y"] + filter_box["height"]
             )
             assert page.locator(".library-kind-filter input").first.is_visible()
+            page.locator(".library-advanced > summary").click()
             main.evaluate("(element) => element.scrollTo(0, 0)")
         if viewport[0] == 1440:
             assert page.evaluate(
@@ -1069,6 +1071,7 @@ def test_failed_scoped_import_is_cleaned_through_attachment_route(browser):
             "document.querySelector('#connection')?.dataset.state === 'ok'"
         )
         page.locator(".library-search-trigger").click()
+        page.locator(".library-advanced > summary").click()
         page.locator("#library-attach-file").set_input_files(
             {
                 "name": "broken.xlsx",
@@ -1190,6 +1193,7 @@ def test_scoped_attachment_waits_for_catalog_before_loading_links(browser):
             "document.querySelector('#connection')?.dataset.state === 'ok'"
         )
         page.locator(".library-search-trigger").click()
+        page.locator(".library-advanced > summary").click()
         page.locator("#library-attach-file").set_input_files(
             {
                 "name": "attached.xlsx",

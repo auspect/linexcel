@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Show each AI proposal's source graph beside its cells: directed dependencies,
+  saved values, formulas, provenance and stop boundaries are recomputed by
+  linexcel. New calculations include a versioned server-authored Python recipe,
+  operand snapshots and a code digest; the model cannot supply result numbers
+  or executable code.
+- Freeze questions to a user-selected workbook/revision or exact filenames
+  named in the question. A missing, duplicate or conflicting name requires a
+  selection before any model request. Once a source is selected, a name absent
+  from the library, such as an external link target, is only text and never
+  widens the selection. Short run-local cell IDs let the model refer to
+  evidence without recopying canonical revision handles.
+- Open library search directly in its query field, with scope, object types and
+  temporary attachments under **Advanced search**. The collapsed summary keeps
+  the selected scope visible. An explicit **Back to workbook** button and Escape
+  return to the previous workbook view without losing its selected tab.
+- Show **Ask AI a question** beside direct search only when an AI provider is
+  configured. It carries the query into an editable question without sending it,
+  explains the bounded evidence tools, and provides a clear return to search.
+  Direct search continues to work without AI.
+- Give library questions their own cumulative token allowance,
+  `linexcel serve --ai-question-token-budget` (default 64,000). The 16,000-token
+  documentation budget no longer applies to questions. Every tool step resends
+  the history, so in a real-user trial that budget stopped four of eight
+  questions without an answer after three to seven steps.
+- Send the question model a compact view of each tool result: cell identity,
+  labels, saved value, formula and stop reasons, at most 24 KiB. Revision
+  hashes, XML provenance, per-sheet catalog coverage and the folder an external
+  link had on its author's machine no longer leave the server. A lineage is cut
+  to its 60 nearest cells for the model and the trace says so. The answer shown
+  to the reader is still reread in full. In a trial with `gpt-6.1-terra`, the
+  same questions that used 30,000 to 105,000 tokens without an answer were
+  answered with 7,000 to 27,000.
+- Let the model correct a misnamed sheet, a range over 25 cells or a proposal
+  that cites a range instead of cells. It receives a fixed code and hint, up to
+  three times, and the trace shows each refused call. Any other invalid call
+  still ends the search at once.
+- While a question runs, show the elapsed time and what it waits for: the
+  model's first response or the latest tool step. When a search stops on a
+  token, step, time or result limit, name that limit and state that this does
+  not prove absence.
+- Format displayed numbers to Excel's 15 significant digits, so a saved
+  `6600.000000000001` reads as `6600`. Exports and calculation receipts keep
+  the stored value.
+- Lock formualizer 0.14.0. A saved dynamic-array spill is now recalculated,
+  where 0.13.0 read it back as `#SPILL!` and linexcel kept the saved value. The
+  declared minimum stays 0.10.1.
+
+### Fixed
+
+- Keep a verified answer whatever the size of its lineage. The reread cells
+  and lineage were counted against the 512 KiB budget of model-facing results,
+  so an answer citing two cells with long lineages was discarded as "result
+  size limit" after the model had found it.
+- Do not send a request that would exceed the question's token allowance. The
+  estimate counted words and missed JSON by a factor of three or more; one
+  request of 102,000 tokens passed a 64,000-token allowance. Requests are now
+  estimated from their size and from the provider's previous count.
+- Show the consent step at once after a large import. Preparing a question
+  waited for the library's search index rebuild, up to two minutes with no
+  explanation. A submitted question now waits for that rebuild before its time
+  allowance starts, and says so.
+- Find a saved number by the value the sheet displays. `6600` finds a cell
+  saved as `6600.000000000001`, and `967.5` or `967,5` finds `967.538`: a number
+  matches the saved values that round to it at the decimals typed. Thousands
+  separators are accepted. Numbers without an indexed label are found too, read
+  from the workbooks and listed without a label; in a wide statistical table
+  that is most of them. Search required exact equality on labelled numbers and
+  reported a complete search with no result.
+- Find a cell by its address. `B5` or `Synthèse!B5` lists that cell when no
+  text matches the query, so labels such as `Q4` are still searched as text.
+- Name the sheet groups of a large workbook's overview by their sheets. A sheet
+  called `CO2` or `TAG1` was read as a cell coordinate, so a group of 32 sheets
+  was titled `CO2 … CO2`. Cards now read "Sheet group, A to Z", the notice says
+  that sheets are grouped alphabetically, and sheetless objects read "No sheet"
+  rather than `∅`. Existing overviews are rebuilt on first use.
+- Keep the data grid and its horizontal scrollbar inside the panel that scrolls
+  them. In an 824 × 768 window the grid was taller than its panel, so its
+  scrollbar and its first rows were never on screen together.
+- Show the graph's loading message in the middle of the canvas. At the top it
+  covered the cell search and the sheet picker for as long as a large workbook
+  was loading.
+- Say what would let an answer's lineage continue past an external workbook:
+  the named file must be imported and be among the question's sources.
+- Translate a sheet's hidden state in static reports, where a French report
+  read `Visibilité: hidden`, and use each language's label separator.
+- Select every workbook a question names, including one followed by the full
+  stop that ends the sentence. "… via consolidation.xlsx jusqu’à budget.xlsx."
+  froze two of the three files, so the lineage stopped one workbook short.
+- Say, above an answer that cites formula cells, that their values are those
+  saved in the file and that Excel may show others after recalculating.
+- Return a clear conflict that names the workbook when a question targets one
+  whose import is still writing its index. The server answered with an internal
+  error.
+- Accept questions that name a reference attached to a workbook in scope, or an
+  external link target it declares, such as `consolidation.xlsx` behind
+  `rapport.xlsx`. Those names were rejected as missing workbooks even though
+  lineage reaches them. They remain text and never select a source.
+- Lead an answer with its lineage limits, such as an external workbook that
+  could not be found or a cache-only value, instead of "lineage verified"
+  above evidence that contradicted it.
+- Open the selected cell's neighbourhood from **See in graph**. When the
+  workbook overview was showing, it collapsed the precedents into
+  "Rest of workbook".
+- Leave search with Escape after a click on plain text moved focus to the page,
+  and translate server messages in the English search and question views. The
+  workspace retention line now follows a change of interface language, and
+  French labels in the search and question views take a space before a colon.
+- Show the remote AI consent step right below the question and move focus to
+  it, without selecting its Allow button. It appeared below the help text,
+  often out of view, while the search button was already disabled.
+- Keep the graph legend clear of the zoom controls and minimap. On a narrow
+  canvas it hid the zoom-out and fit buttons. The workbook graph notice now
+  uses singular forms for one node, link or group.
+- Distinguish a source reference invented or altered by the question model from
+  a changed workbook or scope. Unissued references still stop the question
+  without a proposal; the trace explains the invalid model reference and the
+  evidence instructions require handles to be copied exactly.
+
+### Documentation
+
+- Add a formualizer skill for coding agents in `.agents/skills/formualizer/`.
+  A belief about the engine is written down and checked against the installed
+  version, its type stubs, the upstream changelog and a probe before it
+  justifies code or a workaround. Its inventory script lists the engine APIs
+  linexcel does not use and the comments that assert an engine limit. Its first
+  use corrected a comment about saved dynamic-array spills and led to the
+  0.14.0 lock.
+- Record the November 2026 trial of library questions with `gpt-6.1-terra`,
+  one run per question, in the question-model notes.
+
 ## [1.18.1] — 2026-11-10
 
 ### Fixed

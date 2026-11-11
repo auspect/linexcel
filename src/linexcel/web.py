@@ -2142,6 +2142,9 @@ def serve(args) -> int:
         ai_model=args.ai_model,
         ai_vision_model=args.ai_vision_model,
         ai_token_budget=args.ai_token_budget,
+        ask_limits=AskLimits(
+            tokens=getattr(args, "ai_question_token_budget", AskLimits.tokens)
+        ),
         ai_api_key=_serve_ai_key(args.ai_base_url),
         ai_max_tokens=args.ai_max_tokens,
         ai_stream=args.ai_stream,

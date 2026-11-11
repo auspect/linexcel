@@ -169,6 +169,16 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--ai-model", default="qwen3.8")
     serve.add_argument("--ai-vision-model", default=None)
     serve.add_argument("--ai-token-budget", type=int, default=16000)
+    serve.add_argument(
+        "--ai-question-token-budget",
+        type=int,
+        default=64000,
+        help=(
+            "Cumulative tokens for one library question. Each tool step resends "
+            "the history, so this is separate from --ai-token-budget, which "
+            "bounds documentation tasks (default: 64000)."
+        ),
+    )
     serve.add_argument("--ai-max-tokens", type=int, default=12000)
     serve.add_argument("--ai-stream", action="store_true")
     serve.add_argument("--ai-reasoning-split", action="store_true")

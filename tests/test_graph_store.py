@@ -175,3 +175,35 @@ def test_mixed_pattern_partitions_have_true_bounds_and_bounded_cell_previews(tmp
             "SELECT g.id FROM groups g JOIN groups c ON c.parent=g.id "
             "WHERE g.level='partition' GROUP BY g.id HAVING count(*)=1"
         ).fetchall()
+
+
+def test_sheet_groups_are_named_by_their_sheets_not_as_coordinates(tmp_path):
+    # CO2 and TAG1 are sheet names in a public transport workbook. Read as
+    # cell coordinates they named a whole group of sheets "CO2 … CO2".
+    names = [f"A{i:02d}.1" for i in range(31)] + ["CO2", "TAG1"]
+    names += [f"M{i:02d}.2" for i in range(31)]
+    book = Workbook()
+    book.active.title = names[0]
+    for name in names[1:]:
+        book.create_sheet(name)
+    for name in names:
+        book[name]["A1"] = 1
+        book[name]["B1"] = "=A1*2"
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    stamp = generation(index)
+    overview = read_view(artifact, stamp)
+    groups = [node for node in overview["nodes"] if node["kind"] == "group"]
+    ordered = sorted(names)
+    assert [node["label"] for node in groups] == [
+        f"{ordered[0]} … {ordered[31]}",
+        f"{ordered[32]} … {ordered[-1]}",
+    ]
+    assert all(node["level"] == "sheets" for node in groups)
+    inside = read_view(artifact, stamp, view=groups[0]["viewId"])
+    sheets = [node for node in inside["nodes"] if node.get("level") == "sheet"]
+    assert [node["label"] for node in sheets] == ordered[:32]

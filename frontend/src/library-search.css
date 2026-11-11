@@ -18,9 +18,71 @@
 .library-ask-actions button[aria-pressed="true"] { color: var(--accent); border-color: currentColor; }
 .library-ask-state :is(p, span, strong, code, small, li), .library-ask-trace { overflow-wrap: anywhere; }
 .library-ask-consent, .library-ask-answer, .library-calculation { border-top: 1px solid var(--line); padding-block-start: 16px; }
+.library-calculation { min-width: 0; }
 .library-ask-cell { padding-block: 16px; border-bottom: 1px solid var(--line); }
 .library-ask-cell code { white-space: pre-wrap; }
 .library-ask-trace pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+.library-ask-source { display: grid; gap: 6px; min-width: 0; }
+.library-ask-source select { width: 100%; min-height: var(--tap); }
+.library-ask-frozen-sources,
+.library-answer-proof,
+.library-calculation-receipt {
+  min-width: 0;
+  padding-block: 12px;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.library-answer-proof > summary,
+.library-calculation-receipt > summary {
+  min-height: var(--tap);
+  padding-block: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.library-answer-proof h5 { margin-block: 16px 8px; font-size: var(--fs-label); }
+.library-proof-status { padding: 8px 10px; margin: 8px 0; border-radius: var(--r-xs); }
+.library-proof-status.is-complete { color: var(--ok); background: var(--ok-tint); }
+.library-proof-status.is-incomplete { color: var(--warn); background: var(--warn-tint); }
+.library-answer-headline.is-limited { color: var(--warn); background: var(--warn-tint); padding: 8px 10px; border-radius: var(--r-xs); }
+.library-proof-nodes,
+.library-proof-edges,
+.library-proof-boundaries {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-block: 8px 16px;
+  padding-inline-start: 20px;
+}
+.library-proof-nodes > li,
+.library-proof-boundaries > li {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.library-proof-edges > li { min-width: 0; overflow-wrap: anywhere; }
+.library-proof-nodes small { color: var(--muted); }
+.library-proof-edges small { display: block; }
+.library-proof-edge-direction {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.library-receipt-code {
+  max-width: 100%;
+  max-height: 320px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre;
+  color: var(--ink);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-meta);
+}
 body.library-search-active {
   height: 100dvh;
   overflow: hidden;
@@ -101,6 +163,20 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
   margin: 0;
   font-size: 24px;
 }
+.library-search-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.library-back {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  min-height: var(--tap);
+}
+.library-back svg { flex: none; }
 .library-search-heading p:last-child {
   max-width: 560px;
   margin: 0;
@@ -246,6 +322,35 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
 }
 .library-search-form-row button {
   min-height: var(--tap);
+}
+.library-search-controls > form {
+  display: grid;
+  gap: 8px;
+}
+.library-search-controls > form .help { margin: 0; }
+.library-search-return { justify-self: start; }
+.library-advanced {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.library-advanced > summary {
+  min-height: var(--tap);
+  padding-block: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.library-advanced > summary span {
+  margin-inline-start: 12px;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+.library-advanced-content {
+  display: grid;
+  gap: 16px;
+  padding-block: 12px 4px;
 }
 .library-scope,
 .library-kind-filter {
@@ -674,6 +779,10 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
   .library-search-form-row button {
     width: 100%;
   }
+  .library-advanced > summary span {
+    display: block;
+    margin: 4px 0 0 16px;
+  }
   .library-scope > button {
     flex: 1 1 140px;
   }
@@ -712,3 +821,5 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
     padding-inline: 7px;
   }
 }
+.library-proof-action { color: var(--ink); font-weight: 600; }
+.library-answer-cache { color: var(--ink-2); font-size: 13px; }

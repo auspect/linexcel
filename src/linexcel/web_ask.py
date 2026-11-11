@@ -20,8 +20,45 @@ from linexcel.ask_provider import OpenAIToolProvider, QuestionConfigurationChang
 from linexcel.ask_tools import QuestionTools
 from linexcel.catalog import revision
 from linexcel.lazy_store import WorkbookIndex
+from linexcel.question_sources import SourceSelectionError, select_question_sources
 
 CATEGORIES = ["question", "values", "formulas", "labels", "sheet and workbook names"]
+
+
+def attached_names(sources):
+    """Names of references attached to, or external books declared by, sources.
+
+    Lineage reaches these files through their workbook, so a question may name
+    them without importing them. An index still being written is skipped here;
+    question preparation reports it separately when that source is selected.
+    """
+    names = set()
+    for source in sources:
+        references = source.path.parent / "references"
+        if references.is_dir():
+            names.update(item.name for item in references.iterdir() if item.is_file())
+        try:
+            with WorkbookIndex(source.path) as index:
+                books = index.meta.get("externalBooks") or []
+        except (sqlite3.Error, OSError):
+            continue
+        names.update(
+            book["filename"]
+            for book in books
+            if isinstance(book, dict) and isinstance(book.get("filename"), str)
+        )
+    return names
+
+
+def index_unavailable(filename):
+    from linexcel.web import APIError
+
+    return APIError(
+        409,
+        f"« {filename} » est encore en cours d’import ou son index est "
+        "indisponible. Réessayez quand l’import est terminé, ou choisissez une "
+        "autre source.",
+    )
 
 
 def local_endpoint(endpoint):
@@ -150,22 +187,56 @@ class AskService:
         for key in ("project", "revision", "scope"):
             if key in body and (not isinstance(body[key], str) or len(body[key]) > 128):
                 raise APIError(400, "Portée invalide")
-        with self.store.library.mutation(owner), self.store.lock:
+        # Reading the source list needs the store lock only: every import,
+        # replacement and deletion completes under it. The owner's mutation gate
+        # is also held for a whole catalog rebuild, up to two minutes after a
+        # large import, and the consent step must not wait behind that.
+        with self.store.lock:
             self.cleanup(owner)
             sources = self.store.library.sources(owner, body.get("scope") or None)
+            library_sources = sources
+            linked_cache = []
+
+            def linked():
+                if not linked_cache:
+                    linked_cache.append(attached_names(library_sources))
+                return linked_cache[0]
+
+            # Resolve names against inventory first. An explicitly selected
+            # workbook never requires opening another workbook's source index.
+            try:
+                inventory, _ = select_question_sources(
+                    [
+                        {
+                            "projectId": item.project_id,
+                            "id": item.project_id,
+                            "filename": item.filename,
+                        }
+                        for item in sources
+                    ],
+                    body["question"],
+                    project=body.get("project")
+                    or (body.get("revision") or "").split(":", 1)[0]
+                    or None,
+                    linked=linked,
+                )
+            except SourceSelectionError as exc:
+                raise APIError(409, str(exc)) from None
+            selected_ids = {item["projectId"] for item in inventory}
+            sources = [item for item in sources if item.project_id in selected_ids]
             revisions = []
             for source in sources:
-                if body.get("project") and source.project_id != body["project"]:
-                    continue
-                with WorkbookIndex(source.path) as index:
+                try:
+                    opened = WorkbookIndex(source.path)
+                except (sqlite3.Error, OSError):
+                    raise index_unavailable(source.filename) from None
+                with opened as index:
                     sha = index.meta.get("sha256")
                     if not isinstance(sha, str) or not re.fullmatch(
                         r"[a-f0-9]{64}", sha
                     ):
                         continue
                     rev = revision(source.project_id, sha)
-                    if body.get("revision") and rev["id"] != body["revision"]:
-                        continue
                     revisions.append(
                         {
                             **rev,
@@ -173,8 +244,16 @@ class AskService:
                             "sheets": index.meta.get("sheets", []),
                         }
                     )
-            if not revisions:
-                raise APIError(409, "Aucune révision importée dans cette portée")
+            try:
+                revisions, source_selection = select_question_sources(
+                    revisions,
+                    body["question"],
+                    project=body.get("project"),
+                    revision_id=body.get("revision"),
+                    linked=linked,
+                )
+            except SourceSelectionError as exc:
+                raise APIError(409, str(exc)) from None
             if (
                 len(revisions) > 32
                 or len(encoded(revisions).encode("utf-8")) > 64 * 1024
@@ -189,6 +268,7 @@ class AskService:
                 "scope": {
                     "attachment": body.get("scope") or None,
                     "revisions": revisions,
+                    "sourceSelection": source_selection,
                 },
                 "expires": time.time() + 600,
                 "endpoint": self.store.config.ai_base_url,
@@ -207,6 +287,7 @@ class AskService:
                 "model": prepared["model"],
                 "local": prepared["local"],
                 "revisions": revisions,
+                "sourceSelection": source_selection,
                 "categories": CATEGORIES,
                 "expiresAt": prepared["expires"],
             }
@@ -297,10 +378,22 @@ class AskService:
                 ai_base_url=prepared["endpoint"],
                 ai_model=prepared["model"],
             )
-        limits = replace(
-            self.store.config.ask_limits,
-            tokens=min(self.store.config.ask_limits.tokens, task["budget"]["tokens"]),
+        # Questions have their own cumulative budget (ask_limits.tokens). The
+        # documentation budget is per call and was cutting questions short after
+        # three or four tool steps, since every step resends the history.
+        limits = self.store.config.ask_limits
+        # Every tool call takes the owner's mutation gate, which a catalog
+        # rebuild holds until it ends. Wait for it here, before the question's
+        # clock starts, instead of spending the time budget in that queue.
+        gate = self.store.library.mutation(task["owner"])
+        waiting_until = (
+            time.monotonic() + self.store.config.catalog_limits.build_seconds + 30
         )
+        while not gate.acquire(timeout=0.2):
+            if event.is_set() or time.monotonic() >= waiting_until:
+                break
+        else:
+            gate.release()
         tools = QuestionTools(
             self.store,
             task["owner"],
@@ -387,8 +480,54 @@ class AskService:
                     "trace": trace,
                 }
             )
+        unavailable = {
+            "status": "failed",
+            "answer": None,
+            "trace": {
+                "schemaVersion": trace["schemaVersion"],
+                "state": "terminal",
+                "verdict": "failed",
+                "reason": "scope_or_source_changed",
+                "steps": [
+                    {
+                        "tool": "finish",
+                        "summary": {
+                            "searchCompleted": False,
+                            "truncated": True,
+                            "doesNotProveAbsence": True,
+                        },
+                        "verdict": "failed",
+                    }
+                ],
+            },
+        }
         # Access rules match source evidence, including replacement and attachment
         # expiry. Persisted run logs never extend source authorization.
+        gate = self.store.library.mutation(owner)
+        if gate.acquire(blocking=False):
+            gate.release()
+        elif result.get("status") != "answer_proposed":
+            # A catalog rebuild holds the gate. Polling a run that has no answer
+            # to reverify must not hang behind it: check that every source still
+            # exists, say why the run is waiting, and reverify on a later poll.
+            with self.store.lock:
+                try:
+                    available = {
+                        source.project_id
+                        for source in self.store.library.sources(
+                            owner, trace["scope"].get("attachment")
+                        )
+                    }
+                except KeyError:
+                    available = set()
+                if not all(
+                    item["projectId"] in available
+                    for item in trace["scope"]["revisions"]
+                ):
+                    return unavailable
+                if (root / "feedback.json").is_file():
+                    result["feedback"] = _read(root / "feedback.json")
+                return {**result, "libraryBusy": True}
         try:
             tools = QuestionTools(
                 self.store, owner, trace["scope"], root, time.monotonic() + 5
@@ -422,27 +561,7 @@ class AskService:
                         },
                     }
         except (KeyError, ValueError, OSError, sqlite3.Error, TimeoutError):
-            return {
-                "status": "failed",
-                "answer": None,
-                "trace": {
-                    "schemaVersion": trace["schemaVersion"],
-                    "state": "terminal",
-                    "verdict": "failed",
-                    "reason": "scope_or_source_changed",
-                    "steps": [
-                        {
-                            "tool": "finish",
-                            "summary": {
-                                "searchCompleted": False,
-                                "truncated": True,
-                                "doesNotProveAbsence": True,
-                            },
-                            "verdict": "failed",
-                        }
-                    ],
-                },
-            }
+            return unavailable
         with self.store.lock:
             if (root / "feedback.json").is_file():
                 result["feedback"] = _read(root / "feedback.json")

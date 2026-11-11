@@ -133,7 +133,7 @@ def search(page, query):
     with page.expect_response(
         lambda response: "/api/library/search?" in response.url
     ) as response:
-        page.locator(".library-search-form-row button").click()
+        page.locator(".library-search-form-row button[type=submit]").click()
     assert response.value.ok, response.value.text()
     return response.value.json()
 
@@ -162,7 +162,7 @@ def test_superseding_real_search_unlocks_controls_and_settles_trace(
         gate = app.test_search_gate
         gate["active"] = True
         page.locator("#library-search-query").fill("ALPHA")
-        page.locator(".library-search-form-row button").click()
+        page.locator(".library-search-form-row button[type=submit]").click()
         assert gate["started"].wait(5)
         page.locator(".library-trace-summary").filter(
             has_text="Recherche en cours"
@@ -173,7 +173,7 @@ def test_superseding_real_search_unlocks_controls_and_settles_trace(
         )
         page.locator("#library-search-query").fill("capneedle")
         playwright.expect(
-            page.locator(".library-search-form-row button")
+            page.locator(".library-search-form-row button[type=submit]")
         ).to_be_enabled()
         playwright.expect(page.locator("#library-attach-file")).to_be_enabled()
         assert "remplacée" in page.locator(".library-trace-summary").inner_text()
@@ -198,6 +198,7 @@ def test_recovery_changes_scope_and_invalidates_completed_or_pending_answer(
     second = upload("beta.xlsx", book_bytes("BETA", 9), True)
     page = open_search(browser, url, width)
     try:
+        page.locator(".library-advanced > summary").click()
         recover = page.locator(".library-recoverable-attachments button").filter(
             has_text="Récupérer"
         )
@@ -208,7 +209,7 @@ def test_recovery_changes_scope_and_invalidates_completed_or_pending_answer(
         if inflight:
             gate = app.test_search_gate
             gate["active"] = True
-            page.locator(".library-search-form-row button").click()
+            page.locator(".library-search-form-row button[type=submit]").click()
             assert gate["started"].wait(5)
             page.locator(".library-trace-summary").filter(
                 has_text="Recherche en cours"
@@ -217,7 +218,7 @@ def test_recovery_changes_scope_and_invalidates_completed_or_pending_answer(
         assert page.locator(".library-result").count() == 0
         assert page.locator(".library-verdict").count() == 0
         playwright.expect(
-            page.locator(".library-search-form-row button")
+            page.locator(".library-search-form-row button[type=submit]")
         ).to_be_enabled()
         if inflight:
             gate["release"].set()
@@ -334,7 +335,9 @@ def test_group_membership_counts_null_evidence_and_current_pin_confirmation(
         assert (
             "cache enregistré" in page.locator(".library-accessible-graph").inner_text()
         )
-        assert "Formule:" in page.locator(".library-accessible-graph").inner_text()
+        assert (
+            "Formule\u00a0:" in page.locator(".library-accessible-graph").inner_text()
+        )
         assert (
             reader["workbookRevision"]["sha256"][:8]
             in page.locator(".library-accessible-graph").inner_text()
