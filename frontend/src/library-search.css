@@ -822,4 +822,5 @@ body.library-search-active :is(button, input, select, summary, a, h3) {
   }
 }
 .library-proof-action { color: var(--ink); font-weight: 600; }
-.library-answer-cache { color: var(--ink-2); font-size: 13px; }
+.library-answer-cache,
+.library-answer-search { color: var(--ink-2); font-size: 13px; }

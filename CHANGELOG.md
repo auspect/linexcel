@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - List twelve member cells on a collapsed workbook card of a lineage, then a
   count, where it listed all of them. A range address no longer repeats its
   sheet name, as in `Ledger!Ledger!$H$6:$H$45`.
+- Say beside a proposed answer when the model's search was partial: the cited
+  cells are reread by linexcel, but other relevant cells may exist. The last
+  line of the trace adds that its verdict is about the model's search.
+  "Verified" above an answer and "search incomplete" at the end of its trace
+  read as a contradiction.
+- Mark the result of a calculation on formula cells as coming from saved
+  values, not recalculated, on the result line itself.
+- Show a question's total time in the trace footer, with its steps and tokens.
 
 ## [1.19.0] — 2026-11-11
 
