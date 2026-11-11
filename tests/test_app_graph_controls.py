@@ -873,3 +873,38 @@ def test_sheet_groups_say_what_they_hold_and_how_they_are_ordered(graph_app):
     )
     assert cards[0] == ["Sheet group, A to Z", "No sheet … A4.1.5"]
     assert not errors
+
+
+def test_open_options_float_without_stretching_the_toolbar(graph_app):
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.wait_for_function(
+        "document.querySelector('#graph-canvas')._flow?.getNodes().length===2"
+    )
+    measure = """() => { const box = e => { const r = e.getBoundingClientRect();
+        return {x: r.x, y: r.y, right: r.right, bottom: r.bottom, height: r.height}; };
+      const flow = document.getElementById('graph-canvas')._flow;
+      const body = document.querySelector('#graph-options[open] > .graph-options-body');
+      return {hud: box(document.querySelector('.graph-hud .graph-docked-controls')),
+        summary: box(document.querySelector('#graph-options > summary')),
+        body: body && box(body), canvas: box(document.getElementById('graph-canvas')),
+        zoom: flow.getViewport().zoom}; }"""
+    closed = page.evaluate(measure)
+    page.locator("#graph-options > summary").click()
+    playwright.expect(page.locator("#graph-focus")).to_be_visible()
+    opened = page.evaluate(measure)
+    if page.viewport_size["width"] > 650:
+        # In the toolbar row the open panel made it some 390 px tall, covered the
+        # top of the graph and shrank the area "Focus centre" fits into.
+        assert abs(opened["hud"]["height"] - closed["hud"]["height"]) <= 1
+        assert abs(opened["summary"]["x"] - closed["summary"]["x"]) <= 1
+        body, canvas = opened["body"], opened["canvas"]
+        assert canvas["x"] <= body["x"] and body["right"] <= canvas["right"]
+        assert body["y"] >= opened["summary"]["bottom"]
+    page.locator("#graph-focus").click()
+    page.wait_for_timeout(400)
+    assert not page.locator("#graph-options").evaluate("element => element.open")
+    focused = page.evaluate(measure)
+    # The centre stays readable: the fit is not computed under an open panel.
+    assert focused["zoom"] >= min(closed["zoom"], 0.5)
+    assert not errors

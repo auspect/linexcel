@@ -944,3 +944,99 @@ def test_formula_answers_say_their_values_are_saved_not_recalculated(
             playwright.expect(notice).to_have_count(0)
     finally:
         page.close()
+
+
+def test_answer_says_what_was_reread_what_was_searched_and_how_long(
+    browser, live_library
+):
+    # From a computer-use trial of 1.19.0: "verified" above an answer and
+    # "search incomplete" at the end of its trace read as a contradiction, a
+    # calculation did not say it used saved values, and the trace footer gave
+    # steps and tokens without the total time.
+    book = Workbook()
+    book.active.title = "S"
+    book.active["A1"], book.active["B1"] = "Ventes", 100
+    book.active["A2"], book.active["B2"] = "Coûts", 40
+    output = io.BytesIO()
+    book.save(output)
+    app, url, upload = live_library
+    project = upload("marge.xlsx", output.getvalue())
+    app.store.config = replace(app.store.config, ai_enabled=True)
+    app.store.ask.provider_factory = lambda _: FakeProvider(
+        [
+            [
+                call(
+                    "read_range",
+                    {"project": project["id"], "sheet": "S", "range": "A1:B2"},
+                    "read",
+                )
+            ],
+            lambda messages: [
+                call(
+                    "compute",
+                    {
+                        "op": "difference",
+                        "operands": [
+                            select_handle(messages, "B1"),
+                            select_handle(messages, "B2"),
+                        ],
+                    },
+                    "compute",
+                )
+            ],
+            lambda messages: [
+                call(
+                    "submit_answer",
+                    {
+                        "status": "proposed",
+                        "compute": json.loads(messages[-1]["content"])["data"][
+                            "computeHandle"
+                        ],
+                    },
+                    "end",
+                )
+            ],
+        ]
+    )
+    page = open_search(browser, url, 1440)
+
+    def as_a_partial_search_over_formula_operands(route):
+        # The server's own answer, with the two facts this test is about: one
+        # operand is a formula's saved value and the model's search was partial.
+        response = route.fetch()
+        body = response.json()
+        run = body.get("run") or {}
+        if run.get("status") == "answer_proposed":
+            run["answer"]["computation"]["operands"][0]["formula"] = "=SUM(C1:C9)"
+            run["trace"]["steps"][-1]["summary"]["searchCompleted"] = False
+        route.fulfill(response=response, json=body)
+
+    page.route("**/api/library/ask/*", as_a_partial_search_over_formula_operands)
+    try:
+        scope_ready(page, url)
+        page.get_by_role("button", name="Poser une question à l’IA", exact=True).click()
+        page.locator("#library-ask-question").fill("Quelle est la marge ?")
+        page.get_by_role("button", name="Chercher une réponse", exact=True).click()
+        answer = page.locator(".library-ask-answer")
+        playwright.expect(answer).to_be_visible()
+        playwright.expect(page.locator(".library-calculation")).to_contain_text(
+            "Différence · 60 · à partir de valeurs enregistrées, non recalculées"
+        )
+        playwright.expect(page.locator(".library-answer-search")).to_contain_text(
+            "La recherche du modèle, elle, n’a pas tout parcouru"
+        )
+        trace = page.locator(".library-ask-trace")
+        # The statement about absence stays; the trace adds what it is about.
+        last = trace.locator(".library-ask-last")
+        playwright.expect(last).to_contain_text("ne prouve pas l’absence")
+        playwright.expect(last).to_contain_text(
+            "pas sur la relecture des cellules proposées"
+        )
+        # Steps, tokens, result bytes, then the total time in seconds.
+        playwright.expect(trace).to_contain_text(
+            re.compile(r"3 étapes · \d+ jetons · \d+ octets de résultats · [\d,]+ s")
+        )
+        answer.scroll_into_view_if_needed()
+        capture(page, "answer-scopes-and-duration-1440")
+    finally:
+        page.close()

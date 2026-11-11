@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-11T10:21:35.301747+00:00",
+  "capturedAt": "2026-11-11T12:15:14.245779+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,9 +15,9 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "57af1fef56b1e6280318f4d52c908b17afa311e18aa5145f23b6508c80197c84",
-    "src/linexcel/assets/app-graph.js": "eb2785da5acaf4f3c9eb4ed247ef72f84b733adfe0cfa32a52a22a02adaa103c",
-    "src/linexcel/assets/app-graph.css": "0ef0d478f4eae2a11edc174a90a0b6ff8c9d428c74df53cef39fc2ca18949dcd",
+    "src/linexcel/assets/app.html": "bb61b5997e79bcfdd6977bc111322daa3db525ef8ba7127d1c6aa9203903d16d",
+    "src/linexcel/assets/app-graph.js": "7afd9e7221354a7cbd1670c3fa4fdc305770cfac20910e77fc9012de74b83a07",
+    "src/linexcel/assets/app-graph.css": "e779254e6083a35a1daf1e0f8ad4177e1170c1b77d1bdd321f179725a99bbad7",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "scripts/capture_app.py": "d9260788fd32b83367888897bc682be2dc07b3de6220732ac23f2d864609caa3"
   },
@@ -31,7 +31,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "621d3fd13362a9f1ed73467fe9931f9a911c7a67bddde2eb25e58a11df891abc",
+      "sha256": "5d30722147faaa8a2fae7c00399288ec82129b52942cba7e37ace61172941168",
       "pixels": [
         2880,
         1800
@@ -39,7 +39,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
-      "sha256": "3c2afd03b10733d5a99878c33916243ea5955cd4c8a504d9c8320dd77575548b",
+      "sha256": "852a670003e21a239661d9ba4635b9cefaea097e443f3bb3f6f69137c5192a2e",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "c9e36f4694eff785bdf8a905245b3c9091f55216dfe5fede0e816b4b3ec2e9b9",
+      "sha256": "0d46ba58b5484fcd1d07e196c16c7013589d89ba6ab525edaf90497d65f21496",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "96a11ac4975440119d45b110a9658fd0",
+    "taskId": "c5daf1782a6a409aab70144bb28e0332",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0

@@ -212,3 +212,31 @@ def test_labelled_and_unlabelled_numbers_page_together(tmp_path):
         [("S", "M9"), ("S", "N9")],
         [("S", "O9")],
     ]
+
+
+def test_each_occurrence_of_a_label_carries_its_own_saved_value(tmp_path):
+    # A real user searched a label and got two occurrence buttons, B8 and C8,
+    # without the number that C8 holds, which is what they were looking for.
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Summary"
+    sheet["B5"], sheet["C5"] = "Indicateur", "Réel"
+    sheet["B8"], sheet["C8"] = "Marge Brute Commerciale", 500000
+    book.save(tmp_path / "kpi.xlsx")
+    build_index(tmp_path / "kpi.xlsx", tmp_path / "index.sqlite", filename="kpi.xlsx")
+    catalog = Catalog(tmp_path / "catalog")
+    sources = [Source("4" * 32, "kpi.xlsx", tmp_path / "index.sqlite", 1)]
+    found = catalog.search(sources, "marge brute commerciale")
+    (hit,) = found["results"]
+    assert [(item["address"], item["value"]) for item in hit["occurrences"]] == [
+        ("B8", "Marge Brute Commerciale"),
+        ("C8", 500000),
+    ]
+    assert hit["occurrenceCountComplete"] and hit["occurrencesOmitted"] == 0
+    page = catalog.occurrences(
+        sources, generation=found["generation"], group=hit["occurrenceGroup"]["id"]
+    )
+    assert [(item["address"], item["value"]) for item in page["results"]] == [
+        ("B8", "Marge Brute Commerciale"),
+        ("C8", 500000),
+    ]

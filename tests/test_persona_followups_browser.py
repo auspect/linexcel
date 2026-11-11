@@ -144,3 +144,83 @@ def test_retention_line_follows_the_interface_language(browser, live_library):
         playwright.expect(retention).to_contain_text("Limite des fichiers importés : ")
     finally:
         page.close()
+
+
+def kpi_bytes():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Summary"
+    sheet["B5"], sheet["C5"] = "Indicateur", "Réel"
+    sheet["B8"], sheet["C8"] = "Marge Brute Commerciale", 500000
+    for row in range(21, 41):
+        sheet.cell(row, 2, f"Ligne {row}")
+        sheet.cell(row, 3, row * 10)
+    sheet["B45"], sheet["C45"] = "Total des lignes", "=SUM(C21:C40)"
+    output = io.BytesIO()
+    book.save(output)
+    return output.getvalue()
+
+
+def test_label_search_shows_each_occurrence_value_and_a_short_member_list(
+    browser, live_library
+):
+    app, url, upload = live_library
+    project = upload("kpi.xlsx", kpi_bytes())
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        page.goto(f"{url}/?project={project['id']}")
+        page.locator(".library-search-trigger").click()
+        scope_ready(page, url)
+        query = page.locator("#library-search-query")
+        query.fill("Marge Brute Commerciale")
+        query.press("Enter")
+        card = page.locator(".library-result").first
+        playwright.expect(card).to_be_visible()
+        buttons = card.locator(".library-occurrences button, button").all_inner_texts()
+        # The number sits beside its address; the label does not repeat itself.
+        assert "Summary!C8 · 500000" in buttons
+        assert "Summary!B8" in buttons
+        # Both occurrences are listed and the count is complete: nothing to page.
+        assert not any("page suivante" in text for text in buttons)
+        query.fill("Total des lignes")
+        query.press("Enter")
+        total = page.locator(".library-result").first
+        total.get_by_role("button", name="Summary!C45", exact=False).first.click()
+        members = page.locator(".library-revision-navigation span").first
+        playwright.expect(members).to_contain_text("autres cellules")
+        text = members.inner_text()
+        # Twelve coordinates, then a count; a range is not prefixed twice.
+        assert text.count(",") == 11
+        assert "Summary!Summary!" not in text
+    finally:
+        page.close()
+
+
+def test_range_and_uncached_formula_cards_say_what_they_hold(browser, live_library):
+    app, url, upload = live_library
+    project = upload("model.xlsx", model_bytes())
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        page.goto(f"{url}/?project={project['id']}")
+        page.locator("#tab-graph").click()
+        page.locator("#graph-search").fill("Summary!B6")
+        page.locator("#graph-results").get_by_text("Summary · B6").first.click()
+        page.wait_for_function(
+            """() => document.querySelector('#graph-canvas')._flow?.getNodes()
+              .some(node => node.data.original.kind === 'range')"""
+        )
+        cards = page.locator("#graph-canvas").evaluate(
+            """e => Object.fromEntries(e._flow.getNodes().map(node =>
+              [node.data.title, [node.data.subtitle, node.data.valueLabel]]))"""
+        )
+        # A range has no value of its own: "Not available" read as a failure.
+        assert cards["Summary!B2:B4"] == ["3 cellules · sans valeur propre", ""]
+        # openpyxl saves no cached result for a formula.
+        assert cards["Summary · B6"][1] == "Aucune valeur enregistrée"
+        page.locator("#ui-language").select_option("en")
+        page.wait_for_function(
+            """() => document.querySelector('#graph-canvas')._flow.getNodes()
+              .some(node => node.data.subtitle === '3 cells · no value of its own')"""
+        )
+    finally:
+        page.close()

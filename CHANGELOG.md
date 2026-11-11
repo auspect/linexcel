@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Float the graph options below their button on screens wider than a phone.
+  Inside the toolbar row the open panel made the toolbar some 390 px tall and
+  covered the top of the graph. **Focus center** then fitted the selection into
+  the little space left and showed a tiny cluster.
+- Say what a range card holds, such as "40 cells · no value of its own", where
+  it read "Not available" beside a calculation that had succeeded. A formula
+  whose result was not saved in the file reads "No saved value".
+- Show each occurrence's saved value beside its address in search results, so
+  the number a label points to is visible without opening it. **Show next
+  page** is hidden when every occurrence is already listed.
+- List twelve member cells on a collapsed workbook card of a lineage, then a
+  count, where it listed all of them. A range address no longer repeats its
+  sheet name, as in `Ledger!Ledger!$H$6:$H$45`.
+- Say beside a proposed answer when the model's search was partial: the cited
+  cells are reread by linexcel, but other relevant cells may exist. The last
+  line of the trace adds that its verdict is about the model's search.
+  "Verified" above an answer and "search incomplete" at the end of its trace
+  read as a contradiction.
+- Mark the result of a calculation on formula cells as coming from saved
+  values, not recalculated, on the result line itself.
+- Show a question's total time in the trace footer, with its steps and tokens.
+
 ## [1.19.0] — 2026-11-11
 
 ### Changed
