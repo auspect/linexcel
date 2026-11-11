@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-10T20:55:28.970135+00:00",
+  "capturedAt": "2026-11-11T09:39:15.037683+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,9 +15,9 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "97980c1eb24f35b4c3611799cb91f480ef05ddf606145652a7d65e7c2709d382",
-    "src/linexcel/assets/app-graph.js": "845e35e4ea770642a9b2a448d5981f5ebe46ac6560eee96981189d29397b8012",
-    "src/linexcel/assets/app-graph.css": "d2b9033fc5f3d48c0623d20fe25520a5668efc80d52f7d0a5d88c6e191383645",
+    "src/linexcel/assets/app.html": "57af1fef56b1e6280318f4d52c908b17afa311e18aa5145f23b6508c80197c84",
+    "src/linexcel/assets/app-graph.js": "30ece27b2b17f11209992a3d27c95a77d2bd1aa53ce534f292c4ef2eddb5124c",
+    "src/linexcel/assets/app-graph.css": "0ef0d478f4eae2a11edc174a90a0b6ff8c9d428c74df53cef39fc2ca18949dcd",
     "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "scripts/capture_app.py": "d9260788fd32b83367888897bc682be2dc07b3de6220732ac23f2d864609caa3"
   },
@@ -47,7 +47,7 @@
     },
     "app_node_documented.png": {
       "caption": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
-      "sha256": "ed0342adbc9f648491e8076162f71e3daa9a51f54d2cc1f3dc0944546d9af0db",
+      "sha256": "d33a9011be5aff624bc216a9fdccb63688879e313097a7badf61a47cc061bacf",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "58b514392d26ed39a7412b00551666d29ed95e3f4d7da1f87b1006c5e86331f0",
+      "sha256": "9c6eeb5f7a7038b4f07ae44b9ac75b702efadc3f75156178cd063d8e2ffdd0bc",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "ab3f77f0c3c04fb29e5e4841f6d2622f",
+    "taskId": "d25b27ec81cc4d80a9fca38b5ed4daa5",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
