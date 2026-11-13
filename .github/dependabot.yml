@@ -3,8 +3,7 @@ version: 2
 updates:
   # Updates action SHAs and their "# vX.Y.Z" comment automatically.
   # This is what keeps SHA pinning maintainable over time.
-  # Dependabot never groups two ecosystems, so this is always its own pull
-  # request — one for the workflows, one for the lockfile, and no more.
+  # Dependabot keeps each ecosystem in its own pull requests.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -31,5 +30,16 @@ updates:
         # test failure names the cause and a revert costs nothing else.
         exclude-patterns: ["formualizer"]
         update-types: ["major", "minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    groups:
+      frontend:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "deps"

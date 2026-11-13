@@ -13,8 +13,8 @@ Data lineage analysis for Excel workbooks.
 Search across loaded workbooks and follow external links without AI. Optional
 questions propose source cells with verified saved facts and explicit lineage
 boundaries; the reader still needs to confirm relevance. See the
-[search, lineage and questions guide](docs/guide/library-questions.md) and
-[optional local Phoenix export](docs/phoenix.md).
+[search, lineage and questions guide](https://auspect.github.io/linexcel/guide/library-questions/) and
+[optional local Phoenix export](https://auspect.github.io/linexcel/phoenix/).
 
 Extracts every formula, groups stretched patterns (R1C1 canonicalization), builds a dependency graph (cells, ranges, defined names, VBA), decomposes composite functions with step-by-step evaluation, and optionally documents calculations via the AI provider of your choice.
 
@@ -178,9 +178,9 @@ row and column dimensions, merged cells and common number/date formats. Choose
 **Datasette filters and exports** for filtering, sorting and CSV/JSON exports.
 Both views retain source inputs and saved formula caches; missing caches remain
 explicit. Unsupported formats use raw display, and conditional formatting, charts
-and print layout are outside the preview. See the [data browser guide](docs/guide/datasette.md)
-and [proposed agent workflows](docs/guide/agent-workflows.md).
-For `.xlam` and `.xla` add-ins, use the [static VBA reader](docs/guide/macros.md)
+and print layout are outside the preview. See the [data browser guide](https://auspect.github.io/linexcel/guide/datasette/)
+and [proposed agent workflows](https://auspect.github.io/linexcel/guide/agent-workflows/).
+For `.xlam` and `.xla` add-ins, use the [static VBA reader](https://auspect.github.io/linexcel/guide/macros/)
 to inspect decoded modules and procedures without opening Excel or executing
 macros. Add-in reports explicitly have no worksheet calculation or data view.
 
@@ -227,7 +227,7 @@ supported 3D aggregates and supplied external formula/range dependencies. It
 also handles bounded visibility aggregates, declared array regions, checked
 dynamic references and convergent source-enabled iterative cycles. Each feature
 has explicit limits in the versioned capability registry and the
-[coverage guide](docs/guide/coverage.md#indexed-application-and-batch-analysis).
+[coverage guide](https://auspect.github.io/linexcel/guide/coverage/#indexed-application-and-batch-analysis).
 Missing source metadata, unresolved prerequisites and nonconvergence remain
 explicitly unsupported. Decomposition includes dependency formula values
 available from the calculation, not evaluated subexpression steps. The native
@@ -300,7 +300,7 @@ per-process address-space limits; aggregate renderer memory requires host
 container/cgroup limits. macOS instead samples process-group resident memory
 and stops the group on an observed breach. Its sampled budget can be exceeded
 between polls and is not a hard allocation cap. See the
-[platform memory semantics](docs/guide/execution.md). Upload reads,
+[platform memory semantics](https://auspect.github.io/linexcel/guide/execution/). Upload reads,
 graph pages and task-result previews are bounded. LibreOffice temporary disk use
 and overall service resources also require host resource limits.
 This first implementation is not a distributed worker pool.
@@ -325,7 +325,7 @@ outside this local workflow.
 Selected findings can be shared as a static offline HTML investigation, with
 source formulas, saved and calculated values, dated documentation, bounded
 relationships and chosen captures. It works with JavaScript disabled. See
-[the report limits](docs/guide/html.md#selected-investigation-from-the-local-application).
+[the report limits](https://auspect.github.io/linexcel/guide/html/#selected-investigation-from-the-local-application).
 
 ### Command line
 
@@ -535,11 +535,11 @@ it does not evaluate a model's accuracy. Real model experiments remain optional
 local runs. Deterministic source, calculation, rendering and no-AI safety tests
 remain required.
 
-Run the [local acceptance workflow](docs/manual_validation.md) before delivering
+Run the [local acceptance workflow](https://auspect.github.io/linexcel/manual_validation/) before delivering
 changes: both fixtures, all report languages and sheet captures, followed
 by inspection of dashboard tabs and sampled nodes. AI documentation and image
 analysis are optional; use `--no-ai` for deterministic validation. The script preserves each
-run and reports incomplete coverage as a failure. See [AGENTS.md](AGENTS.md) for
+run and reports incomplete coverage as a failure. See [AGENTS.md](https://github.com/auspect/linexcel/blob/main/AGENTS.md) for
 the repository's validation requirements.
 
 For additional local corpus coverage of the lazy application:
@@ -564,13 +564,15 @@ you configure — see
 [Data handling](https://auspect.github.io/linexcel/guide/data-handling/).
 
 Please report vulnerabilities privately according to
-[SECURITY.md](SECURITY.md). Do not include sensitive workbooks or credentials in
+[SECURITY.md](https://github.com/auspect/linexcel/blob/main/SECURITY.md). Do not include sensitive workbooks or credentials in
 public issues.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](https://github.com/auspect/linexcel/blob/main/CHANGELOG.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Project source: MIT — see [LICENSE](https://github.com/auspect/linexcel/blob/main/LICENSE).
+The distribution also includes JavaScript libraries under MIT, Apache-2.0,
+BSD-3-Clause and ISC; see the [third-party notices](https://github.com/auspect/linexcel/blob/main/THIRD_PARTY_NOTICES.md).
