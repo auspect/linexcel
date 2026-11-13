@@ -6,6 +6,50 @@
 > [local acceptance](manual_validation.md) and the
 > [continuous improvement plan](continuous_improvement_plan.md).
 
+## Addendum du 13 novembre 2026 : revue des dépendances et critères copiés
+
+L'inventaire en ligne confirme que la version installée, le verrou et la
+dernière version stable PyPI sont tous **0.14.0**. La comparaison des bindings
+0.14.0 avec cette même version ne révèle aucun ajout ni retrait. Aucune API
+nouvelle n'est appelée pendant cette maintenance des dépendances : le
+plancher déclaré reste `>=0.10.1`.
+
+Avant l'ajout du cas ci-dessous, les deux fichiers de contrats du moteur
+passent leurs **47 tests** avec 0.14.0. Sur le plancher 0.10.1, ils donnent
+**9 succès et 38 tests ignorés** par leurs gardes de version explicites.
+Ce dernier résultat couvre les contrats applicables au plancher, pas les
+corrections des versions suivantes.
+
+La section `Unreleased` du
+[changelog amont](https://github.com/PSU3D0/formualizer/blob/main/CHANGELOG.md)
+annonce cependant une correction des critères texte dans les familles de
+formules copiées. Une sonde synthétique reproduit le défaut sous **0.14.0**,
+avec le chargement natif comme avec `_open_workbook` de linexcel :
+
+- A1:A40 répète dix fois les quatre textes `a_c`, `abc`, `50%` et `50x`.
+- C1:C40 alterne les critères littéraux `a_c` et `50%`.
+- D1:D40 contient `=COUNTIF($A$1:$A$40,C1)` recopiée vers le bas.
+
+Chaque résultat attendu est **10**. Dans cette famille copiée, les quarante
+résultats observés sont **20** : `_` et `%` sont interprétés comme des
+jokers par ce chemin de calcul. Les contrats existants sur les critères
+littéraux isolés passent ; ils ne couvrent donc pas ce défaut de famille.
+Cette sonde a **échoué**, elle n'a pas été ignorée. La sonde de débordement
+enregistré (`SEQUENCE(3)` puis `SUM(A1#)`) donne toujours 1, 2, 3 et 6 dans
+les deux modes.
+
+Le contrat `test_copied_countif_families_keep_sql_like_characters_literal`
+vérifie maintenant les deux critères dans les deux modes. Ses quatre cas
+ont une attente d'échec stricte pour la version **0.14.0 uniquement**, dont
+le défaut a été observé. Les versions antérieures à 0.11.1 sont ignorées,
+comme dans le contrat des critères isolés. Une nouvelle version publiée
+devra satisfaire l'attente correcte de 10 sans cette exception ; le défaut
+n'est pas présumé pour les versions non sondées.
+
+La maintenance conserve la release publiée 0.14.0 et consigne ce défaut
+amont ; elle n'installe pas la branche non publiée et n'ajoute pas de
+correction sémantique Python.
+
 ## Addendum du 10 novembre 2026 : verrou sur formualizer 0.14.0
 
 Le skill `.agents/skills/formualizer/` a comparé le verrou (0.13.0) à la

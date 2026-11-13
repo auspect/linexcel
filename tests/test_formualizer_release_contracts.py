@@ -94,6 +94,35 @@ def test_criteria_keep_sql_like_characters_literal(mode, formula, expected):
 
 @pytest.mark.skipif(
     FORMUALIZER_VERSION < Version("0.11.1"),
+    reason="Literal percent and underscore criteria require 0.11.1.",
+)
+@pytest.mark.xfail(
+    FORMUALIZER_VERSION == Version("0.14.0"),
+    strict=True,
+    raises=AssertionError,
+    reason="0.14.0 copied COUNTIF families treat literal _/% as wildcards; "
+    "upstream fix is unreleased (2026-11-13 upgrade-plan addendum).",
+)
+@pytest.mark.parametrize("criterion", ["a_c", "50%"])
+def test_copied_countif_families_keep_sql_like_characters_literal(mode, criterion):
+    labels = ["a_c", "abc", "50%", "50x"]
+    cells = {}
+    matching_rows = []
+    for row in range(1, 41):
+        cells[f"A{row}"] = labels[(row - 1) % len(labels)]
+        cells[f"C{row}"] = "a_c" if row % 2 else "50%"
+        cells[f"D{row}"] = f"=COUNTIF($A$1:$A$40,C{row})"
+        if cells[f"C{row}"] == criterion:
+            matching_rows.append(row)
+
+    engine = _evaluate_workbook(cells, mode)
+
+    # Each literal occurs ten times; its SQL wildcard lookalike must not count.
+    assert [engine.get_value("S", row, 4) for row in matching_rows] == [10] * 20
+
+
+@pytest.mark.skipif(
+    FORMUALIZER_VERSION < Version("0.11.1"),
     reason="AGGREGATE options 4-7 require 0.11.1.",
 )
 @pytest.mark.parametrize(

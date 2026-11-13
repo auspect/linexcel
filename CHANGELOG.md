@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.2] — 2026-11-13
+
+### Fixed
+
+- Use absolute documentation and repository links in the README so they also
+  work in the PyPI project description. Add a direct documentation link to the
+  package metadata.
+- Generate signed PyPI publish attestations for both the wheel and source
+  distribution using the release workflow's trusted publishing identity.
+  Earlier uploaded files retain their original provenance status.
+- Include the third-party notices in license metadata, replace the deprecated
+  license classifier with SPDX metadata, and add issue, changelog and security
+  links. Shorten the package summary and use workbook-focused search keywords.
+- Declare the bundled JavaScript licenses in the distribution's SPDX expression
+  and complete the corresponding notices, including the Apache-licensed SVD
+  helper embedded in the standalone viewer's layout library.
+- Refresh the Python lockfile, including security fixes in certifi, setuptools
+  and urllib3. Keep formualizer 0.14.0, the latest released engine, and add
+  a versioned regression for its known copied-COUNTIF literal-criteria issue.
+- Update React and React DOM to 19.3.1 and React Flow to 12.12.1, rebuild the
+  bundled graph, and update its third-party notices and screenshots. Add weekly
+  Dependabot checks for the frontend dependencies.
+
 ## [1.19.1] — 2026-11-11
 
 ### Fixed

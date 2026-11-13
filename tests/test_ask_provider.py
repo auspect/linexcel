@@ -367,9 +367,10 @@ def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
         issued=set(),
         computations={},
         execute=lambda name, args: {
+            "trust": "untrusted_workbook_data",
             "data": {"status": "not_found"}
             if name == "submit_answer"
-            else {"revisions": []}
+            else {"revisions": []},
         },
     )
     try:
@@ -381,6 +382,8 @@ def test_ollama_metadata_is_normalized_and_echoed_without_weakening_loop(
         ][0]
         assert set(echoed) == {"id", "type", "function"}
         assert set(echoed["function"]) == {"name", "arguments"}
+        tool_reply = next(m for m in sent[1]["messages"] if m["role"] == "tool")
+        assert json.loads(tool_reply["content"])["trust"] == "untrusted_workbook_data"
     finally:
         provider.close()
 
