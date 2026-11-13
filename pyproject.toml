@@ -67,7 +67,7 @@ Changelog = "https://github.com/auspect/linexcel/blob/main/CHANGELOG.md"
 Security = "https://github.com/auspect/linexcel/blob/main/SECURITY.md"
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
