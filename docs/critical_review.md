@@ -227,6 +227,32 @@ the generated stand-in; F07's proposed fix needs chunking (F19); F08's refusal
 extends to the styles cap (F25); F16 holds (peak memory 41–99 MB on every
 import).
 
+## 10. Batch 2 bis status (local corrections)
+
+Date: 2026-11-14, same Windows workstation and corpus as section 9. Each
+finding was replayed, covered by a behavioural test on the serve path
+(`tests/test_serve_reading_fixes.py`, `tests/test_app_datasette.py`) that
+failed on the code before the fix, then corrected in its own commit. Every
+figure below was measured on the real corpus with the code of the commit
+before and after (detached checkouts, one fresh process per measurement).
+The index schema and the data node are unchanged.
+
+| ID | Status | Commit | Before | After | Remaining limits |
+| --- | --- | --- | --- | --- | --- |
+| F07, F19 | **fixed** | `cc37c72` | fpna `Forecast!D2` 164.4 s, `Summary!B2` 39.5 s | 57.9 s and 18.6 s, same values and comparisons | Range inputs are written in vertical runs of at most 10,000 rows; a blank or non-selected cell ends a run, so a batch never covers a formula. Most of what remains is decoding each input's per-cell record, twice (diagnostics pass and loading): a storage cost, left for the data node. |
+| F26 | **fixed** | `f23c128` | reading 75 selected inputs 1.9–2.2 s per call; `Forecast!E2` 3.67 s | 0.001 s; 0.04 s | The selection is a per-connection temporary table keyed by position. A selection-driven join with a sort was measured too: faster for 75 inputs, 2.4× slower for a million (9.4 s against 4.0 s), so not retained; the position-keyed table reads a million in 3.3 s. The isolated prototype's `bench.py evaluate` wrote bare ids into this table and no longer runs unchanged. |
+| F24 | **fixed** | `b5766e2` | depth-2 neighbourhood 0.19–0.97 s (ATB, TAG, fpna) | 0.02–0.16 s | One read transaction per read-only `WorkbookIndex`: a writer cannot change an index under a reader (published indexes are never written). Neighbourhood queries still run under the coordinator lock. |
+| F17 | **fixed** | `aac5e74` | ONS tables without `sharedStrings.xml`: index `complete`, no workbook diagnostic | `partial`, diagnostic "Shared-string part declared by the workbook is missing: 560 text cell(s) are unreadable" | Same for a declared but missing styles part. A shared-string reference out of range in a present table stays a cell diagnostic only. |
+| F22 | **fixed** | `a37137d` | ONS with serve defaults: task error `storage_limit`, nodes 409 "Actualisez la structure…"; missing sheet part: presentation 404 "Feuille introuvable" | quota size and remedy stated; "Aucun index publié : le dernier import n'a pas abouti"; 409 naming the missing part; a partly read sheet says so; import diagnostics get advice about the file | The timeout message stays the raw kind with the existing advice. Damaged styles still answer 400 for every sheet (F09 decision). |
+| F25 | **fixed** | `319b58e` | TAG: `Cover`, `A1.3.1`, `MECs` refused ("Métadonnées de présentation trop volumineuses") | presented in 0.39 s, 0.39 s and 2.5 s | `styles.xml` is streamed, keeping fonts, fills, borders, cell formats and number formats, each capped at 8,192; named styles are discarded. Byte ceiling 64 MiB; `DOCTYPE`/`ENTITY` still refused. |
+| F18 | **fixed** | `65c37d3` | first Data tab opening on ATB: 75.3 s inside the request; an unrelated request waited 75.2 s | `/data` answers in 0.02 s with a `building` state; the view is available after 36.6 s; meanwhile 137 unrelated requests took at most 0.012 s | The copy is a worker task (`build_data`) under the usual limits, shown in Operations, refused during an import. The copy itself is as large and as slow as before (fpna 161 s, 1.9 GB; ONS 745 s, 6.3 GB): only the data node removes it. |
+
+With every correction together (`65c37d3`), on the same corpus: `Forecast!D2`
+57.1 s, `Summary!B2` 16.4 s, `Forecast!E2` 0.04 s, 75 selected inputs read in
+0.001 s, depth-2 neighbourhood 0.02–0.15 s, the three TAG sheets presented in
+0.41–2.75 s. Values and cache comparisons are unchanged on every measured
+cell.
+
 ## Appendix: probes
 
 All probes run from `validation_screenshots/lot1/probes/` with

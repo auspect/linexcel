@@ -34,6 +34,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine evaluates these as arrays, and the result was shown as a difference
   from the saved value. A result equal to the saved value is still shown. The
   Excel semantics themselves are not implemented yet.
+- Calculate formulas over large tables faster in `linexcel serve`. The values
+  of a range now reach the calculation engine in blocks of rows instead of
+  one cell at a time. On a 20 MB workbook, a `SUMIFS` over four ledger
+  columns of 250,000 rows took 164 s and now takes 57 s, with the same value.
+- Remove a fixed delay from every calculation of a large workbook. Reading
+  the inputs of a calculation went through the whole workbook index: on a
+  workbook of 2.7 million cells, a small calculation took 3.7 s and now takes
+  0.04 s. Selecting a cell calculates it, so this delay was paid on every
+  click.
+- Show a cell's neighbourhood in the graph faster on Windows: 0.6–1 s before,
+  0.02–0.16 s now on the public TAG and ATB models. Each read of the workbook
+  index used to lock and unlock the file.
+- Mark the import partial when the workbook declares a shared-string or
+  styles part that the file does not contain. It used to be reported as
+  complete, although every text cell, or every styled value, was unreadable.
+  The Diagnostics tab names the missing part; the cells stay unknown, never
+  empty.
+- Say what happened when the server's storage quota stops an operation, with
+  the quota size and how to free space, instead of the bare `storage_limit`.
+  After such a failed import, the graph says that no index was published
+  instead of suggesting a refresh. The Excel presentation of a sheet whose
+  part is missing from the file, or that the import read only partly, says
+  so instead of "Feuille introuvable". Import diagnostics in the Diagnostics
+  tab get advice about the file instead of the advice about formulas.
+- Show the Excel presentation of workbooks whose styles part is very large.
+  Every sheet of the public DfT TAG data book was refused because its 7 MB
+  of named styles exceeded a 4 MiB cap; the styles are now read as a stream,
+  still bounded by the number of styles kept.
+
+### Changed
+
+- Prepare the Data tab's browsing copy in the background. The first opening
+  of the tab copied the whole workbook inside the request and blocked every
+  other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB
+  table takes 12 minutes. The tab now says that the view is being prepared, the
+  operation appears in Operations, and the view opens by itself when it is
+  ready. If the preparation fails, for example on the storage quota, the tab
+  says why and Refresh data starts it again.
 
 ### Documentation
 
