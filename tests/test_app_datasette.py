@@ -524,6 +524,12 @@ def test_a_failed_data_view_says_why_and_refresh_prepares_it_again(
     status = page.locator("#data-status")
     status.filter(has_text=prefix).wait_for()
     assert advice in status.inner_text()
+    reason = (
+        "Quota de stockage du serveur atteint"
+        if language == "fr"
+        else "Server storage quota reached (2048 MiB"
+    )
+    assert reason in status.inner_text()
     assert "error" in (status.get_attribute("class") or "")
     page.wait_for_timeout(2500)
     assert not pending, "a failed preparation is not retried by itself"
