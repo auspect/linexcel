@@ -268,3 +268,33 @@ def test_chunked_loading_matches_cell_by_cell_loading():
                 assert repr(chunked.get_value(sheet, row, column)) == repr(
                     reference.get_value(sheet, row, column)
                 ), (sheet, row, column)
+
+
+# F26: reading a small selection must not walk the whole index.
+
+
+def test_reading_a_small_selection_does_not_scan_the_index(tmp_path):
+    from linexcel.lazy_store import WorkbookIndex, build_index
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for row in range(1, 30_001):
+        sheet.cell(row, 1, row)
+    book.create_sheet("Small")["A1"] = 1
+    path = tmp_path / "wide.xlsx"
+    path.write_bytes(workbook_bytes(book))
+    index = tmp_path / "wide.sqlite"
+    build_index(path, index)
+    with WorkbookIndex(index) as store:
+        store.prepare_input_selection()
+        for node_id in ("Data!A5", "Data!A29999", "Small!A1"):
+            store.select_input(node_id)
+        steps = []
+        store.db.set_progress_handler(lambda: steps.append(1), 100)
+        selected = [node["id"] for node in store.selected_inputs()]
+        store.db.set_progress_handler(None, 100)
+    assert selected == ["Data!A5", "Data!A29999", "Small!A1"]
+    # About 100 virtual-machine steps per callback: a walk of the 30,000-entry
+    # position index costs thousands; three lookups and a sort cost a few.
+    assert len(steps) < 50, len(steps)
