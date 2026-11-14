@@ -336,3 +336,121 @@ def test_an_index_reader_reads_one_snapshot_of_the_index(tmp_path):
     assert not committed, "a writer must not change the file under a reader"
     around = graph_neighborhood(index, "S!B1", depth=1)
     assert {node["id"] for node in around["nodes"]} == {"S!A1", "S!B1"}
+
+
+# F17: a part the workbook declares but the package lacks is a workbook fact.
+
+
+def without_part(data, part):
+    import zipfile
+
+    source = zipfile.ZipFile(io.BytesIO(data))
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            if info.filename != part:
+                target.writestr(info, source.read(info.filename))
+    return stream.getvalue()
+
+
+def text_book():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = "Region"
+    sheet["A2"] = "North"
+    sheet["B2"] = 42
+    sheet["B2"].number_format = "0.00"
+    return workbook_bytes(book)
+
+
+def snapshot_meta(app, project):
+    code, snapshot = call(app, "GET", f"/api/projects/{project}")
+    assert code == 200, snapshot
+    return (snapshot.get("graph") or {}).get("meta") or snapshot.get("meta") or {}
+
+
+def node(app, project, node_id):
+    code, found = call(
+        app, "GET", f"/api/projects/{project}/node", query="nodeId=" + node_id
+    )
+    assert code == 200, found
+    return found.get("node", found)
+
+
+def shared_string_book(with_part=True):
+    """The text book with its strings moved to a shared-string table. The
+    relationship and content type always declare the part; ``with_part``
+    decides whether the part itself is in the package."""
+    import zipfile
+
+    source = zipfile.ZipFile(io.BytesIO(text_book()))
+    stream = io.BytesIO()
+    strings = (
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'count="2" uniqueCount="2"><si><t>Region</t></si><si><t>North</t></si></sst>'
+    )
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            text = source.read(info.filename).decode("utf-8")
+            if info.filename == "xl/worksheets/sheet1.xml":
+                for index, value in enumerate(("Region", "North")):
+                    text = text.replace(
+                        f't="inlineStr"><is><t>{value}</t></is></c>',
+                        f't="s"><v>{index}</v></c>',
+                    )
+                assert "inlineStr" not in text
+            elif info.filename == "xl/_rels/workbook.xml.rels":
+                text = text.replace(
+                    "</Relationships>",
+                    '<Relationship Type="http://schemas.openxmlformats.org/'
+                    'officeDocument/2006/relationships/sharedStrings" '
+                    'Target="sharedStrings.xml" Id="rIdSst" /></Relationships>',
+                )
+            elif info.filename == "[Content_Types].xml":
+                text = text.replace(
+                    "</Types>",
+                    '<Override PartName="/xl/sharedStrings.xml" ContentType="'
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml."
+                    'sharedStrings+xml"/></Types>',
+                )
+            target.writestr(info, text)
+        if with_part:
+            target.writestr("xl/sharedStrings.xml", strings)
+    return stream.getvalue()
+
+
+def test_shared_string_control_book_imports_completely(serve):
+    app, upload = serve
+    project, task = upload(shared_string_book(with_part=True))
+    assert task["status"] == "succeeded", task
+    assert snapshot_meta(app, project)["status"] == "complete"
+    assert node(app, project, "S!A2")["value"] == "North"
+
+
+def test_missing_shared_strings_part_makes_the_import_partial(serve):
+    app, upload = serve
+    project, task = upload(shared_string_book(with_part=False))
+    assert task["status"] == "succeeded", task
+    meta = snapshot_meta(app, project)
+    assert meta["status"] == "partial"
+    messages = [
+        d for d in meta["diagnostics"] if d.get("part") == "xl/sharedStrings.xml"
+    ]
+    assert messages and "missing" in messages[0]["message"]
+    assert "2 text cell" in messages[0]["message"]
+    cell = node(app, project, "S!A2")
+    assert cell["value"] is None and cell["diagnostics"], "unreadable, never empty"
+
+
+def test_missing_styles_part_makes_the_import_partial(serve):
+    app, upload = serve
+    project, task = upload(without_part(text_book(), "xl/styles.xml"))
+    assert task["status"] == "succeeded", task
+    meta = snapshot_meta(app, project)
+    assert meta["status"] == "partial"
+    assert any(
+        d.get("part") == "xl/styles.xml" and "missing" in d["message"]
+        for d in meta["diagnostics"]
+    )
+    assert node(app, project, "S!B2")["value"] is None
