@@ -501,12 +501,12 @@ def test_a_data_view_in_preparation_is_announced_then_opens_by_itself(
     [
         (
             "fr",
-            "Préparation de la vue des données impossible :",
+            "Préparation de la vue des données impossible. Quota",
             "Actualiser les données relance la préparation.",
         ),
         (
             "en",
-            "The data view could not be prepared:",
+            "The data view could not be prepared. Server",
             "Refresh data starts the preparation again.",
         ),
     ],
@@ -667,6 +667,65 @@ def test_storage_quota_messages_are_translated(browser, answer, english):
         status.filter(has_text=english).wait_for()
         assert "Quota de" not in status.inner_text()
         assert "Stockage" not in status.inner_text()
+        assert not errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "text"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "Préparation de la vue des données annulée. "
+            "Actualiser les données la relance.",
+        ),
+        (
+            (390, 844),
+            "en",
+            "Data view preparation cancelled. Refresh data starts it again.",
+        ),
+    ],
+)
+def test_a_cancelled_data_view_is_not_shown_as_a_failure(
+    browser, viewport, language, text
+):
+    """Batch 2 bis, F18: cancelling the preparation in Operations is the
+    user's choice; the tab says so plainly and Refresh data starts it again."""
+    page, _, errors, pending, data = open_app(
+        browser, viewport, delayed=True, language=language
+    )
+    urls = []
+    page.on("request", lambda request: urls.append(request.url))
+    try:
+        for _ in range(50):
+            if pending:
+                break
+            page.wait_for_timeout(50)
+        cancelled = {
+            "available": False,
+            "state": "cancelled",
+            "taskId": "t1",
+            "presentationAvailable": False,
+            "sheets": [],
+        }
+        pending.pop(0).fulfill(
+            body=json.dumps(cancelled), content_type="application/json"
+        )
+        status = page.locator("#data-status")
+        status.filter(has_text=text).wait_for()
+        assert "cancelled" not in status.inner_text().replace(text, "")
+        assert "error" not in (status.get_attribute("class") or "")
+        open_data_options(page)
+        page.locator("#data-refresh").click()
+        for _ in range(50):
+            if pending:
+                break
+            page.wait_for_timeout(50)
+        assert pending and any("/data?retry=1" in url for url in urls)
+        pending.pop(0).fulfill(body=json.dumps(data), content_type="application/json")
+        page.frame_locator("#data-frame").locator("h1").wait_for()
         assert not errors
     finally:
         page.close()

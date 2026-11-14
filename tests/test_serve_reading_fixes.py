@@ -715,3 +715,23 @@ def test_a_preparation_the_quota_cannot_start_says_so(tmp_path):
         assert not any(t["operation"] == "build_data" for t in app.store.tasks.values())
     finally:
         app.close()
+
+
+def test_a_cancelled_preparation_is_not_reported_as_a_failure(serve):
+    app, upload = serve
+    project, task = upload(data_book(5000))
+    assert task["status"] == "succeeded", task
+    first = data_state(app, project)
+    code, cancelled = call(app, "POST", f"/api/tasks/{first['taskId']}/cancel")
+    assert code == 200, cancelled
+    assert finish(app, first["taskId"])["status"] == "cancelled"
+    state = data_state(app, project)
+    assert state["state"] == "cancelled" and state["taskId"] == first["taskId"]
+    assert "error" not in state
+    code, refused = call(
+        app, "GET", f"/api/projects/{project}/datasette/source/sheet_001.json"
+    )
+    assert code == 409 and "annulée" in refused["error"]["message"]
+    again = data_state(app, project, query="retry=1")
+    assert again["state"] == "building" and again["taskId"] != first["taskId"]
+    assert finish(app, again["taskId"], seconds=300)["status"] == "succeeded"

@@ -509,6 +509,9 @@ class DataBrowser:
         }
         if latest is not None and latest["status"] in {"queued", "running"}:
             return {**state, "state": "building", "taskId": latest["id"]}
+        if latest is not None and latest["status"] == "cancelled" and not retry:
+            # The user's own cancel is not a failure: no reason to show.
+            return {**state, "state": "cancelled", "taskId": latest["id"]}
         if latest is not None and latest["status"] != "succeeded" and not retry:
             error = latest.get("error") or {}
             return {
@@ -733,6 +736,12 @@ class DataBrowser:
             database, metadata = self._snapshot(owner, project_id)
             if database is None and metadata.get("state") == "building":
                 raise APIError(409, "Vue des données en préparation ; réessayez")
+            if database is None and metadata.get("state") == "cancelled":
+                raise APIError(
+                    409,
+                    "Préparation de la vue des données annulée. "
+                    "Actualiser les données la relance.",
+                )
             if database is None and metadata.get("state") == "failed":
                 raise APIError(
                     409, "Vue des données indisponible : " + metadata["error"]

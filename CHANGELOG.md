@@ -73,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operation appears in Operations, and the view opens by itself when it is
   ready. If the preparation fails, for example on the storage quota, the tab
   says why and Refresh data starts it again; when storage is already full, the
-  tab says that the preparation could not start.
+  tab says that the preparation could not start. Cancelling the preparation
+  in Operations is shown as a cancel, not as a failure.
 
 ### Documentation
 
