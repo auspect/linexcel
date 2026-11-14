@@ -1247,6 +1247,42 @@ def _reference_feature(reference: str) -> str:
     return "references"
 
 
+_LOCAL_SCOPE = re.compile(r"_xlfn\.(?=(?:LET|LAMBDA)\s*\()", re.IGNORECASE)
+_PARAMETER = re.compile(r"_xlpm\.", re.IGNORECASE)
+
+
+def _local_names(formula: str, tokens) -> set[str]:
+    """Upper-cased LET/LAMBDA names bound by one formula, without prefixes.
+
+    Reuses the static ``analyze`` rule (``resolver._bound_names``). Excel saves
+    ``LET(x,…)`` as ``_xlfn.LET(_xlpm.x,…)``; that rule only recognises the
+    bare spelling, so both prefixes are removed before parsing. An expression
+    the parser refuses binds nothing, which leaves its names unresolved and
+    the calculation refused.
+    """
+    if not any(
+        t.type == "FUNC"
+        and t.subtype == "OPEN"
+        and t.value[:-1].upper().removeprefix("_XLFN.") in {"LET", "LAMBDA"}
+        for t in tokens
+    ):
+        return set()
+    import formualizer as fz
+
+    from linexcel.engine import is_too_deep
+    from linexcel.resolver import _bound_names
+
+    expression = _PARAMETER.sub("", _LOCAL_SCOPE.sub("", formula))
+    if not expression.startswith("="):
+        expression = "=" + expression
+    if is_too_deep(expression):
+        return set()
+    try:
+        return _bound_names(fz.parse(expression).to_dict())
+    except Exception:
+        return set()
+
+
 def _index_dependencies(store, metadata, names, links, refs_dir):
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
@@ -1542,7 +1578,28 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             node["threeDimensionalArguments"] = [
                                 value for value, valid in spans.items() if valid
                             ]
+                        local = _local_names(node["formula"], tokens)
                         for token in tokens:
+                            if (
+                                local
+                                and token.type == "OPERAND"
+                                and token.subtype == "RANGE"
+                                and split_sheet_prefix(token.value)[0] is None
+                            ):
+                                body = token.value
+                                parameter = body.lower().startswith("_xlpm.")
+                                bare = body[6:] if parameter else body
+                                # A bare name that is also a defined name keeps
+                                # that dependency: a superset never hides a
+                                # source. Excel's _xlpm. marks a parameter.
+                                if bare.upper() in local and (
+                                    parameter
+                                    or not (
+                                        names.get((node.get("sheet"), bare.casefold()))
+                                        or names.get((None, bare.casefold()))
+                                    )
+                                ):
+                                    continue
                             if token.type == "FUNC" and token.subtype == "OPEN":
                                 function = (
                                     token.value[:-1].upper().removeprefix("_XLFN.")

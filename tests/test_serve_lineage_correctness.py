@@ -221,3 +221,52 @@ def test_partially_extracted_formula_is_still_refused(serve):
     assert result["status"] == "unsupported"
     assert result.get("value") is None
     assert any("A:B!A1" in d for d in result["diagnostics"])
+
+
+# F04: LET and LAMBDA names are local to their formula, not references.
+
+
+def let_book():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = 2
+    sheet["A2"] = 5
+    sheet["B1"] = "=LET(x,A1,x*3)"
+    # The spelling Excel writes to the file.
+    sheet["B2"] = "=_xlfn.LET(_xlpm.x,A1,_xlpm.x*3)"
+    sheet["B3"] = "=_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.v,_xlpm.v+1),_xlpm.f(A1))"
+    sheet["B4"] = "=LET(total,SUM(A1:A2),n,COUNT(A1:A2),total/n)"
+    sheet["B5"] = "=LET(x,A1,x+missing)"  # A genuinely unknown name.
+    return book
+
+
+@pytest.mark.parametrize(
+    ("cell", "dependencies", "value"),
+    [
+        ("S!B1", ["S!A1"], 6),
+        ("S!B2", ["S!A1"], 6),
+        ("S!B3", ["S!A1"], 3),
+        ("S!B4", ["S!A1:A2"], 3.5),
+    ],
+)
+def test_let_names_are_not_references_and_the_cell_is_calculated(
+    serve, cell, dependencies, value
+):
+    app, upload = serve
+    project, _ = upload(let_book())
+    node = node_detail(app, project, cell)
+    assert node["dependencies"] == dependencies
+    assert node["diagnostics"] == []
+    result = evaluate(app, project, cell)
+    assert result["status"] == "completed", result["diagnostics"]
+    assert result["value"] == value
+
+
+def test_unknown_name_inside_let_is_still_refused(serve):
+    app, upload = serve
+    project, _ = upload(let_book())
+    node = node_detail(app, project, "S!B5")
+    assert "unresolved:S:missing" in node["dependencies"]
+    assert not any(dep.endswith(":x") for dep in node["dependencies"])
+    assert evaluate(app, project, "S!B5")["status"] == "unsupported"
