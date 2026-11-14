@@ -270,3 +270,94 @@ def test_unknown_name_inside_let_is_still_refused(serve):
     assert "unresolved:S:missing" in node["dependencies"]
     assert not any(dep.endswith(":x") for dep in node["dependencies"])
     assert evaluate(app, project, "S!B5")["status"] == "unsupported"
+
+
+# F09: a damaged workbook-level part degrades locally and visibly.
+
+
+def damaged(book, edit):
+    import zipfile
+
+    stream = io.BytesIO()
+    book.save(stream)
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(stream.getvalue())) as source,
+        zipfile.ZipFile(out, "w") as target,
+    ):
+        for item in source.infolist():
+            target.writestr(item.filename, edit(item.filename, source.read(item)))
+    return out.getvalue()
+
+
+def resilient_book():
+    import datetime
+
+    from openpyxl.workbook.defined_name import DefinedName
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = 2
+    sheet["A2"] = datetime.date(2024, 1, 31)
+    sheet["B1"] = "=A1*10"
+    sheet["B2"] = "=Rate*A1"
+    other = book.create_sheet("T")
+    other["A1"] = 4
+    book.defined_names["Rate"] = DefinedName("Rate", attr_text="T!$A$1")
+    return book
+
+
+def project_meta(app, project):
+    code, snapshot = call(app, "GET", f"/api/projects/{project}")
+    assert code == 200, snapshot
+    return snapshot["graph"]["meta"]
+
+
+def test_truncated_styles_part_keeps_the_workbook_usable(serve):
+    app, upload = serve
+    data = damaged(
+        resilient_book(),
+        lambda name, body: body[: len(body) // 2] if name == "xl/styles.xml" else body,
+    )
+    project, task = upload(data)
+    assert task["status"] == "succeeded", task
+    meta = project_meta(app, project)
+    assert meta["status"] == "partial"
+    assert [s["status"] for s in meta["sheetDetails"]] == ["complete", "complete"]
+    styles = [d for d in meta["diagnostics"] if d.get("part") == "xl/styles.xml"]
+    assert len(styles) == 1 and "number formats are unknown" in styles[0]["message"]
+    # A styled cell keeps an unknown value, never a guessed number or date.
+    dated = node_detail(app, project, "S!A2")
+    assert dated["value"] is None and dated["valueSource"] == "unknown"
+    assert dated["diagnostics"]
+    assert node_detail(app, project, "S!A1")["value"] == 2
+    result = evaluate(app, project, "S!B1")
+    assert result["status"] == "completed" and result["value"] == 20
+
+
+def test_malformed_defined_name_is_skipped_locally(serve):
+    app, upload = serve
+    data = damaged(
+        resilient_book(),
+        lambda name, body: (
+            body.replace(
+                b'<definedName name="Rate"',
+                b'<definedName name="Rate" localSheetId="x"',
+            )
+            if name == "xl/workbook.xml"
+            else body
+        ),
+    )
+    project, task = upload(data)
+    assert task["status"] == "succeeded", task
+    meta = project_meta(app, project)
+    assert meta["status"] == "partial"
+    names = [d for d in meta["diagnostics"] if d.get("part") == "xl/workbook.xml"]
+    assert len(names) == 1 and "Rate" in names[0]["message"]
+    assert "localSheetId" in names[0]["message"]
+    assert evaluate(app, project, "S!B1")["value"] == 20
+    # A formula reading the skipped name is refused, never computed from a guess.
+    refused = evaluate(app, project, "S!B2")
+    assert refused["status"] == "unsupported"
+    assert any("Rate" in d for d in refused["diagnostics"])

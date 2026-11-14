@@ -598,18 +598,38 @@ def _read_source(path, store):
             "xl/styles.xml",
         )
         if style_part in archive.namelist():
-            root = ET.fromstring(archive.read(style_part))
-            custom = {
-                int(e.attrib["numFmtId"]): e.get("formatCode", "General")
-                for e in root.findall("{*}numFmts/{*}numFmt")
-            }
-            formats = [
-                custom.get(
-                    int(e.get("numFmtId", "0")),
-                    BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+            try:
+                root = ET.fromstring(archive.read(style_part))
+                custom = {
+                    int(e.attrib["numFmtId"]): e.get("formatCode", "General")
+                    for e in root.findall("{*}numFmts/{*}numFmt")
+                }
+                formats = [
+                    custom.get(
+                        int(e.get("numFmtId", "0")),
+                        BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+                    )
+                    for e in root.findall("{*}cellXfs/{*}xf")
+                ] or ["General"]
+            except (
+                ET.ParseError,
+                ValueError,
+                KeyError,
+                zipfile.BadZipFile,
+                OSError,
+            ) as exc:
+                # Only the default style stays known. A cell with any other
+                # style index keeps an unknown value (see the per-cell check
+                # below) instead of a guessed number, date or duration.
+                formats = ["General"]
+                diagnostics.append(
+                    {
+                        "part": style_part,
+                        "message": "Styles part unreadable: number formats are "
+                        "unknown, so saved values of styled cells are unknown. "
+                        f"{type(exc).__name__}: {exc}",
+                    }
                 )
-                for e in root.findall("{*}cellXfs/{*}xf")
-            ] or ["General"]
         # Elapsed-format detection does not strip literals itself. A quoted
         # "[h]" label on a date must not turn its cache into a timedelta.
         format_kinds = [
@@ -691,15 +711,26 @@ def _read_source(path, store):
                     links[str(index)] = PureWindowsPath(unquote(target)).name
         for definition in workbook.findall("{*}definedNames/{*}definedName"):
             local = definition.get("localSheetId")
-            scope = (
-                sheets[int(local)]["name"]
-                if local is not None and int(local) < len(sheets)
-                else None
-            )
             name = definition.get("name", "")
             if not name:
                 diagnostics.append({"message": "Unnamed defined-name entry skipped."})
                 continue
+            scope = None
+            if local is not None:
+                position = int(local) if re.fullmatch(r"\d+", local.strip()) else -1
+                if not 0 <= position < len(sheets):
+                    # An unknown scope could bind the wrong name. Skip it so that
+                    # formulas reading it stay unresolved and refused.
+                    diagnostics.append(
+                        {
+                            "part": "xl/workbook.xml",
+                            "message": f"Defined name {name!r} skipped: invalid "
+                            f"localSheetId {local!r}. Formulas that use it are "
+                            "not resolved.",
+                        }
+                    )
+                    continue
+                scope = sheets[position]["name"]
             nid = f"name:{scope or '*'}:{name}"
             names[(scope, name.casefold())] = nid
             node = {
