@@ -52,3 +52,6 @@ frontend/node_modules/
 REFACTOR_PLAN.md
 REFACTOR_PROGRESS.md
 KIMI_REVIEW.md
+
+# Local git worktrees
+.worktrees/
