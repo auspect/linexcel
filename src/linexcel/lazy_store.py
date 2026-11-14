@@ -1235,6 +1235,18 @@ def _read_source(path, store):
     )
 
 
+def _reference_feature(reference: str) -> str:
+    """Capability registry feature for one reference that failed to resolve."""
+    if reference.endswith("#"):
+        return "arrays_and_spills"
+    qualifier, _ = split_sheet_prefix(reference)
+    if qualifier and "[" in qualifier:
+        return "external_references"
+    if qualifier and ":" in qualifier:
+        return "three_dimensional_references"
+    return "references"
+
+
 def _index_dependencies(store, metadata, names, links, refs_dir):
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
@@ -1547,22 +1559,34 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                                     dep = dependency(
                                         token.value, node.get("sheet"), node
                                     )
-                                except ValueError as exc:
+                                except Exception as exc:
+                                    # Each reference is extracted on its own: a
+                                    # failure names that reference and keeps the
+                                    # later ones. The diagnostic still refuses
+                                    # calculation of this formula.
                                     from linexcel.structured_refs import (
                                         TableReferenceError,
                                     )
 
-                                    if not isinstance(exc, TableReferenceError):
-                                        raise
+                                    if isinstance(exc, TableReferenceError):
+                                        code, feature = exc.code, "structured_tables"
+                                        message = str(exc)
+                                    else:
+                                        code = "reference_unresolved"
+                                        feature = _reference_feature(token.value)
+                                        message = (
+                                            f"Reference {token.value} could not be "
+                                            f"resolved: {exc}"
+                                        )
                                     node.setdefault("capabilityDiagnostics", []).append(
                                         {
-                                            "code": exc.code,
-                                            "feature": "structured_tables",
+                                            "code": code,
+                                            "feature": feature,
                                             "reference": token.value,
-                                            "message": str(exc),
+                                            "message": message,
                                         }
                                     )
-                                    node["diagnostics"].append(str(exc))
+                                    node["diagnostics"].append(message)
                                     continue
                                 node.setdefault("reference_bindings", {})[
                                     token.value

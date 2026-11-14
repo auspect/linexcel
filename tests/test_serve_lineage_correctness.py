@@ -158,3 +158,66 @@ def test_index_without_range_table_still_reports_membership(tmp_path):
     around = graph_neighborhood(index, "S!C6", depth=2)
     assert {n["id"] for n in around["nodes"]} >= {"S!C6", "S!C2:C11", "S!I1"}
     assert {"source": "S!C6", "target": "S!C2:C11", "kind": "range"} in around["edges"]
+
+
+# F03: one failing reference must not erase the references after it.
+
+
+def node_detail(app, project, node):
+    code, detail = call(
+        app,
+        "GET",
+        f"/api/projects/{project}/node",
+        query=f"nodeId={node.replace('!', '%21')}",
+    )
+    assert code == 200, detail
+    return detail["node"]
+
+
+def failing_reference_book():
+    book = Workbook()
+    first = book.active
+    first.title = "A"
+    for title in ("B", "C"):
+        book.create_sheet(title)
+    for sheet in book.worksheets:
+        for row in range(1, 4):
+            sheet.cell(row, 1, row)
+    first["C2"] = "=B!A1+A:B!A1+C!A2"  # 3D reference outside an aggregate.
+    first["C3"] = "=A1#+C!A3"  # Spill reference without a declared array.
+    return book
+
+
+def test_failing_reference_keeps_later_references_and_names_its_cause(serve):
+    app, upload = serve
+    project, _ = upload(failing_reference_book())
+
+    span = node_detail(app, project, "A!C2")
+    assert span["dependencies"] == ["B!A1", "C!A2"]
+    assert any(
+        "A:B!A1" in d and "3D references require" in d for d in span["diagnostics"]
+    )
+    assert not any("tokenization failed" in d for d in span["diagnostics"])
+    assert {(c["feature"], c["reference"]) for c in span["capabilityDiagnostics"]} == {
+        ("three_dimensional_references", "A:B!A1")
+    }
+
+    spill = node_detail(app, project, "A!C3")
+    assert spill["dependencies"] == ["C!A3"]
+    assert any("A1#" in d and "declared array" in d for d in spill["diagnostics"])
+    assert {(c["feature"], c["reference"]) for c in spill["capabilityDiagnostics"]} == {
+        ("arrays_and_spills", "A1#")
+    }
+
+    # The later source keeps its usage edge.
+    around = neighborhood(app, project, "C!A2")
+    assert {"source": "C!A2", "target": "A!C2", "kind": "dep"} in around["edges"]
+
+
+def test_partially_extracted_formula_is_still_refused(serve):
+    app, upload = serve
+    project, _ = upload(failing_reference_book())
+    result = evaluate(app, project, "A!C2")
+    assert result["status"] == "unsupported"
+    assert result.get("value") is None
+    assert any("A:B!A1" in d for d in result["diagnostics"])
