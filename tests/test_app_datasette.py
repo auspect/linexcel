@@ -635,7 +635,9 @@ def test_after_a_stopped_import_the_tabs_say_that_no_index_was_published(
             page.locator(f"#tab-{name}").click()
             view = page.locator(f"#view-{name}")
             view.filter(has_text=text).wait_for()
+            # Visible text only: a message in a collapsed section is not shown.
             views[name] = view.inner_text()
+            assert text in views[name], (name, views[name])
         assert heading in page.locator("#diagnostics h3").first.inner_text()
         for name, shown in views.items():
             for word in wrong:
@@ -793,6 +795,7 @@ def test_the_file_advice_says_only_what_the_interface_shows(
         page.locator("#tab-diagnostics").click()
         view = page.locator("#diagnostics")
         view.filter(has_text=advice).wait_for()
+        assert advice in view.inner_text()
         assert overclaim not in view.inner_text()
         assert not errors
     finally:
