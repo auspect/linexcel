@@ -436,7 +436,21 @@ def test_a_data_view_in_preparation_is_announced_then_opens_by_itself(
     page, requests, errors, pending, data = open_app(
         browser, viewport, delayed=True, language=language
     )
-    page.wait_for_function("() => true")
+    task = {
+        "id": "t1",
+        "projectId": "p",
+        "operation": "build_data",
+        "nodeId": None,
+        "status": "running",
+        "progress": {"phase": "build_data", "fraction": None},
+        "createdAt": 1,
+    }
+    page.route(
+        "**/api/tasks/t1",
+        lambda route: route.fulfill(
+            body=json.dumps({"task": task}), content_type="application/json"
+        ),
+    )
     for _ in range(50):
         if pending:
             break
@@ -444,6 +458,17 @@ def test_a_data_view_in_preparation_is_announced_then_opens_by_itself(
     pending.pop(0).fulfill(body=json.dumps(BUILDING), content_type="application/json")
     page.locator("#data-status").filter(has_text=text).wait_for()
     assert page.locator("#data-controls").is_hidden()
+    # The task the server started is shown in Operations at once.
+    page.locator("#tab-tasks").click()
+    label, phase = (
+        ("Vue des données", "Préparation de la vue des données")
+        if language == "fr"
+        else ("Data view", "Preparing the data view")
+    )
+    page.locator("#task-list .task").filter(has_text=label).wait_for()
+    assert phase in page.locator("#task-list").inner_text()
+    assert "build_data" not in page.locator("#task-list").inner_text()
+    page.locator("#tab-data").click()
     for _ in range(80):  # the tab polls on its own, about every 2 s
         if pending:
             break

@@ -130,6 +130,7 @@ const UI_EN={
   "Préparation de la vue des données impossible :": "The data view could not be prepared:",
   "Actualiser les données relance la préparation.": "Refresh data starts the preparation again.",
   "Vue des données": "Data view",
+  "Préparation de la vue des données": "Preparing the data view",
   "Vue des données en préparation ; réessayez": "Data view being prepared; try again",
   "Aucun index publié : le dernier import n’a pas abouti. Consultez Opérations pour la raison.": "No index published: the last import did not complete. See Operations for the reason.",
   "La partie XML de cette feuille est absente du fichier : elle n’a pas pu être lue à l’import. Les autres feuilles restent consultables ; voir Diagnostics.": "This sheet's XML part is missing from the file: it could not be read at import. The other sheets remain available; see Diagnostics.",
@@ -611,7 +612,7 @@ $('ready-data').onclick=()=>{importReadyDismissed=current.id;renderImportReady()
 function scopeTabNotices(){const panel=$(['nodes','graph'].includes(tab)?'view-'+tab:'view-nodes');panel.prepend($('calculation-policy'));panel.prepend($('data-return-bar'));$('data-return-bar').hidden=!dataReturn||!['nodes','graph'].includes(tab);$('view-tasks').prepend($('import-ready'));$('view-diagnostics').prepend($('index-status'));}
 function renderImportReady(){const ready=!!graph&&!tasks.some(t=>t.operation==='import'&&active(t))&&current?.id!==importReadyDismissed; $('import-ready').hidden=!ready||tab!=='tasks';}
 function kindLabel(kind){return uiText(({cell:'Formule',formula:'Formule',input:'Entrée',range:'Plage',name:'Nom défini',unresolved:'Référence non résolue',vba:'Source VBA'})[kind]||kind||'Cellule')}
-function phaseLabel(phase){return ['queued','running','succeeded','failed','cancelled'].includes(phase)?stateLabel(phase):({loading:uiText('Chargement…'),indexing:uiText('Import structurel'),evaluating:uiText('Recalcul ciblé')})[phase]||phase||''}
+function phaseLabel(phase){return ['queued','running','succeeded','failed','cancelled'].includes(phase)?stateLabel(phase):({loading:uiText('Chargement…'),indexing:uiText('Import structurel'),evaluating:uiText('Recalcul ciblé'),build_data:uiText('Préparation de la vue des données')})[phase]||phase||''}
 function diagnosticAdvice(items){const raw=JSON.stringify(items||[]);return /external|reference workbook|missing workbook/i.test(raw)?'Joignez le classeur de référence puis réimportez les fichiers.':/budget|memory|timeout|time limit/i.test(raw)?'Ajustez les limites de l’opération puis réessayez.':/"part":|Worksheet import incomplete|Worksheet relationship|Styles part|Shared-string|Table metadata/i.test(raw)?'Une partie du fichier est absente ou illisible : les feuilles et valeurs concernées sont signalées ; le reste du classeur reste consultable.':'Consultez la formule et ses sources ; ce calcul ne peut pas être exécuté avec les éléments disponibles.'}
 function diagnosticHTML(items){return items?.length?'<div class="notice error"><p>'+esc(uiText(diagnosticAdvice(items)))+'</p><details><summary>'+uiText('Détails techniques')+'</summary><ul class="diagnostic-list">'+items.map(d=>'<li data-no-i18n>'+esc(typeof d==='string'?d:show(d))+'</li>').join('')+'</ul></details></div>':''}
 function capabilitiesHTML(registry){
@@ -712,7 +713,7 @@ function renderDataView(){
  $('data-status').classList.toggle('error',!!dataState.error);
  if(dataState.error){$('data-status').textContent=dataState.error+' '+uiText('Réessayez avec Actualiser les données.');return}
  const payload=dataState.payload;
- if(payload?.state==='building'){const key=dataState.key;$('data-status').textContent=uiText('Préparation de la vue des données en arrière-plan… Le reste de l’application reste utilisable ; suivi dans Opérations.');clearTimeout(dataPoll);dataPoll=setTimeout(()=>{if(tab==='data'&&current&&dataState.key===key&&!dataState.loading){dataState.loaded=false;renderDataView()}},2000);return}
+ if(payload?.state==='building'){const key=dataState.key;$('data-status').textContent=uiText('Préparation de la vue des données en arrière-plan… Le reste de l’application reste utilisable ; suivi dans Opérations.');if(!dataPoll)dataPoll=setTimeout(()=>{dataPoll=null;if(tab==='data'&&current&&dataState.key===key&&!dataState.loading){dataState.loaded=false;renderDataView()}},2000);return}
  if(payload?.state==='failed'){dataRetry=true;$('data-status').classList.add('error');$('data-status').textContent=uiText('Préparation de la vue des données impossible :')+' '+payload.error+' '+uiText('Actualiser les données relance la préparation.');return}
  if(!payload?.available){$('data-status').textContent=uiText(payload?.reason==='macro_only'?'Lecture statique du VBA : ce complément ne fournit pas de données de feuilles analysées.':'Les données seront disponibles après l’import. Consultez les opérations.');return}
  $('data-status').textContent='';$('data-controls').hidden=false;
@@ -721,7 +722,7 @@ function renderDataView(){
 async function loadDataView(){
  if(!current||dataState.loading)return;
  const request=++dataRequest,projectId=current.id,key=dataKey();dataState={key,loaded:false,loading:true,payload:null,error:null};$('data-status').textContent=uiText('Chargement des données…');$('data-status').classList.remove('error');
- const retry=dataRetry;dataRetry=false;try{const payload=await api('projects/'+encodeURIComponent(projectId)+'/data'+(retry?'?retry=1':''));if(request!==dataRequest||current?.id!==projectId)return;dataState={key,loaded:true,payload,error:null}}
+ const retry=dataRetry;dataRetry=false;try{const payload=await api('projects/'+encodeURIComponent(projectId)+'/data'+(retry?'?retry=1':''));if(request!==dataRequest||current?.id!==projectId)return;dataState={key,loaded:true,payload,error:null};if(payload?.taskId&&!tasks.some(t=>t.id===payload.taskId)){try{const found=await api('tasks/'+encodeURIComponent(payload.taskId));if(current?.id===projectId&&found?.task&&!tasks.some(t=>t.id===found.task.id)){tasks=orderedTasks([...tasks,found.task]);render()}}catch{}}}
  catch(error){if(request!==dataRequest||current?.id!==projectId)return;dataState={key,loaded:true,payload:null,error:error.message}}
  renderDataView();
 }
