@@ -846,3 +846,33 @@ def test_a_sheet_the_file_lacks_is_not_offered_a_retry(
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "label"),
+    [("fr", "Construction du graphe"), ("en", "Graph construction")],
+)
+def test_operations_name_a_running_operation_phase_in_words(browser, language, label):
+    """Batch 2 bis: a running operation reports its own name as its phase;
+    Operations shows the label, never the internal name."""
+    running = {
+        "id": "g1",
+        "projectId": "p",
+        "operation": "build_graph",
+        "nodeId": None,
+        "status": "running",
+        "progress": {"phase": "build_graph", "fraction": None},
+        "createdAt": 1,
+    }
+    page, _, errors, _, _ = open_app(
+        browser, (390, 844), language=language, project={"tasks": [running]}
+    )
+    try:
+        page.locator("#tab-tasks").click()
+        tasks = page.locator("#task-list")
+        tasks.locator(".task").filter(has_text=label).wait_for()
+        assert "build_graph" not in tasks.inner_text()
+        assert tasks.inner_text().count(label) >= 2, tasks.inner_text()
+        assert not errors
+    finally:
+        page.close()
