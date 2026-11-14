@@ -72,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table takes 12 minutes. The tab now says that the view is being prepared, the
   operation appears in Operations, and the view opens by itself when it is
   ready. If the preparation fails, for example on the storage quota, the tab
-  says why and Refresh data starts it again.
+  says why and Refresh data starts it again; when storage is already full, the
+  tab says that the preparation could not start.
 
 ### Documentation
 

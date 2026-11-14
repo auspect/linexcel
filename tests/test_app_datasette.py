@@ -625,3 +625,48 @@ def test_after_a_stopped_import_the_tabs_say_that_no_index_was_published(
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("answer", "english"),
+    [
+        (
+            {
+                "available": False,
+                "state": "failed",
+                "presentationAvailable": False,
+                "sheets": [],
+                "error": "Quota de stockage du serveur atteint (37 Mio, classeurs, "
+                "index et vues compris) : la préparation de la vue des données n’a "
+                "pas pu démarrer. Supprimez des classeurs ou relancez le serveur "
+                "avec une valeur --max-storage-mb plus grande.",
+            },
+            "Server storage quota reached (37 MiB, workbooks, indexes and views "
+            "included): the data view preparation could not start. Delete "
+            "workbooks or restart the server with a larger --max-storage-mb value.",
+        ),
+        (
+            (413, "Stockage plein ; supprimez des classeurs"),
+            "Storage full; delete workbooks",
+        ),
+    ],
+)
+def test_storage_quota_messages_are_translated(browser, answer, english):
+    """Batch 2 bis, F22: the quota messages the Data tab can show reach an
+    English interface in English."""
+    failed = isinstance(answer, dict)
+    page, _, errors, _, _ = open_app(
+        browser,
+        (1440, 900),
+        language="en",
+        payload=answer if failed else None,
+        data_error=None if failed else answer,
+    )
+    try:
+        status = page.locator("#data-status")
+        status.filter(has_text=english).wait_for()
+        assert "Quota de" not in status.inner_text()
+        assert "Stockage" not in status.inner_text()
+        assert not errors
+    finally:
+        page.close()

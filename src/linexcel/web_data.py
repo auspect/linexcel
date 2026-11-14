@@ -517,14 +517,30 @@ class DataBrowser:
                 "taskId": latest["id"],
                 "error": error.get("message") or latest["status"],
             }
-        task = self.store.submit(
-            owner,
-            project_id,
-            "build_data",
-            None,
-            dict(BUILD_BUDGET),
-            force=latest is not None,
-        )
+        from linexcel.web import APIError, storage_quota_message
+
+        try:
+            task = self.store.submit(
+                owner,
+                project_id,
+                "build_data",
+                None,
+                dict(BUILD_BUDGET),
+                force=latest is not None,
+            )
+        except APIError as exc:
+            if exc.status != 413:
+                raise
+            # Storage is already full: the tab says so in its own words, and
+            # Refresh data asks again once space is freed (F22).
+            return {
+                **state,
+                "state": "failed",
+                "error": storage_quota_message(
+                    self.store.config.max_storage_mb,
+                    "la préparation de la vue des données n’a pas pu démarrer.",
+                ),
+            }
         return {**state, "state": "building", "taskId": task["id"]}
 
     def _discard_stale(self, owner, project_id, path, signature, current):

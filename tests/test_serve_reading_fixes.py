@@ -686,3 +686,32 @@ def test_a_failed_copy_says_why_and_can_be_prepared_again(tmp_path):
         finish(app, again["taskId"], seconds=300)
     finally:
         app.close()
+
+
+def test_a_preparation_the_quota_cannot_start_says_so(tmp_path):
+    """Asking for the view while storage is already full gives the quota
+    message of the tab, not a bare 413 the tab cannot explain."""
+    app = create_app(
+        tmp_path / "app", resolve_user=lambda env: env.get("user"), max_storage_mb=2
+    )
+    try:
+        data = workbook_bytes(data_book(50))
+        code, imported = call(
+            app,
+            "POST",
+            "/api/projects",
+            {"workbook": {"name": "d.xlsx", "data": base64.b64encode(data).decode()}},
+        )
+        assert code == 200, imported
+        assert finish(app, imported["task"]["id"])["status"] == "succeeded"
+        project = imported["project"]["id"]
+        # Another workbook's files fill the quota before the first opening.
+        (app.store.root / "filler.bin").write_bytes(b"\0" * (2 * 1048576))
+        for query in ("", "retry=1"):
+            state = data_state(app, project, query=query)
+            assert state["state"] == "failed", state
+            assert "Quota de stockage du serveur atteint (2 Mio" in state["error"]
+            assert "--max-storage-mb" in state["error"]
+        assert not any(t["operation"] == "build_data" for t in app.store.tasks.values())
+    finally:
+        app.close()

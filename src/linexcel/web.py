@@ -163,6 +163,15 @@ class WebConfig:
             )
 
 
+def storage_quota_message(max_storage_mb: int, consequence: str) -> str:
+    """What the storage quota stopped and what the user can change (F22)."""
+    return (
+        f"Quota de stockage du serveur atteint ({max_storage_mb} Mio, classeurs, "
+        f"index et vues compris) : {consequence} Supprimez des classeurs ou "
+        "relancez le serveur avec une valeur --max-storage-mb plus grande."
+    )
+
+
 NO_INDEX_MESSAGE = (
     "Aucun index publié : le dernier import n’a pas abouti. "
     "Consultez Opérations pour la raison."
@@ -1458,12 +1467,9 @@ class TaskStore:
             elif kind == "storage_limit":
                 # Say what stopped the operation and what the user can change;
                 # the raw kind alone read as an unexplained failure (F22).
-                message = (
-                    "Quota de stockage du serveur atteint "
-                    f"({self.config.max_storage_mb} Mio, classeurs, index et "
-                    "vues compris) : l’opération a été arrêtée et son résultat "
-                    "n’a pas été conservé. Supprimez des classeurs ou relancez "
-                    "le serveur avec une valeur --max-storage-mb plus grande."
+                message = storage_quota_message(
+                    self.config.max_storage_mb,
+                    "l’opération a été arrêtée et son résultat n’a pas été conservé.",
                 )
             return {
                 "error": {
