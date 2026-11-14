@@ -2017,12 +2017,139 @@ def patterns_page(index_path: Path, *, offset=0, limit=200, sheet=None) -> dict:
         }
 
 
+_MEMBER_KINDS = ("cell", "input", "array_result")
+
+
+class _RangeMembership:
+    """Range membership from indexed coordinates, without decoding cell blobs.
+
+    A range node has no edge from its member cells in the ``edges`` table, so a
+    cell read only through ``SUM(C2:C11)`` would otherwise look unused.
+    ``lineage_ranges`` (written by ``link_facts.index_facts``) holds the local
+    range bounds; an older index without it decodes its range nodes instead.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self.indexed = bool(
+            store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lineage_ranges'"
+            ).fetchone()
+        )
+
+    def _fallback_ranges(self, sheet):
+        for nid, data in self.store.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range' AND sheet=?", (sheet,)
+        ):
+            node = _unpack(data)
+            if not node.get("external") and node.get("bounds"):
+                yield nid, node["bounds"]
+
+    def bounds(self, node_id, sheet):
+        if self.indexed:
+            row = self.store.db.execute(
+                "SELECT r1,c1,r2,c2 FROM lineage_ranges WHERE node=?", (node_id,)
+            ).fetchone()
+            return list(row) if row else None
+        return next(
+            (b for nid, b in self._fallback_ranges(sheet) if nid == node_id), None
+        )
+
+    def containing(self, sheet, row, col, limit):
+        """Local ranges that contain one cell, at most ``limit``."""
+        if self.indexed:
+            return [
+                r[0]
+                for r in self.store.db.execute(
+                    "SELECT node FROM lineage_ranges WHERE sheet=? "
+                    "AND ? BETWEEN r1 AND r2 AND ? BETWEEN c1 AND c2 "
+                    "ORDER BY node LIMIT ?",
+                    (sheet.lower(), row, col, limit),
+                )
+            ]
+        return sorted(
+            nid
+            for nid, (r1, c1, r2, c2) in self._fallback_ranges(sheet)
+            if r1 <= row <= r2 and c1 <= col <= c2
+        )[:limit]
+
+    def members(self, sheet, bounds, limit):
+        """Indexed cells inside a range, in sheet order, at most ``limit``."""
+        r1, c1, r2, c2 = bounds
+        return [
+            r[0]
+            for r in self.store.db.execute(
+                "SELECT id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+                "AND col BETWEEN ? AND ? AND kind IN (?,?,?) ORDER BY row,col LIMIT ?",
+                (sheet, r1, r2, c1, c2, *_MEMBER_KINDS, limit),
+            )
+        ]
+
+    def edges(self, ids):
+        """Membership relations (member -> range) among already selected nodes."""
+        if not ids:
+            return []
+        marks = ",".join("?" for _ in ids)
+        rows = self.store.db.execute(
+            f"SELECT id,kind,sheet,row,col FROM nodes WHERE id IN ({marks})", ids
+        ).fetchall()
+        ranges = [
+            (nid, sheet, b)
+            for nid, kind, sheet, _, _ in rows
+            if kind == "range" and (b := self.bounds(nid, sheet))
+        ]
+        cells = [r for r in rows if r[1] in _MEMBER_KINDS and r[3] is not None]
+        return [
+            {"source": cell, "target": rid, "kind": "range"}
+            for rid, rsheet, (r1, c1, r2, c2) in ranges
+            for cell, _, sheet, row, col in cells
+            if sheet.lower() == rsheet.lower() and r1 <= row <= r2 and c1 <= col <= c2
+        ]
+
+
+def _adjacent(store, membership, node_id, condition, limit):
+    """Direct sources and usages of one node, including range membership.
+
+    One bounded query per relation family; each family returns at most
+    ``limit`` rows, which keeps the caller's ``truncated`` flag exact.
+    """
+    found = {
+        row[0]
+        for row in store.db.execute(
+            (
+                "SELECT e.source AS neighbor FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.target=? AND {condition} "
+                "UNION SELECT e.target FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.source=? AND {condition} "
+                "ORDER BY neighbor LIMIT ?"
+            ),
+            (node_id, node_id, limit),
+        )
+    }
+    position = store.db.execute(
+        "SELECT kind,sheet,row,col FROM nodes WHERE id=?", (node_id,)
+    ).fetchone()
+    if position:
+        kind, sheet, row, col = position
+        if kind == "range" and sheet:
+            bounds = membership.bounds(node_id, sheet)
+            if bounds:
+                found.update(membership.members(sheet, bounds, limit))
+        elif kind in _MEMBER_KINDS and sheet and row is not None:
+            found.update(membership.containing(sheet, row, col, limit))
+    return sorted(found)
+
+
 def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> dict:
     """Read an undirected neighborhood with independent depth and node budgets.
 
     A deeper traversal never expands the HTTP node budget. ``truncated`` means
     an eligible node within the requested depth was omitted by that budget;
     neighbors beyond the requested depth are intentionally outside the view.
+    Range membership counts as a relation: a cell read through a range reaches
+    that range, and a range reaches its indexed member cells.
     """
     limit = max(1, min(MAX_PAGE_SIZE, int(limit)))
     depth = max(0, min(MAX_NEIGHBORHOOD_DEPTH, int(depth)))
@@ -2033,23 +2160,18 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         frontier = [node_id]
         truncated = False
         condition = _array_edge_filter(store)
+        membership = _RangeMembership(store)
         for _ in range(depth):
             if not frontier:
                 break
             following = []
             for current in frontier:
-                rows = store.db.execute(
-                    (
-                        "SELECT e.source AS neighbor FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.target=? AND {condition} "
-                        "UNION SELECT e.target FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.source=? AND {condition} "
-                        "ORDER BY neighbor LIMIT ?"
-                    ),
-                    (current, current, limit + 1),
-                )
+                rows = [
+                    (neighbor,)
+                    for neighbor in _adjacent(
+                        store, membership, current, condition, limit + 1
+                    )
+                ]
                 for row in rows:
                     if row[0] in ids:
                         continue
@@ -2064,10 +2186,14 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
                 break
             frontier = following
         nodes = [store.node(nid) for nid in ids]
+        edges = sorted(
+            _edges_for_nodes(store, list(ids)) + membership.edges(list(ids)),
+            key=lambda e: (e["source"], e["target"], e["kind"]),
+        )
         return {
             "lazy": True,
             "nodes": nodes,
-            "edges": _edges_for_nodes(store, list(ids)),
+            "edges": edges,
             "formulaPatterns": [
                 _pattern(
                     store,
