@@ -361,3 +361,173 @@ def test_malformed_defined_name_is_skipped_locally(serve):
     refused = evaluate(app, project, "S!B2")
     assert refused["status"] == "unsupported"
     assert any("Rate" in d for d in refused["diagnostics"])
+
+
+# F05: no "different" verdict for an ordinary formula that relies on
+# implicit intersection. Saved caches below are LibreOffice's (legacy rules);
+# Excel confirmation is pending (batch 7).
+
+
+def with_caches(book, caches):
+    """Save ``book`` with the given saved values for formula cells."""
+    import re
+    import zipfile
+
+    stream = io.BytesIO()
+    book.save(stream)
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(stream.getvalue())) as source,
+        zipfile.ZipFile(out, "w") as target,
+    ):
+        for item in source.infolist():
+            data = source.read(item)
+            if item.filename.startswith("xl/worksheets/"):
+                text = data.decode()
+                for cell, value in caches.items():
+                    kind = ' t="e"' if str(value).startswith("#") else ""
+                    text, count = re.subn(
+                        rf'<c r="{cell}"((?: [a-z]+="[^"]*")*)>(<f[^>]*>.*?</f>)'
+                        r"<v ?/>",
+                        rf'<c r="{cell}"\1{kind}>\2<v>{value}</v>',
+                        text,
+                    )
+                    assert count == 1, cell
+                data = text.encode()
+            target.writestr(item.filename, data)
+    return out.getvalue()
+
+
+def implicit_book():
+    from openpyxl.workbook.defined_name import DefinedName
+    from openpyxl.worksheet.formula import ArrayFormula
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    for row in range(1, 6):
+        sheet.cell(row, 1, row)
+    sheet["B3"] = "=A:A"
+    sheet["C2"] = "=SUM(A1:A3*2)"
+    sheet["D8"] = "=SUM(A1:A3*2)"
+    sheet["E3"] = "=A1:A5*10"
+    sheet["F2"] = "=C2+1"  # Depends on a concerned formula.
+    sheet["G2"] = "=SUM(A1:A3)"
+    sheet["H2"] = "=A2*2"
+    sheet["I2"] = "=MAX(A1:A3*0)"  # Concerned, but the engine agrees.
+    sheet["J1"] = ArrayFormula("J1", "=SUM(A1:A3*2)")  # Declared array.
+    sheet["K2"] = "=SUMPRODUCT((A1:A5>2)*A1:A5)"
+    sheet["L3"] = "=Span*2"
+    sheet["M2"] = "=Total/3"  # A computed name with one value.
+    book.defined_names["Span"] = DefinedName("Span", attr_text="S!$A$1:$A$5")
+    book.defined_names["Total"] = DefinedName("Total", attr_text="SUM(S!$A$1:$A$3)")
+    return with_caches(
+        book,
+        {
+            "B3": 3,
+            "C2": 4,
+            "D8": "#VALUE!",
+            "E3": 30,
+            "F2": 5,
+            "G2": 6,
+            "H2": 4,
+            "I2": 0,
+            "J1": 12,
+            "K2": 12,
+            "L3": 6,
+            "M2": 2,
+        },
+    )
+
+
+@pytest.mark.parametrize("cell", ["S!B3", "S!C2", "S!D8", "S!E3", "S!F2", "S!L3"])
+def test_implicit_intersection_is_a_named_refusal_not_a_difference(serve, cell):
+    app, upload = serve
+    project, _ = upload(implicit_book())
+    result = evaluate(app, project, cell)
+    assert result["status"] == "unsupported"
+    assert result["comparison"] == "unknown"
+    assert result["value"] is None
+    assert any("implicit intersection" in d for d in result["diagnostics"])
+    assert {c["code"] for c in result["capabilityDiagnostics"]} >= {
+        "implicit_intersection_unsupported"
+    }
+    # No step keeps an engine value or a verdict either.
+    assert all(step["comparison"] == "unknown" for step in result["steps"])
+    assert not any("calculatedValue" in step for step in result["steps"])
+
+
+@pytest.mark.parametrize(
+    ("cell", "value"),
+    [
+        ("S!G2", 6),
+        ("S!H2", 4),
+        ("S!I2", 0),
+        ("S!J1", 12),
+        ("S!K2", 12),
+        ("S!M2", 2),
+    ],
+)
+def test_ordinary_and_array_formulas_are_still_compared(serve, cell, value):
+    app, upload = serve
+    project, _ = upload(implicit_book())
+    result = evaluate(app, project, cell)
+    assert result["status"] == "completed", result["diagnostics"]
+    assert result["value"] == value
+    assert result["comparison"] == "equal"
+
+
+@pytest.mark.parametrize(
+    ("formula", "reference"),
+    [
+        ("=A:A", "A:A"),
+        ("=A1:A5*10", "A1:A5"),
+        ("=SUM(A1:A3*2)", "A1:A3"),
+        ("=ABS(A1:A5)", "A1:A5"),
+        ("=IF(A1:A5>2,1,0)", "A1:A5"),
+        ("=-A1:A3", "A1:A3"),
+        ("=VLOOKUP(A1:A5,D1:E5,2,0)", "A1:A5"),
+        ('=TEXT(A1:A3,"0")', "A1:A3"),
+        ("=LET(x,A1:A5,x*2)", "x"),
+        ("=_xlfn.LET(_xlpm.x,A1:A5,_xlpm.x*2)", "_xlpm.x"),
+        ("=SalesTable[Amount]*2", "SalesTable[Amount]"),
+        # A defined name as linexcel hands it to the engine.
+        ("=(S!$A$1:$A$5*2)+0", "S!$A$1:$A$5"),
+        ("=S!$A$1:$A$5", "S!$A$1:$A$5"),
+    ],
+)
+def test_implicit_intersection_rule_flags_scalar_positions(formula, reference):
+    from linexcel.implicit_intersection import implicit_intersection_reference
+
+    assert implicit_intersection_reference(formula) == reference
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(A1:A3)",
+        "=A1*2",
+        "=AVERAGE(A1:A5)*2",
+        "=MAX(A:A)-MIN(A:A)",
+        "=VLOOKUP(A2,D1:E5,2,0)",
+        '=COUNTIF(A1:A5,">2")',
+        '=SUMIFS(A1:A5,A1:A5,">1",D1:D5,"x")',
+        '=COUNTIFS(A1:A5,">1",D1:D5,"x")',
+        "=SUMPRODUCT((A1:A5>2)*A1:A5)",
+        "=INDEX(A1:A5,3)",
+        "=INDEX(A:A,MATCH(2,A:A,0))",
+        "=ROWS(A1:A5)",
+        "=IF(A1>0,SUM(A1:A5),0)",
+        "=LET(x,A1:A5,SUM(x))",
+        "=IFERROR(VLOOKUP(A2,D:E,2,FALSE),0)",
+        "=SUBTOTAL(9,A1:A5)+NPV(0.1,A1:A5)",
+        "=SUM(Data!A:A)/COUNTA(Data!A:A)",
+        "=SalesTable[@Amount]*2",
+        "=(SUM(S!$A$1:$A$2))/3",
+        "=_xlfn.XLOOKUP(A2,D:D,E:E)",
+    ],
+)
+def test_implicit_intersection_rule_keeps_ordinary_formulas(formula):
+    from linexcel.implicit_intersection import implicit_intersection_reference
+
+    assert implicit_intersection_reference(formula) is None
