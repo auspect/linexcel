@@ -58,8 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that no index was published instead of suggesting a refresh; Diagnostics no
   longer says "Import complete". The Excel presentation of a sheet whose
   part is missing from the file, or that the import read only partly, says
-  so instead of "Feuille introuvable". Import diagnostics in the Diagnostics
-  tab get advice about the file instead of the advice about formulas.
+  so instead of "Feuille introuvable", without advising a retry that cannot
+  help. Import diagnostics in the Diagnostics tab get advice about the file
+  instead of the advice about formulas.
 - Show the Excel presentation of workbooks whose styles part is very large.
   Every sheet of the public DfT TAG data book was refused because its 7 MB
   of named styles exceeded a 4 MiB cap; the styles are now read as a stream,

@@ -797,3 +797,52 @@ def test_the_file_advice_says_only_what_the_interface_shows(
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "message", "retry"),
+    [
+        (
+            "fr",
+            "La partie XML de cette feuille est absente du fichier",
+            "Réessayez",
+        ),
+        ("en", "This sheet's XML part is missing from the file", "Retry"),
+    ],
+)
+def test_a_sheet_the_file_lacks_is_not_offered_a_retry(
+    browser, language, message, retry
+):
+    """Batch 2 bis, F22: showing the area again cannot bring back a part
+    the file lacks, so the presentation gives the reason alone."""
+    data = {
+        "available": True,
+        "presentationAvailable": True,
+        "sourceSha256": "a" * 64,
+        "cellsUrl": "/api/projects/p/datasette/source/cells",
+        "sheets": [
+            {"sheet": "Lost", "url": "/api/projects/p/datasette/source/sheet_001"}
+        ],
+    }
+    reason = (
+        "La partie XML de cette feuille est absente du fichier : elle n’a pas pu "
+        "être lue à l’import. Les autres feuilles restent consultables ; voir "
+        "Diagnostics."
+    )
+    page, _, errors, _, _ = open_app(
+        browser,
+        (1440, 900),
+        payload=data,
+        language=language,
+        presentation=lambda route: route.fulfill(
+            status=409, json={"error": {"message": reason}}
+        ),
+    )
+    try:
+        open_data_options(page)
+        status = page.locator("#excel-status")
+        status.filter(has_text=message).wait_for()
+        assert retry not in status.inner_text()
+        assert not errors
+    finally:
+        page.close()
