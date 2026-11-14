@@ -598,3 +598,87 @@ def test_too_many_cell_formats_are_still_refused(serve):
     code, window = presentation(app, project, "S")
     assert code == 413, window
     assert window["error"]["message"] == "Trop de styles de présentation"
+
+
+# F18: the Data tab copy is built by a background task, never in the request.
+
+
+def data_book(rows=3000):
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for row in range(1, rows + 1):
+        sheet.cell(row, 1, f"item {row}")
+        sheet.cell(row, 2, row * 1.5)
+        sheet.cell(row, 3, row % 7)
+    return book
+
+
+def data_state(app, project, query=""):
+    code, metadata = call(app, "GET", f"/api/projects/{project}/data", query=query)
+    assert code == 200, metadata
+    return metadata
+
+
+def test_the_data_tab_answers_at_once_while_a_task_builds_its_copy(serve):
+    app, upload = serve
+    project, task = upload(data_book())
+    assert task["status"] == "succeeded", task
+    path = next(app.store.root.glob(f"*/projects/{project}"))
+    first = data_state(app, project)
+    assert first["state"] == "building" and not first["available"]
+    assert not list(path.glob("source-data*.sqlite")), "built in the request"
+    build = app.store.tasks[first["taskId"]]
+    assert build["operation"] == "build_data" and build["projectId"] == project
+    assert data_state(app, project)["taskId"] == first["taskId"], "one build"
+    assert finish(app, first["taskId"])["status"] == "succeeded"
+    ready = data_state(app, project)
+    assert ready["available"] and ready["sheets"][0]["cellCount"] == 9000
+    code, rows = call(
+        app,
+        "GET",
+        f"/api/projects/{project}/datasette/source/sheet_001.json",
+        query="_shape=objects&_size=2",
+    )
+    assert code == 200 and rows["rows"][0]["A"] == "item 1"
+
+
+def test_a_failed_copy_says_why_and_can_be_prepared_again(tmp_path):
+    from linexcel.lazy_store import build_index
+
+    data = workbook_bytes(data_book(20_000))
+    probe = tmp_path / "probe.xlsx"
+    probe.write_bytes(data)
+    build_index(probe, tmp_path / "probe.sqlite")
+    index_mb = (tmp_path / "probe.sqlite").stat().st_size / 1048576
+    # Room for the workbook and its index, not for a second copy of its cells.
+    quota = int(index_mb + len(data) / 1048576) + 2
+    app = create_app(
+        tmp_path / "app",
+        resolve_user=lambda env: env.get("user"),
+        max_storage_mb=quota,
+    )
+    try:
+        code, imported = call(
+            app,
+            "POST",
+            "/api/projects",
+            {"workbook": {"name": "d.xlsx", "data": base64.b64encode(data).decode()}},
+        )
+        assert code == 200, imported
+        assert finish(app, imported["task"]["id"])["status"] == "succeeded"
+        project = imported["project"]["id"]
+        first = data_state(app, project)
+        assert finish(app, first["taskId"], seconds=300)["status"] == "failed"
+        failed = data_state(app, project)
+        assert failed["state"] == "failed" and failed["taskId"] == first["taskId"]
+        assert "Quota de stockage" in failed["error"]
+        code, refused = call(
+            app, "GET", f"/api/projects/{project}/datasette/source/sheet_001.json"
+        )
+        assert code == 409 and "Quota de stockage" in refused["error"]["message"]
+        again = data_state(app, project, query="retry=1")
+        assert again["state"] == "building" and again["taskId"] != first["taskId"]
+        finish(app, again["taskId"], seconds=300)
+    finally:
+        app.close()

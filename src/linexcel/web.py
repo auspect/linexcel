@@ -38,6 +38,7 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
     "import",
     "build_graph",
+    "build_data",
     "evaluate",
     "capture",
     "document",
@@ -785,6 +786,7 @@ class TaskStore:
         if operation in AI_OPERATIONS | {
             "import",
             "build_graph",
+            "build_data",
             "export_html",
         } and isinstance(budget, dict):
             budget = {"seconds": 600, **budget}
@@ -826,17 +828,26 @@ class TaskStore:
 
             project = project_revision(_read(path / "project.json"), path)
             graph_generation = None
-            if operation in {"import", "build_graph"}:
-                opposite = "build_graph" if operation == "import" else "import"
+            if operation in {"import", "build_graph", "build_data"}:
+                # Derived views read the index; an import replaces it.
+                opposite = (
+                    {"build_graph", "build_data"}
+                    if operation == "import"
+                    else {"import"}
+                )
                 if any(
                     t["owner"] == owner
                     and t["projectId"] == project_id
-                    and t["operation"] == opposite
+                    and t["operation"] in opposite
                     and t["status"] in {"queued", "running"}
                     for t in self.tasks.values()
                 ):
-                    raise APIError(409, "Import ou construction du graphe en cours")
-            if operation == "build_graph":
+                    raise APIError(
+                        409,
+                        "Import, construction du graphe ou préparation des "
+                        "données en cours",
+                    )
+            if operation in {"build_graph", "build_data"}:
                 from linexcel.graph_store import generation
 
                 if not (path / "index.sqlite").is_file():
@@ -1218,6 +1229,21 @@ class TaskStore:
                                 "diagnostics", []
                             ),
                         }
+                    if task["operation"] == "build_data":
+                        from linexcel.graph_store import generation
+                        from linexcel.web_data import publish_source_database
+
+                        project = root.parent.parent
+                        if (
+                            generation(project / "index.sqlite")
+                            != task["graphGeneration"]
+                        ):
+                            raise ValueError(
+                                "Index modifié pendant la préparation des données"
+                            )
+                        publish_source_database(
+                            project, root / "source-data.sqlite", task, payload
+                        )
                     if task["operation"] == "build_graph":
                         from linexcel.graph_store import generation
 
@@ -1262,9 +1288,14 @@ class TaskStore:
                         "hierarchy.sqlite-journal",
                         "hierarchy.sqlite-wal",
                         "hierarchy.sqlite-shm",
+                        "source-data.sqlite",
+                        "source-data.sqlite-journal",
                     ):
                         (root / scratch).unlink(missing_ok=True)
-                    for scratch in root.glob("index.sqlite.*.building*"):
+                    for scratch in [
+                        *root.glob("index.sqlite.*.building*"),
+                        *root.glob("data-*.building*"),
+                    ]:
                         scratch.unlink(missing_ok=True)
                     if (root / "captures").exists():
                         shutil.rmtree(root / "captures")
@@ -2046,7 +2077,8 @@ class WebApp:
         if len(parts) >= 3 and parts[:2] == ["api", "projects"]:
             project_id = parts[2]
             if parts[3:] == ["data"] and method == "GET":
-                return self.data_browser.metadata(owner, project_id)
+                retry = (query or {}).get("retry", ["0"]) == ["1"]
+                return self.data_browser.metadata(owner, project_id, retry)
             if parts[3:] == ["data", "presentation"] and method == "GET":
                 params = query or {}
                 options = {}

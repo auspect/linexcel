@@ -410,3 +410,105 @@ def test_main_tabs_support_keyboard_navigation_and_scoped_calculation_notice(bro
         assert not errors
     finally:
         page.close()
+
+
+BUILDING = {
+    "available": False,
+    "state": "building",
+    "taskId": "t1",
+    "presentationAvailable": False,
+    "sheets": [],
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "text"),
+    [
+        ((1440, 900), "fr", "Préparation de la vue des données en arrière-plan"),
+        ((390, 844), "en", "Preparing the data view in the background"),
+    ],
+)
+def test_a_data_view_in_preparation_is_announced_then_opens_by_itself(
+    browser, viewport, language, text
+):
+    """The copy is built by a task (batch 2 bis, F18): the tab says so and
+    asks again until the view is available, without a manual refresh."""
+    page, requests, errors, pending, data = open_app(
+        browser, viewport, delayed=True, language=language
+    )
+    page.wait_for_function("() => true")
+    for _ in range(50):
+        if pending:
+            break
+        page.wait_for_timeout(50)
+    pending.pop(0).fulfill(body=json.dumps(BUILDING), content_type="application/json")
+    page.locator("#data-status").filter(has_text=text).wait_for()
+    assert page.locator("#data-controls").is_hidden()
+    for _ in range(80):  # the tab polls on its own, about every 2 s
+        if pending:
+            break
+        page.wait_for_timeout(50)
+    assert pending, "the tab did not ask again"
+    pending.pop(0).fulfill(body=json.dumps(data), content_type="application/json")
+    page.frame_locator("#data-frame").locator("h1").wait_for()
+    assert requests.count("/api/projects/p/data") == 2
+    assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+    assert not errors
+    page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "prefix", "advice"),
+    [
+        (
+            "fr",
+            "Préparation de la vue des données impossible :",
+            "Actualiser les données relance la préparation.",
+        ),
+        (
+            "en",
+            "The data view could not be prepared:",
+            "Refresh data starts the preparation again.",
+        ),
+    ],
+)
+def test_a_failed_data_view_says_why_and_refresh_prepares_it_again(
+    browser, language, prefix, advice
+):
+    page, _, errors, pending, data = open_app(
+        browser, (1440, 900), delayed=True, language=language
+    )
+    urls = []
+    page.on("request", lambda request: urls.append(request.url))
+    for _ in range(50):
+        if pending:
+            break
+        page.wait_for_timeout(50)
+    failed = {
+        "available": False,
+        "state": "failed",
+        "taskId": "t1",
+        "error": "Quota de stockage du serveur atteint (2048 Mio, classeurs, index "
+        "et vues compris) : l’opération a été arrêtée et son résultat n’a pas été "
+        "conservé. Supprimez des classeurs ou relancez le serveur avec une valeur "
+        "--max-storage-mb plus grande.",
+        "presentationAvailable": False,
+        "sheets": [],
+    }
+    pending.pop(0).fulfill(body=json.dumps(failed), content_type="application/json")
+    status = page.locator("#data-status")
+    status.filter(has_text=prefix).wait_for()
+    assert advice in status.inner_text()
+    assert "error" in (status.get_attribute("class") or "")
+    page.wait_for_timeout(2500)
+    assert not pending, "a failed preparation is not retried by itself"
+    page.locator("#data-refresh").click()
+    for _ in range(50):
+        if pending:
+            break
+        page.wait_for_timeout(50)
+    assert pending and any("/data?retry=1" in url for url in urls)
+    pending.pop(0).fulfill(body=json.dumps(data), content_type="application/json")
+    page.frame_locator("#data-frame").locator("h1").wait_for()
+    assert not errors
+    page.close()

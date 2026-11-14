@@ -1,5 +1,6 @@
 """The worksheet presentation route shares Datasette's owner/source boundary."""
 
+import hashlib
 import json
 import sqlite3
 
@@ -60,6 +61,10 @@ def test_presentation_does_not_build_or_require_datasette_snapshot(
 ):
     app, project, path = data_app
     route = f"/tools/api/projects/{project}/data/presentation"
+    # The fixture prepares the Data tab copy; remove it to start without one.
+    app.data_browser.invalidate(hashlib.sha256(b"alice").hexdigest(), project)
+    for prepared in path.glob("source-data*"):
+        prepared.unlink()
 
     def forbid_snapshot(*args, **kwargs):
         raise AssertionError("A bounded presentation must not build the full snapshot")
@@ -67,7 +72,7 @@ def test_presentation_does_not_build_or_require_datasette_snapshot(
     monkeypatch.setattr(app.data_browser, "_snapshot", forbid_snapshot)
     status, _, _ = request(app, route, query="sheet=Data+%26+Source")
     assert status == 200
-    assert not (path / "source-data.sqlite").exists()
+    assert not list(path.glob("source-data*.sqlite"))
     assert not (path / "source-data.json").exists()
 
 
