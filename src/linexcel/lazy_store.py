@@ -230,6 +230,12 @@ class WorkbookIndex(Mapping):
         )
         self.db.execute("PRAGMA cache_size=-8192")
         self.db.execute("PRAGMA temp_store=FILE")
+        if not writable:
+            # One read transaction for the reader's lifetime: every statement
+            # reads the same snapshot, and the file lock is taken once. In
+            # autocommit each SELECT takes and releases it, about 270 µs a
+            # lookup on Windows against 8 µs here (critical review F24).
+            self.db.execute("BEGIN")
         self._meta: dict[str, Any] | None = None
 
     def __enter__(self):

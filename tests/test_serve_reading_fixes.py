@@ -298,3 +298,41 @@ def test_reading_a_small_selection_does_not_scan_the_index(tmp_path):
     # About 100 virtual-machine steps per callback: a walk of the 30,000-entry
     # position index costs thousands; three lookups and a sort cost a few.
     assert len(steps) < 50, len(steps)
+
+
+# F24: a reader of the index holds one read transaction.
+
+
+def test_an_index_reader_reads_one_snapshot_of_the_index(tmp_path):
+    """Each serve read path opens a read-only WorkbookIndex. It must read one
+    snapshot: a statement-by-statement reader takes the file lock for every
+    lookup (about 270 µs each on Windows) and can mix two states of a file."""
+    import sqlite3
+
+    from linexcel.lazy_store import WorkbookIndex, build_index, graph_neighborhood
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = 1
+    sheet["B1"] = "=A1*2"
+    path = tmp_path / "small.xlsx"
+    path.write_bytes(workbook_bytes(book))
+    index = tmp_path / "small.sqlite"
+    build_index(path, index)
+    with WorkbookIndex(index) as reader:
+        first = reader.db.execute("SELECT count(*) FROM edges").fetchone()[0]
+        writer = sqlite3.connect(index, timeout=0)
+        try:
+            writer.execute("DELETE FROM edges")
+            writer.commit()
+            committed = True
+        except sqlite3.OperationalError:
+            committed = False
+        finally:
+            writer.close()
+        second = reader.db.execute("SELECT count(*) FROM edges").fetchone()[0]
+    assert first == second == 1
+    assert not committed, "a writer must not change the file under a reader"
+    around = graph_neighborhood(index, "S!B1", depth=1)
+    assert {node["id"] for node in around["nodes"]} == {"S!A1", "S!B1"}
