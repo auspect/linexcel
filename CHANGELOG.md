@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Show a cell read only through a range as used. In the graph of
+  `linexcel serve`, `C5` read by `=SUM(C2:C11)` had no neighbour; it now links
+  to the range `C2:C11`, labelled as range membership, and through it to the
+  formula. A range lists its member cells. The neighbourhood stays bounded and
+  says when cells were left out.
+- Keep every other reference of a formula when one cannot be resolved.
+  `=B!A1+A:B!A1+C!A2` kept only `B!A1` under "Formula tokenization failed"; it
+  now keeps `B!A1` and `C!A2`, and the diagnostic names `A:B!A1` with the real
+  reason. Calculation of such a formula is still refused.
+- Calculate `LET` and `LAMBDA` formulas in `linexcel serve`, including the
+  `_xlfn.LET(_xlpm.x,…)` spelling Excel saves. Their variable names no longer
+  appear as unresolved references. A name that is neither bound nor defined
+  is still refused.
+- Import a workbook whose styles part is damaged, or whose defined name has an
+  invalid `localSheetId`, instead of failing the whole import. The workbook is
+  marked partial with a diagnostic naming the part or the name. With unreadable
+  styles, the saved value of every styled cell is unknown rather than guessed;
+  a formula reading the skipped name is refused. A negative `localSheetId` no
+  longer scopes a name to the last sheet.
+- Refuse, with a named reason, to calculate an ordinary formula that reads a
+  multi-cell reference where Excel applies implicit intersection, such as
+  `=A1:A5*10` or `=SUM(A1:A3*2)` in a cell without array-formula metadata. The
+  engine evaluates these as arrays, and the result was shown as a difference
+  from the saved value. A result equal to the saved value is still shown. The
+  Excel semantics themselves are not implemented yet.
+
 ## [1.19.2] — 2026-11-13
 
 ### Fixed

@@ -164,6 +164,36 @@ Recommended order (Philippe decides): a short lineage-correctness batch (F02,
 F03, F04, F09, and a refusal for F05 legacy formulas), then the Excel oracle on
 the F01/F05/S02 sample, then batch 2, batch 3, batch 4; batches 5 and 6 after.
 
+## 8. Batch 1 bis status (lineage correctness)
+
+Date: 2026-11-14, same environment as above (no Excel, no `linexcel-lab`
+corpus). Each finding was first reproduced with its probe, then covered by a
+behavioural test on the serve path (`tests/test_serve_lineage_correctness.py`,
+through the HTTP coordinator) that failed before the fix.
+
+| ID | Status | Commit | What changed | Remaining limits |
+| --- | --- | --- | --- | --- |
+| F02 | **fixed** (serve neighbourhood) | `a991d3c` | `graph_neighborhood` treats range membership as a relation, read from `lineage_ranges` (fallback for older indexes): a cell reaches the ranges that contain it, a range reaches its indexed members. Membership is returned as a `range` edge (member → range). Each relation family is bounded by the node budget, so `truncated` stays exact. Probe: `S!C5` now reaches `S!C2:C11`, `S!I1`, `S!C1`. | Cost on the 100,000-row table (warm, `big100k.sqlite`): depth 1 from `Data!G5` 1–2 ms (unchanged), depth 2 60–100 ms against 2 ms before, because 200 nodes are now returned (`truncated: true`) instead of 1; after dropping the page cache, 190 ms, dominated by decoding the 200 returned nodes and their context labels. One first cold call took 8.4 s and was not reproduced. `web_report` relation counts still count formula edges only. The canvas legend reads "→ calculation dependency" for every arrow, including membership; the detail list labels it as membership. |
+| S01 | **verified, not fixed** | — | `build_graph`/`read_view` on `position.xlsx`: `S!C5` shows one edge (to `J1`, outside the view) and no link to `S!C2:C11` in the same view (`validation_screenshots/lot1bis/probes/probe_s01.py`). | Same blind spot as F02 in the hierarchical view, which is the default Graph view of the application: there `S!C6` shows no link while `S!C2:C11` points to the rest of the workbook; **Back to neighbourhood** shows the fixed F02 view. Fixing it changes the aggregated edge counts and the `edgeCount` consistency check of `build_graph`; left for batch 3, which needs it for highlights. |
+| F03 | **fixed** | `fe92c25` | Each reference is resolved on its own. A failure adds a diagnostic and a capability diagnostic naming the reference and the real reason (`Reference A:B!A1 could not be resolved: 3D references require …`); later references keep their edges. Calculation of the formula stays refused. | No `unresolved:` node is created for the failed reference, so it does not appear in the graph; it appears in the node's diagnostics. |
+| F04 | **fixed** | `3e2d4da` | The serve extractor reuses `resolver._bound_names` (the `analyze` rule) to skip names a formula binds itself. `_xlfn.`/`_xlpm.` prefixes are removed before parsing: the `analyze` rule alone does not recognise the spelling Excel saves (probe below). Excel-spelled `LET`, nested `LAMBDA` and the stress workbook's `LET` now calculate. | A bare bound name that is also a defined name keeps the defined-name dependency (a superset, never a hidden source). The rule is formula-wide, not lexically scoped, as in `analyze`. Serve now imports a private function of the `analyze` pipeline (see issue #148). |
+| F09 | **fixed** (import) | `39f74c5` | Unreadable styles become a workbook diagnostic on `xl/styles.xml`; the existing per-cell check then keeps the value of every styled cell unknown. A defined name with a `localSheetId` that is not a valid sheet position is skipped with a diagnostic naming it; formulas reading it are refused. A negative position no longer selects the last sheet. The index is marked partial; other sheets stay complete. | With damaged styles, the Data tab of that workbook answers 400 "Présentation de la feuille indisponible" (local to the tab; F08/batch 2). The workbook notice uses the generic advice "Consultez la formule et ses sources …", which does not fit an import diagnostic; the technical details name the part. |
+| F05 | **partly fixed** (named refusal, semantics unchanged) | `9bac0f8` | `implicit_intersection.py` flags a multi-cell reference read in a scalar position (whole formula, operator operand, function argument not known to accept a range, outside `SUMPRODUCT`) in an ordinary formula, on the expression handed to the engine. If such a formula in the closure is not equal to its saved cache, the result is refused with a named diagnostic (`implicit_intersection_unsupported`) and no step keeps an engine value. | Measured on the generated validation workbooks: 1 verdict change in 616 formula cells (`'Cross Refs'!B11 =RevenueColumn`, engine 21.75 against a LibreOffice cache of 62.25); no "equal" became a refusal. `implicit.xlsx`: 3 "different" become refusals, `B3` keeps its refusal with a named reason. Not detected: multi-cell references returned by functions not rewritten by the index (`INDEX(…,0)`, `CHOOSE`, `IF`). Unknown functions are treated as not accepting ranges (refusal, never a value). The Excel semantics wait for batch 7. |
+
+Other observations made during this batch (verified unless noted):
+
+- `resolver._bound_names` (analyze) returns no bound name for
+  `=_xlfn.LET(_xlpm.x,A1,_xlpm.x*3)`, the spelling Excel saves, and reports
+  `_xlpm.x` as a reference (`probe_let_engine.py`). formualizer 0.14.0
+  evaluates both spellings (6.0) and `_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(…),_xlpm.f(A1))`
+  (3.0). The `analyze` path was not changed.
+- The probe case `missing_sharedStrings` is vacuous on the generated workbooks:
+  they store text inline (`t="inlineStr"`) and have no shared-string part.
+- The serve application (`app.html`) has French and English interface text
+  only; the nine languages of `i18n.py` cover the static report. This batch
+  adds no interface text: the new diagnostics are English technical messages,
+  shown verbatim in "Détails techniques" like the existing ones.
+
 ## Appendix: probes
 
 All probes run from `validation_screenshots/lot1/probes/` with
