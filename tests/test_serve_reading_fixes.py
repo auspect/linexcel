@@ -454,3 +454,88 @@ def test_missing_styles_part_makes_the_import_partial(serve):
         for d in meta["diagnostics"]
     )
     assert node(app, project, "S!B2")["value"] is None
+
+
+# F22: an operation stopped by the storage quota, or a missing part, says so.
+
+
+def test_a_storage_quota_stop_says_what_happened(tmp_path):
+    app = create_app(
+        tmp_path, resolve_user=lambda env: env.get("user"), max_storage_mb=1
+    )
+    try:
+        book = Workbook()
+        sheet = book.active
+        for row in range(1, 6001):
+            for column in range(1, 5):
+                sheet.cell(row, column, row * column)
+        data = workbook_bytes(book)
+        assert len(data) < 512 * 1024  # the upload fits, the index does not
+        code, imported = call(
+            app,
+            "POST",
+            "/api/projects",
+            {"workbook": {"name": "big.xlsx", "data": base64.b64encode(data).decode()}},
+        )
+        assert code == 200, imported
+        task = finish(app, imported["task"]["id"])
+        assert task["status"] == "failed"
+        assert task["error"]["kind"] == "storage_limit"
+        message = task["error"]["message"]
+        assert "Quota de stockage" in message and "--max-storage-mb" in message
+        project = imported["project"]["id"]
+        code, nodes = call(app, "GET", f"/api/projects/{project}/nodes")
+        assert code == 409
+        assert "le dernier import n’a pas abouti" in nodes["error"]["message"]
+    finally:
+        app.close()
+
+
+def two_sheet_book():
+    book = Workbook()
+    first = book.active
+    first.title = "First"
+    first["A1"] = 1
+    second = book.create_sheet("Second")
+    for row in range(1, 50):
+        second.cell(row, 1, row)
+    return workbook_bytes(book)
+
+
+def presentation(app, project, sheet):
+    return call(
+        app,
+        "GET",
+        f"/api/projects/{project}/data/presentation",
+        query=f"sheet={sheet}&row=1&column=1&rows=20&columns=5",
+    )
+
+
+def test_a_missing_sheet_part_is_named_in_the_presentation(serve):
+    app, upload = serve
+    project, task = upload(without_part(two_sheet_book(), "xl/worksheets/sheet2.xml"))
+    assert task["status"] == "succeeded", task
+    code, first = presentation(app, project, "First")
+    assert code == 200, first
+    code, second = presentation(app, project, "Second")
+    assert code == 409, second
+    assert "absente du fichier" in second["error"]["message"]
+
+
+def test_a_partly_read_sheet_is_named_in_the_presentation(serve):
+    import zipfile
+
+    app, upload = serve
+    source = zipfile.ZipFile(io.BytesIO(two_sheet_book()))
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "xl/worksheets/sheet2.xml":
+                data = data[: len(data) // 2]
+            target.writestr(info, data)
+    project, task = upload(stream.getvalue())
+    assert task["status"] == "succeeded", task
+    code, second = presentation(app, project, "Second")
+    assert code == 409, second
+    assert "lue que partiellement" in second["error"]["message"]

@@ -45,6 +45,10 @@ class PresentationLimitError(RuntimeError):
     """Source presentation exceeds an explicit inspection budget."""
 
 
+class SheetSourceUnavailableError(ValueError):
+    """The workbook lists the sheet but its worksheet part is not in the file."""
+
+
 def _bounded_node(packed, remaining):
     """Enforce the window budget before inflating or retaining source records."""
     try:
@@ -426,6 +430,14 @@ def sheet_presentation(
         )
         if part is None:
             raise ValueError("Source OOXML de la feuille introuvable")
+        if part not in archive.namelist():
+            # Listed by the workbook, absent from the package: say so instead
+            # of letting the missing entry read as an unknown sheet (F22).
+            raise SheetSourceUnavailableError(
+                "La partie XML de cette feuille est absente du fichier : "
+                "elle n’a pas pu être lue à l’import. Les autres feuilles "
+                "restent consultables ; voir Diagnostics."
+            )
         if archive.getinfo(part).file_size > MAX_WORKSHEET_BYTES:
             raise PresentationLimitError(
                 "Feuille trop volumineuse pour cet aperçu statique"

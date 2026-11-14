@@ -600,6 +600,23 @@ class TaskStore:
             path = self.project_path(owner, project_id)
             index = path / "index.sqlite"
             if not index.is_file():
+                imports = sorted(
+                    (
+                        t
+                        for t in self.tasks.values()
+                        if t["owner"] == owner
+                        and t["projectId"] == project_id
+                        and t["operation"] == "import"
+                    ),
+                    key=lambda t: t["createdAt"],
+                )
+                if imports and imports[-1]["status"] in {"failed", "cancelled"}:
+                    # A refresh cannot help an import that stopped (F22).
+                    raise APIError(
+                        409,
+                        "Aucun index publié : le dernier import n’a pas abouti. "
+                        "Consultez Opérations pour la raison.",
+                    )
                 raise APIError(
                     409, "Actualisez la structure pour activer l’index sur disque"
                 )
@@ -1393,6 +1410,16 @@ class TaskStore:
                     f"Budget mémoire de {request['memoryMb']} Mio insuffisant pour "
                     "cette opération. Augmentez le budget puis réessayez ; "
                     "le classeur et les autres résultats restent accessibles."
+                )
+            elif kind == "storage_limit":
+                # Say what stopped the operation and what the user can change;
+                # the raw kind alone read as an unexplained failure (F22).
+                message = (
+                    "Quota de stockage du serveur atteint "
+                    f"({self.config.max_storage_mb} Mio, classeurs, index et "
+                    "vues compris) : l’opération a été arrêtée et son résultat "
+                    "n’a pas été conservé. Supprimez des classeurs ou relancez "
+                    "le serveur avec une valeur --max-storage-mb plus grande."
                 )
             return {
                 "error": {

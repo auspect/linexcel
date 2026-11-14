@@ -553,6 +553,7 @@ class DataBrowser:
         """Return a static source worksheet window behind the same owner check."""
         from linexcel.excel_presentation import (
             PresentationLimitError,
+            SheetSourceUnavailableError,
             sheet_presentation,
         )
         from linexcel.lazy_store import file_sha256
@@ -573,6 +574,10 @@ class DataBrowser:
             before = generation(index)
             with WorkbookIndex(index) as source:
                 source_sha = source.meta.get("sha256")
+                partial = any(
+                    detail.get("name") == sheet and detail.get("status") != "complete"
+                    for detail in source.meta.get("sheetDetails", [])
+                )
             if file_sha256(path / "workbook.xlsx") != source_sha:
                 raise APIError(409, "Sources modifiées ; importez une nouvelle version")
             try:
@@ -585,11 +590,21 @@ class DataBrowser:
                     rows=rows,
                     columns=columns,
                 )
+            except SheetSourceUnavailableError as exc:
+                raise APIError(409, str(exc)) from None
             except KeyError:
                 raise APIError(404, "Feuille introuvable") from None
             except PresentationLimitError as exc:
                 raise APIError(413, str(exc)) from None
             except (ValueError, OSError, zipfile.BadZipFile, ET.ParseError):
+                if partial:
+                    # The import already found this sheet damaged (F22).
+                    raise APIError(
+                        409,
+                        "Cette feuille n’a été lue que partiellement à l’import "
+                        "(voir Diagnostics) : sa présentation est indisponible. "
+                        "Les autres feuilles restent consultables.",
+                    ) from None
                 raise APIError(400, "Présentation de la feuille indisponible") from None
             if (
                 self.store._revision(path) != project["revision"]
