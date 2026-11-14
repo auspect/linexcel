@@ -163,6 +163,12 @@ class WebConfig:
             )
 
 
+NO_INDEX_MESSAGE = (
+    "Aucun index publié : le dernier import n’a pas abouti. "
+    "Consultez Opérations pour la raison."
+)
+
+
 class APIError(Exception):
     def __init__(self, status: int, message: str):
         self.status = status
@@ -566,6 +572,28 @@ class TaskStore:
             )["workbookRevision"]
             return result
 
+    def missing_index_error(
+        self, owner: str, project_id: str, fallback: str
+    ) -> APIError:
+        """409 for a project without index: name a stopped import (F22).
+
+        A refresh cannot help an import that stopped, so the message sends
+        the user to the reason in Operations instead of the usual advice.
+        """
+        imports = sorted(
+            (
+                t
+                for t in self.tasks.values()
+                if t["owner"] == owner
+                and t["projectId"] == project_id
+                and t["operation"] == "import"
+            ),
+            key=lambda t: t["createdAt"],
+        )
+        if imports and imports[-1]["status"] in {"failed", "cancelled"}:
+            return APIError(409, NO_INDEX_MESSAGE)
+        return APIError(409, fallback)
+
     def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
         from linexcel.lazy_store import (
@@ -601,25 +629,10 @@ class TaskStore:
             path = self.project_path(owner, project_id)
             index = path / "index.sqlite"
             if not index.is_file():
-                imports = sorted(
-                    (
-                        t
-                        for t in self.tasks.values()
-                        if t["owner"] == owner
-                        and t["projectId"] == project_id
-                        and t["operation"] == "import"
-                    ),
-                    key=lambda t: t["createdAt"],
-                )
-                if imports and imports[-1]["status"] in {"failed", "cancelled"}:
-                    # A refresh cannot help an import that stopped (F22).
-                    raise APIError(
-                        409,
-                        "Aucun index publié : le dernier import n’a pas abouti. "
-                        "Consultez Opérations pour la raison.",
-                    )
-                raise APIError(
-                    409, "Actualisez la structure pour activer l’index sur disque"
+                raise self.missing_index_error(
+                    owner,
+                    project_id,
+                    "Actualisez la structure pour activer l’index sur disque",
                 )
             if kind == "graph-view":
                 from linexcel.graph_store import generation, read_view

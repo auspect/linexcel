@@ -23,7 +23,15 @@ def browser():
 
 
 def open_app(
-    browser, viewport, *, payload=None, delayed=False, language="fr", presentation=None
+    browser,
+    viewport,
+    *,
+    payload=None,
+    delayed=False,
+    language="fr",
+    presentation=None,
+    project=None,
+    data_error=None,
 ):
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
     requests, errors, pending = [], [], []
@@ -88,17 +96,23 @@ def open_app(
         elif path == "/api/projects":
             fulfill(route, {"projects": projects})
         elif path in {"/api/projects/p", "/api/projects/q"}:
-            project = projects[0 if path.endswith("/p") else 1]
+            chosen = projects[0 if path.endswith("/p") else 1]
             fulfill(
                 route,
                 {
-                    "project": project,
+                    "project": chosen,
                     "graph": {"nodes": [], "edges": [], "meta": {}},
                     "tasks": [],
+                    **(project if path.endswith("/p") and project else {}),
                 },
             )
         elif path == "/api/projects/p/data":
-            if delayed:
+            if data_error:
+                route.fulfill(
+                    status=data_error[0],
+                    json={"error": {"message": data_error[1]}},
+                )
+            elif delayed:
                 pending.append(route)
             else:
                 fulfill(route, data)
@@ -543,3 +557,71 @@ def test_a_failed_data_view_says_why_and_refresh_prepares_it_again(
     page.frame_locator("#data-frame").locator("h1").wait_for()
     assert not errors
     page.close()
+
+
+NO_INDEX = (
+    "Aucun index publié : le dernier import n’a pas abouti. "
+    "Consultez Opérations pour la raison."
+)
+STOPPED_IMPORT = {
+    "id": "i1",
+    "projectId": "p",
+    "operation": "import",
+    "nodeId": None,
+    "status": "failed",
+    "error": {
+        "kind": "storage_limit",
+        "message": "Quota de stockage du serveur atteint",
+    },
+    "createdAt": 1,
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "text", "heading", "wrong"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "Aucun index publié",
+            "Import non abouti",
+            ("Import complet", "Réessayez"),
+        ),
+        (
+            (390, 844),
+            "en",
+            "No index published",
+            "Import did not complete",
+            ("Import complete", "try again", "Importez", "Aucun"),
+        ),
+    ],
+)
+def test_after_a_stopped_import_the_tabs_say_that_no_index_was_published(
+    browser, viewport, language, text, heading, wrong
+):
+    """Batch 2 bis, F22: no tab may suggest a complete import or a retry that
+    cannot help when the last import stopped before publishing its index."""
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={"graph": None, "tasks": [STOPPED_IMPORT]},
+        data_error=(409, NO_INDEX),
+    )
+    try:
+        status = page.locator("#data-status")
+        status.filter(has_text=text).wait_for()
+        views = {"data": status.inner_text()}
+        for name in ("nodes", "graph", "diagnostics"):
+            page.locator(f"#tab-{name}").click()
+            view = page.locator(f"#view-{name}")
+            view.filter(has_text=text).wait_for()
+            views[name] = view.inner_text()
+        assert heading in page.locator("#diagnostics h3").first.inner_text()
+        for name, shown in views.items():
+            for word in wrong:
+                assert word not in shown, (name, word, shown)
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()

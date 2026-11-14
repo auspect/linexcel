@@ -487,6 +487,10 @@ def test_a_storage_quota_stop_says_what_happened(tmp_path):
         code, nodes = call(app, "GET", f"/api/projects/{project}/nodes")
         assert code == 409
         assert "le dernier import n’a pas abouti" in nodes["error"]["message"]
+        # The Data tab, the only tab that asks the server, says the same.
+        code, data = call(app, "GET", f"/api/projects/{project}/data")
+        assert code == 409
+        assert data["error"]["message"] == nodes["error"]["message"]
     finally:
         app.close()
 

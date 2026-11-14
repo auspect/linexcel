@@ -558,7 +558,9 @@ class DataBrowser:
             }
         index = path / "index.sqlite"
         if not index.is_file():
-            raise APIError(409, "Importez le classeur avant de parcourir les données")
+            raise self.store.missing_index_error(
+                owner, project_id, "Importez le classeur avant de parcourir les données"
+            )
         index_generation = generation(index)
         signature = data_signature(project["revision"], index_generation)
         stamp_path = path / "source-data.json"

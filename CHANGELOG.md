@@ -53,8 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty.
 - Say what happened when the server's storage quota stops an operation, with
   the quota size and how to free space, instead of the bare `storage_limit`.
-  After such a failed import, the graph says that no index was published
-  instead of suggesting a refresh. The Excel presentation of a sheet whose
+  After such a failed import, the Nodes, Graph, Diagnostics and Data tabs say
+  that no index was published instead of suggesting a refresh; Diagnostics no
+  longer says "Import complete". The Excel presentation of a sheet whose
   part is missing from the file, or that the import read only partly, says
   so instead of "Feuille introuvable". Import diagnostics in the Diagnostics
   tab get advice about the file instead of the advice about formulas.
