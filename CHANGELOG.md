@@ -35,6 +35,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the saved value. A result equal to the saved value is still shown. The
   Excel semantics themselves are not implemented yet.
 
+### Documentation
+
+- Measure import, calculation and the Data tab of `linexcel serve` on large
+  public workbooks, and what happens with damaged ones, in
+  `docs/reading_resilience_data_node.md`. A 103 MB data table takes 22 minutes
+  to import and an 11 GB index; the first opening of the Data tab blocks every
+  other request while it copies the workbook. The note inventories every
+  reading cap, separates protections against hostile files from convenience
+  limits, and proposes replacements. No limit or behaviour changes in this
+  release.
+- Add an isolated data node prototype under `prototypes/data_node/`, outside
+  the package: one node per formula-free table, with its headers, column
+  types, number formats and fingerprint, stored 60 to 260 times smaller than
+  today's per-cell index, and formulas pointing to the sub-range they read.
+
 ## [1.19.2] — 2026-11-13
 
 ### Fixed
