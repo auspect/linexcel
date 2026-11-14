@@ -539,3 +539,62 @@ def test_a_partly_read_sheet_is_named_in_the_presentation(serve):
     code, second = presentation(app, project, "Second")
     assert code == 409, second
     assert "lue que partiellement" in second["error"]["message"]
+
+
+# F25: the presentation streams styles.xml and bounds what it keeps.
+
+
+def with_styles(data, section, entries):
+    """Copy a workbook with ``entries`` appended to one styles.xml section."""
+    import zipfile
+
+    source = zipfile.ZipFile(io.BytesIO(data))
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            content = source.read(info.filename)
+            if info.filename == "xl/styles.xml":
+                text = content.decode("utf-8")
+                closing = f"</{section}>"
+                assert closing in text, section
+                text = text.replace(closing, entries + closing, 1)
+                content = text.encode("utf-8")
+            target.writestr(info, content)
+    return stream.getvalue()
+
+
+def bold_book():
+    from openpyxl.styles import Font
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "S"
+    sheet["A1"] = "Total"
+    sheet["A1"].font = Font(bold=True)
+    sheet["B1"] = 3
+    return workbook_bytes(book)
+
+
+def test_named_styles_beyond_4_mib_do_not_block_the_presentation(serve):
+    app, upload = serve
+    named = (
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">'
+        '<alignment horizontal="left" vertical="center" wrapText="1"/></xf>'
+    ) * 45_000
+    data = with_styles(bold_book(), "cellStyleXfs", named)
+    project, task = upload(data)
+    assert task["status"] == "succeeded", task
+    code, window = presentation(app, project, "S")
+    assert code == 200, window
+    a1 = next(cell for cell in window["cells"] if cell["address"] == "A1")
+    assert window["styles"][str(a1["styleId"])]["css"].get("fontWeight") == "bold"
+
+
+def test_too_many_cell_formats_are_still_refused(serve):
+    app, upload = serve
+    formats = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>' * 9_000
+    project, task = upload(with_styles(bold_book(), "cellXfs", formats))
+    assert task["status"] == "succeeded", task
+    code, window = presentation(app, project, "S")
+    assert code == 413, window
+    assert window["error"]["message"] == "Trop de styles de présentation"

@@ -170,18 +170,58 @@ def _color(element, theme):
     return "#" + value.upper()
 
 
+_STYLE_COLLECTIONS = ("fonts", "fills", "borders", "cellXfs")
+
+
+def _read_styles(archive):
+    """Stream ``styles.xml``, keeping only what a window can use.
+
+    Fonts, fills, borders, cell formats and number formats are kept, each
+    bounded by ``MAX_STYLES`` as it is read. Named cell styles and other
+    sections are skipped as they stream: old workbooks accumulate tens of
+    thousands of them (7 MB in the DfT TAG data book), which a byte cap on the
+    whole part refused although nothing displayed needs them (F25).
+    """
+    if archive.getinfo("xl/styles.xml").file_size > MAX_WORKSHEET_BYTES:
+        raise PresentationLimitError("Métadonnées de présentation trop volumineuses")
+    collections = {name: [] for name in _STYLE_COLLECTIONS}
+    number_formats = []
+    stack = []
+    with archive.open("xl/styles.xml") as handle:
+        for event, element in ET.iterparse(_SafeXML(handle), events=("start", "end")):
+            if event == "start":
+                stack.append(element)
+                continue
+            stack.pop()
+            tag = element.tag.rsplit("}", 1)[-1]
+            depth = len(stack)
+            if depth == 2:
+                section = stack[1].tag.rsplit("}", 1)[-1]
+                if section in collections:
+                    collections[section].append(element)
+                    if len(collections[section]) > MAX_STYLES:
+                        raise PresentationLimitError("Trop de styles de présentation")
+                    continue
+                if section == "numFmts" and tag == "numFmt":
+                    number_formats.append(element)
+                    if len(number_formats) > MAX_STYLES:
+                        raise PresentationLimitError("Trop de styles de présentation")
+                    continue
+                stack[1].remove(element)
+                element.clear()
+            elif depth == 1 and tag not in collections and tag != "numFmts":
+                stack[0].remove(element)
+                element.clear()
+    return collections, number_formats
+
+
 def _styles(archive):
     if "xl/styles.xml" not in archive.namelist():
         return {0: {"css": {}, "numberFormat": "General"}}
-    root, theme = _xml(archive, "xl/styles.xml"), _theme(archive)
-    collections = {}
-    for name in ("fonts", "fills", "borders", "cellXfs"):
-        parent = root.find("{*}" + name)
-        collections[name] = list(parent) if parent is not None else []
-        if len(collections[name]) > MAX_STYLES:
-            raise PresentationLimitError("Trop de styles de présentation")
+    collections, number_formats = _read_styles(archive)
+    theme = _theme(archive)
     formats = dict(BUILTIN_FORMATS)
-    for item in root.findall("{*}numFmts/{*}numFmt"):
+    for item in number_formats:
         code = item.get("formatCode", "General")
         if len(code) > MAX_FORMAT_LENGTH:
             raise PresentationLimitError("Format numérique trop long pour cet aperçu")
