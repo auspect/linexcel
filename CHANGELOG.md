@@ -50,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   styles part that the file does not contain. It used to be reported as
   complete, although every text cell, or every styled value, was unreadable.
   The Diagnostics tab names the missing part; the cells stay unknown, never
-  empty.
+  empty, and the Excel presentation shows them as unknown (∅) instead of
+  blank cells.
 - Say what happened when the server's storage quota stops an operation, with
   the quota size and how to free space, instead of the bare `storage_limit`.
   After such a failed import, the Nodes, Graph, Diagnostics and Data tabs say

@@ -283,6 +283,16 @@ def presentation_payload():
                 "valueStatus": "missing",
             },
             {
+                # A text cell whose shared-string part is missing (F17).
+                "row": 2,
+                "column": 1,
+                "address": "A2",
+                "value": None,
+                "display": "",
+                "numberFormat": "General",
+                "valueStatus": "unreadable",
+            },
+            {
                 "row": 4,
                 "column": 1,
                 "address": "A4",
@@ -344,11 +354,20 @@ def test_excel_presentation_preserves_source_details_and_datasette(
         page.locator("#excel-window td[data-cell='D2']").click()
         assert "SUM(B2:C2)" in page.locator("#excel-cell-detail").inner_text()
         assert page.locator("#excel-window td[data-cell='D2']").inner_text() == "∅"
+        # An unreadable stored value is unknown, never an empty cell (F17).
+        unreadable = page.locator("#excel-window td[data-cell='A2']")
+        assert unreadable.inner_text() == "∅"
+        label = (
+            "Value unreadable in the file"
+            if language == "en"
+            else "Valeur illisible dans le fichier"
+        )
+        assert label in unreadable.get_attribute("title")
+        unreadable.click()
+        assert label in page.locator("#excel-cell-detail").inner_text()
         page.locator("#excel-window td[data-cell='B2']").click()
         page.keyboard.press("ArrowLeft")
-        assert page.locator("#excel-window td[data-cell='A2']").evaluate(
-            "el => el === document.activeElement"
-        )
+        assert unreadable.evaluate("el => el === document.activeElement")
         page.keyboard.press("ArrowRight")
         assert "1234.5" in page.locator("#excel-cell-detail").inner_text()
         assert (
@@ -726,6 +745,55 @@ def test_a_cancelled_data_view_is_not_shown_as_a_failure(
         assert pending and any("/data?retry=1" in url for url in urls)
         pending.pop(0).fulfill(body=json.dumps(data), content_type="application/json")
         page.frame_locator("#data-frame").locator("h1").wait_for()
+        assert not errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "advice", "overclaim"),
+    [
+        (
+            "fr",
+            "les valeurs qui en dépendent restent inconnues (∅), jamais vides",
+            "sont signalées",
+        ),
+        (
+            "en",
+            "the values that depend on it stay unknown (∅), never empty",
+            "flagged",
+        ),
+    ],
+)
+def test_the_file_advice_says_only_what_the_interface_shows(
+    browser, language, advice, overclaim
+):
+    """Batch 2 bis, F17: the advice for a missing part must not promise
+    flags the sheets do not carry; unreadable values are shown as ∅."""
+    meta = {
+        "status": "partial",
+        "sheetDetails": [
+            {"name": "Data", "status": "complete", "formulas": 0, "diagnostics": []}
+        ],
+        "diagnostics": [
+            {
+                "part": "xl/sharedStrings.xml",
+                "message": "Shared-string part declared by the workbook is "
+                "missing: 3 text cell(s) are unreadable, never empty values.",
+            }
+        ],
+    }
+    page, _, errors, _, _ = open_app(
+        browser,
+        (1440, 900),
+        language=language,
+        project={"graph": {"nodes": [], "edges": [], "meta": meta}},
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        view = page.locator("#diagnostics")
+        view.filter(has_text=advice).wait_for()
+        assert overclaim not in view.inner_text()
         assert not errors
     finally:
         page.close()
