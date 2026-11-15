@@ -42,6 +42,8 @@ from linexcel.structured_refs import formula_tokens
 
 SCHEMA_VERSION = 4
 MAX_PAGE_SIZE = 200
+#: The node kinds that stand for one worksheet cell.
+_CELL_KINDS = "kind IN ('cell','input','array_result')"
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
     "id",
@@ -491,6 +493,24 @@ class WorkbookIndex(Mapping):
             "SELECT id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
             f"AND col BETWEEN ? AND ? AND {clause} ORDER BY row,col",
             arguments,
+        ):
+            yield row[0]
+
+    # Reads for other modules. Callers outside this module never query the
+    # ``nodes`` table themselves, so how cells are stored can change here alone.
+
+    def cell_ids(self):
+        """Every cell (formula, literal, array member) id, in import order."""
+        for row in self.db.execute(
+            f"SELECT id FROM nodes WHERE {_CELL_KINDS} ORDER BY seq"
+        ):
+            yield row[0]
+
+    def sheet_cell_ids(self, sheet):
+        """The cell ids of one sheet, row by row."""
+        for row in self.db.execute(
+            f"SELECT id FROM nodes WHERE sheet=? AND {_CELL_KINDS} ORDER BY row,col",
+            (sheet,),
         ):
             yield row[0]
 
