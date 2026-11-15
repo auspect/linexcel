@@ -670,6 +670,18 @@ def test_after_a_stopped_import_the_tabs_say_that_no_index_was_published(
             (413, "Stockage plein ; supprimez des classeurs"),
             "Storage full; delete workbooks",
         ),
+        (
+            (
+                413,
+                "Quota de stockage du serveur atteint (2 Mio, classeurs, index et "
+                "vues compris) : l’opération n’a pas pu démarrer. Supprimez des "
+                "classeurs ou relancez le serveur avec une valeur --max-storage-mb "
+                "plus grande.",
+            ),
+            "Server storage quota reached (2 MiB, workbooks, indexes and views "
+            "included): the operation could not start. Delete workbooks or restart "
+            "the server with a larger --max-storage-mb value.",
+        ),
     ],
 )
 def test_storage_quota_messages_are_translated(browser, answer, english):

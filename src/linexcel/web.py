@@ -405,7 +405,15 @@ class TaskStore:
         if pending >= self.config.max_pending_tasks:
             raise APIError(429, "File des opérations pleine ; réessayez plus tard")
         if self._storage_bytes() >= self.config.max_storage_mb * 1048576:
-            raise APIError(413, "Stockage plein ; supprimez des classeurs")
+            raise self.storage_full()
+
+    def storage_full(
+        self, consequence: str = "l’opération n’a pas pu démarrer."
+    ) -> APIError:
+        """413 naming the quota and the remedy, as a stopped operation does."""
+        return APIError(
+            413, storage_quota_message(self.config.max_storage_mb, consequence)
+        )
 
     def _storage_bytes(self) -> int:
         size = 0
@@ -470,7 +478,7 @@ class TaskStore:
                 used + self.uploads.remaining_bytes() + sum(len(d) for _, d in files)
                 > self.config.max_storage_mb * 1048576
             ):
-                raise APIError(413, "Stockage plein ; supprimez des classeurs")
+                raise self.storage_full()
             project_id = uuid.uuid4().hex
             path = self.root / owner / "projects" / project_id
             (path / "references").mkdir(parents=True)

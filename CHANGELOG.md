@@ -54,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blank cells.
 - Say what happened when the server's storage quota stops an operation, with
   the quota size and how to free space, instead of the bare `storage_limit`.
+  An operation or upload that the full storage refuses at its start says the
+  same instead of "Stockage plein ; supprimez des classeurs".
   After such a failed import, the Nodes, Graph, Diagnostics and Data tabs say
   that no index was published instead of suggesting a refresh; Diagnostics no
   longer says "Import complete". The Excel presentation of a sheet whose

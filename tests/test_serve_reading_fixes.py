@@ -735,3 +735,37 @@ def test_a_cancelled_preparation_is_not_reported_as_a_failure(serve):
     again = data_state(app, project, query="retry=1")
     assert again["state"] == "building" and again["taskId"] != first["taskId"]
     assert finish(app, again["taskId"], seconds=300)["status"] == "succeeded"
+
+
+def test_an_operation_the_quota_cannot_start_says_so(tmp_path):
+    """Every operation refused because storage is full names the quota and
+    the remedy, as the Data tab does, not the bare "storage full"."""
+    app = create_app(
+        tmp_path / "app", resolve_user=lambda env: env.get("user"), max_storage_mb=2
+    )
+    try:
+        data = workbook_bytes(data_book(50))
+        upload = {
+            "workbook": {"name": "d.xlsx", "data": base64.b64encode(data).decode()}
+        }
+        code, imported = call(app, "POST", "/api/projects", upload)
+        assert code == 200, imported
+        assert finish(app, imported["task"]["id"])["status"] == "succeeded"
+        project = imported["project"]["id"]
+        (app.store.root / "filler.bin").write_bytes(b"\0" * (2 * 1048576))
+        refused = [
+            call(
+                app,
+                "POST",
+                f"/api/projects/{project}/tasks",
+                {"operation": "build_graph"},
+            ),
+            call(app, "POST", "/api/projects", upload),
+        ]
+        for code, answer in refused:
+            assert code == 413, answer
+            message = answer["error"]["message"]
+            assert message.startswith("Quota de stockage du serveur atteint (2 Mio")
+            assert "n’a pas pu démarrer" in message and "--max-storage-mb" in message
+    finally:
+        app.close()
