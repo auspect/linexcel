@@ -421,15 +421,53 @@ def test_header_bands_scan_cells_outside_described_tables(project):
     assert covered.coverage["cellsScanned"] == 0 and covered.bands == []
 
 
+def test_calculation_step_of_a_wide_range_counts_the_members_it_omits(project):
+    from linexcel.lazy import evaluate_node
+
+    _, _, _, path = project
+    result = evaluate_node(
+        path / "workbook.xlsx", "Calc!B6", index_path=path / "index.sqlite"
+    )
+    assert (result["status"], result["value"]) == ("completed", 45150.0)
+    step = next(s for s in result["steps"] if s["nodeId"] == "Big!A1:A300")
+    # A step lists 200 members of the 300-cell range and counts the rest.
+    assert step["dependencies"] == [f"Big!A{row}" for row in range(1, 201)]
+    assert step["dependenciesOmitted"] == 100
+
+
+def test_report_counts_the_cells_each_selected_range_holds(project):
+    from linexcel.web_report import prepare_report
+
+    app, owner, pid, _ = project
+    snapshot = prepare_report(
+        app.store, owner, pid, {"nodeIds": ["Calc!B6", "Calc!B2"]}
+    )
+    ranges = {
+        record["node"]["id"]: [
+            (
+                r["id"],
+                r["representedCellCount"],
+                r["positionCount"],
+                len(r["members"]),
+                r["omitted"],
+            )
+            for r in record["ranges"]
+        ]
+        for record in snapshot["records"]
+    }
+    assert ranges == {
+        "Calc!B6": [("Big!A1:A300", 300, 300, 200, 100)],
+        "Calc!B2": [("Data!A2:A6", 5, 5, 5, 0), ("Data!B2:B6", 5, 5, 5, 0)],
+    }
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
     "graph_store.py": 3,
-    "lazy.py": 1,
     "link_facts.py": 2,
     "web_data.py": 2,
     "web_export.py": 1,
-    "web_report.py": 1,
 }
 
 
