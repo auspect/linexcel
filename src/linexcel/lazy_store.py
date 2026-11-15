@@ -63,6 +63,15 @@ MAX_PAGE_SIZE = 200
 #: The node kinds that stand for one worksheet cell.
 _CELL_KINDS = "kind IN ('cell','input','array_result')"
 _CELL_KIND_SET = frozenset({"cell", "input", "array_result"})
+_VALUE_TYPES = {
+    "n": "number",
+    "s": "text",
+    "str": "text",
+    "inlineStr": "text",
+    "b": "boolean",
+    "e": "error",
+    "d": "date",
+}
 #: Positions after a sheet's cells: a cell's opaque position in one sheet is
 #: ``row * _COLUMN_SPAN + col``; nodes added after the import come later.
 _COLUMN_SPAN = 16385
@@ -1154,6 +1163,99 @@ class WorkbookIndex(Mapping):
                     row,
                     col,
                     partial(self._grid_node, sheet, row, col, raw),
+                )
+
+    # Region detection (``data_regions``) reads cells by kind.
+
+    def import_sheets(self):
+        """The sheets the import read cells from, in reading order."""
+        return list(self._layout_info()[1])
+
+    def literal_spans(self, sheet):
+        """``{col: (first row, last row)}`` of the literal cells read at import."""
+        end, _ = self._layout_info()
+        spans = {
+            col: (first, last)
+            for col, first, last in self.db.execute(
+                "SELECT col,min(row),max(row) FROM nodes WHERE sheet=? "
+                "AND kind='input' AND seq<=? AND row IS NOT NULL GROUP BY col",
+                (sheet, end),
+            )
+        }
+        info = self.grid.sheets.get(sheet)
+        if info is not None and info.cells:
+            for col, first, last in self.db.execute(
+                "SELECT col,min(r1),max(r2) FROM grid_runs WHERE sheet_no=? "
+                "GROUP BY col",
+                (info.no,),
+            ):
+                known = spans.get(col)
+                spans[col] = (
+                    (first, last)
+                    if known is None
+                    else (min(first, known[0]), max(last, known[1]))
+                )
+        return spans
+
+    def formula_positions(self, sheet, bounds=None):
+        """``(row, col)`` of formula cells and array results, row by row."""
+        sql = (
+            "SELECT row,col FROM nodes WHERE sheet=? "
+            "AND kind IN ('cell','array_result') AND row IS NOT NULL"
+        )
+        args = [sheet]
+        if bounds is not None:
+            r1, c1, r2, c2 = bounds
+            sql += " AND row BETWEEN ? AND ? AND col BETWEEN ? AND ?"
+            args += [r1, r2, c1, c2]
+        return self.db.execute(sql + " ORDER BY row,col", args).fetchall()
+
+    def literal_values(self, sheet, bounds, *, rows=None):
+        """``(row, col, saved value, type)`` of the literal cells in bounds.
+
+        Row by row; ``type`` is ``number``, ``date``, ``text``, ``boolean``,
+        ``error`` or ``unreadable``. A date gives its serial. ``rows`` stops
+        after that many rows holding values.
+        """
+        r1, c1, r2, c2 = bounds
+        formats = self.grid.formats
+        seen, last = 0, None
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            (r1, c1, r2, c2),
+            "SELECT row,col,data FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            "AND col BETWEEN ? AND ? AND kind='input' ORDER BY row,col",
+            (sheet, r1, r2, c1, c2),
+        ):
+            node = _unpack(record[2]) if record else None
+            if node is not None and node.get("provenance") == "saved_blank":
+                continue  # a referenced blank, not a saved value
+            if row != last:
+                seen += 1
+                last = row
+                if rows is not None and seen > rows:
+                    return
+            if node is not None:
+                kind = node.get("sourceDataType")
+                value = node.get("cached_comparison_value", node.get("value"))
+                if node.get("diagnostics"):
+                    label = "unreadable"
+                elif kind == "d" or (
+                    kind == "n"
+                    and node.get("value") != node.get("cached_comparison_value")
+                ):
+                    label = "date"
+                else:
+                    label = _VALUE_TYPES.get(kind, "text")
+                yield row, col, value, label
+            else:
+                value, fmt, _ = raw
+                kind, _, date_kind, _ = formats[fmt]
+                yield (
+                    row,
+                    col,
+                    bool(value) if kind == "b" else value,
+                    "date" if date_kind else _VALUE_TYPES[kind],
                 )
 
     def prepare_input_selection(self):
@@ -2702,6 +2804,9 @@ def build_index(
 
             index_facts(path, store, metadata)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
+            from linexcel.data_regions import index_regions
+
+            metadata["dataRegions"] = index_regions(store)
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}
                 for warning in metadata["vba"]["warnings"]
