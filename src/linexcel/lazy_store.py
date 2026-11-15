@@ -578,6 +578,24 @@ class WorkbookIndex(Mapping):
             ).fetchall()
         ]
 
+    def cell_records(self, sheet, *, exclude=(), limit):
+        """``(row, col, decode)`` of one sheet's cells, row by row.
+
+        Cells inside any ``exclude`` rectangle ``(r1, c1, r2, c2)`` are left
+        out; at most ``limit`` records. ``decode()`` returns the stored node.
+        """
+        clauses, args = ["sheet=?", "row IS NOT NULL", "col IS NOT NULL"], [sheet]
+        for r1, c1, r2, c2 in exclude:
+            clauses.append("NOT (row BETWEEN ? AND ? AND col BETWEEN ? AND ?)")
+            args.extend((r1, r2, c1, c2))
+        for row, col, data in self.db.execute(
+            "SELECT row,col,data FROM nodes WHERE "
+            + " AND ".join(clauses)
+            + f" AND {_CELL_KINDS} ORDER BY row,col LIMIT ?",
+            (*args, limit),
+        ):
+            yield row, col, partial(_unpack, data)
+
     def window_records(self, sheet, bounds, max_record_bytes):
         """The stored records of a rectangle's cells, for a bounded reader.
 

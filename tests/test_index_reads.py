@@ -394,11 +394,37 @@ def test_presentation_window_shows_saved_values_within_its_byte_budget(
         sheet_presentation(path / "workbook.xlsx", path / "index.sqlite", "Data")
 
 
+def test_header_bands_scan_cells_outside_described_tables(project):
+    from linexcel.catalog import CatalogLimits
+    from linexcel.header_bands import HeaderBands
+    from linexcel.lazy_store import WorkbookIndex
+
+    _, _, _, path = project
+    table = {
+        "name": "tblData",
+        "headerRows": 1,
+        "headers": ["Region", "Amount", "Flag", "Double"],
+        "bounds": [1, 1, 6, 4],
+    }
+    with WorkbookIndex(path / "index.sqlite") as index:
+        labels = HeaderBands(index, "Labels", [], CatalogLimits(), lambda: False)
+        alone = HeaderBands(index, "Data", [], CatalogLimits(), lambda: False)
+        covered = HeaderBands(index, "Data", [table], CatalogLimits(), lambda: False)
+    assert [(b.header_row, b.first_row, b.last_row) for b in labels.bands] == [
+        (1, 2, 4)
+    ]
+    assert labels.bands[0].headers == {1: "Region", 2: "Q1", 3: "Q2"}
+    assert labels.bands[0].row_columns == [1]
+    assert labels.coverage["cellsScanned"] == 12
+    assert alone.coverage["cellsScanned"] == 24 and len(alone.bands) == 1
+    # Cells of a table whose headers already describe them are not scanned.
+    assert covered.coverage["cellsScanned"] == 0 and covered.bands == []
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
     "graph_store.py": 3,
-    "header_bands.py": 1,
     "lazy.py": 1,
     "link_facts.py": 2,
     "web_data.py": 2,

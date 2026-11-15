@@ -12,7 +12,6 @@ from dataclasses import asdict, dataclass
 from itertools import groupby
 from typing import Any
 
-from linexcel.lazy_store import _unpack
 from linexcel.refs import a1
 
 
@@ -115,23 +114,15 @@ class HeaderBands:
             return
         # Ordinary declared columns already have a stronger label. Do not spend
         # inference budgets scanning millions of their body cells again.
-        clauses = ["sheet=?", "row IS NOT NULL", "col IS NOT NULL"]
-        args = [sheet]
-        for table in tables:
-            headers = table.get("headers", [])
-            if (
-                table.get("headerRows") == 1
-                and headers
-                and all(descriptive(h) for h in headers)
-            ):
-                r1, c1, r2, c2 = table["bounds"]
-                clauses.append("NOT (row BETWEEN ? AND ? AND col BETWEEN ? AND ?)")
-                args.extend((r1, r2, c1, c2))
-        cursor = index.db.execute(
-            "SELECT row,col,data FROM nodes WHERE "
-            + " AND ".join(clauses)
-            + " AND kind IN ('input','cell','array_result') ORDER BY row,col LIMIT ?",
-            (*args, limits.header_scan_cells + 1),
+        described = [
+            table["bounds"]
+            for table in tables
+            if table.get("headerRows") == 1
+            and table.get("headers", [])
+            and all(descriptive(h) for h in table.get("headers", []))
+        ]
+        cursor = index.cell_records(
+            sheet, exclude=described, limit=limits.header_scan_cells + 1
         )
         count = 0
         for row, cells in groupby(cursor, key=lambda record: record[0]):
@@ -143,7 +134,7 @@ class HeaderBands:
                 break
             values = {}
             truncated = False
-            for _, column, blob in cells:
+            for _, column, decode in cells:
                 count += 1
                 if count > limits.header_scan_cells:
                     caps.add("header_scan_cells")
@@ -153,7 +144,7 @@ class HeaderBands:
                     caps.add("header_columns")
                     truncated = True
                     continue
-                values[column] = _unpack(blob)
+                values[column] = decode()
             if not truncated:
                 self.rows[row] = values
             if count > limits.header_scan_cells:
