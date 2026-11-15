@@ -440,9 +440,10 @@ class WorkbookIndex(Mapping):
                 pass  # The import diagnostics already describe the failure.
         return node
 
-    def values(self):
+    def values(self, *, context=False):
+        """Every node in import order; ``context`` adds labels and tokens."""
         for row in self.db.execute("SELECT data,pattern_id FROM nodes ORDER BY seq"):
-            yield self._decode(row)
+            yield self._decode(row, context=context)
 
     def items(self):
         for node in self.values():

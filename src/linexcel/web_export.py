@@ -126,11 +126,11 @@ class ProjectExport:
         store = self.index
         yield b'{"lazy":true,"nodes":['
         first = True
-        for row in store.db.execute("SELECT data,pattern_id FROM nodes ORDER BY seq"):
+        for node in store.values(context=True):
             if not first:
                 yield b","
             first = False
-            yield from _json(store._decode(row, context=True))
+            yield from _json(node)
         yield b'],"edges":['
         first = True
         for source, target in store.db.execute(

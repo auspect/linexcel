@@ -494,6 +494,28 @@ def test_data_copy_writes_each_cell_with_its_provenance(source_data):
     }
 
 
+def test_export_writes_every_node_in_import_order_with_its_context(project):
+    from linexcel.web_export import ProjectExport
+
+    app, owner, pid, _ = project
+    graph = json.loads(b"".join(ProjectExport(app.store, owner, pid)))["graph"]
+    ids = [n["id"] for n in graph["nodes"]]
+    # The name, then each sheet's cells as read, then the ranges formulas use.
+    assert ids[:9] == ["name:*:Rate"] + [
+        f"Data!{c}{r}" for r, cs in ((1, "ABCD"), (2, "ABCD")) for c in cs
+    ]
+    assert ids[-4:] == ["Data!B2:B6", "Data!A2:A6", "Big!A1:A300", "Arr!B1:B3"]
+    assert len(ids) == 357
+    nodes = {n["id"]: n for n in graph["nodes"]}
+    assert nodes["Data!B5"]["value"] == 40
+    assert nodes["Data!D2"]["patternId"] == nodes["Data!D6"]["patternId"]
+    # Exported with context: the row label on its left, then the one above.
+    assert [label["text"] for label in nodes["Labels!B2"]["cellLabels"]] == [
+        "North",
+        "Q1",
+    ]
+
+
 def test_report_counts_the_cells_each_selected_range_holds(project):
     from linexcel.web_report import prepare_report
 
@@ -525,7 +547,6 @@ def test_report_counts_the_cells_each_selected_range_holds(project):
 REMAINING_DIRECT_READS = {
     "graph_store.py": 3,
     "link_facts.py": 2,
-    "web_export.py": 1,
 }
 
 
