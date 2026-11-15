@@ -1325,7 +1325,7 @@ $('delete').onclick=async()=>{if(!current||!confirm(uiText('Supprimer cet espace
 const mobileMoves=[
  [document.querySelector('#view-data>.help'),$('data-options')],
  [$('data-refresh').parentElement,$('data-options')],[$('data-open'),$('data-options')],[$('data-source'),$('data-options')],
- [document.querySelector('#data-excel>.help'),$('data-options')],[$('excel-position'),$('data-options')],[$('excel-status'),$('data-options')]
+ [document.querySelector('#data-excel>.help'),$('data-options')],[$('excel-position'),$('data-options')]
 ].map(([element,target,always])=>{const marker=document.createComment('responsive position');element.before(marker);return{element,target,marker,always}});
 function placeMobileControls(){const mobile=matchMedia('(max-width:650px)').matches;for(const {element,target,marker,always} of mobileMoves){if(mobile||always){if(element.parentElement!==target)target.append(element)}else marker.after(element)}}placeMobileControls();
 const graphDepthControl=document.querySelector('.graph-primary-controls .graph-depth-control');function placeGraphDepth(){const primary=document.querySelector('.graph-primary-controls'),options=$('graph-options');for(const control of [graphDepthControl,document.querySelector('.graph-sheet-control'),$('graph-reader-toggle')]){if(matchMedia('(max-width:650px)').matches)options.append(control);else (control.id==='graph-reader-toggle'?document.querySelector('.graph-actions'):primary).append(control)}}placeGraphDepth();

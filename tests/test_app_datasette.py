@@ -938,3 +938,42 @@ def test_presentation_refusals_reach_english_in_english(browser, reason, english
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_a_presentation_reason_is_visible_on_a_phone(browser, language):
+    """Batch 2 bis, F22: at 390 px the reason must not wait behind the
+    collapsed data options; the user would see an empty grid."""
+    data = {
+        "available": True,
+        "presentationAvailable": True,
+        "sourceSha256": "a" * 64,
+        "cellsUrl": "/api/projects/p/datasette/source/cells",
+        "sheets": [
+            {"sheet": "Lost", "url": "/api/projects/p/datasette/source/sheet_001"}
+        ],
+    }
+    reason = (
+        "La partie XML de cette feuille est absente du fichier : elle n’a pas pu "
+        "être lue à l’import. Les autres feuilles restent consultables ; voir "
+        "Diagnostics."
+    )
+    page, _, errors, _, _ = open_app(
+        browser,
+        (390, 844),
+        payload=data,
+        language=language,
+        presentation=lambda route: route.fulfill(
+            status=409, json={"error": {"message": reason}}
+        ),
+    )
+    try:
+        text = "absente du fichier" if language == "fr" else "missing from the file"
+        status = page.locator("#excel-status")
+        status.filter(has_text=text).wait_for(state="attached")
+        assert not page.locator("#data-options").evaluate("element => element.open")
+        assert status.is_visible()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
