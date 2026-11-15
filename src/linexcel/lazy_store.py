@@ -579,6 +579,42 @@ class WorkbookIndex(Mapping):
             ).fetchall()
         ]
 
+    def nodes_by_sheet_and_pattern(self):
+        """``(position, id, kind, sheet, pattern)`` of every node.
+
+        Grouped by sheet, then by formula pattern (``''`` for none, and for
+        a node without a sheet), in import order inside each group.
+        """
+        yield from self.db.execute(
+            "SELECT seq,id,kind,coalesce(sheet,''),coalesce(pattern_id,'') "
+            "FROM nodes ORDER BY sheet,coalesce(pattern_id,''),seq"
+        )
+
+    # A derived database that attaches this index under ``schema`` aggregates
+    # it in SQLite, without moving millions of rows through Python; these
+    # return the SQL that reads the index's own tables for such a query.
+
+    def attached_pattern_sizes_sql(self, schema):
+        """SQL of ``(sheet, pattern_id, size)``, ``''`` for none, per group."""
+        return (
+            "SELECT coalesce(sheet,'') sheet,coalesce(pattern_id,'') pattern_id,"
+            f"count(*) size FROM {schema}.nodes "
+            "GROUP BY coalesce(sheet,''),coalesce(pattern_id,'')"
+        )
+
+    def attached_edges_sql(self, schema):
+        """SQL of ``(source, target)`` for every edge a lineage view keeps.
+
+        Edges to an array member whose owner was chosen among overlapping
+        declared arrays by an older import are left out
+        (``_array_edge_filter``).
+        """
+        return (
+            f"SELECT e.source source,e.target target FROM {schema}.edges e "
+            f"JOIN {schema}.nodes t ON t.id=e.target "
+            f"WHERE {_array_edge_filter(self, schema=schema)}"
+        )
+
     def bracketed_formula_nodes(self):
         """``(id, node)`` of nodes whose formula holds a ``[``, in table order.
 

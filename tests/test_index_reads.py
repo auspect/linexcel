@@ -569,6 +569,82 @@ def test_import_records_the_bounds_of_every_local_range(project):
     ]
 
 
+@pytest.fixture
+def hierarchy(project, tmp_path):
+    from linexcel.graph_store import build_graph, read_view
+
+    _, _, _, path = project
+    output = tmp_path / "hierarchy.sqlite"
+    built = build_graph(path / "index.sqlite", output)
+
+    def view(**where):
+        return read_view(output, built["generation"], **where)
+
+    return built, view
+
+
+def _groups(view):
+    return [(n["label"], n["nodeCount"], n.get("level")) for n in view["nodes"]]
+
+
+def test_graph_sizes_each_formula_group_as_the_index_counts_it(hierarchy):
+    built, view = hierarchy
+    assert (built["nodeCount"], built["edgeCount"]) == (357, 15)
+    # The five copies of =B2*2 form one pattern; the rest of Data are sources.
+    assert _groups(view(sheet="Data"))[:2] == [
+        ("◇ Data", 21, "sources"),
+        ("=RC[-2]*2", 5, "pattern"),
+    ]
+    assert [g for g in _groups(view(sheet="Calc")) if g[2] == "pattern"] == [
+        ("=R[-3]C*Rate", 1, "pattern"),
+        ("=SUMIFS(Data!RC:R[4]C,Data!RC[-1]:R[4]C[-1],RC[-1])", 1, "pattern"),
+        ("=Data!R[-3]C", 1, "pattern"),
+        ("=SUM(Big!R[-5]C[-1]:R[294]C[-1])", 1, "pattern"),
+        ("=SUM(Data!R[1]C:R[5]C)", 1, "pattern"),
+    ]
+
+
+def test_graph_places_every_node_under_its_sheet_and_pattern(hierarchy):
+    _, view = hierarchy
+    root = {n["label"]: n["nodeCount"] for n in view()["nodes"]}
+    assert root == {
+        "∅": 1,
+        "Arr": 5,
+        "Big": 301,
+        "Calc": 12,
+        "Data": 26,
+        "Labels": 12,
+    }
+    pattern = view(node_id="Data!D3")
+    assert [n.get("nodeId") for n in pattern["nodes"] if n.get("nodeId")] == [
+        f"Data!D{row}" for row in range(2, 7)
+    ]
+
+
+def test_graph_keeps_every_index_edge_between_its_groups(hierarchy):
+    _, view = hierarchy
+    root = view()
+    labels = {n["id"]: n["label"] for n in root["nodes"]}
+    assert sorted(
+        (labels[e["source"]], labels[e["target"]], e["weight"]) for e in root["edges"]
+    ) == [
+        ("Big", "Calc", 1),
+        ("Calc", "∅", 1),
+        ("Data", "Calc", 4),
+        ("∅", "Calc", 1),
+    ]
+    # B2:B6 to D2:D6 in Data, B1 to B4 and A2 to B2 in Calc (B3 reaches B4
+    # through the name Rate), the range B1:B3 to A1 in Arr.
+    assert {n["label"]: n["internalEdges"] for n in root["nodes"]} == {
+        "∅": 0,
+        "Arr": 1,
+        "Big": 0,
+        "Calc": 2,
+        "Data": 5,
+        "Labels": 0,
+    }
+
+
 def test_report_counts_the_cells_each_selected_range_holds(project):
     from linexcel.web_report import prepare_report
 
@@ -593,13 +669,6 @@ def test_report_counts_the_cells_each_selected_range_holds(project):
         "Calc!B6": [("Big!A1:A300", 300, 300, 200, 100)],
         "Calc!B2": [("Data!A2:A6", 5, 5, 5, 0), ("Data!B2:B6", 5, 5, 5, 0)],
     }
-
-
-# Direct reads of the index's ``nodes`` table still to route, by module. The
-# list only shrinks; it is empty once every read goes through WorkbookIndex.
-REMAINING_DIRECT_READS = {
-    "graph_store.py": 3,
-}
 
 
 def _direct_node_reads(path: Path) -> int:
@@ -641,4 +710,4 @@ def test_only_workbook_index_reads_the_nodes_table():
         for path in sorted(SOURCE.glob("*.py"))
         if path.name != "lazy_store.py" and (count := _direct_node_reads(path))
     }
-    assert found == REMAINING_DIRECT_READS
+    assert found == {}
