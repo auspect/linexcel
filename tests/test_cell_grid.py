@@ -229,3 +229,25 @@ def test_a_later_writer_turns_a_grid_cell_into_a_node(column_index):
         assert len(store) == 302
         assert store.count_cells("Big", (1, 1, 300, 1)) == 300
         assert "Big!A7" not in _grid_ids(column_index)
+
+
+def test_a_grid_date_displays_from_its_saved_serial(tmp_path):
+    from linexcel.excel_presentation import sheet_presentation
+
+    book = Workbook()
+    book.active.title = "Dates"
+    book.active["A1"] = dt.datetime(2024, 2, 29)
+    book.active["A1"].number_format = "yyyy-mm-dd"
+    book.active["B1"] = 45351.5
+    book.active["B1"].number_format = "dd/mm/yyyy hh:mm"
+    path = tmp_path / "dates.xlsx"
+    book.save(path)
+    build_index(path, tmp_path / "index.sqlite")
+    assert {"Dates!A1", "Dates!B1"} <= _grid_ids(tmp_path / "index.sqlite")
+    window = sheet_presentation(path, tmp_path / "index.sqlite", "Dates")
+    cells = {cell["address"]: cell for cell in window["cells"]}
+    assert (cells["A1"]["display"], cells["A1"]["formatStatus"]) == (
+        "2024-02-29",
+        "formatted",
+    )
+    assert cells["B1"]["display"] == "29/02/2024 12:00"

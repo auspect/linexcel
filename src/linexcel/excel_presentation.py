@@ -653,10 +653,19 @@ def sheet_presentation(
                 node.get("value"),
                 node.get("sourceValueProvenance") or {},
             )
+            raw = provenance.get("rawXmlValue")
+            if (
+                "rawXmlValue" not in provenance
+                and provenance.get("storageType") == "n"
+                and provenance.get("status") == "present"
+            ):
+                # A grid cell (index schema 5) keeps the saved number, not
+                # its XML spelling: a date displays from its serial.
+                raw = node.get("cached_comparison_value")
             display, status = format_display(
                 value,
                 style["numberFormat"],
-                raw=provenance.get("rawXmlValue"),
+                raw=raw,
                 epoch1904=epoch1904,
             )
             used_styles.add(style_id)
