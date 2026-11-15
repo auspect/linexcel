@@ -365,3 +365,18 @@ def test_inputs_are_never_edge_targets_nor_formula_pattern_members(index):
         for node in export["nodes"]
         if node["kind"] == "input" and node.get("patternId")
     ]
+
+
+def test_graph_page_search_matches_cell_references_and_sheet_names(index):
+    # "a30": the ids Big!A30 and Big!A300, the range Big!A1:A300 and the
+    # formula of Calc!B6, =SUM(Big!A1:A300).
+    found = graph_page(index, query="a30")
+    assert sorted(_ids(found["nodes"])) == [
+        "Big!A1:A300",
+        "Big!A30",
+        "Big!A300",
+        "Calc!B6",
+    ]
+    assert found["pagination"]["total"] == 4
+    # A sheet name matches every node whose id holds it.
+    assert graph_page(index, query="Labels!")["pagination"]["total"] == 12

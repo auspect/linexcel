@@ -3195,11 +3195,25 @@ def graph_page(
             condition = where.removeprefix(" WHERE ")
             accept = None
             if query:
+                from linexcel.refs import num_to_col
+
                 like = _like_search(query)
                 search = store.grid.search_text
+                prefixes: dict[str, tuple[str, bool]] = {}
+                letters: dict[int, str] = {}
 
                 def accept(name, row, col, raw):
-                    return like(cell_id(name, row, col)) or like(search(raw))
+                    # The id, ``Sheet!B12``, built once per sheet and column.
+                    prefix = prefixes.get(name)
+                    if prefix is None:
+                        text = quote_sheet(name) + "!"
+                        prefix = prefixes[name] = (text, like(text))
+                    if prefix[1]:
+                        return True
+                    column = letters.get(col)
+                    if column is None:
+                        column = letters[col] = num_to_col(col)
+                    return like(prefix[0] + column + str(row)) or like(search(raw))
 
             grid = kind in {None, "input"}
             if grid:
