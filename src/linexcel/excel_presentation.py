@@ -446,11 +446,10 @@ def sheet_presentation(
             raise KeyError(sheet)
         sha = source.meta.get("sha256")
         nodes, node_bytes = {}, 0
-        for size, packed in source.db.execute(
-            "SELECT length(data), CASE WHEN length(data)<=? THEN data END "
-            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
-            "AND col BETWEEN ? AND ? AND kind IN ('cell','input','array_result')",
-            (MAX_PRESENTATION_BYTES + 65536, sheet, row, last_row, column, last_column),
+        for packed in source.window_records(
+            sheet,
+            (row, column, last_row, last_column),
+            MAX_PRESENTATION_BYTES + 65536,
         ):
             if packed is None:
                 raise PresentationLimitError("Cellule indexée trop volumineuse")

@@ -578,6 +578,23 @@ class WorkbookIndex(Mapping):
             ).fetchall()
         ]
 
+    def window_records(self, sheet, bounds, max_record_bytes):
+        """The stored records of a rectangle's cells, for a bounded reader.
+
+        Yields each record as stored (zlib-compressed JSON, see ``_pack``) so
+        the caller can bound its inflation before decoding it, which protects
+        against a hostile file. A record over ``max_record_bytes`` is yielded
+        as ``None`` without being read.
+        """
+        r1, c1, r2, c2 = bounds
+        for _size, data in self.db.execute(
+            "SELECT length(data), CASE WHEN length(data)<=? THEN data END "
+            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS}",
+            (max_record_bytes, sheet, r1, r2, c1, c2),
+        ):
+            yield data
+
     def node_inventory(self):
         """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
         return self.db.execute(

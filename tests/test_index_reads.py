@@ -369,10 +369,34 @@ def test_search_finds_saved_numbers_without_a_label(catalog):
     ]
 
 
+def test_presentation_window_shows_saved_values_within_its_byte_budget(
+    project, monkeypatch
+):
+    from linexcel.excel_presentation import PresentationLimitError, sheet_presentation
+
+    _, _, _, path = project
+    window = sheet_presentation(
+        path / "workbook.xlsx", path / "index.sqlite", "Data", rows=6, columns=4
+    )
+    cells = {
+        c["address"]: (c["display"], c["valueStatus"], c["formula"])
+        for c in window["cells"]
+    }
+    assert len(cells) == 24
+    assert cells["A1"] == ("Region", "present", None)
+    assert cells["B5"] == ("40", "present", None)
+    assert cells["C3"] == ("FALSE", "present", None)
+    assert cells["C5"] == ("#N/A", "present", None)
+    # openpyxl saves formulas without a cached value.
+    assert cells["D6"] == ("", "missing", "=B6*2")
+    monkeypatch.setattr("linexcel.excel_presentation.MAX_PRESENTATION_BYTES", 10)
+    with pytest.raises(PresentationLimitError, match="Zone de présentation"):
+        sheet_presentation(path / "workbook.xlsx", path / "index.sqlite", "Data")
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
-    "excel_presentation.py": 1,
     "graph_store.py": 3,
     "header_bands.py": 1,
     "lazy.py": 1,
