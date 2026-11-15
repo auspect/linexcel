@@ -515,6 +515,23 @@ class WorkbookIndex(Mapping):
         ):
             yield row[0]
 
+    def node_id_at(self, sheet, row, col):
+        """The id of a node stored at one position, or ``None``."""
+        hit = self.db.execute(
+            "SELECT id FROM nodes WHERE sheet=? AND row=? AND col=?",
+            (sheet, row, col),
+        ).fetchone()
+        return hit[0] if hit else None
+
+    def count_cells(self, sheet, bounds):
+        """How many cells are stored in a rectangle ``(r1, c1, r2, c2)``."""
+        r1, c1, r2, c2 = bounds
+        return self.db.execute(
+            f"SELECT count(*) FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS}",
+            (sheet, r1, r2, c1, c2),
+        ).fetchone()[0]
+
     def node_inventory(self):
         """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
         return self.db.execute(

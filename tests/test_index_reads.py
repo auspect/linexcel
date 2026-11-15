@@ -252,10 +252,80 @@ def test_catalog_scans_every_cell_of_every_sheet(catalog):
     ]
 
 
+def _handle(source, node_id):
+    from linexcel.catalog import cell_handle, revision
+    from linexcel.lazy_store import WorkbookIndex
+
+    with WorkbookIndex(source.path) as index:
+        return cell_handle(revision(source.project_id, index.meta["sha256"]), node_id)
+
+
+def _node_id(handle):
+    from linexcel.catalog import parse_handle
+
+    return parse_handle(handle)[2]
+
+
+def test_lineage_compares_external_caches_with_the_cells_they_name(tmp_path):
+    from test_external import _link
+    from test_total_lineage import fixture_source, handle
+
+    from linexcel.catalog import Catalog
+
+    inputs = fixture_source(tmp_path, 1, "inputs.xlsx", {"A1": 600, "A3": "x"})
+    reader = fixture_source(
+        tmp_path,
+        2,
+        "reader.xlsx",
+        {"A1": "=SUM('[1]S'!A1:A3)"},
+        links=[_link("inputs.xlsx", "S", {"A1": 500, "A2": 7, "A3": "x"})],
+    )
+    result = Catalog(tmp_path / "catalog").lineage(
+        [inputs, reader], handle(reader), direction="upstream", depth=4
+    )
+    # A1 changed since the cache, A2 is no longer stored, A3 agrees.
+    assert result["edges"][0]["cacheDiagnostic"] == [
+        {"address": "A1", "cached": 500, "current": 600, "agreement": False},
+        {"address": "A2", "cached": 7, "current": None, "agreement": None},
+        {"address": "A3", "cached": "x", "current": "x", "agreement": True},
+    ]
+
+
+def test_lineage_reaches_the_cells_a_range_holds(catalog):
+    built, source = catalog
+    result = built.lineage(
+        [source], _handle(source, "Calc!B1"), direction="upstream", depth=3
+    )
+    edges = sorted(
+        (_node_id(e["source"]), _node_id(e["target"]), e["kind"])
+        for e in result["edges"]
+    )
+    assert edges == [
+        ("Data!B2", "Data!B2:B6", "range"),
+        ("Data!B2:B6", "Calc!B1", "formula"),
+        ("Data!B3", "Data!B2:B6", "range"),
+        ("Data!B4", "Data!B2:B6", "range"),
+        ("Data!B5", "Data!B2:B6", "range"),
+        ("Data!B6", "Data!B2:B6", "range"),
+    ]
+
+
+def test_lineage_stops_at_an_array_wider_than_its_node_budget(catalog):
+    built, source = catalog
+    anchor = _handle(source, "Arr!A1")
+    # Arr!A1:A3 has three cells and only its anchor is stored: with a budget
+    # of two nodes the members cannot be certified, so the walk says so.
+    narrow = built.lineage([source], anchor, direction="downstream", limit=2)
+    assert [(_node_id(b["node"]), b["reason"]) for b in narrow["boundaries"]] == [
+        ("Arr!A1", "node_budget")
+    ]
+    wide = built.lineage([source], anchor, direction="downstream", limit=200)
+    assert wide["boundaries"] == []
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
-    "catalog_lineage.py": 3,
     "catalog_occurrences.py": 2,
     "catalog_query.py": 1,
     "excel_presentation.py": 1,
