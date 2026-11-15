@@ -268,12 +268,13 @@ the commit before:
 | D9 | — | `5609851` | Operations printed the raw phase `build_graph`; phases fall back to the operation labels. |
 
 A second independent review of the corrected states confirmed these seven
-corrections at French and English, 1440 and 390 px, and found four more
+corrections at French and English, 1440 and 390 px (D9 on three of the four
+combinations, where a running graph construction was listed), and found four more
 points in the same messages, also corrected with a failing test first:
 
 | Review | Finding | Commit | Correction |
 | --- | --- | --- | --- |
-| N2 | F22 | `a19dda1` | An operation or upload refused because storage was already full still said "Stockage plein" without the quota or the remedy; the Graph tab showed it on each visit. Every such refusal now uses the quota message. |
+| N2 | F22 | `a19dda1` | An operation or upload refused because storage was already full still said "Stockage plein" without the quota or the remedy; the Graph tab showed it on each visit. Every such refusal now uses the quota message. On a phone the Graph tab shows it in the strip of N3 below, cut off and over the node title: unreadable there until N3 is fixed. |
 | N4 | F22 | `7ed9fcf` | Since D6, three presentation refusals appeared alone and untranslated, and the transient "sources changed while reading" lost its retry advice. They are translated and that one carries the advice. |
 | N1 | F22 | `5cc0750` | On phones the presentation status sat in the collapsed data options, so a missing sheet part showed an empty grid. The status now stays above the grid. |
 | N8 | F22 | `38ee60b` | The Data tab gave the no-index message in the error style; it is now a notice, as on the other tabs. |
@@ -286,7 +287,10 @@ Not changed, reported:
 - a sheet-part diagnostic appears both under its sheet and in the workbook
   list (D8, existing layout);
 - at 390 px the Graph tab's build status line sits partly off-screen over the
-  node card (N3, existing CSS);
+  node card (N3, existing CSS in `frontend/src/shell.css`: the portrait rule
+  moves the status panel to the left edge while the status keeps a −140 px
+  offset). The longer quota message of N2 now fills three lines there and
+  hides the node title; fixing it means rebuilding the graph bundle;
 - with storage full, the Data tab sentence names the preparation twice and
   still says that Refresh data starts it again (N6);
 - with the shared-strings part missing, each sheet still says "Import
