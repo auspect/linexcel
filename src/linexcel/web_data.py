@@ -32,9 +32,39 @@ from openpyxl.utils.cell import get_column_letter
 from linexcel.graph_store import generation
 from linexcel.lazy_store import WorkbookIndex, _unpack
 
-DATA_VERSION = 4
+DATA_VERSION = 5
 MAX_GRID_COLUMNS = 512
 MAX_INSTANCES = 8
+#: The background copy may take minutes on a large table (ONS: 745 s); the
+#: storage quota and cancellation still stop it.
+BUILD_BUDGET = {"seconds": 3600, "memoryMb": 512}
+
+
+def data_signature(revision: str, index_generation) -> str:
+    """Identity of the Data tab copy built from one index of one revision."""
+    return hashlib.sha256(
+        f"{DATA_VERSION}:{revision}:{index_generation}".encode()
+    ).hexdigest()
+
+
+def publish_source_database(project: Path, built: Path, task: dict, metadata: dict):
+    """Move a finished copy into the project under a name of its own.
+
+    Called by the coordinator. A new name, never a replacement, so Datasette
+    instances still reading the previous copy are not disturbed.
+    """
+    from linexcel.web import _write
+
+    name = f"source-data-{task['id']}.sqlite"
+    built.replace(project / name)
+    _write(
+        project / "source-data.json",
+        {
+            "signature": data_signature(task["revision"], task["graphGeneration"]),
+            "metadata": metadata,
+            "file": name,
+        },
+    )
 
 
 def _json(value):
@@ -454,7 +484,84 @@ class DataBrowser:
         if errors:
             raise ExceptionGroup("Could not completely close Datasette", errors)
 
-    def _snapshot(self, owner: str, project_id: str) -> tuple[Path | None, dict]:
+    def _build_state(
+        self, owner: str, project_id: str, revision: str, index_generation, retry
+    ) -> dict:
+        """State of the background copy for this index; starts it if needed."""
+        builds = sorted(
+            (
+                task
+                for task in self.store.tasks.values()
+                if task["owner"] == owner
+                and task["projectId"] == project_id
+                and task["operation"] == "build_data"
+                and task["revision"] == revision
+                and task.get("graphGeneration") == index_generation
+            ),
+            key=lambda task: task["createdAt"],
+        )
+        latest = builds[-1] if builds else None
+        state = {
+            "available": False,
+            "presentationAvailable": False,
+            "sheets": [],
+            "revision": revision,
+        }
+        if latest is not None and latest["status"] in {"queued", "running"}:
+            return {**state, "state": "building", "taskId": latest["id"]}
+        if latest is not None and latest["status"] == "cancelled" and not retry:
+            # The user's own cancel is not a failure: no reason to show.
+            return {**state, "state": "cancelled", "taskId": latest["id"]}
+        if latest is not None and latest["status"] != "succeeded" and not retry:
+            error = latest.get("error") or {}
+            return {
+                **state,
+                "state": "failed",
+                "taskId": latest["id"],
+                "error": error.get("message") or latest["status"],
+            }
+        from linexcel.web import APIError, storage_quota_message
+
+        try:
+            task = self.store.submit(
+                owner,
+                project_id,
+                "build_data",
+                None,
+                dict(BUILD_BUDGET),
+                force=latest is not None,
+            )
+        except APIError as exc:
+            if exc.status != 413:
+                raise
+            # Storage is already full: the tab says so in its own words, and
+            # Refresh data asks again once space is freed (F22).
+            return {
+                **state,
+                "state": "failed",
+                "error": storage_quota_message(
+                    self.store.config.max_storage_mb,
+                    "la préparation de la vue des données n’a pas pu démarrer.",
+                ),
+            }
+        return {**state, "state": "building", "taskId": task["id"]}
+
+    def _discard_stale(self, owner, project_id, path, signature, current):
+        """Close instances and delete copies of earlier builds of this project."""
+        for key in list(self._instances):
+            if key[:2] == (owner, project_id) and key[2] != signature:
+                self._close_instance(self._instances[key])
+                del self._instances[key]
+        for stale in path.glob("source-data*.sqlite"):
+            if stale.name != current:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass  # Still open elsewhere; removed on a later opening.
+
+    def _snapshot(
+        self, owner: str, project_id: str, retry: bool = False
+    ) -> tuple[Path | None, dict]:
         from linexcel.web import APIError, _read
 
         path = self.store.project_path(owner, project_id)
@@ -470,44 +577,27 @@ class DataBrowser:
             }
         index = path / "index.sqlite"
         if not index.is_file():
-            raise APIError(409, "Importez le classeur avant de parcourir les données")
+            raise self.store.missing_index_error(
+                owner, project_id, "Importez le classeur avant de parcourir les données"
+            )
         index_generation = generation(index)
-        signature = hashlib.sha256(
-            f"{DATA_VERSION}:{project['revision']}:{index_generation}".encode()
-        ).hexdigest()
-        destination = path / "source-data.sqlite"
+        signature = data_signature(project["revision"], index_generation)
         stamp_path = path / "source-data.json"
         saved: dict[str, Any] = _read(stamp_path) if stamp_path.exists() else {}
-        if saved.get("signature") != signature or not destination.is_file():
-            # Instances release handles before Windows replaces a rebuilt file.
-            for key in list(self._instances):
-                if key[:2] == (owner, project_id):
-                    self._close_instance(self._instances[key])
-                    del self._instances[key]
-            remaining = (
-                self.store.config.max_storage_mb * 1048576
-                - self.store._storage_bytes()
-                + (destination.stat().st_size if destination.exists() else 0)
+        name = saved.get("file")
+        destination = path / name if isinstance(name, str) else None
+        if (
+            saved.get("signature") != signature
+            or destination is None
+            or not destination.is_file()
+        ):
+            # The copy is built by a worker task, never inside this request:
+            # it read every indexed cell under the coordinator lock and froze
+            # every other request for its whole duration (F18).
+            return None, self._build_state(
+                owner, project_id, project["revision"], index_generation, retry
             )
-            try:
-                metadata = build_source_database(
-                    index, destination, max_bytes=remaining
-                )
-            except DataLimitError:
-                raise APIError(
-                    413, "Stockage insuffisant pour la vue des données"
-                ) from None
-            if (
-                generation(index) != index_generation
-                or self.store._revision(path) != project["revision"]
-            ):
-                # Source ownership was held throughout; source edits still must
-                # invalidate the snapshot rather than serve stale provenance.
-                raise APIError(409, "Sources modifiées pendant la lecture")
-            from linexcel.web import _write
-
-            saved = {"signature": signature, "metadata": metadata}
-            _write(stamp_path, saved)
+        self._discard_stale(owner, project_id, path, signature, destination.name)
         prefix = f"{self.store.config.mount_path}/api/projects/{project_id}/datasette"
         metadata = dict(saved["metadata"])
         metadata.update(
@@ -533,9 +623,9 @@ class DataBrowser:
         ]
         return destination, {"signature": signature, **metadata}
 
-    def metadata(self, owner: str, project_id: str) -> dict:
+    def metadata(self, owner: str, project_id: str, retry: bool = False) -> dict:
         with self._lock, self.store.lock:
-            _, metadata = self._snapshot(owner, project_id)
+            _, metadata = self._snapshot(owner, project_id, retry)
             metadata.pop("signature", None)
             return metadata
 
@@ -553,6 +643,7 @@ class DataBrowser:
         """Return a static source worksheet window behind the same owner check."""
         from linexcel.excel_presentation import (
             PresentationLimitError,
+            SheetSourceUnavailableError,
             sheet_presentation,
         )
         from linexcel.lazy_store import file_sha256
@@ -573,6 +664,10 @@ class DataBrowser:
             before = generation(index)
             with WorkbookIndex(index) as source:
                 source_sha = source.meta.get("sha256")
+                partial = any(
+                    detail.get("name") == sheet and detail.get("status") != "complete"
+                    for detail in source.meta.get("sheetDetails", [])
+                )
             if file_sha256(path / "workbook.xlsx") != source_sha:
                 raise APIError(409, "Sources modifiées ; importez une nouvelle version")
             try:
@@ -585,18 +680,33 @@ class DataBrowser:
                     rows=rows,
                     columns=columns,
                 )
+            except SheetSourceUnavailableError as exc:
+                raise APIError(409, str(exc)) from None
             except KeyError:
                 raise APIError(404, "Feuille introuvable") from None
             except PresentationLimitError as exc:
                 raise APIError(413, str(exc)) from None
             except (ValueError, OSError, zipfile.BadZipFile, ET.ParseError):
+                if partial:
+                    # The import already found this sheet damaged (F22).
+                    raise APIError(
+                        409,
+                        "Cette feuille n’a été lue que partiellement à l’import "
+                        "(voir Diagnostics) : sa présentation est indisponible. "
+                        "Les autres feuilles restent consultables.",
+                    ) from None
                 raise APIError(400, "Présentation de la feuille indisponible") from None
             if (
                 self.store._revision(path) != project["revision"]
                 or generation(index) != before
                 or result.get("sourceSha256") != source_sha
             ):
-                raise APIError(409, "Sources modifiées pendant la lecture")
+                # Shown alone by the interface: say that a retry can help.
+                raise APIError(
+                    409,
+                    "Sources modifiées pendant la lecture ; "
+                    "réessayez avec Afficher la zone.",
+                )
             return {"available": True, "revision": project["revision"], **result}
 
     def request(
@@ -629,6 +739,18 @@ class DataBrowser:
             if self._closed:
                 raise APIError(503, "La vue des données est fermée")
             database, metadata = self._snapshot(owner, project_id)
+            if database is None and metadata.get("state") == "building":
+                raise APIError(409, "Vue des données en préparation ; réessayez")
+            if database is None and metadata.get("state") == "cancelled":
+                raise APIError(
+                    409,
+                    "Préparation de la vue des données annulée. "
+                    "Actualiser les données la relance.",
+                )
+            if database is None and metadata.get("state") == "failed":
+                raise APIError(
+                    409, "Vue des données indisponible : " + metadata["error"]
+                )
             if database is None:
                 raise APIError(
                     409, "Cet add-in contient des sources VBA, sans vue de données"
@@ -688,7 +810,7 @@ class DataBrowser:
                 )
                 # A stable public name avoids leaking the file name/path and
                 # ensures each instance contains only its project's source DB.
-                instance.remove_database("source-data")
+                instance.remove_database(Path(database).stem)
                 instance.add_database(
                     SourceDatabase(instance, path=str(database), is_mutable=False),
                     name="source",

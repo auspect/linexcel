@@ -230,6 +230,12 @@ class WorkbookIndex(Mapping):
         )
         self.db.execute("PRAGMA cache_size=-8192")
         self.db.execute("PRAGMA temp_store=FILE")
+        if not writable:
+            # One read transaction for the reader's lifetime: every statement
+            # reads the same snapshot, and the file lock is taken once. In
+            # autocommit each SELECT takes and releases it, about 270 µs a
+            # lookup on Windows against 8 µs here (critical review F24).
+            self.db.execute("BEGIN")
         self._meta: dict[str, Any] | None = None
 
     def __enter__(self):
@@ -489,28 +495,37 @@ class WorkbookIndex(Mapping):
             yield row[0]
 
     def prepare_input_selection(self):
+        # The selection is keyed by position, so it is read back in sheet order
+        # by walking its own rows. Joining a bare id list to ``nodes`` in that
+        # order made SQLite walk the whole position index instead: 1.6 s per
+        # read for 75 inputs of a 2.7-million-node index (critical review F26).
         self.db.execute(
             "CREATE TEMP TABLE IF NOT EXISTS selected_inputs "
-            "(id TEXT PRIMARY KEY) WITHOUT ROWID"
+            "(sheet TEXT NOT NULL, row INTEGER NOT NULL, col INTEGER NOT NULL, "
+            "id TEXT NOT NULL, PRIMARY KEY (sheet, row, col, id)) WITHOUT ROWID"
         )
         self.db.execute("DELETE FROM selected_inputs")
 
     def select_input(self, node_id):
-        self.db.execute("INSERT OR IGNORE INTO selected_inputs VALUES (?)", (node_id,))
+        self.db.execute(
+            "INSERT OR IGNORE INTO selected_inputs SELECT coalesce(sheet,''),"
+            "coalesce(row,0),coalesce(col,0),id FROM nodes WHERE id=?",
+            (node_id,),
+        )
 
     def select_range_inputs(self, sheet, bounds):
         r1, c1, r2, c2 = bounds
         self.db.execute(
-            "INSERT OR IGNORE INTO selected_inputs SELECT id FROM nodes "
-            "WHERE sheet=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-            "AND kind='input'",
+            "INSERT OR IGNORE INTO selected_inputs SELECT sheet,row,col,id "
+            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            "AND col BETWEEN ? AND ? AND kind='input'",
             (sheet, r1, r2, c1, c2),
         )
 
     def selected_inputs(self):
         for (data,) in self.db.execute(
-            "SELECT n.data FROM selected_inputs s JOIN nodes n ON n.id=s.id "
-            "ORDER BY n.sheet,n.row,n.col"
+            "SELECT n.data FROM selected_inputs s CROSS JOIN nodes n ON n.id=s.id "
+            "ORDER BY s.sheet,s.row,s.col,s.id"
         ):
             yield _unpack(data)
 
@@ -630,6 +645,17 @@ def _read_source(path, store):
                         f"{type(exc).__name__}: {exc}",
                     }
                 )
+        elif any(v[0].endswith("/styles") for v in rels.values()):
+            # Declared but absent: the same unknown values as an unreadable
+            # part, and the workbook must say so (critical review F17).
+            diagnostics.append(
+                {
+                    "part": style_part,
+                    "message": "Styles part declared by the workbook is missing: "
+                    "number formats are unknown, so saved values of styled cells "
+                    "are unknown.",
+                }
+            )
         # Elapsed-format detection does not strip literals itself. A quoted
         # "[h]" label on a date must not turn its cache into a timedelta.
         format_kinds = [
@@ -644,7 +670,10 @@ def _read_source(path, store):
             ),
             "xl/sharedStrings.xml",
         )
-        if string_part in archive.namelist():
+        strings_declared = any(v[0].endswith("/sharedStrings") for v in rels.values())
+        strings_present = string_part in archive.namelist()
+        missing_strings = 0
+        if strings_present:
             try:
                 for index, element in enumerate(
                     _stream_elements(archive, string_part, "si")
@@ -1049,6 +1078,8 @@ def _read_source(path, store):
                                         (int(raw),),
                                     ).fetchone()
                                     if hit is None:
+                                        if not strings_present:
+                                            missing_strings += 1
                                         raise ValueError(f"Missing shared string {raw}")
                                     value = hit[0]
                                 elif cell_type in {"str", "e"}:
@@ -1253,6 +1284,19 @@ def _read_source(path, store):
                 diagnostics.append({"sheet": sheet["name"], "message": message})
             sheet.pop("part", None)
             db.commit()
+        if not strings_present and (strings_declared or missing_strings):
+            # Without the part every text cell is unreadable, never empty. A
+            # cell says so; the workbook must too, or the index reads as
+            # complete (critical review F17).
+            declared = " declared by the workbook" if strings_declared else ""
+            diagnostics.append(
+                {
+                    "part": string_part,
+                    "message": f"Shared-string part{declared} is missing: "
+                    f"{missing_strings} text cell(s) are unreadable, never empty "
+                    "values.",
+                }
+            )
     return (
         {
             "sheets": [s["name"] for s in sheets],

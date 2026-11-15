@@ -29,6 +29,13 @@ def main():
             from linexcel.graph_store import build_graph
 
             result = build_graph(project / "index.sqlite", root / "hierarchy.sqlite")
+        elif request["operation"] == "build_data":
+            from linexcel.web_data import build_source_database
+
+            # The coordinator enforces the storage quota while this runs.
+            result = build_source_database(
+                project / "index.sqlite", root / "source-data.sqlite", max_bytes=2**62
+            )
         elif request["operation"] == "evaluate":
             from linexcel.lazy import evaluate_node
 

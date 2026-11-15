@@ -184,7 +184,7 @@ class UploadStore:
                 self.store._storage_bytes() + self.remaining_bytes() + total + 65536
                 > self.store.config.max_storage_mb * 1048576
             ):
-                raise APIError(413, "Stockage plein ; supprimez des classeurs")
+                raise self.store.storage_full()
             session = {
                 "id": uuid.uuid4().hex,
                 "owner": owner,
@@ -255,7 +255,7 @@ class UploadStore:
                     self.store._storage_bytes() + self.remaining_bytes()
                     > self.store.config.max_storage_mb * 1048576
                 ):
-                    raise APIError(413, "Stockage plein ; supprimez des classeurs")
+                    raise self.store.storage_full("le transfert a été interrompu.")
             path = self._file_path(self._path(session), session, index)
             try:
                 with path.open("r+b" if path.exists() else "w+b") as target:

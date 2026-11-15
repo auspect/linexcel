@@ -38,6 +38,7 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
     "import",
     "build_graph",
+    "build_data",
     "evaluate",
     "capture",
     "document",
@@ -160,6 +161,21 @@ class WebConfig:
             raise ValueError(
                 "mount_path must be empty or /path without a trailing slash"
             )
+
+
+def storage_quota_message(max_storage_mb: int, consequence: str) -> str:
+    """What the storage quota stopped and what the user can change (F22)."""
+    return (
+        f"Quota de stockage du serveur atteint ({max_storage_mb} Mio, classeurs, "
+        f"index et vues compris) : {consequence} Supprimez des classeurs ou "
+        "relancez le serveur avec une valeur --max-storage-mb plus grande."
+    )
+
+
+NO_INDEX_MESSAGE = (
+    "Aucun index publié : le dernier import n’a pas abouti. "
+    "Consultez Opérations pour la raison."
+)
 
 
 class APIError(Exception):
@@ -389,7 +405,15 @@ class TaskStore:
         if pending >= self.config.max_pending_tasks:
             raise APIError(429, "File des opérations pleine ; réessayez plus tard")
         if self._storage_bytes() >= self.config.max_storage_mb * 1048576:
-            raise APIError(413, "Stockage plein ; supprimez des classeurs")
+            raise self.storage_full()
+
+    def storage_full(
+        self, consequence: str = "l’opération n’a pas pu démarrer."
+    ) -> APIError:
+        """413 naming the quota and the remedy, as a stopped operation does."""
+        return APIError(
+            413, storage_quota_message(self.config.max_storage_mb, consequence)
+        )
 
     def _storage_bytes(self) -> int:
         size = 0
@@ -454,7 +478,7 @@ class TaskStore:
                 used + self.uploads.remaining_bytes() + sum(len(d) for _, d in files)
                 > self.config.max_storage_mb * 1048576
             ):
-                raise APIError(413, "Stockage plein ; supprimez des classeurs")
+                raise self.storage_full()
             project_id = uuid.uuid4().hex
             path = self.root / owner / "projects" / project_id
             (path / "references").mkdir(parents=True)
@@ -565,6 +589,28 @@ class TaskStore:
             )["workbookRevision"]
             return result
 
+    def missing_index_error(
+        self, owner: str, project_id: str, fallback: str
+    ) -> APIError:
+        """409 for a project without index: name a stopped import (F22).
+
+        A refresh cannot help an import that stopped, so the message sends
+        the user to the reason in Operations instead of the usual advice.
+        """
+        imports = sorted(
+            (
+                t
+                for t in self.tasks.values()
+                if t["owner"] == owner
+                and t["projectId"] == project_id
+                and t["operation"] == "import"
+            ),
+            key=lambda t: t["createdAt"],
+        )
+        if imports and imports[-1]["status"] in {"failed", "cancelled"}:
+            return APIError(409, NO_INDEX_MESSAGE)
+        return APIError(409, fallback)
+
     def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
         """Read only bounded SQL results in the HTTP coordinator."""
         from linexcel.lazy_store import (
@@ -600,8 +646,10 @@ class TaskStore:
             path = self.project_path(owner, project_id)
             index = path / "index.sqlite"
             if not index.is_file():
-                raise APIError(
-                    409, "Actualisez la structure pour activer l’index sur disque"
+                raise self.missing_index_error(
+                    owner,
+                    project_id,
+                    "Actualisez la structure pour activer l’index sur disque",
                 )
             if kind == "graph-view":
                 from linexcel.graph_store import generation, read_view
@@ -768,6 +816,7 @@ class TaskStore:
         if operation in AI_OPERATIONS | {
             "import",
             "build_graph",
+            "build_data",
             "export_html",
         } and isinstance(budget, dict):
             budget = {"seconds": 600, **budget}
@@ -809,17 +858,26 @@ class TaskStore:
 
             project = project_revision(_read(path / "project.json"), path)
             graph_generation = None
-            if operation in {"import", "build_graph"}:
-                opposite = "build_graph" if operation == "import" else "import"
+            if operation in {"import", "build_graph", "build_data"}:
+                # Derived views read the index; an import replaces it.
+                opposite = (
+                    {"build_graph", "build_data"}
+                    if operation == "import"
+                    else {"import"}
+                )
                 if any(
                     t["owner"] == owner
                     and t["projectId"] == project_id
-                    and t["operation"] == opposite
+                    and t["operation"] in opposite
                     and t["status"] in {"queued", "running"}
                     for t in self.tasks.values()
                 ):
-                    raise APIError(409, "Import ou construction du graphe en cours")
-            if operation == "build_graph":
+                    raise APIError(
+                        409,
+                        "Import, construction du graphe ou préparation des "
+                        "données en cours",
+                    )
+            if operation in {"build_graph", "build_data"}:
                 from linexcel.graph_store import generation
 
                 if not (path / "index.sqlite").is_file():
@@ -1201,6 +1259,21 @@ class TaskStore:
                                 "diagnostics", []
                             ),
                         }
+                    if task["operation"] == "build_data":
+                        from linexcel.graph_store import generation
+                        from linexcel.web_data import publish_source_database
+
+                        project = root.parent.parent
+                        if (
+                            generation(project / "index.sqlite")
+                            != task["graphGeneration"]
+                        ):
+                            raise ValueError(
+                                "Index modifié pendant la préparation des données"
+                            )
+                        publish_source_database(
+                            project, root / "source-data.sqlite", task, payload
+                        )
                     if task["operation"] == "build_graph":
                         from linexcel.graph_store import generation
 
@@ -1245,9 +1318,14 @@ class TaskStore:
                         "hierarchy.sqlite-journal",
                         "hierarchy.sqlite-wal",
                         "hierarchy.sqlite-shm",
+                        "source-data.sqlite",
+                        "source-data.sqlite-journal",
                     ):
                         (root / scratch).unlink(missing_ok=True)
-                    for scratch in root.glob("index.sqlite.*.building*"):
+                    for scratch in [
+                        *root.glob("index.sqlite.*.building*"),
+                        *root.glob("data-*.building*"),
+                    ]:
                         scratch.unlink(missing_ok=True)
                     if (root / "captures").exists():
                         shutil.rmtree(root / "captures")
@@ -1393,6 +1471,13 @@ class TaskStore:
                     f"Budget mémoire de {request['memoryMb']} Mio insuffisant pour "
                     "cette opération. Augmentez le budget puis réessayez ; "
                     "le classeur et les autres résultats restent accessibles."
+                )
+            elif kind == "storage_limit":
+                # Say what stopped the operation and what the user can change;
+                # the raw kind alone read as an unexplained failure (F22).
+                message = storage_quota_message(
+                    self.config.max_storage_mb,
+                    "l’opération a été arrêtée et son résultat n’a pas été conservé.",
                 )
             return {
                 "error": {
@@ -2019,7 +2104,8 @@ class WebApp:
         if len(parts) >= 3 and parts[:2] == ["api", "projects"]:
             project_id = parts[2]
             if parts[3:] == ["data"] and method == "GET":
-                return self.data_browser.metadata(owner, project_id)
+                retry = (query or {}).get("retry", ["0"]) == ["1"]
+                return self.data_browser.metadata(owner, project_id, retry)
             if parts[3:] == ["data", "presentation"] and method == "GET":
                 params = query or {}
                 options = {}

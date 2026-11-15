@@ -39,6 +39,13 @@ from linexcel.values import (
 
 _INPUT_ERROR_KINDS = {value: kind for kind, value in ERROR_KIND_TEXT.items()}
 
+#: Rows per ``set_values_batch`` call when range inputs are loaded. In
+#: formualizer 0.14.0 the cost of one call grows faster than its row count
+#: (3.4 µs a cell for 10,000 rows, 53 µs for 250,000); chunks of 1,000 to
+#: 10,000 rows load 500,000 ledger cells in under 2 s instead of 25 s in one
+#: call or 42 s cell by cell (docs/critical_review.md, F19).
+INPUT_CHUNK_ROWS = 10_000
+
 _VOLATILE = {"RAND", "RANDBETWEEN", "RANDARRAY", "NOW", "TODAY"}
 _PATTERN_CELL = r"\$?[A-Za-z]{1,3}\$?[1-9][0-9]*"
 _PATTERN_REFERENCE = re.compile(
@@ -56,6 +63,54 @@ _DYNAMIC = {
     "WEBSERVICE",
     "STOCKHISTORY",
 }
+
+
+def _input_engine_value(node: dict) -> Any:
+    """The engine value of a literal input: its saved value, serials for dates."""
+    value = node.get("cached_comparison_value", node.get("value"))
+    if node.get("sourceDataType") == "e":
+        value = {"type": "Error", "kind": _INPUT_ERROR_KINDS[value]}
+    return value
+
+
+def _load_inputs(engine, inputs, sheet_alias: dict, chunk_rows: int = INPUT_CHUNK_ROWS):
+    """Write selected literal inputs into the engine, in vertical runs.
+
+    ``inputs`` are ordered by sheet, row and column. Consecutive rows of one
+    column form a run, written with one ``set_values_batch`` call per chunk of
+    at most ``chunk_rows`` rows. A blank input is never written, so it ends a
+    run, and so does any position that is not a selected input: a batch never
+    covers a formula cell or a cell outside the closure.
+    """
+    runs: dict[int, tuple[int, list]] = {}
+    current = None
+
+    def flush(column: int) -> None:
+        start, values = runs.pop(column)
+        if len(values) == 1:
+            engine.set_value(current, start, column, values[0])
+        else:
+            engine.set_values_batch(current, start, column, [[v] for v in values])
+
+    for node in inputs:
+        value = _input_engine_value(node)
+        if value is None:
+            continue
+        sheet = sheet_alias.get(node["sheet"], node["sheet"])
+        if sheet != current:
+            for column in list(runs):
+                flush(column)
+            current = sheet
+        row, column = node["row"], node["column"]
+        run = runs.get(column)
+        if run is not None and run[0] + len(run[1]) == row and len(run[1]) < chunk_rows:
+            run[1].append(value)
+            continue
+        if run is not None:
+            flush(column)
+        runs[column] = (row, [value])
+    for column in list(runs):
+        flush(column)
 
 
 def _json(value: Any) -> Any:
@@ -931,13 +986,7 @@ def _evaluate_index(
                 column,
                 rewrite_formula(evaluation_formula, sheet),
             )
-    for node in nodes.selected_inputs():
-        sheet = external_sheets.get(node["sheet"], node["sheet"])
-        value = node.get("cached_comparison_value", node.get("value"))
-        if node.get("sourceDataType") == "e":
-            value = {"type": "Error", "kind": _INPUT_ERROR_KINDS[value]}
-        if value is not None:
-            engine.set_value(sheet, node["row"], node["column"], value)
+    _load_inputs(engine, nodes.selected_inputs(), external_sheets)
     array_anchors = [
         nodes[nid] for nid in reversed(topological) if nodes[nid].get("arrayBounds")
     ]

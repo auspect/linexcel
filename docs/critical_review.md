@@ -194,6 +194,115 @@ Other observations made during this batch (verified unless noted):
   adds no interface text: the new diagnostics are English technical messages,
   shown verbatim in "Détails techniques" like the existing ones.
 
+## 9. Batch 2 additions (reading, resilience, data node)
+
+Date: 2026-11-14, Windows 11 workstation with the `linexcel-lab` public corpus
+(DGT 103 MB, ONS 50 MB, TAG, ATB, generated `fpna-*`). Measurements, method
+and proposals: [`reading_resilience_data_node.md`](reading_resilience_data_node.md).
+No product code was changed.
+
+**F06–F08 on the real corpus** (verified). F06: DGT imports in 1310 s into a
+10,969 MB index (605 bytes per stored cell, 107× the file), ONS in 733 s into
+6,717 MB, fpna-20mb in 265 s into 2,022 MB; formula models cost 380–650 µs per
+cell (ATB 134 s, TAG 72 s). F07: selecting `Forecast!D2` (a `SUMIFS` over
+998,703 ledger cells) calculates for 156.9 s. F08: the Excel presentation
+refuses DGT, ONS `MYEB2`, the fpna ledger (> 64 MiB), ONS `MYEB1`
+(> 1,000,000 elements) and every TAG sheet (F25).
+
+| ID | Subsystem | Finding | Evidence | Severity | Recommendation |
+| --- | --- | --- | --- | --- | --- |
+| F17 | Import resilience | A shared-string part that the workbook relationships declare but the package lacks is skipped silently: index `complete`, no workbook diagnostic, while every text cell is unreadable (560 of 2,733 inputs of the real ONS tables), visible only cell by cell. A truncated part does raise a workbook diagnostic. | `make_damaged.py` case `ons_missing_shared_strings` through `serve_path.py`; `WorkbookIndex.meta` `status` = `complete`, `diagnostics` = []. | medium | **correct**: a declared part that is absent is a workbook diagnostic and makes the index partial. |
+| F18 | Data tab (`web_data`) | The first opening of the Data tab copies every indexed cell into a second SQLite database (`build_source_database`) inside the HTTP request, holding `TaskStore.lock`. Every other request waits. | ATB (5 MB): 50 s and 64 s; an unrelated `GET /api/projects` waited 64 s (`probe_data_lock.py`). Project storage 925 MB for a 5 MB workbook. fpna-20mb with serve defaults: 100.8 s, then 413 "Stockage insuffisant pour la vue des données". | **high** | **rewrite**: serve the tab from the data-node store (no copy), or at least build in a worker task outside the lock. |
+| F19 | Targeted calculation, formualizer | `set_values_batch` in formualizer 0.14.0 is superlinear in the rows of one call: 3.4 µs/cell for 10,000 rows, 53 µs/cell for 250,000. Chunks of 1,000–10,000 rows load 500,000 real ledger cells in 1.5–1.9 s against 24.7 s in one call and 41.6 s cell by cell, with the same `SUMIFS`. | `probe_fz_scaling.py`, `probe_fz_chunks.py` on `fpna-20mb`. | medium | **correct** F07 with chunked batches (the batch 1 recommendation "batch loading" is only true per chunk); consider reporting upstream (Philippe). |
+| F20 | Readers | formualizer's own reader is not a usable reader for this corpus: it refuses DGT and ONS ("XML part byte limit") and fpna ("ZIP64 member"), and a single damaged sheet or a damaged shared-string or styles part makes the whole load fail. | `reader_bench.py formualizer`, `readers-damaged/summary.txt`. | low | **keep** linexcel's streaming reader for import. |
+| F21 | Import resilience | Resource stops are global. `build_index` publishes one file at the end; a time or storage stop discards every sheet already read. With serve defaults, ONS stops after 230 s on `storage_limit` and none of its 9 sheets is available; the nodes list answers 409 "Actualisez la structure pour activer l'index sur disque". | `serve_path.py` `serve_defaults_ons` and `serve_defaults_dgt` (UI budgets, server defaults): ONS stops at 230 s, DGT at 219 s, both `storage_limit`, nothing published. fpna-20mb imports, then the default Graph view's `build_graph` stops on the same quota after 14 s ("Construisez le graphe du classeur"). | **high** | **correct**: publish per sheet (or per part) within the budget, mark the rest `not_imported` with its reason; and **rewrite** storage (data node) so that honest tables fit. |
+| F22 | Messages | A task stopped by the storage quota shows the raw kind `storage_limit` with the generic advice "Consultez la formule et ses sources…" (`diagnosticAdvice` in `app.html`); a sheet whose part is missing is listed but its presentation answers 404 "Feuille introuvable"; the 409 above suggests a refresh that cannot help. | `serve-runs/*.json`, `app.html`. | low | **correct** the messages when the related behaviour is reworked. |
+| F23 | Import cost of formula models | Real formula models import at 380–650 µs per stored cell, 5–9× a data table; the data node does not help them (no region on TAG or ATB). | Quiet: ATB 134 s, TAG 72 s; prototype finds no region. cProfile of `build_index` on ATB (245 s under the profiler): `_index_dependencies` 72 %; openpyxl's tokenizer runs 583,238 times for 233,410 formulas (`formula_tokens` twice per formula, then `_pattern_signature` 64 s, plus shared-formula translation); each formula node is packed twice (591,118 JSON+zlib writes, 767,109 reads); 3.8 M SQL statements (`profile_index.py`). | medium | **correct**: tokenize once per formula (or per shared-formula pattern), keep nodes in memory between reading and dependency indexing instead of writing, reading and rewriting them. |
+| F24 | Index reads on Windows | Each SQLite statement outside a transaction takes and releases the file lock: 260–300 µs per primary-key lookup on Windows, against 8–9 µs inside a read transaction, with `locking_mode=EXCLUSIVE` or an `immutable=1` URI. `WorkbookIndex` opens read connections in autocommit, so every `nodes[id]` on serve's read paths pays it. | 100,000 lookups on a 500,000-row table, 5 configurations. On serve's functions (`probe_win_lock.py`, identical values): depth-2 neighbourhood 0.57–0.98 s → 0.10–0.16 s with one read transaction; an 11,532-node calculation 2.89 → 2.02 s. | medium (Windows) | **correct**: hold one read transaction per `WorkbookIndex` read connection. |
+| F25 | Excel presentation | The 4 MiB metadata cap applies to `styles.xml`, read whole into memory. TAG (a public DfT model) has a 7.0 MB styles part, so the presentation of **every** one of its 122 sheets is refused. | `probe_views.py presentation` on `Cover`, `A1.3.1`, `MECs`. | medium | **correct**: stream the styles part with the existing style-count cap (`MAX_STYLES`) instead of a byte cap. |
+| F26 | Targeted calculation | `WorkbookIndex.selected_inputs` joins the temporary selection to `nodes` with `ORDER BY n.sheet,n.row,n.col`; SQLite answers by scanning the whole `nodes_position` index and probing the selection for each row. On fpna-20mb (2.7 M nodes) one call takes 1.6 s for 75 selected inputs, and `_evaluate_index` makes two calls, so every calculation, including the automatic one on selection, pays about 3.5 s whatever its size; the cost grows with the index, not with the formula. | `EXPLAIN QUERY PLAN`: `SCAN n USING INDEX nodes_position`; with `selected_inputs s CROSS JOIN nodes n` (the selection drives, temporary B-tree for the order): 0.0 s, same 75 rows. cProfile of `evaluate_node('Forecast!E2')`: 3.53 of 3.54 s in `selected_inputs`. | medium | **correct**: let the selection drive the join (`CROSS JOIN`) and sort the selected rows. |
+
+Batch 1 findings revisited: F06 is confirmed and larger on real data than on
+the generated stand-in; F07's proposed fix needs chunking (F19); F08's refusal
+extends to the styles cap (F25); F16 holds (peak memory 41–99 MB on every
+import).
+
+## 10. Batch 2 bis status (local corrections)
+
+Date: 2026-11-14, same Windows workstation and corpus as section 9. Each
+finding was replayed, covered by a behavioural test on the serve path
+(`tests/test_serve_reading_fixes.py`, `tests/test_app_datasette.py`) that
+failed on the code before the fix, then corrected in its own commit. Every
+figure below was measured on the real corpus with the code of the commit
+before and after (detached checkouts, one fresh process per measurement).
+The index schema and the data node are unchanged.
+
+| ID | Status | Commit | Before | After | Remaining limits |
+| --- | --- | --- | --- | --- | --- |
+| F07, F19 | **fixed** | `cc37c72` | fpna `Forecast!D2` 164.4 s, `Summary!B2` 39.5 s | 57.9 s and 18.6 s, same values and comparisons | Range inputs are written in vertical runs of at most 10,000 rows; a blank or non-selected cell ends a run, so a batch never covers a formula. Most of what remains is decoding each input's per-cell record, twice (diagnostics pass and loading): a storage cost, left for the data node. |
+| F26 | **fixed** | `f23c128` | reading 75 selected inputs 1.9–2.2 s per call; `Forecast!E2` 3.67 s | 0.001 s; 0.04 s | The selection is a per-connection temporary table keyed by position. A selection-driven join with a sort was measured too: faster for 75 inputs, 2.4× slower for a million (9.4 s against 4.0 s), so not retained; the position-keyed table reads a million in 3.3 s. The isolated prototype's `bench.py evaluate` wrote bare ids into this table and no longer runs unchanged. |
+| F24 | **fixed** | `b5766e2` | depth-2 neighbourhood 0.19–0.97 s (ATB, TAG, fpna) | 0.02–0.16 s | One read transaction per read-only `WorkbookIndex`: a writer cannot change an index under a reader (published indexes are never written). Neighbourhood queries still run under the coordinator lock. |
+| F17 | **fixed** | `aac5e74` | ONS tables without `sharedStrings.xml`: index `complete`, no workbook diagnostic | `partial`, diagnostic "Shared-string part declared by the workbook is missing: 560 text cell(s) are unreadable" | Same for a declared but missing styles part. A shared-string reference out of range in a present table stays a cell diagnostic only. |
+| F22 | **fixed** | `a37137d` | ONS with serve defaults: task error `storage_limit`, nodes 409 "Actualisez la structure…"; missing sheet part: presentation 404 "Feuille introuvable" | quota size and remedy stated; "Aucun index publié : le dernier import n'a pas abouti"; 409 naming the missing part; a partly read sheet says so; import diagnostics get advice about the file | The timeout message stays the raw kind with the existing advice. Damaged styles still answer 400 for every sheet (F09 decision). |
+| F25 | **fixed** | `319b58e` | TAG: `Cover`, `A1.3.1`, `MECs` refused ("Métadonnées de présentation trop volumineuses") | presented in 0.39 s, 0.39 s and 2.5 s | `styles.xml` is streamed, keeping fonts, fills, borders, cell formats and number formats, each capped at 8,192; named styles are discarded. Byte ceiling 64 MiB; `DOCTYPE`/`ENTITY` still refused. |
+| F18 | **fixed** | `65c37d3` | first Data tab opening on ATB: 75.3 s inside the request; an unrelated request waited 75.2 s | `/data` answers in 0.02 s with a `building` state; the view is available after 36.6 s; meanwhile 137 unrelated requests took at most 0.012 s | The copy is a worker task (`build_data`) under the usual limits, shown in Operations, refused during an import. The copy itself is as large and as slow as before (fpna 161 s, 1.9 GB; ONS 745 s, 6.3 GB): only the data node removes it. |
+
+With every correction together (`65c37d3`), on the same corpus: `Forecast!D2`
+57.1 s, `Summary!B2` 16.4 s, `Forecast!E2` 0.04 s, 75 selected inputs read in
+0.001 s, depth-2 neighbourhood 0.02–0.15 s, the three TAG sheets presented in
+0.41–2.75 s. Values and cache comparisons are unchanged on every measured
+cell. Measured again on the final code of the batch, after the review
+corrections below (which change no calculation or index code): `Forecast!D2`
+66.5 s then 55.9 s in a second run (run-to-run variance), `Summary!B2` 15.2 s
+and 14.9 s, `Forecast!E2` 0.04 s, selected inputs 0.001 s, neighbourhood
+0.02–0.19 s, TAG sheets 0.39–2.51 s; on ATB the Data tab answers in 0.021 s,
+the view is available after 36.9 s, and 137 unrelated requests take at most
+0.012 s meanwhile.
+
+An independent visual review of the serve captures (desktop 1440×900, mobile
+390×844, French and English) then found interface defects in these
+corrections. Each one was fixed in its own commit, with a test that failed on
+the commit before:
+
+| Review | Finding | Commit | Correction |
+| --- | --- | --- | --- |
+| D2 | F22 | `37b3cba`, `4a4b99a` | After a stopped import, only the node endpoints said that no index was published, and the interface never called them: Diagnostics said "Import complete" and the Data tab showed an untranslated French message with a retry advice. Nodes, Graph, Diagnostics and Data now say that no index was published. |
+| D3 | F22 | `54d26c9` | With storage already full, asking for the Data view answered 413 with the French-only "Stockage plein". The tab now gets a failed state with the quota message for a preparation that could not start. |
+| D1, D10 | F18 | `fede42c` | A cancelled preparation was shown as a failure with the raw word `cancelled`. It is now a cancelled state; the failure sentence ends with a full stop before the reason. |
+| D4 | F17 | `e880fde` | Unreadable text cells looked empty in the Excel presentation, and the file advice claimed that the affected sheets were flagged. They show ∅ with "value unreadable in the file"; the advice says that the dependent values stay unknown. Sheet statuses are unchanged: marking a sheet partial would change lineage boundaries, outside this batch. |
+| D6 | F22 | `22f0f1c` | A missing sheet part was introduced by "Retry with Show area"; a 409 reason is now shown alone. |
+| D9 | — | `5609851` | Operations printed the raw phase `build_graph`; phases fall back to the operation labels. |
+
+A second independent review of the corrected states confirmed these seven
+corrections at French and English, 1440 and 390 px (D9 on three of the four
+combinations, where a running graph construction was listed), and found four more
+points in the same messages, also corrected with a failing test first:
+
+| Review | Finding | Commit | Correction |
+| --- | --- | --- | --- |
+| N2 | F22 | `a19dda1` | An operation or upload refused because storage was already full still said "Stockage plein" without the quota or the remedy; the Graph tab showed it on each visit. Every such refusal now uses the quota message. On a phone the Graph tab shows it in the strip of N3 below, cut off and over the node title: unreadable there until N3 is fixed. |
+| N4 | F22 | `7ed9fcf` | Since D6, three presentation refusals appeared alone and untranslated, and the transient "sources changed while reading" lost its retry advice. They are translated and that one carries the advice. |
+| N1 | F22 | `5cc0750` | On phones the presentation status sat in the collapsed data options, so a missing sheet part showed an empty grid. The status now stays above the grid. |
+| N8 | F22 | `38ee60b` | The Data tab gave the no-index message in the error style; it is now a notice, as on the other tabs. |
+
+Not changed, reported:
+- the `--max-storage-mb` flag can wrap at its hyphen (D5);
+- on mobile, Refresh data sits in the collapsed "Data options" that the
+  failed and cancelled messages name (D7), and when no data view exists those
+  options still offer "Open Datasette" and the row controls (N5, existing);
+- a sheet-part diagnostic appears both under its sheet and in the workbook
+  list (D8, existing layout);
+- at 390 px the Graph tab's build status line sits partly off-screen over the
+  node card (N3, existing CSS in `frontend/src/shell.css`: the portrait rule
+  moves the status panel to the left edge while the status keeps a −140 px
+  offset). The longer quota message of N2 now fills three lines there and
+  hides the node title; fixing it means rebuilding the graph bundle;
+- with storage full, the Data tab sentence names the preparation twice and
+  still says that Refresh data starts it again (N6);
+- with the shared-strings part missing, each sheet still says "Import
+  complete" (N7, see D4);
+- English labels keep the French space before a colon (N9, existing).
+
 ## Appendix: probes
 
 All probes run from `validation_screenshots/lot1/probes/` with

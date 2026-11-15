@@ -72,8 +72,9 @@ class ProjectExport:
                 self.tasks = [store.public(t, include_result=False) for t in tasks]
                 index_path = self.path / "index.sqlite"
                 if index_path.is_file():
+                    # A read-only index holds one read transaction for its
+                    # lifetime, so the whole export reads one snapshot.
                     self.index = WorkbookIndex(index_path)
-                    self.index.db.execute("BEGIN")
                     self.meta = self.index.meta
                     self.count = len(self.index)
                 self._iterator = _buffer(self._generate())

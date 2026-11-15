@@ -34,6 +34,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine evaluates these as arrays, and the result was shown as a difference
   from the saved value. A result equal to the saved value is still shown. The
   Excel semantics themselves are not implemented yet.
+- Calculate formulas over large tables faster in `linexcel serve`. The values
+  of a range now reach the calculation engine in blocks of rows instead of
+  one cell at a time. On a 20 MB workbook, a `SUMIFS` over four ledger
+  columns of 250,000 rows took 164 s and now takes 57 s, with the same value.
+- Remove a fixed delay from every calculation of a large workbook. Reading
+  the inputs of a calculation went through the whole workbook index: on a
+  workbook of 2.7 million cells, a small calculation took 3.7 s and now takes
+  0.04 s. Selecting a cell calculates it, so this delay was paid on every
+  click.
+- Show a cell's neighbourhood in the graph faster on Windows: 0.6–1 s before,
+  0.02–0.16 s now on the public TAG and ATB models. Each read of the workbook
+  index used to lock and unlock the file.
+- Mark the import partial when the workbook declares a shared-string or
+  styles part that the file does not contain. It used to be reported as
+  complete, although every text cell, or every styled value, was unreadable.
+  The Diagnostics tab names the missing part; the cells stay unknown, never
+  empty, and the Excel presentation shows them as unknown (∅) instead of
+  blank cells.
+- Say what happened when the server's storage quota stops or refuses an
+  operation: the quota size and how to free space, instead of the bare
+  `storage_limit` or "Stockage plein ; supprimez des classeurs". After such a
+  failed import, the Nodes, Graph, Diagnostics and Data tabs say that no index
+  was published instead of suggesting a refresh, and Diagnostics no longer
+  says "Import complete".
+- Say why the Excel presentation of a sheet cannot be shown when its part is
+  missing from the file or the import read it only partly, instead of
+  "Feuille introuvable" and without advising a retry that cannot help; on a
+  phone the reason is no longer hidden in the collapsed data options. Import
+  diagnostics in the Diagnostics tab get advice about the file instead of the
+  advice about formulas.
+- Name the phase of a running operation in words in Operations, for example
+  "Graph construction" instead of `build_graph`.
+- Show the Excel presentation of workbooks whose styles part is very large.
+  Every sheet of the public DfT TAG data book was refused because its 7 MB
+  of named styles exceeded a 4 MiB cap; the styles are now read as a stream,
+  still bounded by the number of styles kept.
+
+### Changed
+
+- Prepare the Data tab's browsing copy in the background. The first opening
+  of the tab copied the whole workbook inside the request and blocked every
+  other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB
+  table takes 12 minutes. The tab now says that the view is being prepared, the
+  operation appears in Operations, and the view opens by itself when it is
+  ready. If the preparation fails, for example on the storage quota, the tab
+  says why and Refresh data starts it again; when storage is already full, the
+  tab says that the preparation could not start. Cancelling the preparation
+  in Operations is shown as a cancel, not as a failure.
+
+### Documentation
+
+- Measure import, calculation and the Data tab of `linexcel serve` on large
+  public workbooks, and what happens with damaged ones, in
+  `docs/reading_resilience_data_node.md`. A 103 MB data table takes 22 minutes
+  to import and an 11 GB index; the first opening of the Data tab blocks every
+  other request while it copies the workbook. The note inventories every
+  reading cap, separates protections against hostile files from convenience
+  limits, and proposes replacements. No limit or behaviour changes in this
+  release.
+- Add an isolated data node prototype under `prototypes/data_node/`, outside
+  the package: one node per formula-free table, with its headers, column
+  types, number formats and fingerprint, stored 60 to 260 times smaller than
+  today's per-cell index, and formulas pointing to the sub-range they read.
 
 ## [1.19.2] — 2026-11-13
 

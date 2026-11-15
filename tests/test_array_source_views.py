@@ -240,15 +240,27 @@ def test_array_data_routes_exports_and_cached_snapshot_upgrade(
     # Simulate the previous cached source-data generation, then switch to the
     # current reader version. Existing projects must rebuild without reimport.
     version = data.DATA_VERSION
+
+    def prepared():
+        # The copy is built by a background task (batch 2 bis, F18).
+        import time
+
+        for _ in range(600):
+            code, raw, _ = request(app, "GET", prefix + "/data")
+            assert code == 200
+            if json.loads(raw).get("state") != "building":
+                return json.loads(raw)
+            time.sleep(0.05)
+        raise AssertionError("the data view was not prepared")
+
     with monkeypatch.context() as patch:
         patch.setattr(data, "DATA_VERSION", version - 1)
-        assert request(app, "GET", prefix + "/data")[0] == 200
+        assert prepared()["available"]
     stamp = json.loads((path / "source-data.json").read_text())
-    with closing(sqlite3.connect(path / "source-data.sqlite")) as db, db:
+    with closing(sqlite3.connect(path / stamp["file"])) as db, db:
         db.execute("DELETE FROM cells WHERE cell='H3'")
         db.execute("UPDATE sheet_001 SET H=NULL WHERE row=3")
-    code, raw, _ = request(app, "GET", prefix + "/data")
-    assert code == 200
+    assert prepared()["available"]
     assert (
         json.loads((path / "source-data.json").read_text())["signature"]
         != stamp["signature"]
@@ -295,7 +307,9 @@ def test_array_data_routes_exports_and_cached_snapshot_upgrade(
         if value is not None:
             assert nodes[address]["value"] == value
             assert nodes[address]["sourceValueProvenance"]["role"] == "formula_cache"
-    assert not app.store.tasks  # No import, evaluation or AI tasks were started.
+    # No import, evaluation or AI task was started; only the Data tab's
+    # background copy (batch 2 bis, F18).
+    assert {task["operation"] for task in app.store.tasks.values()} == {"build_data"}
 
 
 def test_catalog_numeric_lookup_and_ask_keep_array_values(array_project, tmp_path):
