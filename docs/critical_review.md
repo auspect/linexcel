@@ -253,6 +253,25 @@ With every correction together (`65c37d3`), on the same corpus: `Forecast!D2`
 0.41–2.75 s. Values and cache comparisons are unchanged on every measured
 cell.
 
+An independent visual review of the serve captures (desktop 1440×900, mobile
+390×844, French and English) then found interface defects in these
+corrections. Each one was fixed in its own commit, with a test that failed on
+the commit before:
+
+| Review | Finding | Commit | Correction |
+| --- | --- | --- | --- |
+| D2 | F22 | `37b3cba`, `4a4b99a` | After a stopped import, only the node endpoints said that no index was published, and the interface never called them: Diagnostics said "Import complete" and the Data tab showed an untranslated French message with a retry advice. Nodes, Graph, Diagnostics and Data now say that no index was published. |
+| D3 | F22 | `54d26c9` | With storage already full, asking for the Data view answered 413 with the French-only "Stockage plein". The tab now gets a failed state with the quota message for a preparation that could not start. |
+| D1, D10 | F18 | `fede42c` | A cancelled preparation was shown as a failure with the raw word `cancelled`. It is now a cancelled state; the failure sentence ends with a full stop before the reason. |
+| D4 | F17 | `e880fde` | Unreadable text cells looked empty in the Excel presentation, and the file advice claimed that the affected sheets were flagged. They show ∅ with "value unreadable in the file"; the advice says that the dependent values stay unknown. Sheet statuses are unchanged: marking a sheet partial would change lineage boundaries, outside this batch. |
+| D6 | F22 | `22f0f1c` | A missing sheet part was introduced by "Retry with Show area"; a 409 reason is now shown alone. |
+| D9 | — | `5609851` | Operations printed the raw phase `build_graph`; phases fall back to the operation labels. |
+
+Not changed, reported: the `--max-storage-mb` flag can wrap at its hyphen
+(D5); on mobile, Refresh data sits in the collapsed "Data options" that the
+failed and cancelled messages name (D7); a sheet-part diagnostic appears both
+under its sheet and in the workbook list (D8, existing layout).
+
 ## Appendix: probes
 
 All probes run from `validation_screenshots/lot1/probes/` with
