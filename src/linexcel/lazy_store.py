@@ -532,6 +532,52 @@ class WorkbookIndex(Mapping):
             (sheet, r1, r2, c1, c2),
         ).fetchone()[0]
 
+    def sheet_cells_after(self, sheet, after, limit):
+        """``(position, id, row, col, decode)`` of one sheet's cells.
+
+        In import order, from just after the opaque ``position`` a previous
+        record gave (0 to start), at most ``limit`` records. ``decode()``
+        returns the stored node.
+        """
+        for seq, node_id, row, col, data in self.db.execute(
+            "SELECT seq,id,row,col,data FROM nodes NOT INDEXED "
+            f"WHERE sheet IS ? AND seq>? AND {_CELL_KINDS} ORDER BY seq LIMIT ?",
+            (sheet, after, limit),
+        ):
+            yield seq, node_id, row, col, partial(_unpack, data)
+
+    def row_nodes(self, sheet, row, columns):
+        """``{column: node}`` for the nodes stored in some columns of a row."""
+        return {
+            col: _unpack(data)
+            for col, data in self.db.execute(
+                "SELECT col,data FROM nodes WHERE sheet IS ? AND row=? "
+                "AND col IN (" + ",".join("?" for _ in columns) + ")",
+                (sheet, row, *columns),
+            )
+        }
+
+    def numeric_value_ids(self, ranges, limit):
+        """Ids of cells whose saved value is a number in one of ``ranges``.
+
+        ``ranges`` are ``(low, high)`` pairs. Only values spelled with digits
+        and number punctuation count: a text such as "12 rue" casts to 12 and
+        must not be read as a number. Import order, at most ``limit`` ids.
+        """
+        clause = " OR ".join(
+            "CAST(search_value AS REAL) BETWEEN ? AND ?" for _ in ranges
+        )
+        return [
+            row[0]
+            for row in self.db.execute(
+                f"SELECT id FROM nodes WHERE {_CELL_KINDS} "
+                "AND search_value GLOB '*[0-9]*' "
+                "AND search_value NOT GLOB '*[^0-9.eE+-]*' "
+                f"AND ({clause}) ORDER BY seq LIMIT ?",
+                (*[bound for pair in ranges for bound in pair], limit),
+            ).fetchall()
+        ]
+
     def node_inventory(self):
         """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
         return self.db.execute(

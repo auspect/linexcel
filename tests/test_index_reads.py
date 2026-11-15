@@ -323,11 +323,55 @@ def test_lineage_stops_at_an_array_wider_than_its_node_budget(catalog):
     assert wide["boundaries"] == []
 
 
+def _occurrence_pages(built, source, query, sheet):
+    """Every occurrence of the first hit for ``query``, one page at a time."""
+    hit = next(
+        r for r in built.search([source], query)["results"] if r["sheet"] == sheet
+    )
+    group, after, pages = hit["occurrenceGroup"], 0, []
+    while after is not None:
+        page = built.occurrences(
+            [source],
+            generation=group["generation"],
+            group=group["id"],
+            after=after,
+            limit=1,
+        )
+        pages.append([r["address"] for r in page["results"]])
+        after = page["pagination"]["nextAfter"]
+    return pages
+
+
+def test_occurrences_page_through_a_repeated_text(catalog):
+    built, source = catalog
+    # "North" is typed in Data!A2 and Data!A6: one group, read page by page.
+    pages = _occurrence_pages(built, source, "north", "Data")
+    assert [address for page in pages for address in page] == ["A2", "A6"]
+
+
+def test_occurrences_of_a_labelled_number_use_its_row_label(catalog):
+    built, source = catalog
+    # Labels!B2 and Labels!B4 are numbers under "Q1" on rows labelled
+    # "North"; their text is the label, read from the row's label column.
+    pages = _occurrence_pages(built, source, "q1 north", "Labels")
+    assert [address for page in pages for address in page] == ["B2", "B4"]
+
+
+def test_search_finds_saved_numbers_without_a_label(catalog):
+    built, source = catalog
+    # Big!A1:A300 has no label: only the scan of saved numbers finds them.
+    found = built.search([source], "300")["results"]
+    assert [(r["sheet"], r["address"]) for r in found] == [("Big", "A300")]
+    found = built.search([source], "40")["results"]
+    assert [(r["sheet"], r["address"]) for r in found] == [
+        ("Data", "B5"),
+        ("Big", "A40"),
+    ]
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
-    "catalog_occurrences.py": 2,
-    "catalog_query.py": 1,
     "excel_presentation.py": 1,
     "graph_store.py": 3,
     "header_bands.py": 1,
