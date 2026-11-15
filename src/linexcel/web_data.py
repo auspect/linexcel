@@ -30,7 +30,7 @@ from datasette.database import Database
 from openpyxl.utils.cell import get_column_letter
 
 from linexcel.graph_store import generation
-from linexcel.lazy_store import WorkbookIndex, _unpack
+from linexcel.lazy_store import WorkbookIndex
 
 DATA_VERSION = 5
 MAX_GRID_COLUMNS = 512
@@ -146,12 +146,7 @@ def build_source_database(index: Path, destination: Path, *, max_bytes: int) -> 
             sheets = []
             for sequence, sheet in enumerate(metadata.get("sheets", []), 1):
                 count, rows, maximum, previous_row = 0, 0, 0, None
-                for (packed,) in source.db.execute(
-                    "SELECT data FROM nodes WHERE sheet=? "
-                    "AND kind IN ('cell','input','array_result') ORDER BY row,col",
-                    (sheet,),
-                ):
-                    node = _unpack(packed)
+                for node in source.sheet_cells(sheet):
                     if not _worksheet_source_cell(node, metadata.get("sha256"), sheet):
                         continue
                     count += 1
@@ -198,12 +193,7 @@ def build_source_database(index: Path, destination: Path, *, max_bytes: int) -> 
                         (current_row, *(row_values[c] for c in present)),
                     )
 
-                for (packed,) in source.db.execute(
-                    "SELECT data FROM nodes WHERE sheet=? "
-                    "AND kind IN ('cell','input','array_result') ORDER BY row,col",
-                    (sheet,),
-                ):
-                    node = _unpack(packed)
+                for node in source.sheet_cells(sheet):
                     if not _worksheet_source_cell(node, metadata.get("sha256"), sheet):
                         continue
                     node = source.resolve_array_ownership(node)

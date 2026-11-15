@@ -435,6 +435,65 @@ def test_calculation_step_of_a_wide_range_counts_the_members_it_omits(project):
     assert step["dependenciesOmitted"] == 100
 
 
+@pytest.fixture
+def source_data(project, tmp_path):
+    import sqlite3
+
+    from linexcel.web_data import build_source_database
+
+    _, _, _, path = project
+    output = tmp_path / "source-data.sqlite"
+    summary = build_source_database(path / "index.sqlite", output, max_bytes=2**40)
+    db = sqlite3.connect(output)
+    try:
+        yield summary, db
+    finally:
+        db.close()
+
+
+def test_data_copy_sizes_each_sheet_grid_from_its_cells(source_data):
+    summary, _ = source_data
+    assert [
+        (s["sheet"], s["table"], s["rowCount"], s["cellCount"], s["columns"])
+        for s in summary["sheets"]
+    ] == [
+        ("Data", "sheet_001", 6, 24, ["A", "B", "C", "D"]),
+        ("Calc", "sheet_002", 6, 12, ["A", "B"]),
+        ("Big", "sheet_003", 300, 300, ["A"]),
+        ("Labels", "sheet_004", 4, 12, ["A", "B", "C"]),
+        # The array formula and its three inputs; its members have no cache.
+        ("Arr", "sheet_005", 3, 4, ["A", "B"]),
+    ]
+
+
+def test_data_copy_writes_each_cell_with_its_provenance(source_data):
+    _, db = source_data
+    assert db.execute("SELECT * FROM sheet_001 ORDER BY row").fetchall() == [
+        (1, "Region", "Amount", "Flag", "Double"),
+        (2, "North", 10, 1, None),
+        (3, "South", 20, 0, None),
+        (4, "East", 30, 1, None),
+        (5, "West", 40, "#N/A", None),
+        (6, "North", 50, 1, None),
+    ]
+    assert db.execute(
+        "SELECT cell,value,value_kind,source_type,value_status FROM cells "
+        "WHERE sheet='Data' AND row=5 ORDER BY column"
+    ).fetchall() == [
+        ("A5", "West", "string", "inlineStr", "present"),
+        ("B5", 40, "integer", "n", "present"),
+        ("C5", "#N/A", "string", "e", "present"),
+        ("D5", None, "null", "f", "missing"),
+    ]
+    assert dict(db.execute("SELECT sheet,count(*) FROM cells GROUP BY sheet")) == {
+        "Data": 24,
+        "Calc": 12,
+        "Big": 300,
+        "Labels": 12,
+        "Arr": 4,
+    }
+
+
 def test_report_counts_the_cells_each_selected_range_holds(project):
     from linexcel.web_report import prepare_report
 
@@ -466,7 +525,6 @@ def test_report_counts_the_cells_each_selected_range_holds(project):
 REMAINING_DIRECT_READS = {
     "graph_store.py": 3,
     "link_facts.py": 2,
-    "web_data.py": 2,
     "web_export.py": 1,
 }
 

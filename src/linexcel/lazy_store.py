@@ -578,6 +578,17 @@ class WorkbookIndex(Mapping):
             ).fetchall()
         ]
 
+    def sheet_cells(self, sheet):
+        """The stored nodes of one sheet's cells, row by row, as stored.
+
+        Unlike ``self[id]`` the nodes are not resolved for array ownership.
+        """
+        for (data,) in self.db.execute(
+            f"SELECT data FROM nodes WHERE sheet=? AND {_CELL_KINDS} ORDER BY row,col",
+            (sheet,),
+        ):
+            yield _unpack(data)
+
     def cell_records(self, sheet, *, exclude=(), limit):
         """``(row, col, decode)`` of one sheet's cells, row by row.
 
