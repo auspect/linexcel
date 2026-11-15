@@ -140,6 +140,43 @@ reused as current calculations. Keep archives private when their sources are
 private. Older browser-owned projects can be recovered explicitly from the
 local workspace; recovery preserves the original project.
 
+### The disk index
+
+Each project keeps its structural index in `index-v5.sqlite` (index schema 5).
+Formulas, names, ranges and any unusual cell keep one record each. A literal
+value that can be rebuilt exactly is stored as one value in a row of its
+sheet's grid instead of a compressed record with three SQLite indexes on top.
+Reading a cell gives back the same node as before, field by field, with
+one exception: the provenance of a stored value is now its sheet (workbook
+SHA-256, worksheet part, sheet state) plus the value, and the XML spelling of
+the number or the shared-string index (`rawXmlValue`) is no longer kept for
+grid cells. Formula caches and cells kept as records still have it.
+
+A project imported by an earlier version keeps its old `index.sqlite` on disk,
+unused: the project shows "Index created by an earlier version of linexcel:
+reimport the workbook (the file is kept)" with a reimport button, every view
+that reads the index says the same, and library search leaves the project out.
+Nothing is deleted when the server starts. Launching the reimport deletes the
+old index and the graph and data views built from it, then builds the new
+index from the kept workbook. Archives never contained indexes, so an archive
+made by either version restores and reimports.
+
+An import publishes the sheets it reads within its budgets. Reading sheets may
+use 60 % of the import's time budget and half of the storage left when it
+starts; the rest is kept for dependencies and publication. The sheet the
+import stops in is rolled back; it and the following sheets are marked "Sheet
+not imported" in Diagnostics, with the reason. A formula reading such a sheet
+is refused: its cells are unknown, never blank. A memory stop still ends the
+import without an index.
+
+A block of at least 10,000 saved values without formulas becomes a data
+region: one node of kind `data` with its bounds, header names, a type per
+column, a fingerprint and a bounded preview. A range node that reads a region
+lists it under `dataRegions` with the exact sub-range read, and the
+neighbourhood shows the link. Calculation still reads every cell of a range.
+The detection rule and its mixed cases are in
+`docs/reading_resilience_data_node.md`.
+
 The application imports a structural index, then loads node pages and bounded
 neighborhoods as you explore. Selecting a formula cell immediately starts a
 fresh targeted calculation of that cell and its dependency closure, including

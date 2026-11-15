@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Describe each block of at least 10,000 saved values without formulas as a
+  data region node, with its header names, a type per column, a fingerprint
+  and a preview. A range that reads a region names it with the exact
+  sub-range read, and the neighbourhood shows the link.
+
 ### Fixed
 
 - Show a cell read only through a range as used. In the graph of
@@ -73,6 +80,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Store literal values in per-sheet grids: index schema 5. **Projects
+  imported by an earlier version must be reimported**; they say so and keep
+  their workbook, and their old index is deleted only when you launch the
+  reimport. Calculations read their inputs from the grid. Every cell
+  reads back as before, except that the XML spelling of a stored literal
+  (`rawXmlValue`) is no longer kept: its provenance is its sheet plus the
+  value. In the Data tab, `raw_xml_value` is empty for those cells.
+- Publish the sheets an import reads within its time budget and the storage
+  quota. An import stopped there published nothing; the sheet in progress and
+  the following ones are now marked "Sheet not imported" with the reason, and
+  a formula reading them is refused rather than calculated on absent cells.
 - Prepare the Data tab's browsing copy in the background. The first opening
   of the tab copied the whole workbook inside the request and blocked every
   other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB

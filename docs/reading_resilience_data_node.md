@@ -424,6 +424,34 @@ it.
 5. **Batch 3**: highlights of the sub-range a formula reads (plan, batch 3
    criterion), S01 on the hierarchy view.
 
+### Step 3 as built (batch 2 ter, step A)
+
+Adopted on 15 November 2026, with these choices:
+
+- **Grid.** `cell_grid.py` keeps a literal input in its sheet's grid only when
+  the node rebuilt from it equals the reader's node field by field, except
+  `rawXmlValue`. Formulas, array members, cells with a diagnostic, unreadable
+  or missing values, ISO dates (`t="d"`) and cells out of row order stay
+  records. A supplied external workbook's temporary index keeps every cell a
+  record, so a copied external cell keeps its XML spelling.
+- **Order.** Reads keep the import's order: names, each sheet's cells row by
+  row, then nodes added afterwards. For worksheet XML in row order, as Excel
+  writes it, this is the old storage order; a hostile file listing cells out
+  of order now reads them row by row.
+- **Migration.** The file name carries the schema (`index-v5.sqlite`); an older
+  version finds no index and asks for an import instead of reading the grids
+  as blanks. A schema 4 index is never converted: it stays on disk, unused,
+  until the user reimports the project, which deletes it with its derived
+  views. The notice is in the two languages of the `serve` interface.
+- **Regions.** The rule of the prototype with one change: only a formula
+  between a column's first and last values makes it mixed; a title or total
+  row above or below no longer excludes it. A region needs 10,000 saved
+  values, counted: measured as rows times columns, a column with values in
+  rows 1 and 1,048,576 became a region.
+- **Per-sheet publication (F21).** 60 % of the time budget and half of the
+  storage left at the start for reading; the sheet in progress is rolled back
+  and marked `not_imported` with its reason.
+
 ### Decisions for Philippe
 
 - Adopt the store and data node (step 3) as the storage of literals, with the
