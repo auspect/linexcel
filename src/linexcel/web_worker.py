@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from linexcel.lazy_store import INDEX_FILENAME
 
 
 def main():
+    started = time.time()
     root = Path(sys.argv[1])
     request = json.loads((root / "request.json").read_text("utf-8"))
     project = root.parent.parent
@@ -26,12 +28,12 @@ def main():
                 root / INDEX_FILENAME,
                 project / "references",
                 filename=metadata["filename"],
+                # The worker starts after the coordinator's clock: its own
+                # deadline is a little later, within the reading share.
                 budget=ImportBudget.for_task(
-                    request["startedAt"],
-                    request["seconds"],
-                    request.get("storageBytes"),
+                    started, request["seconds"], request.get("storageBytes")
                 )
-                if "startedAt" in request
+                if "seconds" in request
                 else None,
             )
         elif request["operation"] == "build_graph":

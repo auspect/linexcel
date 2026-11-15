@@ -185,6 +185,17 @@ OUTDATED_INDEX_MESSAGE = (
 _INDEX_DERIVED = ("hierarchy.sqlite", "source-data.sqlite")
 
 
+def _disk_usage(root: Path) -> int:
+    size = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                size += path.stat().st_size
+        except FileNotFoundError:
+            pass  # Another task atomically published its result.
+    return size
+
+
 def outdated_index(path: Path) -> bool:
     """An earlier schema's index is on disk and the current one is not.
 
@@ -442,14 +453,7 @@ class TaskStore:
         )
 
     def _storage_bytes(self) -> int:
-        size = 0
-        for path in self.root.rglob("*"):
-            try:
-                if path.is_file():
-                    size += path.stat().st_size
-            except FileNotFoundError:
-                pass  # Another task atomically published its result.
-        return size
+        return _disk_usage(self.root)
 
     @staticmethod
     def _filename(name: Any) -> str:
@@ -1413,10 +1417,9 @@ class TaskStore:
             # The import stops reading sheets within these budgets and
             # publishes the rest as not imported (F21).
             request.update(
-                startedAt=time.time(),
                 seconds=task["budget"]["seconds"],
                 storageBytes=max(
-                    0, self.config.max_storage_mb * 1048576 - self._storage_bytes()
+                    0, self.config.max_storage_mb * 1048576 - _disk_usage(self.root)
                 ),
             )
         _write(root / "request.json", request)
