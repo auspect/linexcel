@@ -288,7 +288,8 @@ def read_view(
     path: Path, stamp: str, *, view=0, node_id=None, sheet=None, index_path=None
 ) -> dict:
     """Indexed, bounded reads only; never aggregate the workbook in HTTP."""
-    with WorkbookIndex(path) as store:
+    # The hierarchy database, opened read-only like an index.
+    with WorkbookIndex(path, check_schema=False) as store:
         db = store.db
         meta = json.loads(db.execute("SELECT data FROM metadata").fetchone()[0])
         if meta["generation"] != stamp or meta["version"] != VERSION:

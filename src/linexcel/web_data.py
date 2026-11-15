@@ -30,7 +30,7 @@ from datasette.database import Database
 from openpyxl.utils.cell import get_column_letter
 
 from linexcel.graph_store import generation
-from linexcel.lazy_store import WorkbookIndex
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex
 
 DATA_VERSION = 5
 MAX_GRID_COLUMNS = 512
@@ -565,7 +565,7 @@ class DataBrowser:
                 "sheets": [],
                 "revision": project["revision"],
             }
-        index = path / "index.sqlite"
+        index = path / INDEX_FILENAME
         if not index.is_file():
             raise self.store.missing_index_error(
                 owner, project_id, "Importez le classeur avant de parcourir les données"
@@ -646,7 +646,7 @@ class DataBrowser:
                 raise APIError(409, "Sources modifiées ; importez une nouvelle version")
             if project["filename"].lower().endswith((".xla", ".xlam")):
                 raise APIError(409, "Cet add-in ne contient pas de feuille de calcul")
-            index = path / "index.sqlite"
+            index = path / INDEX_FILENAME
             if not index.is_file():
                 raise APIError(
                     409, "Importez le classeur avant de parcourir les données"
@@ -663,7 +663,7 @@ class DataBrowser:
             try:
                 result = sheet_presentation(
                     path / "workbook.xlsx",
-                    path / "index.sqlite",
+                    path / INDEX_FILENAME,
                     sheet,
                     row=row,
                     column=column,

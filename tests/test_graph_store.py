@@ -10,7 +10,7 @@ import pytest
 from openpyxl import Workbook
 
 from linexcel.graph_store import build_graph, generation, read_view
-from linexcel.lazy_store import build_index
+from linexcel.lazy_store import WorkbookIndex, build_index
 
 
 def test_hierarchy_conserves_topology_and_can_locate_every_cell(tmp_path):
@@ -37,7 +37,9 @@ def test_hierarchy_conserves_topology_and_can_locate_every_cell(tmp_path):
         assert (
             meta["edgeCount"] == db.execute("SELECT count(*) FROM edges").fetchone()[0]
         )
-        all_ids = {row[0] for row in db.execute("SELECT id FROM nodes")}
+    # Literal inputs live in the index's grid, not in its nodes table.
+    with WorkbookIndex(index) as store:
+        all_ids = set(store)
     seen, pending, visited = set(), [0], set()
     while pending:
         view_id = pending.pop()

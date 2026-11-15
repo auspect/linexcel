@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from openpyxl.worksheet.table import Table
 
 from linexcel.catalog import Catalog, CatalogLimits, Source, parse_handle
-from linexcel.lazy_store import WorkbookIndex, _pack, build_index
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, _pack, build_index
 from linexcel.web import APIError, TaskStore, WebConfig
 
 
@@ -387,7 +387,7 @@ def test_occurrence_cli_reaches_omitted_handles(tmp_path, capsys):
     data = tmp_path / "workspace"
     project = data / owner / "projects" / item.project_id
     project.mkdir(parents=True)
-    shutil.copyfile(item.path, project / "index.sqlite")
+    shutil.copyfile(item.path, project / INDEX_FILENAME)
     (project / "project.json").write_text(
         json.dumps(
             {

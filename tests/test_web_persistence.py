@@ -14,6 +14,7 @@ import pytest
 from test_web import request, wait, workbook
 
 from linexcel.cli import _build_parser, main
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import APIError, TaskStore, WebConfig, _write, create_app
 from linexcel.web_backup import backup, receive_restore, restore
 from linexcel.web_local import COOKIE_SECONDS, _process_exists, session_link
@@ -274,7 +275,7 @@ def test_backup_restore_rebuilds_index_keeps_history_and_assigns_new_owner(works
             == store.list_projects("alice")[0]["revision"]
         )
         assert wait(store, restored["task"]["id"])["status"] == "succeeded"
-        assert (store.project_path("bob", new_id) / "index.sqlite").is_file()
+        assert (store.project_path("bob", new_id) / INDEX_FILENAME).is_file()
         history = [
             t for t in store.tasks.values() if t.get("restoredFromTask") == task_id
         ]

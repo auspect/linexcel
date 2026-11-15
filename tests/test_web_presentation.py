@@ -8,6 +8,7 @@ import pytest
 from test_web_data import data_app as data_app
 from test_web_data import request
 
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import _write
 
 
@@ -80,7 +81,7 @@ def test_presentation_rejects_stale_index_hash_even_with_current_project_revisio
     data_app,
 ):
     app, project, path = data_app
-    with sqlite3.connect(path / "index.sqlite") as database:
+    with sqlite3.connect(path / INDEX_FILENAME) as database:
         raw = database.execute(
             "SELECT value FROM metadata WHERE key='meta'"
         ).fetchone()[0]
@@ -102,5 +103,5 @@ def test_presentation_macro_and_missing_index_remain_local_errors(data_app):
     assert request(app, route, query="sheet=Data+%26+Source")[0] == 409
     metadata["filename"] = "sources.xlsx"
     _write(path / "project.json", metadata)
-    (path / "index.sqlite").unlink()
+    (path / INDEX_FILENAME).unlink()
     assert request(app, route, query="sheet=Data+%26+Source")[0] == 409

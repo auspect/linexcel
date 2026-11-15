@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from linexcel.lazy_store import INDEX_FILENAME
+
 
 def main():
     root = Path(sys.argv[1])
@@ -21,20 +23,20 @@ def main():
 
             result = build_index(
                 project / "workbook.xlsx",
-                root / "index.sqlite",
+                root / INDEX_FILENAME,
                 project / "references",
                 filename=metadata["filename"],
             )
         elif request["operation"] == "build_graph":
             from linexcel.graph_store import build_graph
 
-            result = build_graph(project / "index.sqlite", root / "hierarchy.sqlite")
+            result = build_graph(project / INDEX_FILENAME, root / "hierarchy.sqlite")
         elif request["operation"] == "build_data":
             from linexcel.web_data import build_source_database
 
             # The coordinator enforces the storage quota while this runs.
             result = build_source_database(
-                project / "index.sqlite", root / "source-data.sqlite", max_bytes=2**62
+                project / INDEX_FILENAME, root / "source-data.sqlite", max_bytes=2**62
             )
         elif request["operation"] == "evaluate":
             from linexcel.lazy import evaluate_node
@@ -43,7 +45,7 @@ def main():
                 project / "workbook.xlsx",
                 request["nodeId"],
                 project / "references",
-                index_path=project / "index.sqlite",
+                index_path=project / INDEX_FILENAME,
             )
         elif request["operation"] == "export_html":
             from linexcel.web_report import write_report

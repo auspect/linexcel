@@ -18,6 +18,7 @@ from linexcel.catalog import (
     revision,
     terms_for,
 )
+from linexcel.lazy_store import INDEX_FILENAME
 
 SEARCH_ATTACHMENT_TTL = 24 * 60 * 60
 SEARCH_ATTACHMENT_CLEANUP_LIMIT = 32
@@ -78,7 +79,7 @@ class Library:
                 Source(
                     project["id"],
                     project["filename"],
-                    path / "index.sqlite",
+                    path / INDEX_FILENAME,
                     project["createdAt"],
                 )
             )
@@ -728,7 +729,7 @@ def project_revision(project: dict, path) -> dict:
     """Read identity from the immutable index; old projects need no migration."""
     from linexcel.lazy_store import WorkbookIndex, file_sha256
 
-    index = path / "index.sqlite"
+    index = path / INDEX_FILENAME
     sha = None
     if index.is_file():
         try:

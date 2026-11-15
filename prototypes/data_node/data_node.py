@@ -260,6 +260,17 @@ class _CaptureStore:
     def put(self, node, *, only_if_absent=False):
         self.sink.put(node)
 
+    # The product's reader also feeds its own grids (index schema 5); the
+    # prototype keeps its sink instead.
+    def begin_grid(self, *, epoch1904):
+        pass
+
+    def note_array(self, sheet, r1, c1, r2, c2):
+        pass
+
+    def finish_grid(self):
+        pass
+
 
 def build_store(workbook: Path, store_path: Path) -> dict:
     """Stream the workbook with serve's reader into a compact value store."""

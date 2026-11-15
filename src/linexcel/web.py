@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
+from linexcel.lazy_store import INDEX_FILENAME
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -561,18 +562,18 @@ class TaskStore:
 
     @staticmethod
     def _graph(path: Path) -> dict | None:
-        if (path / "index.sqlite").is_file():
+        if (path / INDEX_FILENAME).is_file():
             from linexcel.lazy_store import graph_page
 
-            return graph_page(path / "index.sqlite")
+            return graph_page(path / INDEX_FILENAME)
         return _read(path / "graph.json") if (path / "graph.json").is_file() else None
 
     @staticmethod
     def _node(path: Path, node_id: str) -> dict | None:
-        if (path / "index.sqlite").is_file():
+        if (path / INDEX_FILENAME).is_file():
             from linexcel.lazy_store import get_node
 
-            return get_node(path / "index.sqlite", node_id)
+            return get_node(path / INDEX_FILENAME, node_id)
         graph = TaskStore._graph(path)
         return next(
             (n for n in (graph or {}).get("nodes", []) if n["id"] == node_id), None
@@ -644,7 +645,7 @@ class TaskStore:
             )
         with self.lock:
             path = self.project_path(owner, project_id)
-            index = path / "index.sqlite"
+            index = path / INDEX_FILENAME
             if not index.is_file():
                 raise self.missing_index_error(
                     owner,
@@ -880,11 +881,11 @@ class TaskStore:
             if operation in {"build_graph", "build_data"}:
                 from linexcel.graph_store import generation
 
-                if not (path / "index.sqlite").is_file():
+                if not (path / INDEX_FILENAME).is_file():
                     raise APIError(
                         409, "Importez le classeur avant de construire le graphe"
                     )
-                graph_generation = generation(path / "index.sqlite")
+                graph_generation = generation(path / INDEX_FILENAME)
             if operation == "import" and self._project_exports.get((owner, project_id)):
                 raise APIError(409, "Un export est en cours ; réessayez après sa fin")
             if self._revision(path) != project["revision"]:
@@ -896,7 +897,7 @@ class TaskStore:
                 operation == "document" and node_id is not None
             ):
                 if not isinstance(node_id, str) or not any(
-                    (path / name).is_file() for name in ("index.sqlite", "graph.json")
+                    (path / name).is_file() for name in (INDEX_FILENAME, "graph.json")
                 ):
                     raise APIError(409, "Importez le graphe avant le recalcul")
                 node = self._node(path, node_id)
@@ -930,7 +931,7 @@ class TaskStore:
                 if operation == "document":
                     if not any(
                         (path / name).is_file()
-                        for name in ("index.sqlite", "graph.json")
+                        for name in (INDEX_FILENAME, "graph.json")
                     ):
                         raise APIError(409, "Importez le graphe avant la documentation")
                     completed = [
@@ -951,10 +952,10 @@ class TaskStore:
                             completed, key=lambda t: t["createdAt"], reverse=True
                         )[: 1 if node_id is not None else 4]
                     ]
-                    if (path / "index.sqlite").is_file():
+                    if (path / INDEX_FILENAME).is_file():
                         from linexcel.lazy_store import evidence_graph
 
-                        graph = evidence_graph(path / "index.sqlite", node_id)
+                        graph = evidence_graph(path / INDEX_FILENAME, node_id)
                     else:
                         graph = _read(path / "graph.json")
                     ai_snapshot = evidence(
@@ -1241,8 +1242,8 @@ class TaskStore:
                         payload = {**payload, "screenshots": screenshots}
                     if task["operation"] == "import":
                         project = root.parent.parent
-                        if (root / "index.sqlite").is_file():
-                            (root / "index.sqlite").replace(project / "index.sqlite")
+                        if (root / INDEX_FILENAME).is_file():
+                            (root / INDEX_FILENAME).replace(project / INDEX_FILENAME)
                             (project / "graph.json").unlink(missing_ok=True)
                         else:
                             _write(project / "graph.json", payload)
@@ -1265,7 +1266,7 @@ class TaskStore:
 
                         project = root.parent.parent
                         if (
-                            generation(project / "index.sqlite")
+                            generation(project / INDEX_FILENAME)
                             != task["graphGeneration"]
                         ):
                             raise ValueError(
@@ -1279,7 +1280,7 @@ class TaskStore:
 
                         project = root.parent.parent
                         if (
-                            generation(project / "index.sqlite")
+                            generation(project / INDEX_FILENAME)
                             != task["graphGeneration"]
                             or payload.get("generation") != task["graphGeneration"]
                         ):
@@ -1310,10 +1311,10 @@ class TaskStore:
                         "request.json",
                         "ai_input.json",
                         "report-input.json",
-                        "index.sqlite",
-                        "index.sqlite-journal",
-                        "index.sqlite-wal",
-                        "index.sqlite-shm",
+                        INDEX_FILENAME,
+                        INDEX_FILENAME + "-journal",
+                        INDEX_FILENAME + "-wal",
+                        INDEX_FILENAME + "-shm",
                         "hierarchy.sqlite",
                         "hierarchy.sqlite-journal",
                         "hierarchy.sqlite-wal",
@@ -1323,7 +1324,7 @@ class TaskStore:
                     ):
                         (root / scratch).unlink(missing_ok=True)
                     for scratch in [
-                        *root.glob("index.sqlite.*.building*"),
+                        *root.glob(INDEX_FILENAME + ".*.building*"),
                         *root.glob("data-*.building*"),
                     ]:
                         scratch.unlink(missing_ok=True)
