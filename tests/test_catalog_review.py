@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from openpyxl.worksheet.table import Table
 
 from linexcel.catalog import Catalog, CatalogLimits, Source, parse_handle
-from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, _pack, build_index
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, build_index
 from linexcel.web import APIError, TaskStore, WebConfig
 
 
@@ -202,7 +202,7 @@ def test_occurrence_pages_reread_authoritative_values_and_reauthorize(tmp_path):
     with WorkbookIndex(item.path, writable=True) as index:
         node = index[nid]
         node["value"] = "Changed"
-        index.db.execute("UPDATE nodes SET data=? WHERE id=?", (_pack(node), nid))
+        index.put(node)
         index.db.commit()
     page = cat.occurrences([item], **args)
     assert len(page["results"]) == 34
