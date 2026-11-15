@@ -238,8 +238,10 @@ def test_task_history_is_small_and_full_steps_remain_downloadable(indexed):
 def test_index_disk_quota_is_independent_of_compressed_upload_limit(tmp_path):
     book = Workbook(write_only=True)
     sheet = book.create_sheet()
+    # Formulas stay one record per cell in the index; literal values would
+    # fit in a few hundred kilobytes of grid (index schema 5).
     for row in range(10000):
-        sheet.append([row, row + 1, row + 2])
+        sheet.append([f"={row}+1", f"={row}+2", f"={row}+3"])
     stream = io.BytesIO()
     book.save(stream)
     assert len(stream.getvalue()) < 1048576
