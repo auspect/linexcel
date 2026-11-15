@@ -571,6 +571,23 @@ class GridWriter:
         ).fetchone()
         return hit[0] if hit else None
 
+    def discard(self, name: str) -> None:
+        """Drop one sheet's grid cells; later cells of that sheet stay nodes."""
+        sheet = self.sheets.get(name)
+        if sheet is None:
+            return
+        if self.current is sheet:
+            self.current = None
+        if sheet.created:
+            self.db.execute(f'DROP TABLE "{sheet.table}"')
+        self.db.execute("DELETE FROM grid_wide WHERE sheet_no=?", (sheet.no,))
+        self.db.execute("DELETE FROM grid_runs WHERE sheet_no=?", (sheet.no,))
+        sheet.created, sheet.cells, sheet.width = False, 0, 0
+        sheet.values, sheet.pending, sheet.wide = {}, [], []
+        sheet.runs, sheet.closed_runs = {}, []
+        sheet.frozen = True
+        self.closed.add(name)
+
     def close(self) -> None:
         """Write what is buffered and describe each grid; idempotent."""
         if self.current is not None:

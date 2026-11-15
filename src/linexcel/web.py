@@ -1409,6 +1409,16 @@ class TaskStore:
             "options": task.get("options", {}),
             "tokens": task["budget"].get("tokens", self.config.ai_token_budget),
         }
+        if task["operation"] == "import":
+            # The import stops reading sheets within these budgets and
+            # publishes the rest as not imported (F21).
+            request.update(
+                startedAt=time.time(),
+                seconds=task["budget"]["seconds"],
+                storageBytes=max(
+                    0, self.config.max_storage_mb * 1048576 - self._storage_bytes()
+                ),
+            )
         _write(root / "request.json", request)
         child_env = os.environ.copy()
         if sys.platform == "linux":

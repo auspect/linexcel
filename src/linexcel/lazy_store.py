@@ -178,6 +178,87 @@ class IndexSchemaError(ValueError):
         )
 
 
+class ImportBudget:
+    """When the import stops reading sheets, within a task's budgets (F21).
+
+    The reader checks it before each sheet and every 10,000 cells. A sheet it
+    stops in is rolled back; that sheet and the following ones are published
+    as not imported, with the reason. ``deadline`` is a wall-clock time;
+    ``max_bytes`` bounds the index file while sheets are read.
+    """
+
+    #: Shares of a task's time budget and of the storage left at its start
+    #: that reading sheets may use; the rest is for dependencies, facts and
+    #: publication, which the coordinator still bounds.
+    READ_TIME_SHARE = 0.6
+    READ_STORAGE_SHARE = 0.5
+
+    def __init__(self, *, deadline=None, max_bytes=None, clock=None):
+        import time
+
+        self.deadline = deadline
+        self.max_bytes = max_bytes
+        self.clock = clock or time.time
+
+    @classmethod
+    def for_task(cls, started_at, seconds, storage_bytes=None):
+        return cls(
+            deadline=started_at + cls.READ_TIME_SHARE * seconds,
+            max_bytes=None
+            if storage_bytes is None
+            else int(cls.READ_STORAGE_SHARE * storage_bytes),
+        )
+
+    def exhausted(self, index_path) -> str | None:
+        """``"time_budget"``, ``"storage_budget"`` or ``None``."""
+        if self.deadline is not None and self.clock() >= self.deadline:
+            return "time_budget"
+        if self.max_bytes is not None:
+            size = 0
+            for suffix in ("", "-journal"):
+                try:
+                    size += os.stat(str(index_path) + suffix).st_size
+                except OSError:
+                    pass
+            if size >= self.max_bytes:
+                return "storage_budget"
+        return None
+
+
+class _ImportStopError(Exception):
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+_NOT_IMPORTED = {
+    "time_budget": (
+        "Sheet not imported: the import's time budget ran out before it was "
+        "read. Its cells are unknown, never blank; reimport with a larger time "
+        "budget."
+    ),
+    "storage_budget": (
+        "Sheet not imported: the server's storage quota would be exceeded. Its "
+        "cells are unknown, never blank; free storage or raise the quota, then "
+        "reimport."
+    ),
+}
+
+
+def _not_imported(sheet, reason, diagnostics):
+    message = _NOT_IMPORTED[reason]
+    sheet.update(status="not_imported", reason=reason, formulas=0, inputs=0)
+    sheet["diagnostics"].append(message)
+    diagnostics.append(
+        {
+            "sheet": sheet["name"],
+            "code": "not_imported",
+            "reason": reason,
+            "message": message,
+        }
+    )
+
+
 def _ascii_lower(text: str) -> str:
     # SQLite's LIKE folds ASCII letters only.
     return text.translate(_ASCII_LOWER)
@@ -690,6 +771,11 @@ class WorkbookIndex(Mapping):
         """A declared array or data table, whose cells are never grid cells."""
         if self._writer is not None:
             self._writer.note_array(sheet, r1, c1, r2, c2)
+
+    def discard_grid_sheet(self, sheet):
+        """Forget the grid cells of a sheet the import did not finish."""
+        if self._writer is not None:
+            self._writer.discard(sheet)
 
     def finish_grid(self):
         """Write the grids and record where the reader's nodes end."""
@@ -1537,7 +1623,7 @@ def _schema(db):
     """)
 
 
-def _read_source(path, store):
+def _read_source(path, store, budget=None):
     """Index literals and formula text in one forward XML pass per sheet."""
     from linexcel.lazy import _INPUT_ERROR_KINDS, _id, _json, _name_literal
 
@@ -1738,6 +1824,14 @@ def _read_source(path, store):
             previous_address = None
             row_hidden = False
             hidden_columns = []
+            stop = budget.exhausted(store.path) if budget else None
+            if stop:
+                _not_imported(sheet, stop, diagnostics)
+                sheet.pop("part", None)
+                continue
+            first_seq = db.execute("SELECT coalesce(max(seq),0) FROM nodes").fetchone()[
+                0
+            ]
             try:
                 if not sheet["part"]:
                     raise ValueError("Worksheet relationship is missing")
@@ -2167,6 +2261,10 @@ def _read_source(path, store):
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
                                     db.commit()
+                                    if budget and (
+                                        stop := budget.exhausted(store.path)
+                                    ):
+                                        raise _ImportStopError(stop)
                             stack[-2].remove(element)
                             element.clear()
                         elif tag == "mergeCell":
@@ -2231,6 +2329,21 @@ def _read_source(path, store):
                             stack[-2].remove(element)
                             element.clear()
                         stack.pop()
+            except _ImportStopError as stopped:
+                # Roll the sheet back: nothing of it is published, so no cell
+                # of it can be mistaken for the whole sheet.
+                name = sheet["name"]
+                store.discard_grid_sheet(name)
+                db.execute("DELETE FROM nodes WHERE seq>?", (first_seq,))
+                for table in (
+                    "shared",
+                    "arrays",
+                    "array_definitions",
+                    "merge_definitions",
+                    "table_definitions",
+                ):
+                    db.execute(f"DELETE FROM {table} WHERE sheet=?", (name,))
+                _not_imported(sheet, stopped.reason, diagnostics)
             except (
                 ET.ParseError,
                 ValueError,
@@ -2327,6 +2440,9 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
     sheets = metadata["sheets"]
     lookup = {sheet.casefold(): sheet for sheet in sheets}
     partial = {s["name"] for s in metadata["sheetDetails"] if s["status"] != "complete"}
+    not_imported = {
+        s["name"] for s in metadata["sheetDetails"] if s["status"] == "not_imported"
+    }
     from linexcel.external_index import ExternalSources
 
     with tempfile.TemporaryDirectory(
@@ -2474,7 +2590,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "dependencies": array_anchors,
                         "diagnostics": [],
                     }
-                if rect.sheet in partial:
+                if rect.sheet in not_imported:
+                    node["diagnostics"].append(
+                        "Source worksheet was not imported within the import's "
+                        "budget; its cells are unknown, never blank."
+                    )
+                elif rect.sheet in partial:
                     node["diagnostics"].append(
                         "Source worksheet is incomplete; missing cells "
                         "cannot be treated as "
@@ -2772,8 +2893,13 @@ def build_index(
     refs_dir: Path | None = None,
     *,
     filename: str | None = None,
+    budget: ImportBudget | None = None,
 ) -> dict:
-    "Publish a complete disk index atomically; preserve any previous index on failure."
+    """Publish a disk index atomically; preserve any previous index on failure.
+
+    With a ``budget``, sheets the import cannot read within it are published
+    as not imported, with their reason, instead of failing the whole import.
+    """
     path, index_path = Path(path), Path(index_path)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(
@@ -2798,7 +2924,7 @@ def build_index(
                     "macroOnly": True,
                 }
             else:
-                metadata, names, links = _read_source(path, store)
+                metadata, names, links = _read_source(path, store, budget)
                 _index_dependencies(store, metadata, names, links, refs_dir)
             from linexcel.link_facts import index_facts
 

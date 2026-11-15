@@ -19,13 +19,20 @@ def main():
     output: dict[str, Any]
     try:
         if request["operation"] == "import":
-            from linexcel.lazy_store import build_index
+            from linexcel.lazy_store import ImportBudget, build_index
 
             result = build_index(
                 project / "workbook.xlsx",
                 root / INDEX_FILENAME,
                 project / "references",
                 filename=metadata["filename"],
+                budget=ImportBudget.for_task(
+                    request["startedAt"],
+                    request["seconds"],
+                    request.get("storageBytes"),
+                )
+                if "startedAt" in request
+                else None,
             )
         elif request["operation"] == "build_graph":
             from linexcel.graph_store import build_graph
