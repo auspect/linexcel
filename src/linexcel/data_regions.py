@@ -20,9 +20,12 @@ The rule (lot 2 ter, approved 15 November 2026):
    The header is the first row, among the band's first ``HEADER_SCAN_ROWS``
    rows holding values, whose values are all text and fill at least half
    the columns, followed by a row holding a value that is not text. Rows
-   above it (title, notes) stay outside the region. The region has at least
-   ``REGION_MIN_CELLS`` cells (rows times columns) and ends by column
-   ``GRID_COLUMNS``.
+   above it (title, notes) stay outside the region. The region ends by
+   column ``GRID_COLUMNS``.
+
+Every region holds at least ``REGION_MIN_CELLS`` saved values, counted, not
+taken from its area: a column with two values, in rows 1 and 1,048,576, is
+not a region.
 
 A region never contains a formula: this is checked again on the stored
 cells before a region is kept. When the rule is wrong the values stay
@@ -42,7 +45,7 @@ from collections import Counter
 from linexcel.cell_grid import GRID_COLUMNS
 from linexcel.refs import a1, quote_sheet
 
-#: Smallest region, in cells (rows times columns).
+#: Fewest saved values a region holds.
 REGION_MIN_CELLS = 10_000
 HEADER_SCAN_ROWS = 20
 PREVIEW_ROWS, PREVIEW_COLUMNS = 10, 12
@@ -191,7 +194,11 @@ def detect_regions(store) -> list[dict]:
         )
         if formulas.in_rect(r1, c1, r2, c2):
             continue  # never a formula inside a region
-        kept.append(_describe(store, region))
+        if store.count_cells(sheet, (r1, c1, r2, c2)) < REGION_MIN_CELLS:
+            continue  # an upper bound of its values: too sparse
+        node = _describe(store, region)
+        if node["cells"] >= REGION_MIN_CELLS:
+            kept.append(node)
     return kept
 
 

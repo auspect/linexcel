@@ -146,6 +146,18 @@ def test_a_block_under_the_threshold_has_no_region(tmp_path):
     assert "data" not in meta["nodeCounts"]
 
 
+def test_a_sparse_column_is_not_a_region(tmp_path):
+    book = Workbook()
+    book.active.title = "Sparse"
+    book.active["A1"], book.active["A1048576"] = 1, 7
+    for row in range(1, ROWS):
+        book.active.cell(row, 2, row)  # 2,499 values
+    _, index = _build(tmp_path, book)
+    regions, _ = _regions(index)
+    # A1:B1048576 has two million cells but 2,501 values.
+    assert regions == {}
+
+
 def test_a_formula_inside_the_rectangle_cuts_it(tmp_path):
     book = Workbook()
     sheet = book.active
