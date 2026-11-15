@@ -52,18 +52,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The Diagnostics tab names the missing part; the cells stay unknown, never
   empty, and the Excel presentation shows them as unknown (∅) instead of
   blank cells.
-- Say what happened when the server's storage quota stops an operation, with
-  the quota size and how to free space, instead of the bare `storage_limit`.
-  An operation or upload that the full storage refuses at its start says the
-  same instead of "Stockage plein ; supprimez des classeurs".
-  After such a failed import, the Nodes, Graph, Diagnostics and Data tabs say
-  that no index was published instead of suggesting a refresh; Diagnostics no
-  longer says "Import complete". The Excel presentation of a sheet whose
-  part is missing from the file, or that the import read only partly, says
-  so instead of "Feuille introuvable", without advising a retry that cannot
-  help; on a phone the reason is no longer hidden in the collapsed data
-  options. Import diagnostics in the Diagnostics tab get advice about the file
-  instead of the advice about formulas.
+- Say what happened when the server's storage quota stops or refuses an
+  operation: the quota size and how to free space, instead of the bare
+  `storage_limit` or "Stockage plein ; supprimez des classeurs". After such a
+  failed import, the Nodes, Graph, Diagnostics and Data tabs say that no index
+  was published instead of suggesting a refresh, and Diagnostics no longer
+  says "Import complete".
+- Say why the Excel presentation of a sheet cannot be shown when its part is
+  missing from the file or the import read it only partly, instead of
+  "Feuille introuvable" and without advising a retry that cannot help; on a
+  phone the reason is no longer hidden in the collapsed data options. Import
+  diagnostics in the Diagnostics tab get advice about the file instead of the
+  advice about formulas.
+- Name the phase of a running operation in words in Operations, for example
+  "Graph construction" instead of `build_graph`.
 - Show the Excel presentation of workbooks whose styles part is very large.
   Every sheet of the public DfT TAG data book was refused because its 7 MB
   of named styles exceeded a 4 MiB cap; the styles are now read as a stream,

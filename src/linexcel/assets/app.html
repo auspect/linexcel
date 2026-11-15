@@ -720,7 +720,7 @@ function renderDataView(){
  if(tab!=='data'||!current)return;
  if(dataState.key!==dataKey()){resetDataView();dataState.key=dataKey()}
  if(!dataState.loaded){loadDataView();return}
- $('data-status').classList.toggle('error',!!dataState.error);
+ $('data-status').classList.toggle('error',!!dataState.error&&!importStopped());
  if(dataState.error){$('data-status').textContent=uiText(dataState.error)+(importStopped()?'':' '+uiText('Réessayez avec Actualiser les données.'));return}
  const payload=dataState.payload;
  if(payload?.state==='building'){const key=dataState.key;$('data-status').textContent=uiText('Préparation de la vue des données en arrière-plan… Le reste de l’application reste utilisable ; suivi dans Opérations.');if(!dataPoll)dataPoll=setTimeout(()=>{dataPoll=null;if(tab==='data'&&current&&dataState.key===key&&!dataState.loading){dataState.loaded=false;renderDataView()}},2000);return}

@@ -630,6 +630,8 @@ def test_after_a_stopped_import_the_tabs_say_that_no_index_was_published(
     try:
         status = page.locator("#data-status")
         status.filter(has_text=text).wait_for()
+        # The same neutral notice as the other tabs: nothing failed here.
+        assert "error" not in (status.get_attribute("class") or "")
         views = {"data": status.inner_text()}
         for name in ("nodes", "graph", "diagnostics"):
             page.locator(f"#tab-{name}").click()
