@@ -650,13 +650,7 @@ def _evaluate_index(
             )
             dependencies = members[:200]
             if len(members) > 200:
-                r1, c1, r2, c2 = node["bounds"]
-                count = nodes.db.execute(
-                    "SELECT count(*) FROM nodes WHERE sheet=? "
-                    "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input','array_result')",
-                    (node["sheet"], r1, r2, c1, c2),
-                ).fetchone()[0]
+                count = nodes.count_cells(node["sheet"], node["bounds"])
                 omitted = count - len(dependencies)
         step = {
             "node_id": nid,

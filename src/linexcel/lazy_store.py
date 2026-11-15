@@ -20,6 +20,7 @@ import zipfile
 import zlib
 from collections.abc import Mapping
 from dataclasses import replace
+from functools import partial
 from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import quote, unquote
@@ -42,6 +43,8 @@ from linexcel.structured_refs import formula_tokens
 
 SCHEMA_VERSION = 4
 MAX_PAGE_SIZE = 200
+#: The node kinds that stand for one worksheet cell.
+_CELL_KINDS = "kind IN ('cell','input','array_result')"
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
     "id",
@@ -437,9 +440,10 @@ class WorkbookIndex(Mapping):
                 pass  # The import diagnostics already describe the failure.
         return node
 
-    def values(self):
+    def values(self, *, context=False):
+        """Every node in import order; ``context`` adds labels and tokens."""
         for row in self.db.execute("SELECT data,pattern_id FROM nodes ORDER BY seq"):
-            yield self._decode(row)
+            yield self._decode(row, context=context)
 
     def items(self):
         for node in self.values():
@@ -493,6 +497,214 @@ class WorkbookIndex(Mapping):
             arguments,
         ):
             yield row[0]
+
+    # Reads for other modules. Callers outside this module never query the
+    # ``nodes`` table themselves, so how cells are stored can change here alone.
+
+    def cell_ids(self):
+        """Every cell (formula, literal, array member) id, in import order."""
+        for row in self.db.execute(
+            f"SELECT id FROM nodes WHERE {_CELL_KINDS} ORDER BY seq"
+        ):
+            yield row[0]
+
+    def sheet_cell_ids(self, sheet):
+        """The cell ids of one sheet, row by row."""
+        for row in self.db.execute(
+            f"SELECT id FROM nodes WHERE sheet=? AND {_CELL_KINDS} ORDER BY row,col",
+            (sheet,),
+        ):
+            yield row[0]
+
+    def node_id_at(self, sheet, row, col):
+        """The id of a node stored at one position, or ``None``."""
+        hit = self.db.execute(
+            "SELECT id FROM nodes WHERE sheet=? AND row=? AND col=?",
+            (sheet, row, col),
+        ).fetchone()
+        return hit[0] if hit else None
+
+    def count_cells(self, sheet, bounds):
+        """How many cells are stored in a rectangle ``(r1, c1, r2, c2)``."""
+        r1, c1, r2, c2 = bounds
+        return self.db.execute(
+            f"SELECT count(*) FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS}",
+            (sheet, r1, r2, c1, c2),
+        ).fetchone()[0]
+
+    def sheet_cells_after(self, sheet, after, limit):
+        """``(position, id, row, col, decode)`` of one sheet's cells.
+
+        In import order, from just after the opaque ``position`` a previous
+        record gave (0 to start), at most ``limit`` records. ``decode()``
+        returns the stored node.
+        """
+        for seq, node_id, row, col, data in self.db.execute(
+            "SELECT seq,id,row,col,data FROM nodes NOT INDEXED "
+            f"WHERE sheet IS ? AND seq>? AND {_CELL_KINDS} ORDER BY seq LIMIT ?",
+            (sheet, after, limit),
+        ):
+            yield seq, node_id, row, col, partial(_unpack, data)
+
+    def row_nodes(self, sheet, row, columns):
+        """``{column: node}`` for the nodes stored in some columns of a row."""
+        return {
+            col: _unpack(data)
+            for col, data in self.db.execute(
+                "SELECT col,data FROM nodes WHERE sheet IS ? AND row=? "
+                "AND col IN (" + ",".join("?" for _ in columns) + ")",
+                (sheet, row, *columns),
+            )
+        }
+
+    def numeric_value_ids(self, ranges, limit):
+        """Ids of cells whose saved value is a number in one of ``ranges``.
+
+        ``ranges`` are ``(low, high)`` pairs. Only values spelled with digits
+        and number punctuation count: a text such as "12 rue" casts to 12 and
+        must not be read as a number. Import order, at most ``limit`` ids.
+        """
+        clause = " OR ".join(
+            "CAST(search_value AS REAL) BETWEEN ? AND ?" for _ in ranges
+        )
+        return [
+            row[0]
+            for row in self.db.execute(
+                f"SELECT id FROM nodes WHERE {_CELL_KINDS} "
+                "AND search_value GLOB '*[0-9]*' "
+                "AND search_value NOT GLOB '*[^0-9.eE+-]*' "
+                f"AND ({clause}) ORDER BY seq LIMIT ?",
+                (*[bound for pair in ranges for bound in pair], limit),
+            ).fetchall()
+        ]
+
+    def nodes_by_sheet_and_pattern(self):
+        """``(position, id, kind, sheet, pattern)`` of every node.
+
+        Grouped by sheet, then by formula pattern (``''`` for none, and for
+        a node without a sheet), in import order inside each group.
+        """
+        yield from self.db.execute(
+            "SELECT seq,id,kind,coalesce(sheet,''),coalesce(pattern_id,'') "
+            "FROM nodes ORDER BY sheet,coalesce(pattern_id,''),seq"
+        )
+
+    # A derived database that attaches this index under ``schema`` aggregates
+    # it in SQLite, without moving millions of rows through Python; these
+    # return the SQL that reads the index's own tables for such a query.
+
+    def attached_pattern_sizes_sql(self, schema):
+        """SQL of ``(sheet, pattern_id, size)``, ``''`` for none, per group."""
+        return (
+            "SELECT coalesce(sheet,'') sheet,coalesce(pattern_id,'') pattern_id,"
+            f"count(*) size FROM {schema}.nodes "
+            "GROUP BY coalesce(sheet,''),coalesce(pattern_id,'')"
+        )
+
+    def attached_edges_sql(self, schema):
+        """SQL of ``(source, target)`` for every edge a lineage view keeps.
+
+        Edges to an array member whose owner was chosen among overlapping
+        declared arrays by an older import are left out
+        (``_array_edge_filter``).
+        """
+        return (
+            f"SELECT e.source source,e.target target FROM {schema}.edges e "
+            f"JOIN {schema}.nodes t ON t.id=e.target "
+            f"WHERE {_array_edge_filter(self, schema=schema)}"
+        )
+
+    def bracketed_formula_nodes(self):
+        """``(id, node)`` of nodes whose formula holds a ``[``, in table order.
+
+        External references (``[1]Sheet!A1``) are among them; structured
+        references are too, so a caller still checks each formula.
+        """
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE formula IS NOT NULL "
+            "AND instr(formula,'[')>0"
+        ):
+            yield node_id, _unpack(data)
+
+    def range_nodes(self):
+        """``(id, node)`` of every range node, in table order."""
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range'"
+        ):
+            yield node_id, _unpack(data)
+
+    def sheet_cells(self, sheet):
+        """The stored nodes of one sheet's cells, row by row, as stored.
+
+        Unlike ``self[id]`` the nodes are not resolved for array ownership.
+        """
+        for (data,) in self.db.execute(
+            f"SELECT data FROM nodes WHERE sheet=? AND {_CELL_KINDS} ORDER BY row,col",
+            (sheet,),
+        ):
+            yield _unpack(data)
+
+    def cell_records(self, sheet, *, exclude=(), limit):
+        """``(row, col, decode)`` of one sheet's cells, row by row.
+
+        Cells inside any ``exclude`` rectangle ``(r1, c1, r2, c2)`` are left
+        out; at most ``limit`` records. ``decode()`` returns the stored node.
+        """
+        clauses, args = ["sheet=?", "row IS NOT NULL", "col IS NOT NULL"], [sheet]
+        for r1, c1, r2, c2 in exclude:
+            clauses.append("NOT (row BETWEEN ? AND ? AND col BETWEEN ? AND ?)")
+            args.extend((r1, r2, c1, c2))
+        for row, col, data in self.db.execute(
+            "SELECT row,col,data FROM nodes WHERE "
+            + " AND ".join(clauses)
+            + f" AND {_CELL_KINDS} ORDER BY row,col LIMIT ?",
+            (*args, limit),
+        ):
+            yield row, col, partial(_unpack, data)
+
+    def window_records(self, sheet, bounds, max_record_bytes):
+        """The stored records of a rectangle's cells, for a bounded reader.
+
+        Yields each record as stored (zlib-compressed JSON, see ``_pack``) so
+        the caller can bound its inflation before decoding it, which protects
+        against a hostile file. A record over ``max_record_bytes`` is yielded
+        as ``None`` without being read.
+        """
+        r1, c1, r2, c2 = bounds
+        for _size, data in self.db.execute(
+            "SELECT length(data), CASE WHEN length(data)<=? THEN data END "
+            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS}",
+            (max_record_bytes, sheet, r1, r2, c1, c2),
+        ):
+            yield data
+
+    def node_inventory(self):
+        """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
+        return self.db.execute(
+            "SELECT sheet,kind,count(*) FROM nodes GROUP BY sheet,kind"
+        ).fetchall()
+
+    def name_records(self):
+        """``(id, sheet, node)`` of every defined name, in import order."""
+        for node_id, sheet, data in self.db.execute(
+            "SELECT id,sheet,data FROM nodes WHERE kind='name' ORDER BY seq"
+        ):
+            yield node_id, sheet, _unpack(data)
+
+    def sheet_records(self, sheet):
+        """``(id, kind, row, col, decode)`` of one sheet's nodes, row by row.
+
+        Names excluded. ``decode()`` returns the stored node; a caller that
+        skips a record never pays for decoding it.
+        """
+        for node_id, kind, row, col, data in self.db.execute(
+            "SELECT id,kind,row,col,data FROM nodes WHERE sheet IS ? "
+            "AND kind!='name' ORDER BY row,col,seq",
+            (sheet,),
+        ):
+            yield node_id, kind, row, col, partial(_unpack, data)
 
     def prepare_input_selection(self):
         # The selection is keyed by position, so it is read back in sheet order

@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import deque
+from itertools import islice
 from typing import Any
 
 from linexcel.header_bands import HeaderBands, catalog_labels, numeric
-from linexcel.lazy_store import _unpack
 from linexcel.refs import a1
 
 
@@ -79,9 +79,7 @@ class WorkbookBuilder:
         self.progress = progress
         self.disk_full = False
         self.counts = item["coverage"] = coverage(item["nodes"])
-        inventory = index.db.execute(
-            "SELECT sheet,kind,count(*) FROM nodes GROUP BY sheet,kind"
-        ).fetchall()
+        inventory = index.node_inventory()
         names = [
             s if isinstance(s, str) else s["name"] for s in index.meta.get("sheets", [])
         ]
@@ -216,10 +214,7 @@ class WorkbookBuilder:
                     self.add(
                         "column", sheet, a1(r1, c1 + i), f"{table['name']} {header}"
                     )
-        for node_id, sheet, blob in self.index.db.execute(
-            "SELECT id,sheet,data FROM nodes WHERE kind='name' ORDER BY seq"
-        ):
-            node = _unpack(blob)
+        for node_id, sheet, node in self.index.name_records():
             self.sheets[sheet]["nodesScanned"] += 1
             self.add(
                 "name", sheet, node.get("cell"), node.get("name", node_id), node=node_id
@@ -274,16 +269,12 @@ class WorkbookBuilder:
                 textCellsObserved=0,
                 textCellsOmitted=0,
             )
-            cursor = self.index.db.execute(
-                "SELECT id,kind,row,col,data FROM nodes WHERE sheet IS ? "
-                "AND kind!='name' ORDER BY row,col,seq",
-                (sheet,),
-            )
+            cursor = self.index.sheet_records(sheet)
             queue.append((sheet, scope, cursor, 0))
         while queue and not self.expired() and not self.disk_full:
             sheet, scope, cursor, ordinal = queue.popleft()
-            rows = cursor.fetchmany(512)
-            for node_id, kind, row, column, blob in rows:
+            rows = list(islice(cursor, 512))
+            for node_id, kind, row, column, decode in rows:
                 scope["nodesScanned"] += 1
                 ordinal += 1
                 if (
@@ -292,7 +283,7 @@ class WorkbookBuilder:
                     or not column
                 ):
                     continue
-                node = _unpack(blob)
+                node = decode()
                 value = node.get("value")
                 if isinstance(value, str) and value.strip():
                     scope["textCellsObserved"] += 1

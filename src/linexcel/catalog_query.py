@@ -113,9 +113,6 @@ def cell_address(query: str) -> tuple[str | None, int, int, str] | None:
     return sheet, row, column, f"{letters.upper()}{row}"
 
 
-CELL_KINDS = "kind IN ('cell','input','array_result')"
-
-
 def cells_at(revisions, index_of, address, fold, deadline, limit, caps):
     """Cells at one address in each scoped sheet, read from the source indexes.
 
@@ -152,8 +149,6 @@ def numbers_in(revisions, index_of, ranges, seen, deadline, limit, caps):
     number the sheet shows. One pass over each source index finds them; the
     time budget of the query bounds it.
     """
-    bounds = [bound for item in ranges for bound in item]
-    clause = " OR ".join("CAST(search_value AS REAL) BETWEEN ? AND ?" for _ in ranges)
     found = []
     for item in revisions:
         if not item["revision"] or item["rebuildRequired"]:
@@ -164,16 +159,7 @@ def numbers_in(revisions, index_of, ranges, seen, deadline, limit, caps):
         index = index_of(item)
         index.db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         try:
-            # Digits and number punctuation only: a text such as "12 rue" casts
-            # to 12 and must not be read as a number.
-            cursor = index.db.execute(
-                f"SELECT id FROM nodes WHERE {CELL_KINDS} "
-                "AND search_value GLOB '*[0-9]*' "
-                "AND search_value NOT GLOB '*[^0-9.eE+-]*' "
-                f"AND ({clause}) ORDER BY seq LIMIT ?",
-                (*bounds, limit + 1),
-            )
-            for (nid,) in cursor.fetchall():
+            for nid in index.numeric_value_ids(ranges, limit + 1):
                 if (item["projectId"], nid) in seen:
                     continue
                 node = index[nid]

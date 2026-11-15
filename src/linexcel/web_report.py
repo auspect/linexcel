@@ -168,12 +168,7 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
                 if node.get("kind") != "range" or not node.get("bounds"):
                     continue
                 r1, c1, r2, c2 = node["bounds"]
-                count = index.db.execute(
-                    "SELECT count(*) FROM nodes WHERE sheet=? "
-                    "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input','array_result')",
-                    (node["sheet"], r1, r2, c1, c2),
-                ).fetchone()[0]
+                count = index.count_cells(node["sheet"], node["bounds"])
                 members = [
                     _node(index[member])
                     for member in islice(

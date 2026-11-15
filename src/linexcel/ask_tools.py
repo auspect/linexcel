@@ -9,6 +9,7 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import replace
+from itertools import islice
 
 from linexcel.catalog import Catalog, cell_handle, parse_handle, revision
 from linexcel.lazy_store import WorkbookIndex
@@ -348,15 +349,7 @@ class QuestionTools:
                     raise ToolArgumentError("unknown_sheet")
                 rev = revision(source.project_id, index.meta["sha256"])
                 if name == "describe_sheet":
-                    ids = [
-                        row[0]
-                        for row in index.db.execute(
-                            "SELECT id FROM nodes WHERE sheet=? "
-                            "AND kind IN ('cell','input','array_result') "
-                            "ORDER BY row,col LIMIT 12",
-                            (args["sheet"],),
-                        )
-                    ]
+                    ids = list(islice(index.sheet_cell_ids(args["sheet"]), 12))
                     return {
                         "sheet": args["sheet"],
                         "revision": rev,
@@ -388,10 +381,7 @@ class QuestionTools:
                         lambda: int(time.monotonic() >= self.deadline), 100
                     )
                     rev = revision(source.project_id, index.meta["sha256"])
-                    for (nid,) in index.db.execute(
-                        "SELECT id FROM nodes "
-                        "WHERE kind IN ('cell','input','array_result') ORDER BY seq"
-                    ):
+                    for nid in index.cell_ids():
                         if (
                             scanned >= 5000
                             or len(cells) >= 20
