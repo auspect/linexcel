@@ -267,10 +267,31 @@ the commit before:
 | D6 | F22 | `22f0f1c` | A missing sheet part was introduced by "Retry with Show area"; a 409 reason is now shown alone. |
 | D9 | — | `5609851` | Operations printed the raw phase `build_graph`; phases fall back to the operation labels. |
 
-Not changed, reported: the `--max-storage-mb` flag can wrap at its hyphen
-(D5); on mobile, Refresh data sits in the collapsed "Data options" that the
-failed and cancelled messages name (D7); a sheet-part diagnostic appears both
-under its sheet and in the workbook list (D8, existing layout).
+A second independent review of the corrected states confirmed these seven
+corrections at French and English, 1440 and 390 px, and found four more
+points in the same messages, also corrected with a failing test first:
+
+| Review | Finding | Commit | Correction |
+| --- | --- | --- | --- |
+| N2 | F22 | `a19dda1` | An operation or upload refused because storage was already full still said "Stockage plein" without the quota or the remedy; the Graph tab showed it on each visit. Every such refusal now uses the quota message. |
+| N4 | F22 | `7ed9fcf` | Since D6, three presentation refusals appeared alone and untranslated, and the transient "sources changed while reading" lost its retry advice. They are translated and that one carries the advice. |
+| N1 | F22 | `5cc0750` | On phones the presentation status sat in the collapsed data options, so a missing sheet part showed an empty grid. The status now stays above the grid. |
+| N8 | F22 | `38ee60b` | The Data tab gave the no-index message in the error style; it is now a notice, as on the other tabs. |
+
+Not changed, reported:
+- the `--max-storage-mb` flag can wrap at its hyphen (D5);
+- on mobile, Refresh data sits in the collapsed "Data options" that the
+  failed and cancelled messages name (D7), and when no data view exists those
+  options still offer "Open Datasette" and the row controls (N5, existing);
+- a sheet-part diagnostic appears both under its sheet and in the workbook
+  list (D8, existing layout);
+- at 390 px the Graph tab's build status line sits partly off-screen over the
+  node card (N3, existing CSS);
+- with storage full, the Data tab sentence names the preparation twice and
+  still says that Refresh data starts it again (N6);
+- with the shared-strings part missing, each sheet still says "Import
+  complete" (N7, see D4);
+- English labels keep the French space before a colon (N9, existing).
 
 ## Appendix: probes
 
