@@ -891,3 +891,50 @@ def test_operations_name_a_running_operation_phase_in_words(browser, language, l
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("reason", "english"),
+    [
+        (
+            "Sources modifiées ; importez une nouvelle version",
+            "Sources changed; import a new version",
+        ),
+        (
+            "Sources modifiées pendant la lecture ; réessayez avec Afficher la zone.",
+            "Sources changed while reading; retry with Show area.",
+        ),
+        (
+            "Cet add-in ne contient pas de feuille de calcul",
+            "This add-in contains no worksheet",
+        ),
+    ],
+)
+def test_presentation_refusals_reach_english_in_english(browser, reason, english):
+    """Batch 2 bis, F22: a 409 reason is shown alone, so it must be
+    translated, and the one a retry can help says so itself."""
+    data = {
+        "available": True,
+        "presentationAvailable": True,
+        "sourceSha256": "a" * 64,
+        "cellsUrl": "/api/projects/p/datasette/source/cells",
+        "sheets": [
+            {"sheet": "Data", "url": "/api/projects/p/datasette/source/sheet_001"}
+        ],
+    }
+    page, _, errors, _, _ = open_app(
+        browser,
+        (1440, 900),
+        payload=data,
+        language="en",
+        presentation=lambda route: route.fulfill(
+            status=409, json={"error": {"message": reason}}
+        ),
+    )
+    try:
+        status = page.locator("#excel-status")
+        status.filter(has_text=english).wait_for()
+        assert status.inner_text().strip() == english
+        assert not errors
+    finally:
+        page.close()

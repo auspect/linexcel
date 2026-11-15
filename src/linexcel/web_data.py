@@ -701,7 +701,12 @@ class DataBrowser:
                 or generation(index) != before
                 or result.get("sourceSha256") != source_sha
             ):
-                raise APIError(409, "Sources modifiées pendant la lecture")
+                # Shown alone by the interface: say that a retry can help.
+                raise APIError(
+                    409,
+                    "Sources modifiées pendant la lecture ; "
+                    "réessayez avec Afficher la zone.",
+                )
             return {"available": True, "revision": project["revision"], **result}
 
     def request(
