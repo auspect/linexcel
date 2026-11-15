@@ -579,6 +579,25 @@ class WorkbookIndex(Mapping):
             ).fetchall()
         ]
 
+    def bracketed_formula_nodes(self):
+        """``(id, node)`` of nodes whose formula holds a ``[``, in table order.
+
+        External references (``[1]Sheet!A1``) are among them; structured
+        references are too, so a caller still checks each formula.
+        """
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE formula IS NOT NULL "
+            "AND instr(formula,'[')>0"
+        ):
+            yield node_id, _unpack(data)
+
+    def range_nodes(self):
+        """``(id, node)`` of every range node, in table order."""
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range'"
+        ):
+            yield node_id, _unpack(data)
+
     def sheet_cells(self, sheet):
         """The stored nodes of one sheet's cells, row by row, as stored.
 

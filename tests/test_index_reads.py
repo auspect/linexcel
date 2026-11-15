@@ -516,6 +516,59 @@ def test_export_writes_every_node_in_import_order_with_its_context(project):
     ]
 
 
+def test_import_records_each_external_reference_of_a_formula(tmp_path):
+    from test_external import _link
+    from test_total_lineage import fixture_source
+
+    from linexcel.lazy_store import WorkbookIndex
+
+    reader = fixture_source(
+        tmp_path,
+        1,
+        "reader.xlsx",
+        {"A1": "=SUM('[1]S'!A1:A3)", "A2": "='[1]S'!B1*2", "A3": "=1"},
+        links=[_link("inputs.xlsx", "S", {"A1": 500})],
+    )
+    with WorkbookIndex(reader.path) as index:
+        facts = [
+            (node, ordinal, json.loads(data))
+            for node, ordinal, data in index.db.execute(
+                "SELECT node,ordinal,data FROM external_facts ORDER BY node,ordinal"
+            )
+        ]
+        count = index.meta["externalReferenceCount"]
+    assert [
+        (node, ordinal, f["reference"], f["bounds"], f["placeholder"])
+        for node, ordinal, f in facts
+    ] == [
+        (
+            "S!A1",
+            0,
+            "'[1]S'!A1:A3",
+            [1, 1, 3, 1],
+            "external-unresolved:inputs.xlsx:S!A1:A3",
+        ),
+        ("S!A2", 0, "'[1]S'!B1", [1, 2, 1, 2], "external-unresolved:inputs.xlsx:S!B1"),
+    ]
+    assert count == 2
+
+
+def test_import_records_the_bounds_of_every_local_range(project):
+    from linexcel.lazy_store import WorkbookIndex
+
+    _, _, _, path = project
+    with WorkbookIndex(path / "index.sqlite") as index:
+        ranges = index.db.execute(
+            "SELECT * FROM lineage_ranges ORDER BY rowid"
+        ).fetchall()
+    assert ranges == [
+        ("Data!B2:B6", "data", 2, 2, 6, 2),
+        ("Data!A2:A6", "data", 2, 1, 6, 1),
+        ("Big!A1:A300", "big", 1, 1, 300, 1),
+        ("Arr!B1:B3", "arr", 1, 2, 3, 2),
+    ]
+
+
 def test_report_counts_the_cells_each_selected_range_holds(project):
     from linexcel.web_report import prepare_report
 
@@ -546,7 +599,6 @@ def test_report_counts_the_cells_each_selected_range_holds(project):
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
     "graph_store.py": 3,
-    "link_facts.py": 2,
 }
 
 

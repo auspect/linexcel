@@ -124,7 +124,7 @@ def reference_facts(formula, books):
 
 
 def index_facts(path, store, metadata):
-    from linexcel.lazy_store import _dump, _unpack
+    from linexcel.lazy_store import _dump
 
     db = store.db
     db.executescript("""
@@ -152,10 +152,7 @@ def index_facts(path, store, metadata):
         }
         for b in books.values()
     ]
-    for nid, data in db.execute(
-        "SELECT id,data FROM nodes WHERE formula IS NOT NULL AND instr(formula,'[')>0"
-    ):
-        node = _unpack(data)
+    for nid, node in store.bracketed_formula_nodes():
         if node.get("external"):
             continue
         for ordinal, fact in enumerate(reference_facts(node["formula"], books)):
@@ -167,8 +164,7 @@ def index_facts(path, store, metadata):
             db.execute(
                 "INSERT INTO external_facts VALUES (?,?,?)", (nid, ordinal, _dump(fact))
             )
-    for nid, data in db.execute("SELECT id,data FROM nodes WHERE kind='range'"):
-        node = _unpack(data)
+    for nid, node in store.range_nodes():
         if not node.get("external") and node.get("bounds") and node.get("sheet"):
             db.execute(
                 "INSERT INTO lineage_ranges VALUES (?,?,?,?,?,?)",
