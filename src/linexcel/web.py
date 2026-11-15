@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
-from linexcel.lazy_store import INDEX_FILENAME
+from linexcel.lazy_store import INDEX_FILENAME, LEGACY_INDEX_FILENAMES
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -177,6 +177,31 @@ NO_INDEX_MESSAGE = (
     "Aucun index publié : le dernier import n’a pas abouti. "
     "Consultez Opérations pour la raison."
 )
+OUTDATED_INDEX_MESSAGE = (
+    "Index créé par une version précédente de linexcel : réimportez le "
+    "classeur (le fichier est conservé)."
+)
+#: Files derived from an index, rebuilt from the new one after a reimport.
+_INDEX_DERIVED = ("hierarchy.sqlite", "source-data.sqlite")
+
+
+def outdated_index(path: Path) -> bool:
+    """An earlier schema's index is on disk and the current one is not.
+
+    The old file stays, unused, until the user reimports the project.
+    """
+    return not (path / INDEX_FILENAME).is_file() and any(
+        (path / name).is_file() for name in LEGACY_INDEX_FILENAMES
+    )
+
+
+def remove_outdated_index(path: Path) -> None:
+    """Delete an earlier schema's index and the files derived from it."""
+    if not outdated_index(path):
+        return
+    for name in (*LEGACY_INDEX_FILENAMES, *_INDEX_DERIVED):
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            (path / (name + suffix)).unlink(missing_ok=True)
 
 
 class APIError(Exception):
@@ -553,6 +578,7 @@ class TaskStore:
             return {
                 "project": project_revision(_read(path / "project.json"), path),
                 "graph": self._graph(path),
+                "outdatedIndex": outdated_index(path),
                 "tasks": [
                     self.public(t, include_result=False)
                     for t in self.tasks.values()
@@ -610,6 +636,8 @@ class TaskStore:
         )
         if imports and imports[-1]["status"] in {"failed", "cancelled"}:
             return APIError(409, NO_INDEX_MESSAGE)
+        if outdated_index(self.project_path(owner, project_id)):
+            return APIError(409, OUTDATED_INDEX_MESSAGE)
         return APIError(409, fallback)
 
     def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
@@ -882,8 +910,10 @@ class TaskStore:
                 from linexcel.graph_store import generation
 
                 if not (path / INDEX_FILENAME).is_file():
-                    raise APIError(
-                        409, "Importez le classeur avant de construire le graphe"
+                    raise self.missing_index_error(
+                        owner,
+                        project_id,
+                        "Importez le classeur avant de construire le graphe",
                     )
                 graph_generation = generation(path / INDEX_FILENAME)
             if operation == "import" and self._project_exports.get((owner, project_id)):
@@ -892,6 +922,10 @@ class TaskStore:
                 raise APIError(
                     409, "Sources modifiées sur disque ; importez une nouvelle version"
                 )
+            if operation == "import":
+                # The user reimports: an index of an earlier schema, kept
+                # until now, and its derived views go, freeing their storage.
+                remove_outdated_index(path)
             pattern_id = None
             if operation == "evaluate" or (
                 operation == "document" and node_id is not None
@@ -899,7 +933,9 @@ class TaskStore:
                 if not isinstance(node_id, str) or not any(
                     (path / name).is_file() for name in (INDEX_FILENAME, "graph.json")
                 ):
-                    raise APIError(409, "Importez le graphe avant le recalcul")
+                    raise self.missing_index_error(
+                        owner, project_id, "Importez le graphe avant le recalcul"
+                    )
                 node = self._node(path, node_id)
                 if node is None:
                     raise APIError(404, "Nœud introuvable")
@@ -933,7 +969,11 @@ class TaskStore:
                         (path / name).is_file()
                         for name in (INDEX_FILENAME, "graph.json")
                     ):
-                        raise APIError(409, "Importez le graphe avant la documentation")
+                        raise self.missing_index_error(
+                            owner,
+                            project_id,
+                            "Importez le graphe avant la documentation",
+                        )
                     completed = [
                         t
                         for t in self.tasks.values()

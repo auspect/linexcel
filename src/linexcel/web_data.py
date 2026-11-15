@@ -648,8 +648,10 @@ class DataBrowser:
                 raise APIError(409, "Cet add-in ne contient pas de feuille de calcul")
             index = path / INDEX_FILENAME
             if not index.is_file():
-                raise APIError(
-                    409, "Importez le classeur avant de parcourir les données"
+                raise self.store.missing_index_error(
+                    owner,
+                    project_id,
+                    "Importez le classeur avant de parcourir les données",
                 )
             before = generation(index)
             with WorkbookIndex(index) as source:

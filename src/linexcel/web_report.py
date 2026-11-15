@@ -102,7 +102,9 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
     ):
         raise APIError(409, "Attendez la fin de l’import avant le rapport")
     if not (project / INDEX_FILENAME).is_file():
-        raise APIError(409, "Actualisez la structure avant le rapport")
+        raise store.missing_index_error(
+            owner, project_id, "Actualisez la structure avant le rapport"
+        )
     completed = sorted(
         (
             t
