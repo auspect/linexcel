@@ -263,9 +263,10 @@ def evaluate(xlsx, store, index, cell, out):
                 for _ in outside
             )
             args = [x for sub in outside for x in (sub[0], sub[2], sub[1], sub[3])]
+            # Same columns as serve's selection, keyed by position since F26.
             self.db.execute(
-                "INSERT OR IGNORE INTO selected_inputs SELECT id FROM nodes "
-                "WHERE sheet=? AND row BETWEEN ? AND ? "
+                "INSERT OR IGNORE INTO selected_inputs SELECT sheet,row,col,id "
+                "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
                 "AND col BETWEEN ? AND ? AND kind='input'" + condition,
                 (sheet, r1, r2, c1, c2, *args),
             )
