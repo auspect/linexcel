@@ -266,7 +266,7 @@ def _stream_elements(archive, member: str, tag: str):
 class WorkbookIndex(Mapping):
     """A read-through node mapping; iteration streams rows, never a workbook."""
 
-    def __init__(self, path: Path, *, writable=False, check_schema=True):
+    def __init__(self, path: Path, *, writable=False, check_schema=True, use_grid=True):
         self.path = Path(path)
         uri_path = str(Path(path).resolve())
         if os.name == "nt":
@@ -308,6 +308,10 @@ class WorkbookIndex(Mapping):
         self._grid: GridReader | None = None
         self._layout: tuple[int, list[str]] | None = None
         self._selected_rects: dict[str, list[tuple[int, int, int, int]]] = {}
+        #: False keeps every cell a node, as the temporary index of a supplied
+        #: external workbook does: its cells are copied as nodes, with their
+        #: XML spelling.
+        self.use_grid = use_grid
 
     def __enter__(self):
         return self
@@ -665,6 +669,8 @@ class WorkbookIndex(Mapping):
 
     def begin_grid(self, *, epoch1904):
         """Keep the literal cells the reader stores next in per-sheet grids."""
+        if not self.use_grid:
+            return
         self._writer = GridWriter(self.db, epoch1904=epoch1904, demote=self._store)
         self.db.execute(
             "INSERT OR REPLACE INTO metadata VALUES ('gridEpoch1904',?)",
@@ -1209,16 +1215,16 @@ class WorkbookIndex(Mapping):
                 "LEFT JOIN nodes n ON n.id=s.id ORDER BY s.sheet,s.row,s.col,s.id"
             )
         )
-        ranges = []
-        for sheet in sorted(self._selected_rects):
-            scans = [
-                (
-                    (sheet, r, c, 1, None, raw)
-                    for r, c, *raw in self.grid.scan(sheet, rect)
-                )
-                for rect in self._selected_rects[sheet]
-            ]
-            ranges.append(heapq.merge(*scans, key=_merge_key4))
+        ranges = [
+            heapq.merge(
+                *(
+                    _labelled(sheet, self.grid.scan(sheet, rect))
+                    for rect in self._selected_rects[sheet]
+                ),
+                key=_merge_key4,
+            )
+            for sheet in sorted(self._selected_rects)
+        ]
         previous = None
         for sheet, row, col, _, data, extra in heapq.merge(
             table, *ranges, key=_merge_key4
@@ -1362,6 +1368,12 @@ class WorkbookIndex(Mapping):
 
 def _merge_key(item):
     return item[0], item[1], item[2]
+
+
+def _labelled(sheet, cells):
+    """Grid cells of one sheet as selection rows ``(sheet, row, col, 1, ...)``."""
+    for row, col, *raw in cells:
+        yield sheet, row, col, 1, None, raw
 
 
 def _merge_key4(item):

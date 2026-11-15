@@ -251,3 +251,31 @@ def test_a_grid_date_displays_from_its_saved_serial(tmp_path):
         "formatted",
     )
     assert cells["B1"]["display"] == "29/02/2024 12:00"
+
+
+def test_ranges_selected_on_several_sheets_keep_their_sheet(tmp_path):
+    book = Workbook()
+    book.active.title = "Jan"
+    for name in ("Feb", "Mar"):
+        book.create_sheet(name)
+    for position, sheet in enumerate(book.worksheets, 1):
+        sheet["A1"], sheet["A2"] = position, position * 10
+    path = tmp_path / "months.xlsx"
+    book.save(path)
+    build_index(path, tmp_path / "index.sqlite")
+    with WorkbookIndex(tmp_path / "index.sqlite") as store:
+        store.prepare_input_selection()
+        for sheet in ("Mar", "Jan", "Feb"):
+            store.select_range_inputs(sheet, (1, 1, 2, 1))
+        cells = [
+            (c["sheet"], c["row"], c["cached_comparison_value"])
+            for c in store.selected_input_cells()
+        ]
+    assert cells == [
+        ("Feb", 1, 2),
+        ("Feb", 2, 20),
+        ("Jan", 1, 1),
+        ("Jan", 2, 10),
+        ("Mar", 1, 3),
+        ("Mar", 2, 30),
+    ]
