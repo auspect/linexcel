@@ -251,7 +251,13 @@ With every correction together (`65c37d3`), on the same corpus: `Forecast!D2`
 57.1 s, `Summary!B2` 16.4 s, `Forecast!E2` 0.04 s, 75 selected inputs read in
 0.001 s, depth-2 neighbourhood 0.02–0.15 s, the three TAG sheets presented in
 0.41–2.75 s. Values and cache comparisons are unchanged on every measured
-cell.
+cell. Measured again on the final code of the batch, after the review
+corrections below (which change no calculation or index code): `Forecast!D2`
+66.5 s then 55.9 s in a second run (run-to-run variance), `Summary!B2` 15.2 s
+and 14.9 s, `Forecast!E2` 0.04 s, selected inputs 0.001 s, neighbourhood
+0.02–0.19 s, TAG sheets 0.39–2.51 s; on ATB the Data tab answers in 0.021 s,
+the view is available after 36.9 s, and 137 unrelated requests take at most
+0.012 s meanwhile.
 
 An independent visual review of the serve captures (desktop 1440×900, mobile
 390×844, French and English) then found interface defects in these
