@@ -20,6 +20,7 @@ import zipfile
 import zlib
 from collections.abc import Mapping
 from dataclasses import replace
+from functools import partial
 from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import quote, unquote
@@ -513,6 +514,32 @@ class WorkbookIndex(Mapping):
             (sheet,),
         ):
             yield row[0]
+
+    def node_inventory(self):
+        """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
+        return self.db.execute(
+            "SELECT sheet,kind,count(*) FROM nodes GROUP BY sheet,kind"
+        ).fetchall()
+
+    def name_records(self):
+        """``(id, sheet, node)`` of every defined name, in import order."""
+        for node_id, sheet, data in self.db.execute(
+            "SELECT id,sheet,data FROM nodes WHERE kind='name' ORDER BY seq"
+        ):
+            yield node_id, sheet, _unpack(data)
+
+    def sheet_records(self, sheet):
+        """``(id, kind, row, col, decode)`` of one sheet's nodes, row by row.
+
+        Names excluded. ``decode()`` returns the stored node; a caller that
+        skips a record never pays for decoding it.
+        """
+        for node_id, kind, row, col, data in self.db.execute(
+            "SELECT id,kind,row,col,data FROM nodes WHERE sheet IS ? "
+            "AND kind!='name' ORDER BY row,col,seq",
+            (sheet,),
+        ):
+            yield node_id, kind, row, col, partial(_unpack, data)
 
     def prepare_input_selection(self):
         # The selection is keyed by position, so it is read back in sheet order

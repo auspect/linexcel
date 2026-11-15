@@ -182,10 +182,79 @@ def test_ask_find_value_scans_cells_in_import_order(question_tools):
     assert data["coverage"] == {"complete": True, "scanned": 352}
 
 
+@pytest.fixture
+def catalog(project, tmp_path):
+    from linexcel.catalog import Catalog, CatalogLimits, Source
+
+    _, _, pid, path = project
+    source = Source(pid, "reads.xlsx", path / "index.sqlite")
+    built = Catalog(tmp_path / "catalog", CatalogLimits())
+    built.ensure([source])
+    return built, source
+
+
+def _sheet_coverage(catalog):
+    return {s["sheet"]: s for s in catalog.status()["coverage"]["sheets"]}
+
+
+def test_catalog_counts_every_node_kind_of_every_sheet(catalog):
+    sheets = _sheet_coverage(catalog[0])
+    assert {sheet: s["nodeKinds"] for sheet, s in sheets.items()} == {
+        "Data": {"cell": 5, "input": 19, "range": 2},
+        "Calc": {"cell": 5, "input": 7},
+        "Big": {"input": 300, "range": 1},
+        "Labels": {"input": 12},
+        "Arr": {"cell": 1, "input": 3, "range": 1},
+        None: {"name": 1},
+    }
+    assert {sheet: s["nodesTotal"] for sheet, s in sheets.items()} == {
+        "Data": 26,
+        "Calc": 12,
+        "Big": 301,
+        "Labels": 12,
+        "Arr": 5,
+        None: 1,
+    }
+
+
+def test_catalog_lists_defined_names(catalog):
+    with catalog[0].pin() as (db, _):
+        names = db.execute(
+            "SELECT sheet,address,text,node FROM entries WHERE kind='name'"
+        ).fetchall()
+    assert names == [(None, None, "rate", "name:*:Rate")]
+    assert _sheet_coverage(catalog[0])[None]["nodesScanned"] == 1
+
+
+def test_catalog_scans_every_cell_of_every_sheet(catalog):
+    sheets = _sheet_coverage(catalog[0])
+    assert all(s["nodesScanned"] == s["nodesTotal"] for s in sheets.values())
+    # Text values, the error literal #N/A included; numbers are not text.
+    assert {sheet: s["textCellsObserved"] for sheet, s in sheets.items()} == {
+        "Data": 10,
+        "Calc": 6,
+        "Big": 0,
+        "Labels": 6,
+        "Arr": 0,
+        None: 0,
+    }
+    with catalog[0].pin() as (db, _):
+        cells = db.execute(
+            "SELECT address,text FROM entries WHERE kind='cell' AND sheet='Data' "
+            "AND address LIKE 'A%' ORDER BY address"
+        ).fetchall()
+    assert cells == [
+        ("A1", "region"),
+        ("A2", "north"),
+        ("A3", "south"),
+        ("A4", "east"),
+        ("A5", "west"),
+    ]
+
+
 # Direct reads of the index's ``nodes`` table still to route, by module. The
 # list only shrinks; it is empty once every read goes through WorkbookIndex.
 REMAINING_DIRECT_READS = {
-    "catalog_build.py": 3,
     "catalog_lineage.py": 3,
     "catalog_occurrences.py": 2,
     "catalog_query.py": 1,
