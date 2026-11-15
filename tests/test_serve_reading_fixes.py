@@ -466,9 +466,12 @@ def test_a_storage_quota_stop_says_what_happened(tmp_path):
     try:
         book = Workbook()
         sheet = book.active
-        for row in range(1, 6001):
-            for column in range(1, 5):
-                sheet.cell(row, column, row * column)
+        # Long formulas stay one record each (literals would fit in a grid);
+        # under 10,000 cells, the import's own budget check never runs inside
+        # the sheet, so the coordinator's quota stop ends the task (F21 only
+        # publishes sheets read within the budget).
+        for row in range(1, 9001):
+            sheet.cell(row, 1, "=" + "+".join([str(row)] * 150))
         data = workbook_bytes(book)
         assert len(data) < 512 * 1024  # the upload fits, the index does not
         code, imported = call(
