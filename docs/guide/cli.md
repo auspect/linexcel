@@ -160,8 +160,9 @@ and 175,000 formulas) 357 MB in 188 s, of which 230 MB are its formulas.
 Schema 4 needed 10,969 MB, 6,717 MB and 2,022 MB. The Data tab still copies
 every cell into a database of its own: 9,830 MB for DGT and 6,027 MB for ONS,
 prepared in 585 s and 390 s. With the default storage quota of 2048 MiB that
-preparation stops on the quota and the tab says so; start the server with a
-larger `--max-storage-mb` to browse such workbooks there.
+preparation stops on the quota and the tab says so. With a larger
+`--max-storage-mb` the preparation completes, but the Excel presentation still
+refuses sheets this large (its size limit).
 
 A project imported by an earlier version keeps its old `index.sqlite` on disk,
 unused: the project shows "Index created by an earlier version of linexcel:
@@ -182,10 +183,10 @@ import without an index.
 
 When time stops the reading, Diagnostics says how long the import read and
 how much of the worksheet XML it read, and proposes a reimport with the time
-budget that reads every sheet at that rate: the reading time over the 60 %
-share, plus 25 %, rounded up to the minute, at least a minute more than the
-budget used, at most 3600 s. Above that maximum it says that even 3600 s may
-not read everything. The default budget of an import, a graph construction
+budget estimated to read every sheet at that rate: the reading time over the
+60 % share, plus 25 %, rounded up to the minute, at least a minute more than
+the budget used, at most 3600 s. Above that maximum it says that reading
+everything would need more than 3600 s, and the button still offers 3600 s. The default budget of an import, a graph construction
 or a report is 600 s; `linexcel serve --import-seconds N` sets another
 default (1 to 3600), and the "Import and graph" field still lets each
 operation choose its own.

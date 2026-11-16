@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a preview. A range that reads a region names it with the exact
   sub-range read, and the neighbourhood shows the link.
 - Offer to reimport a workbook whose sheets were not all read within the
-  import's time budget. Diagnostics says how long the import read and how
-  much of the sheets it read, and proposes a reimport with the time budget
-  that reads every sheet at that rate, with a margin, at most 3600 s. On the
-  public DGT election table, the default 600 s read 64 % of its only sheet
-  in 356 s; the proposed 1200 s imported it completely in 580 s.
+  import's time budget. Diagnostics says how long the sheets were read (60 %
+  of the import's budget is kept for that) and how much of them was read,
+  and proposes a reimport with the budget estimated to read every sheet at
+  that rate, with a margin, at most 3600 s. On the public DGT election table,
+  the default 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
+  imported it completely in 580 s.
 - Set the default time budget of imports, graph constructions and reports
   with `linexcel serve --import-seconds N` (1 to 3600; default 600 s,
   unchanged). The "Import and graph" field starts at that value, and each
