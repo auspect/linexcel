@@ -725,14 +725,16 @@ class GridReader:
         if not isinstance(node_id, str) or "!" not in node_id or not self.sheets:
             return None
         rect = parse_ref(node_id)
+        if rect is None or rect.ncells != 1:
+            return None
+        sheet = rect.sheet
         if (
-            rect is None
-            or rect.ncells != 1
-            or rect.sheet not in self.sheets
-            or cell_id(rect.sheet, rect.r1, rect.c1) != node_id
+            sheet is None
+            or sheet not in self.sheets
+            or cell_id(sheet, rect.r1, rect.c1) != node_id
         ):
             return None
-        return rect.sheet, rect.r1, rect.c1
+        return sheet, rect.r1, rect.c1
 
     def node(self, sheet: str, row: int, col: int, value, fmt, hidden) -> dict:
         info = self.sheets[sheet]

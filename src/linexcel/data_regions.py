@@ -41,6 +41,7 @@ import hashlib
 import json
 from bisect import bisect_left
 from collections import Counter
+from typing import Any
 
 from linexcel.cell_grid import GRID_COLUMNS
 from linexcel.refs import a1, quote_sheet
@@ -133,7 +134,7 @@ def detect_regions(store) -> list[dict]:
     arrays: dict[str, list[tuple]] = {}
     for sheet, r1, c1, r2, c2 in store.db.execute("SELECT * FROM arrays"):
         arrays.setdefault(sheet, []).append((r1, c1, r2, c2))
-    regions = []
+    regions: list[dict[str, Any]] = []
     for sheet in store.import_sheets():
         spans = store.literal_spans(sheet)
         if not spans:

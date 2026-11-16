@@ -1967,7 +1967,7 @@ def _read_source(path, store, budget=None):
             hidden_columns = []
             stop = budget.exhausted(store.path) if budget else None
             if stop:
-                if stop == "time_budget" and estimate is None:
+                if budget and stop == "time_budget" and estimate is None:
                     estimate = budget.estimate(bytes_read, sum(sizes))
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
@@ -2474,7 +2474,8 @@ def _read_source(path, store, budget=None):
                             element.clear()
                         stack.pop()
             except _ImportStopError as stopped:
-                if stopped.reason == "time_budget" and estimate is None:
+                # Only a budget check raises it: ``budget`` is set here.
+                if budget and stopped.reason == "time_budget" and estimate is None:
                     estimate = budget.estimate(
                         bytes_read + stopped.position, sum(sizes)
                     )
