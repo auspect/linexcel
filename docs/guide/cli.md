@@ -152,6 +152,17 @@ SHA-256, worksheet part, sheet state) plus the value, and the XML spelling of
 the number or the shared-string index (`rawXmlValue`) is no longer kept for
 grid cells. Formula caches and cells kept as records still have it.
 
+Measured on the public corpus (Windows, quiet machine): the index of the DGT
+election table (103 MB of workbook, 18.1 million values, no formula) takes
+92 MB and imports in 569 s; the ONS population tables (50 MB, 11.2 million
+values) 26 MB in 321 s; the generated fpna model (20 MB, 2.5 million values
+and 175,000 formulas) 357 MB in 188 s, of which 230 MB are its formulas.
+Schema 4 needed 10,969 MB, 6,717 MB and 2,022 MB. The Data tab still copies
+every cell into a database of its own: 9,830 MB for DGT and 6,027 MB for ONS,
+prepared in 585 s and 390 s. With the default storage quota of 2048 MiB that
+preparation stops on the quota and the tab says so; start the server with a
+larger `--max-storage-mb` to browse such workbooks there.
+
 A project imported by an earlier version keeps its old `index.sqlite` on disk,
 unused: the project shows "Index created by an earlier version of linexcel:
 reimport the workbook (the file is kept)" with a reimport button, every view
@@ -168,6 +179,16 @@ import stops in is rolled back; it and the following sheets are marked "Sheet
 not imported" in Diagnostics, with the reason. A formula reading such a sheet
 is refused: its cells are unknown, never blank. A memory stop still ends the
 import without an index.
+
+When time stops the reading, Diagnostics says how long the import read and
+how much of the worksheet XML it read, and proposes a reimport with the time
+budget that reads every sheet at that rate: the reading time over the 60 %
+share, plus 25 %, rounded up to the minute, at least a minute more than the
+budget used, at most 3600 s. Above that maximum it says that even 3600 s may
+not read everything. The default budget of an import, a graph construction
+or a report is 600 s; `linexcel serve --import-seconds N` sets another
+default (1 to 3600), and the "Import and graph" field still lets each
+operation choose its own.
 
 A block of at least 10,000 saved values without formulas becomes a data
 region: one node of kind `data` with its bounds, header names, a type per
