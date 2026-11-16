@@ -598,18 +598,38 @@ def _read_source(path, store):
             "xl/styles.xml",
         )
         if style_part in archive.namelist():
-            root = ET.fromstring(archive.read(style_part))
-            custom = {
-                int(e.attrib["numFmtId"]): e.get("formatCode", "General")
-                for e in root.findall("{*}numFmts/{*}numFmt")
-            }
-            formats = [
-                custom.get(
-                    int(e.get("numFmtId", "0")),
-                    BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+            try:
+                root = ET.fromstring(archive.read(style_part))
+                custom = {
+                    int(e.attrib["numFmtId"]): e.get("formatCode", "General")
+                    for e in root.findall("{*}numFmts/{*}numFmt")
+                }
+                formats = [
+                    custom.get(
+                        int(e.get("numFmtId", "0")),
+                        BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+                    )
+                    for e in root.findall("{*}cellXfs/{*}xf")
+                ] or ["General"]
+            except (
+                ET.ParseError,
+                ValueError,
+                KeyError,
+                zipfile.BadZipFile,
+                OSError,
+            ) as exc:
+                # Only the default style stays known. A cell with any other
+                # style index keeps an unknown value (see the per-cell check
+                # below) instead of a guessed number, date or duration.
+                formats = ["General"]
+                diagnostics.append(
+                    {
+                        "part": style_part,
+                        "message": "Styles part unreadable: number formats are "
+                        "unknown, so saved values of styled cells are unknown. "
+                        f"{type(exc).__name__}: {exc}",
+                    }
                 )
-                for e in root.findall("{*}cellXfs/{*}xf")
-            ] or ["General"]
         # Elapsed-format detection does not strip literals itself. A quoted
         # "[h]" label on a date must not turn its cache into a timedelta.
         format_kinds = [
@@ -691,15 +711,26 @@ def _read_source(path, store):
                     links[str(index)] = PureWindowsPath(unquote(target)).name
         for definition in workbook.findall("{*}definedNames/{*}definedName"):
             local = definition.get("localSheetId")
-            scope = (
-                sheets[int(local)]["name"]
-                if local is not None and int(local) < len(sheets)
-                else None
-            )
             name = definition.get("name", "")
             if not name:
                 diagnostics.append({"message": "Unnamed defined-name entry skipped."})
                 continue
+            scope = None
+            if local is not None:
+                position = int(local) if re.fullmatch(r"\d+", local.strip()) else -1
+                if not 0 <= position < len(sheets):
+                    # An unknown scope could bind the wrong name. Skip it so that
+                    # formulas reading it stay unresolved and refused.
+                    diagnostics.append(
+                        {
+                            "part": "xl/workbook.xml",
+                            "message": f"Defined name {name!r} skipped: invalid "
+                            f"localSheetId {local!r}. Formulas that use it are "
+                            "not resolved.",
+                        }
+                    )
+                    continue
+                scope = sheets[position]["name"]
             nid = f"name:{scope or '*'}:{name}"
             names[(scope, name.casefold())] = nid
             node = {
@@ -1235,6 +1266,54 @@ def _read_source(path, store):
     )
 
 
+def _reference_feature(reference: str) -> str:
+    """Capability registry feature for one reference that failed to resolve."""
+    if reference.endswith("#"):
+        return "arrays_and_spills"
+    qualifier, _ = split_sheet_prefix(reference)
+    if qualifier and "[" in qualifier:
+        return "external_references"
+    if qualifier and ":" in qualifier:
+        return "three_dimensional_references"
+    return "references"
+
+
+_LOCAL_SCOPE = re.compile(r"_xlfn\.(?=(?:LET|LAMBDA)\s*\()", re.IGNORECASE)
+_PARAMETER = re.compile(r"_xlpm\.", re.IGNORECASE)
+
+
+def _local_names(formula: str, tokens) -> set[str]:
+    """Upper-cased LET/LAMBDA names bound by one formula, without prefixes.
+
+    Reuses the static ``analyze`` rule (``resolver._bound_names``). Excel saves
+    ``LET(x,…)`` as ``_xlfn.LET(_xlpm.x,…)``; that rule only recognises the
+    bare spelling, so both prefixes are removed before parsing. An expression
+    the parser refuses binds nothing, which leaves its names unresolved and
+    the calculation refused.
+    """
+    if not any(
+        t.type == "FUNC"
+        and t.subtype == "OPEN"
+        and t.value[:-1].upper().removeprefix("_XLFN.") in {"LET", "LAMBDA"}
+        for t in tokens
+    ):
+        return set()
+    import formualizer as fz
+
+    from linexcel.engine import is_too_deep
+    from linexcel.resolver import _bound_names
+
+    expression = _PARAMETER.sub("", _LOCAL_SCOPE.sub("", formula))
+    if not expression.startswith("="):
+        expression = "=" + expression
+    if is_too_deep(expression):
+        return set()
+    try:
+        return _bound_names(fz.parse(expression).to_dict())
+    except Exception:
+        return set()
+
+
 def _index_dependencies(store, metadata, names, links, refs_dir):
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
@@ -1530,7 +1609,28 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             node["threeDimensionalArguments"] = [
                                 value for value, valid in spans.items() if valid
                             ]
+                        local = _local_names(node["formula"], tokens)
                         for token in tokens:
+                            if (
+                                local
+                                and token.type == "OPERAND"
+                                and token.subtype == "RANGE"
+                                and split_sheet_prefix(token.value)[0] is None
+                            ):
+                                body = token.value
+                                parameter = body.lower().startswith("_xlpm.")
+                                bare = body[6:] if parameter else body
+                                # A bare name that is also a defined name keeps
+                                # that dependency: a superset never hides a
+                                # source. Excel's _xlpm. marks a parameter.
+                                if bare.upper() in local and (
+                                    parameter
+                                    or not (
+                                        names.get((node.get("sheet"), bare.casefold()))
+                                        or names.get((None, bare.casefold()))
+                                    )
+                                ):
+                                    continue
                             if token.type == "FUNC" and token.subtype == "OPEN":
                                 function = (
                                     token.value[:-1].upper().removeprefix("_XLFN.")
@@ -1547,22 +1647,34 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                                     dep = dependency(
                                         token.value, node.get("sheet"), node
                                     )
-                                except ValueError as exc:
+                                except Exception as exc:
+                                    # Each reference is extracted on its own: a
+                                    # failure names that reference and keeps the
+                                    # later ones. The diagnostic still refuses
+                                    # calculation of this formula.
                                     from linexcel.structured_refs import (
                                         TableReferenceError,
                                     )
 
-                                    if not isinstance(exc, TableReferenceError):
-                                        raise
+                                    if isinstance(exc, TableReferenceError):
+                                        code, feature = exc.code, "structured_tables"
+                                        message = str(exc)
+                                    else:
+                                        code = "reference_unresolved"
+                                        feature = _reference_feature(token.value)
+                                        message = (
+                                            f"Reference {token.value} could not be "
+                                            f"resolved: {exc}"
+                                        )
                                     node.setdefault("capabilityDiagnostics", []).append(
                                         {
-                                            "code": exc.code,
-                                            "feature": "structured_tables",
+                                            "code": code,
+                                            "feature": feature,
                                             "reference": token.value,
-                                            "message": str(exc),
+                                            "message": message,
                                         }
                                     )
-                                    node["diagnostics"].append(str(exc))
+                                    node["diagnostics"].append(message)
                                     continue
                                 node.setdefault("reference_bindings", {})[
                                     token.value
@@ -2017,12 +2129,139 @@ def patterns_page(index_path: Path, *, offset=0, limit=200, sheet=None) -> dict:
         }
 
 
+_MEMBER_KINDS = ("cell", "input", "array_result")
+
+
+class _RangeMembership:
+    """Range membership from indexed coordinates, without decoding cell blobs.
+
+    A range node has no edge from its member cells in the ``edges`` table, so a
+    cell read only through ``SUM(C2:C11)`` would otherwise look unused.
+    ``lineage_ranges`` (written by ``link_facts.index_facts``) holds the local
+    range bounds; an older index without it decodes its range nodes instead.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self.indexed = bool(
+            store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lineage_ranges'"
+            ).fetchone()
+        )
+
+    def _fallback_ranges(self, sheet):
+        for nid, data in self.store.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range' AND sheet=?", (sheet,)
+        ):
+            node = _unpack(data)
+            if not node.get("external") and node.get("bounds"):
+                yield nid, node["bounds"]
+
+    def bounds(self, node_id, sheet):
+        if self.indexed:
+            row = self.store.db.execute(
+                "SELECT r1,c1,r2,c2 FROM lineage_ranges WHERE node=?", (node_id,)
+            ).fetchone()
+            return list(row) if row else None
+        return next(
+            (b for nid, b in self._fallback_ranges(sheet) if nid == node_id), None
+        )
+
+    def containing(self, sheet, row, col, limit):
+        """Local ranges that contain one cell, at most ``limit``."""
+        if self.indexed:
+            return [
+                r[0]
+                for r in self.store.db.execute(
+                    "SELECT node FROM lineage_ranges WHERE sheet=? "
+                    "AND ? BETWEEN r1 AND r2 AND ? BETWEEN c1 AND c2 "
+                    "ORDER BY node LIMIT ?",
+                    (sheet.lower(), row, col, limit),
+                )
+            ]
+        return sorted(
+            nid
+            for nid, (r1, c1, r2, c2) in self._fallback_ranges(sheet)
+            if r1 <= row <= r2 and c1 <= col <= c2
+        )[:limit]
+
+    def members(self, sheet, bounds, limit):
+        """Indexed cells inside a range, in sheet order, at most ``limit``."""
+        r1, c1, r2, c2 = bounds
+        return [
+            r[0]
+            for r in self.store.db.execute(
+                "SELECT id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+                "AND col BETWEEN ? AND ? AND kind IN (?,?,?) ORDER BY row,col LIMIT ?",
+                (sheet, r1, r2, c1, c2, *_MEMBER_KINDS, limit),
+            )
+        ]
+
+    def edges(self, ids):
+        """Membership relations (member -> range) among already selected nodes."""
+        if not ids:
+            return []
+        marks = ",".join("?" for _ in ids)
+        rows = self.store.db.execute(
+            f"SELECT id,kind,sheet,row,col FROM nodes WHERE id IN ({marks})", ids
+        ).fetchall()
+        ranges = [
+            (nid, sheet, b)
+            for nid, kind, sheet, _, _ in rows
+            if kind == "range" and (b := self.bounds(nid, sheet))
+        ]
+        cells = [r for r in rows if r[1] in _MEMBER_KINDS and r[3] is not None]
+        return [
+            {"source": cell, "target": rid, "kind": "range"}
+            for rid, rsheet, (r1, c1, r2, c2) in ranges
+            for cell, _, sheet, row, col in cells
+            if sheet.lower() == rsheet.lower() and r1 <= row <= r2 and c1 <= col <= c2
+        ]
+
+
+def _adjacent(store, membership, node_id, condition, limit):
+    """Direct sources and usages of one node, including range membership.
+
+    One bounded query per relation family; each family returns at most
+    ``limit`` rows, which keeps the caller's ``truncated`` flag exact.
+    """
+    found = {
+        row[0]
+        for row in store.db.execute(
+            (
+                "SELECT e.source AS neighbor FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.target=? AND {condition} "
+                "UNION SELECT e.target FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.source=? AND {condition} "
+                "ORDER BY neighbor LIMIT ?"
+            ),
+            (node_id, node_id, limit),
+        )
+    }
+    position = store.db.execute(
+        "SELECT kind,sheet,row,col FROM nodes WHERE id=?", (node_id,)
+    ).fetchone()
+    if position:
+        kind, sheet, row, col = position
+        if kind == "range" and sheet:
+            bounds = membership.bounds(node_id, sheet)
+            if bounds:
+                found.update(membership.members(sheet, bounds, limit))
+        elif kind in _MEMBER_KINDS and sheet and row is not None:
+            found.update(membership.containing(sheet, row, col, limit))
+    return sorted(found)
+
+
 def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> dict:
     """Read an undirected neighborhood with independent depth and node budgets.
 
     A deeper traversal never expands the HTTP node budget. ``truncated`` means
     an eligible node within the requested depth was omitted by that budget;
     neighbors beyond the requested depth are intentionally outside the view.
+    Range membership counts as a relation: a cell read through a range reaches
+    that range, and a range reaches its indexed member cells.
     """
     limit = max(1, min(MAX_PAGE_SIZE, int(limit)))
     depth = max(0, min(MAX_NEIGHBORHOOD_DEPTH, int(depth)))
@@ -2033,23 +2272,18 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         frontier = [node_id]
         truncated = False
         condition = _array_edge_filter(store)
+        membership = _RangeMembership(store)
         for _ in range(depth):
             if not frontier:
                 break
             following = []
             for current in frontier:
-                rows = store.db.execute(
-                    (
-                        "SELECT e.source AS neighbor FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.target=? AND {condition} "
-                        "UNION SELECT e.target FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.source=? AND {condition} "
-                        "ORDER BY neighbor LIMIT ?"
-                    ),
-                    (current, current, limit + 1),
-                )
+                rows = [
+                    (neighbor,)
+                    for neighbor in _adjacent(
+                        store, membership, current, condition, limit + 1
+                    )
+                ]
                 for row in rows:
                     if row[0] in ids:
                         continue
@@ -2064,10 +2298,14 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
                 break
             frontier = following
         nodes = [store.node(nid) for nid in ids]
+        edges = sorted(
+            _edges_for_nodes(store, list(ids)) + membership.edges(list(ids)),
+            key=lambda e: (e["source"], e["target"], e["kind"]),
+        )
         return {
             "lazy": True,
             "nodes": nodes,
-            "edges": _edges_for_nodes(store, list(ids)),
+            "edges": edges,
             "formulaPatterns": [
                 _pattern(
                     store,
