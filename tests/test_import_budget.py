@@ -171,6 +171,8 @@ def test_a_time_stop_estimates_the_budget_that_reads_every_sheet(tmp_path):
         160, math.ceil(needed / ImportBudget.READ_TIME_SHARE * 1.25 / 60) * 60
     )
     assert estimate["budgetSeconds"] == 100 and not estimate["beyondMaximum"]
+    # The reading share, so that the interface can explain the numbers.
+    assert estimate["readShare"] == ImportBudget.READ_TIME_SHARE
 
 
 def test_no_estimate_when_every_sheet_is_read(tmp_path):

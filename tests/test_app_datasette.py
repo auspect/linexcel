@@ -1018,6 +1018,7 @@ ESTIMATE_META = {
         "budgetSeconds": 600,
         "seconds": 1080,
         "beyondMaximum": False,
+        "readShare": 0.6,
     },
 }
 
@@ -1028,15 +1029,16 @@ ESTIMATE_META = {
         (
             (1440, 900),
             "fr",
-            "Lecture arrêtée par le budget de temps après 355 s : "
-            "71 % du contenu des feuilles lu.",
+            "La lecture des feuilles dispose de 60 % du budget de l’import, soit "
+            "360 s sur 600 s : elle s’est arrêtée après 355 s, avec 71 % de leur "
+            "contenu lu.",
             "Réimporter avec un budget de 1080 s",
         ),
         (
             (390, 844),
             "en",
-            "Reading stopped by the time budget after 355 s: "
-            "71 % of the sheets' content read.",
+            "Reading the sheets gets 60% of the import's budget, 360 s of 600 s: "
+            "it stopped after 355 s, with 71% of their content read.",
             "Reimport with a budget of 1080 s",
         ),
     ],

@@ -245,6 +245,7 @@ class ImportBudget:
             "budgetSeconds": self.seconds,
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
+            "readShare": self.READ_TIME_SHARE,
         }
 
     def exhausted(self, index_path) -> str | None:
