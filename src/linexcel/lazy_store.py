@@ -267,6 +267,10 @@ def _ascii_lower(text: str) -> str:
 _ASCII_LOWER = {c: c + 32 for c in range(65, 91)}
 
 
+#: The characters of a cell address past its sheet prefix, lower-cased.
+_ADDRESS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
 def _like_search(query: str):
     """``x LIKE '%query%'`` as SQLite evaluates it, for one Python string."""
     needle = _ascii_lower(query)
@@ -586,6 +590,75 @@ class WorkbookIndex(Mapping):
             (end, *sheet_args, *args),
         ):
             yield "node", row
+
+    def _search(self, *, sheet, where, args, accept, wanted):
+        """A search's first ``wanted`` items and its grid matches, in one pass.
+
+        The items are those ``_import_order`` gives, in its order, as
+        ``("node", row)`` without data or ``("grid", (sheet, row, col, raw))``.
+        Once ``wanted`` are kept, the rest of each grid is only counted: no
+        more node rows are read or merged.
+        """
+        columns = "seq,id,kind,sheet,row,col"
+        end, order = self._layout_info()
+        by_sheet, sheet_args = ("AND sheet IS ? ", (sheet,)) if sheet else ("", ())
+        extra = f"AND ({where}) " if where else ""
+        found: list[tuple] = []
+        matched = 0
+        keeping = True
+
+        def matching(name):
+            # Counts each grid cell that matches as the scan reaches it, and
+            # yields it only while the page still needs items.
+            nonlocal matched
+            for r, c, *raw in self.grid.scan(name):
+                if accept(name, r, c, raw):
+                    matched += 1
+                    if keeping:
+                        yield r, c, 1, (name, r, c, raw)
+
+        for row in self.db.execute(
+            f"SELECT {columns} FROM nodes WHERE seq<=? AND NOT {_CELL_KINDS} "
+            f"{by_sheet}{extra}ORDER BY seq",
+            (end, *sheet_args, *args),
+        ):
+            if len(found) >= wanted:
+                break
+            found.append(("node", row))
+        for name in order:
+            if sheet and name != sheet:
+                continue
+            cells = matching(name)
+            if len(found) < wanted:
+                nodes = (
+                    (row[4] or 0, row[5] or 0, 0, row)
+                    for row in self.db.execute(
+                        f"SELECT {columns} FROM nodes WHERE sheet=? AND seq<=? "
+                        f"AND {_CELL_KINDS} {extra}ORDER BY row,col,seq",
+                        (name, end, *args),
+                    )
+                )
+                # heapq.merge ends with ``yield from`` the last iterator left:
+                # leaving the merge would close ``cells`` with it. An iterator
+                # without ``close`` keeps the scan open for counting.
+                kept = iter(cells.__next__, None)
+                for *_, source, item in heapq.merge(nodes, kept, key=_merge_key):
+                    found.append(("grid" if source else "node", item))
+                    if len(found) >= wanted:
+                        break
+            keeping = len(found) < wanted
+            for _ in cells:  # the rest of the sheet: counted, not kept
+                pass
+        if len(found) < wanted:
+            for row in self.db.execute(
+                f"SELECT {columns} FROM nodes WHERE seq>? {by_sheet}{extra}"
+                "ORDER BY seq",
+                (end, *sheet_args, *args),
+            ):
+                if len(found) >= wanted:
+                    break
+                found.append(("node", row))
+        return found, matched
 
     def _sheet_merge(self, sheet, bounds, node_sql, node_args, *, accept=None):
         """One sheet's node rows and grid cells, by row and column.
@@ -3214,7 +3287,8 @@ def graph_page(
 
                 like = _like_search(query)
                 search = store.grid.search_text
-                prefixes: dict[str, tuple[str, bool]] = {}
+                needle = _ascii_lower(query)
+                prefixes: dict[str, tuple[str, bool, bool]] = {}
                 letters: dict[int, str] = {}
 
                 def accept(name, row, col, raw):
@@ -3222,43 +3296,73 @@ def graph_page(
                     prefix = prefixes.get(name)
                     if prefix is None:
                         text = quote_sheet(name) + "!"
-                        prefix = prefixes[name] = (text, like(text))
+                        # Past its sheet prefix an id holds letters and digits
+                        # only. Unless the query lies in the prefix, it must
+                        # be an end of the prefix followed by such characters.
+                        lower = _ascii_lower(text)
+                        possible = any(
+                            lower.endswith(needle[:cut])
+                            and set(needle[cut:]) <= _ADDRESS
+                            for cut in range(len(needle) + 1)
+                        )
+                        prefix = prefixes[name] = (text, like(text), possible)
                     if prefix[1]:
                         return True
-                    column = letters.get(col)
-                    if column is None:
-                        column = letters[col] = num_to_col(col)
-                    return like(prefix[0] + column + str(row)) or like(search(raw))
+                    if prefix[2]:
+                        column = letters.get(col)
+                        if column is None:
+                            column = letters[col] = num_to_col(col)
+                        if like(prefix[0] + column + str(row)):
+                            return True
+                    return like(search(raw))
 
             grid = kind in {None, "input"}
-            if grid:
-                names = [sheet] if sheet else list(store.grid.sheets)
-                for name in names:
-                    if accept is None:
-                        total += store.grid.count(name)
-                    else:
-                        total += sum(
-                            1
-                            for r, c, *raw in store.grid.scan(name)
-                            if accept(name, r, c, raw)
-                        )
-            nodes = [
-                store._decode(item[0][6:], context=True)
-                if source == "node"
-                else store._finish(store._grid_node(*item), None, context=True)
-                for source, *item in islice(
-                    store._import_order(
-                        data=True,
-                        sheet=sheet,
-                        where=condition,
-                        args=args,
-                        grid=grid,
-                        accept=accept,
-                    ),
-                    offset,
-                    offset + limit,
+            if grid and accept is not None:
+                # One pass keeps the page and counts the grid cells that
+                # match. Counting first read every grid cell twice when few
+                # matched: 10.4 s on 2.5 million cells against 3.6 s with
+                # schema 4 (batch 2 ter).
+                page, matched = store._search(
+                    sheet=sheet,
+                    where=condition,
+                    args=args,
+                    accept=accept,
+                    wanted=offset + limit,
                 )
-            ]
+                total += matched
+                nodes = [
+                    store._decode(
+                        store.db.execute(
+                            "SELECT data,pattern_id FROM nodes WHERE id=?",
+                            (item[1],),
+                        ).fetchone(),
+                        context=True,
+                    )
+                    if source == "node"
+                    else store._finish(store._grid_node(*item), None, context=True)
+                    for source, item in page[offset:]
+                ]
+            else:
+                if grid:
+                    names = [sheet] if sheet else list(store.grid.sheets)
+                    total += sum(store.grid.count(name) for name in names)
+                nodes = [
+                    store._decode(item[0][6:], context=True)
+                    if source == "node"
+                    else store._finish(store._grid_node(*item), None, context=True)
+                    for source, *item in islice(
+                        store._import_order(
+                            data=True,
+                            sheet=sheet,
+                            where=condition,
+                            args=args,
+                            grid=grid,
+                            accept=accept,
+                        ),
+                        offset,
+                        offset + limit,
+                    )
+                ]
         patterns = []
         for key in dict.fromkeys(n["patternId"] for n in nodes if n.get("patternId")):
             row = store.db.execute(

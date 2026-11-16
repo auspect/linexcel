@@ -380,3 +380,92 @@ def test_graph_page_search_matches_cell_references_and_sheet_names(index):
     assert found["pagination"]["total"] == 4
     # A sheet name matches every node whose id holds it.
     assert graph_page(index, query="Labels!")["pagination"]["total"] == 12
+
+
+# graph_page: a search reads each grid cell once, and builds no cell address
+# a query cannot occur in (batch 2 ter: a search with no match read the
+# 2.5 million grid cells of fpna twice, 10.4 s against 3.6 s with schema 4).
+
+
+def _counting_scan(monkeypatch):
+    from linexcel import cell_grid
+
+    seen = {"cells": 0}
+    scan = cell_grid.GridReader.scan
+
+    def counted(self, sheet, bounds=None):
+        for cell in scan(self, sheet, bounds):
+            seen["cells"] += 1
+            yield cell
+
+    monkeypatch.setattr(cell_grid.GridReader, "scan", counted)
+    return seen
+
+
+def test_a_search_with_no_match_reads_each_grid_cell_once(index, monkeypatch):
+    with WorkbookIndex(index) as store:
+        grid_cells = sum(store.grid.count(name) for name in store.grid.sheets)
+    assert grid_cells > 300
+    seen = _counting_scan(monkeypatch)
+    found = graph_page(index, query="zz no such text")
+    assert found["pagination"]["total"] == 0 and found["nodes"] == []
+    assert seen["cells"] == grid_cells
+
+
+def test_a_search_builds_no_address_a_query_cannot_occur_in(tmp_path, monkeypatch):
+    import re
+
+    from linexcel import lazy_store
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "My Data"
+    for row in range(1, 41):
+        sheet.append([f"name {row}", row * 1.5])
+    other = book.create_sheet("Plain")
+    for row in range(1, 41):
+        other.append([row, f"item {row}"])
+    path = tmp_path / "book.xlsx"
+    book.save(path)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index)
+    compared = []
+    like_search = lazy_store._like_search
+
+    def recorded(query):
+        like = like_search(query)
+
+        def test(text):
+            compared.append(text)
+            return like(text)
+
+        return test
+
+    monkeypatch.setattr(lazy_store, "_like_search", recorded)
+    address = re.compile(r"!\$?[A-Z]+\$?[0-9]+$")
+    # A space can be in a cell address only through a sheet name: every cell
+    # of 'My Data' matches by its address, no address of Plain can match.
+    assert graph_page(index, query="y da")["pagination"]["total"] == 80
+    assert graph_page(index, query="item 3")["pagination"]["total"] == 11
+    assert graph_page(index, query="zz no such text")["pagination"]["total"] == 0
+    assert not [text for text in compared if address.search(text or "")]
+    # Letters and digits can be an address: those queries still test it.
+    assert graph_page(index, query="plain!b1")["pagination"]["total"] == 11
+    assert [text for text in compared if address.search(text or "")]
+
+
+def test_a_search_counts_every_match_past_a_full_page(index):
+    # Big!A1:A300 holds 300 literal cells; the range node and the formula
+    # =SUM(Big!A1:A300) of Calc!B6 also hold "big!". A page of 5 is full
+    # long before the grid of Big ends: the total still counts all of them.
+    with WorkbookIndex(index) as store:
+        grid = store.grid.count("Big")
+        others = store.db.execute(
+            "SELECT count(*) FROM nodes WHERE id LIKE '%big!%' "
+            "OR formula LIKE '%big!%' OR search_value LIKE '%big!%'"
+        ).fetchone()[0]
+    assert (grid, others) == (300, 2)
+    for limit in (5, 200):
+        found = graph_page(index, query="big!", limit=limit)
+        assert found["pagination"]["total"] == grid + others
+        assert len(found["nodes"]) == limit
