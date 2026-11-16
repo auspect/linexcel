@@ -40,7 +40,7 @@ progress = ["rich>=13.0"]
 # README image capture and the optional browser regression suite.
 screenshots = ["playwright>=1.40", "pillow>=10"]
 tracing = ["opentelemetry-sdk>=1.39,<2", "opentelemetry-exporter-otlp-proto-http>=1.39,<2"]
-docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.26"]
+docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=1.0.8"]
 
 # The toolchain is a dependency group, not an extra: uv installs it on a plain
 # `uv sync`, and it stays out of what a consumer can `pip install linexcel[...]`.

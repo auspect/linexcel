@@ -1076,7 +1076,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'openai'", specifier = ">=0.28,<1" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.26" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=1.0.8" },
     { name = "oletools", specifier = ">=0.60.2" },
     { name = "openai", marker = "extra == 'ai'", specifier = ">=1.55.3" },
     { name = "openai", marker = "extra == 'all'", specifier = ">=1.55.3" },
