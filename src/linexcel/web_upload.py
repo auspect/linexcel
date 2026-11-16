@@ -147,7 +147,9 @@ class UploadStore:
     def begin(self, owner: str, body: dict) -> dict:
         from linexcel.web import APIError, _write
 
-        budget = self.store.budget(body.get("budget", {}), default_seconds=600)
+        budget = self.store.budget(
+            body.get("budget", {}), default_seconds=self.store.config.import_seconds
+        )
         search_scoped = body.get("searchScoped", False)
         if not isinstance(search_scoped, bool):
             raise APIError(400, "Invalid search scope")

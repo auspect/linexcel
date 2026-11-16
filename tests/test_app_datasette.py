@@ -32,6 +32,7 @@ def open_app(
     presentation=None,
     project=None,
     data_error=None,
+    limits=None,
 ):
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
     requests, errors, pending = [], [], []
@@ -92,7 +93,10 @@ def open_app(
                 ),
             )
         elif path == "/api/config":
-            fulfill(route, {"limits": {"memoryMb": 2048, "uploadMb": 64}})
+            fulfill(
+                route,
+                {"limits": {"memoryMb": 2048, "uploadMb": 64, **(limits or {})}},
+            )
         elif path == "/api/projects":
             fulfill(route, {"projects": projects})
         elif path in {"/api/projects/p", "/api/projects/q"}:
@@ -976,6 +980,19 @@ def test_a_presentation_reason_is_visible_on_a_phone(browser, language):
         assert not page.locator("#data-options").evaluate("element => element.open")
         assert status.is_visible()
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_the_import_budget_field_starts_at_the_servers_default(browser):
+    """Batch 2 ter: ``linexcel serve --import-seconds`` sets the budget the
+    "Import and graph" field proposes; the user can still change it."""
+    page, _, errors, _, _ = open_app(
+        browser, (1440, 900), limits={"importSeconds": 1500}
+    )
+    try:
+        assert page.locator("#import-seconds").input_value() == "1500"
         assert not errors
     finally:
         page.close()

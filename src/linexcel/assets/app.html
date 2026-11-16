@@ -1375,7 +1375,7 @@ async function initializeApplication(){
  try{
   const fragment=new URLSearchParams(location.hash.slice(1)),token=fragment.get('session');if(token){history.replaceState(null,'',location.pathname+location.search);current=null;graph=null;tasks=[];resetDataView();render();await api('session',{method:'POST',body:JSON.stringify({token})})}
   let config={};try{config=await api('config')}catch(error){if(error.status===401)throw error}
-  serverCacheVersion=config.cacheVersion||null;limits={...limits,...config.limits};uploadConfig={...uploadConfig,...config.uploads};aiConfig={...aiConfig,...config.ai};sessionRequired=!!config.session?.required;
+  serverCacheVersion=config.cacheVersion||null;limits={...limits,...config.limits};if(Number.isInteger(limits.importSeconds))$('import-seconds').value=limits.importSeconds;uploadConfig={...uploadConfig,...config.uploads};aiConfig={...aiConfig,...config.ai};sessionRequired=!!config.session?.required;
   $('session-required').hidden=!sessionRequired;$('legacy-load').hidden=!config.session?.localProfile;$('begin-import').disabled=sessionRequired;$('import-button').disabled=sessionRequired;
   $('import-source-control').hidden=!uploadConfig.localImport;$('ai-service').textContent=uiText(aiConfig.available?'Service configuré':'Service indisponible')+' · '+uiText('Documentation')+' : '+(aiConfig.model||'—')+' · Vision : '+(aiConfig.visionModel||'—');
   $('ai-seconds').value=aiConfig.defaultSeconds||600;$('ai-tokens').value=aiConfig.tokenBudget||16000;if(aiConfig.languages?.length)$('ai-language').innerHTML=aiConfig.languages.map(l=>'<option value="'+esc(l)+'">'+esc(l)+'</option>').join('');if(aiConfig.languages?.includes('fr'))$('ai-language').value='fr';

@@ -70,6 +70,9 @@ class WebConfig:
     total_memory_mb: int = 2048
     max_upload_mb: int = 256
     max_storage_mb: int = 2048
+    #: Default time budget of an import, a graph construction or a report,
+    #: when the request names none; each operation may still choose its own.
+    import_seconds: int = 600
     retention_days: int | None = 7
     max_pending_tasks: int = 32
     ai_enabled: bool = False
@@ -102,6 +105,12 @@ class WebConfig:
             value = getattr(self, key)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{key} must be a positive integer")
+        if (
+            isinstance(self.import_seconds, bool)
+            or not isinstance(self.import_seconds, int)
+            or not 1 <= self.import_seconds <= 3600
+        ):
+            raise ValueError("import_seconds must be an integer from 1 to 3600")
         if any(
             not isinstance(value, bool)
             for value in (
@@ -488,7 +497,9 @@ class TaskStore:
         return name, data
 
     def create(self, owner: str, body: dict) -> dict:
-        budget = self.budget(body.get("budget", {}), default_seconds=600)
+        budget = self.budget(
+            body.get("budget", {}), default_seconds=self.config.import_seconds
+        )
         workbook = self._file(body.get("workbook"))
         workspace_name = body.get("name") or workbook[0]
         if not isinstance(workspace_name, str) or len(workspace_name) > 200:
@@ -846,12 +857,11 @@ class TaskStore:
             raise APIError(
                 400, "Utilisez la préparation de question et son autorisation"
             )
-        if operation in AI_OPERATIONS | {
-            "import",
-            "build_graph",
-            "build_data",
-            "export_html",
-        } and isinstance(budget, dict):
+        if operation in {"import", "build_graph", "export_html"} and isinstance(
+            budget, dict
+        ):
+            budget = {"seconds": self.config.import_seconds, **budget}
+        elif operation in AI_OPERATIONS | {"build_data"} and isinstance(budget, dict):
             budget = {"seconds": 600, **budget}
         budget = self.budget(budget)
         options = {} if options is None else options
@@ -2123,6 +2133,7 @@ class WebApp:
                 "limits": {
                     "memoryMb": self.config.total_memory_mb,
                     "uploadMb": self.config.max_upload_mb,
+                    "importSeconds": self.config.import_seconds,
                     "retentionDays": self.config.retention_days,
                 },
             }
@@ -2275,6 +2286,7 @@ def serve(args) -> int:
         retention_days=args.retention_days,
         max_upload_mb=args.max_upload_mb,
         max_storage_mb=args.max_storage_mb,
+        import_seconds=getattr(args, "import_seconds", 600),
         allow_local_import=not args.no_local_import,
         local_profile=True,
         ai_enabled=args.ai,
