@@ -1623,6 +1623,20 @@ def _schema(db):
     """)
 
 
+def _read_in_transaction(db) -> None:
+    """Commit what the import has read so far and read on inside a transaction.
+
+    Outside a transaction every statement takes and releases the database
+    file lock: about 200 µs a statement on Windows against about 1 µs inside
+    one, as for readers (critical review F24). Grid storage writes literal
+    cells in batches, so nothing else keeps a transaction open between two
+    commits, and the per-cell shared-string lookups would each pay it.
+    """
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN")
+
+
 def _read_source(path, store, budget=None):
     """Index literals and formula text in one forward XML pass per sheet."""
     from linexcel.lazy import _INPUT_ERROR_KINDS, _id, _json, _name_literal
@@ -1829,6 +1843,7 @@ def _read_source(path, store, budget=None):
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
                 continue
+            _read_in_transaction(db)
             first_seq = db.execute("SELECT coalesce(max(seq),0) FROM nodes").fetchone()[
                 0
             ]
@@ -2260,7 +2275,7 @@ def _read_source(path, store, budget=None):
                                     "formulas" if formula is not None else "inputs"
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
-                                    db.commit()
+                                    _read_in_transaction(db)
                                     if budget and (
                                         stop := budget.exhausted(store.path)
                                     ):
