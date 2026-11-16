@@ -116,3 +116,66 @@ def test_a_task_budget_leaves_time_and_storage_for_the_rest_of_the_import(
     (tmp_path / "index.sqlite-journal").write_bytes(b"x" * 1_000)
     assert budget.exhausted(index) == "storage_budget"
     assert budget.exhausted(index) == "time_budget"
+
+
+class _Clock:
+    """One second per reading of the clock."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        self.now += 1.0
+        return self.now
+
+
+def test_a_time_stop_estimates_the_budget_that_reads_every_sheet(tmp_path):
+    """Batch 2 ter: "reimport with a larger time budget" said nothing of how
+    large. The import records the reading rate observed until it stopped and
+    the budget that would read every sheet at that rate."""
+    import math
+    import zipfile
+
+    book = Workbook()
+    book.active.title = "Small"
+    book.active["A1"] = 1
+    for name in ("Big1", "Big2"):
+        sheet = book.create_sheet(name)
+        for row in range(1, 12_501):
+            sheet.cell(row, 1, row)
+            sheet.cell(row, 2, f"v{row}")
+    path = tmp_path / "book.xlsx"
+    book.save(path)
+    with zipfile.ZipFile(path) as archive:
+        sizes = [
+            archive.getinfo(f"xl/worksheets/sheet{n}.xml").file_size for n in (1, 2, 3)
+        ]
+    # Clock readings: start, before Small, before Big1, Big1 at 10,000 and
+    # 20,000 cells, before Big2, Big2 at 10,000 cells: past the deadline.
+    budget = ImportBudget(deadline=6.5, clock=_Clock(), seconds=100)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, meta = _details(index)
+    assert [details[s]["status"] for s in ("Small", "Big1", "Big2")] == [
+        "complete",
+        "complete",
+        "not_imported",
+    ]
+    estimate = meta["importEstimate"]
+    assert estimate["bytesTotal"] == sum(sizes)
+    # Small and Big1 whole, then part of Big2 up to its stop.
+    assert sizes[0] + sizes[1] < estimate["bytesRead"] < sum(sizes)
+    assert estimate["readSeconds"] == 6.0
+    needed = 6.0 * sum(sizes) / estimate["bytesRead"]
+    assert estimate["seconds"] == max(
+        160, math.ceil(needed / ImportBudget.READ_TIME_SHARE * 1.25 / 60) * 60
+    )
+    assert estimate["budgetSeconds"] == 100 and not estimate["beyondMaximum"]
+
+
+def test_no_estimate_when_every_sheet_is_read(tmp_path):
+    path = _book(tmp_path)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=ImportBudget(deadline=1e9, seconds=600))
+    _, meta = _details(index)
+    assert "importEstimate" not in meta

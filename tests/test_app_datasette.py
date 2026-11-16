@@ -996,3 +996,88 @@ def test_the_import_budget_field_starts_at_the_servers_default(browser):
         assert not errors
     finally:
         page.close()
+
+
+ESTIMATE_META = {
+    "status": "partial",
+    "sheetDetails": [
+        {"name": "Small", "status": "complete", "formulas": 0, "diagnostics": []},
+        {
+            "name": "Feuil1",
+            "status": "not_imported",
+            "reason": "time_budget",
+            "formulas": 0,
+            "diagnostics": [],
+        },
+    ],
+    "diagnostics": [],
+    "importEstimate": {
+        "readSeconds": 355.2,
+        "bytesRead": 563_000_000,
+        "bytesTotal": 796_018_668,
+        "budgetSeconds": 600,
+        "seconds": 1080,
+        "beyondMaximum": False,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "rate", "button"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "Lecture arrêtée par le budget de temps après 355 s : "
+            "71 % du contenu des feuilles lu.",
+            "Réimporter avec un budget de 1080 s",
+        ),
+        (
+            (390, 844),
+            "en",
+            "Reading stopped by the time budget after 355 s: "
+            "71 % of the sheets' content read.",
+            "Reimport with a budget of 1080 s",
+        ),
+    ],
+)
+def test_a_time_stop_proposes_a_reimport_with_an_estimated_budget(
+    browser, viewport, language, rate, button
+):
+    """Batch 2 ter: a sheet not read within the import's time budget gets a
+    reimport proposal with the budget estimated from the observed rate."""
+    posted = []
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ESTIMATE_META}
+        },
+    )
+    page.on(
+        "request",
+        lambda request: (
+            posted.append(request.post_data_json)
+            if request.method == "POST" and request.url.endswith("/projects/p/tasks")
+            else None
+        ),
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        proposal = page.locator("#import-estimate")
+        proposal.wait_for()
+        assert rate in proposal.inner_text()
+        page.get_by_role("button", name=button).click()
+        for _ in range(50):
+            if any(body.get("operation") == "import" for body in posted):
+                break
+            page.wait_for_timeout(50)
+        imports = [body for body in posted if body.get("operation") == "import"]
+        assert imports and imports[0]["budget"]["seconds"] == 1080
+        assert imports[0]["force"] is True
+        assert page.locator("#import-seconds").input_value() == "1080"
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()

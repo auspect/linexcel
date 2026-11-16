@@ -192,13 +192,20 @@ class ImportBudget:
     #: publication, which the coordinator still bounds.
     READ_TIME_SHARE = 0.6
     READ_STORAGE_SHARE = 0.5
+    #: The server's bound on a task's time budget.
+    MAX_SECONDS = 3600
+    #: Margin over the reading time estimated from the observed rate.
+    ESTIMATE_MARGIN = 1.25
 
-    def __init__(self, *, deadline=None, max_bytes=None, clock=None):
+    def __init__(self, *, deadline=None, max_bytes=None, clock=None, seconds=None):
         import time
 
         self.deadline = deadline
         self.max_bytes = max_bytes
         self.clock = clock or time.time
+        #: The task's time budget, from which ``deadline`` was set.
+        self.seconds = seconds
+        self.started = self.stopped = None
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
@@ -207,12 +214,47 @@ class ImportBudget:
             max_bytes=None
             if storage_bytes is None
             else int(cls.READ_STORAGE_SHARE * storage_bytes),
+            seconds=seconds,
         )
+
+    def start_reading(self) -> None:
+        self.started = self.clock()
+
+    def estimate(self, bytes_read: int, bytes_total: int) -> dict | None:
+        """The time budget that reads every sheet, at the rate observed.
+
+        ``bytes_read`` of the ``bytes_total`` bytes of worksheet XML were
+        read between the start of reading and the time stop. The budget is
+        rounded up to the minute, with a margin, and is at least a minute more
+        than the task's; above the server's bound it says so.
+        """
+        if self.started is None or self.stopped is None or bytes_read <= 0:
+            return None
+        elapsed = self.stopped - self.started
+        if elapsed <= 0 or bytes_total <= 0:
+            return None
+        reading = elapsed * bytes_total / bytes_read
+        needed = reading / self.READ_TIME_SHARE * self.ESTIMATE_MARGIN
+        seconds = math.ceil(needed / 60) * 60
+        if self.seconds:
+            seconds = max(seconds, math.ceil(self.seconds) + 60)
+        return {
+            "readSeconds": round(elapsed, 1),
+            "bytesRead": bytes_read,
+            "bytesTotal": bytes_total,
+            "budgetSeconds": self.seconds,
+            "seconds": min(seconds, self.MAX_SECONDS),
+            "beyondMaximum": seconds > self.MAX_SECONDS,
+        }
 
     def exhausted(self, index_path) -> str | None:
         """``"time_budget"``, ``"storage_budget"`` or ``None``."""
-        if self.deadline is not None and self.clock() >= self.deadline:
-            return "time_budget"
+        if self.deadline is not None:
+            now = self.clock()
+            if now >= self.deadline:
+                if self.stopped is None:
+                    self.stopped = now
+                return "time_budget"
         if self.max_bytes is not None:
             size = 0
             for suffix in ("", "-journal"):
@@ -226,9 +268,11 @@ class ImportBudget:
 
 
 class _ImportStopError(Exception):
-    def __init__(self, reason):
+    def __init__(self, reason, position=0):
         super().__init__(reason)
         self.reason = reason
+        #: Bytes of the sheet's XML read when the import stopped.
+        self.position = position
 
 
 _NOT_IMPORTED = {
@@ -1905,7 +1949,16 @@ def _read_source(path, store, budget=None):
                 _, value, kind = literal
                 node.update(value=value, valueKind=kind, provenance="defined_constant")
             store.put(node)
-        for sheet in sheets:
+        # Worksheet XML sizes, for the reading rate of a time stop.
+        members = set(archive.namelist())
+        sizes = [
+            archive.getinfo(s["part"]).file_size if s["part"] in members else 0
+            for s in sheets
+        ]
+        bytes_read, estimate = 0, None
+        if budget:
+            budget.start_reading()
+        for sheet, size in zip(sheets, sizes):
             row_number = 0
             column_number = 0
             previous_address = None
@@ -1913,6 +1966,8 @@ def _read_source(path, store, budget=None):
             hidden_columns = []
             stop = budget.exhausted(store.path) if budget else None
             if stop:
+                if stop == "time_budget" and estimate is None:
+                    estimate = budget.estimate(bytes_read, sum(sizes))
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
                 continue
@@ -2352,7 +2407,7 @@ def _read_source(path, store, budget=None):
                                     if budget and (
                                         stop := budget.exhausted(store.path)
                                     ):
-                                        raise _ImportStopError(stop)
+                                        raise _ImportStopError(stop, source.tell())
                             stack[-2].remove(element)
                             element.clear()
                         elif tag == "mergeCell":
@@ -2418,6 +2473,10 @@ def _read_source(path, store, budget=None):
                             element.clear()
                         stack.pop()
             except _ImportStopError as stopped:
+                if stopped.reason == "time_budget" and estimate is None:
+                    estimate = budget.estimate(
+                        bytes_read + stopped.position, sum(sizes)
+                    )
                 # Roll the sheet back: nothing of it is published, so no cell
                 # of it can be mistaken for the whole sheet.
                 name = sheet["name"]
@@ -2443,6 +2502,8 @@ def _read_source(path, store, budget=None):
                 sheet["status"] = "partial"
                 sheet["diagnostics"].append(message)
                 diagnostics.append({"sheet": sheet["name"], "message": message})
+            if sheet["status"] != "not_imported":
+                bytes_read += size
             sheet.pop("part", None)
             db.commit()
         if not strings_present and (strings_declared or missing_strings):
@@ -2467,6 +2528,7 @@ def _read_source(path, store, budget=None):
             "dateSystem": "1904" if epoch1904 else "1900",
             "calculationSettings": calculation_settings,
             "diagnostics": diagnostics,
+            **({"importEstimate": estimate} if estimate else {}),
         },
         names,
         links,
