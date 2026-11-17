@@ -1,7 +1,7 @@
 """The default time budget of an import is a setting of the server (batch 2 ter).
 
-With the default 600 s an import may read sheets for 360 s; the public DGT
-election table needs about 500 s. ``linexcel serve --import-seconds`` lets a
+The public DGT election table needs about 580 s to import, close to the
+default 600 s. ``linexcel serve --import-seconds`` lets a
 server that receives such workbooks raise the default of imports, graph
 constructions and reports, which every user can still change per operation.
 """

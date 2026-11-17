@@ -14,15 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a preview. A range that reads a region names it with the exact
   sub-range read, and the neighbourhood shows the link.
 - Offer to reimport a workbook whose sheets were not all read within the
-  import's time budget. Diagnostics says how long the sheets were read (60 %
-  of the import's budget is kept for that) and how much of them was read,
-  and proposes a reimport with the budget estimated to read every sheet at
-  that rate, with a margin, at most 3600 s. On the public DGT election table,
+  import's time budget. Diagnostics says how long the sheets were read and
+  how much of them was read, and proposes a reimport with an estimated
+  budget, with a margin, at most 3600 s. On the public DGT election table,
   the default 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
-  imported it completely in 580 s. The estimate counts only the reading
-  rate, so it can be too short for a workbook rich in formulas, whose
-  dependency extraction follows the reading (see the per-sheet publication
-  limit below).
+  imported it completely in 580 s (measured with the earlier rule, which
+  kept 60 % of the budget for reading; see "Publish an import whose formula
+  analysis outlasts its time budget" below for the current rule).
 - Set the default time budget of imports, graph constructions and reports
   with `linexcel serve --import-seconds N` (1 to 3600; default 600 s,
   unchanged). The "Import and graph" field starts at that value, and each
@@ -30,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Translate the calculation status beside "Linexcel result" in the node
+  card: a refused calculation read "Linexcel result · Non pris en charge" in
+  the English interface.
 - Show a cell read only through a range as used. In the graph of
   `linexcel serve`, `C5` read by `=SUM(C2:C11)` had no neighbour; it now links
   to the range `C2:C11`, labelled as range membership, and through it to the
@@ -126,11 +127,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quota. An import stopped there published nothing; the sheet in progress and
   the following ones are now marked "Sheet not imported" with the reason, and
   a formula reading them is refused rather than calculated on absent cells.
-  Limit: the time budget is checked only while sheets are read. The work
-  that follows, mainly extracting the formulas' dependencies, is not; when it
-  runs past the budget the task still times out, nothing is published and no
-  reimport is proposed. On ATB, a model of 233,000 formulas (reading 29 s,
-  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
+- Publish an import whose formula analysis outlasts its time budget. The
+  budget was checked only while sheets were read; on ATB, a model of
+  233,000 formulas (reading 29 s, dependencies 93 s), budgets of 25, 60 and
+  120 s timed out and published nothing. Reading now stops as soon as the
+  time left does not cover the analysis at its fastest (0.30 ms a formula,
+  no margin) of the formulas of the sheets read whole, instead of at a fixed 60 %
+  of the budget, so a sheet of values alone may use most of the budget. The
+  sheet being read does not count its own formulas: a sheet that can be
+  read is published with its values, its formulas analyzed as far as time
+  allows, instead of being rolled back. The analysis checks the
+  deadline before each formula: the formulas it did not reach keep "Formula
+  not analyzed", their sheets are published as partial for the time budget
+  with the count left, every value is kept, and a calculation reaching such a
+  formula is refused. Data regions are described only when their predicted
+  time fits ("Data regions skipped: budget"). The end of the budget is
+  kept for links, VBA, counts and publication: 5 s, or 20 µs a formula read
+  when more (20 s for a million formulas: that end grows by about 7.5 µs a
+  formula, and a generated million-formula import cut by the analysis
+  safety net timed out with 5 s) (measured on the corpus: 0.07
+  to 0.40 s after the last phase, 1.2 to 2.2 s with the worker's start and
+  exit). Measured through serve on 17 November: ATB at 25 s published 6
+  complete sheets, 2 partial (14,036 formulas not analyzed) and proposed
+  180 s, which imported it completely in 127 s; at 60 s and 120 s it
+  published partial indexes using the budget to within 3.5 s and 2.9 s; at
+  180 s it was complete in 129 s (151 s before this step). The DGT election
+  table imported completely in 520 s at 600 s, its regions skipped; the
+  generated fpna model completely in 209 s. No task timed out. A first
+  reserve, 1.25 x 0.65 ms a formula, had left 29 to 40 % of ATB's budget
+  unused and its proposed 180 s short of a complete import.
+- Propose a reimport budget that counts the whole import. It extrapolated
+  the reading alone; it now adds the analysis of every formula and the
+  regions, at the rates measured on the import when enough work was done to
+  measure them, else at cautious rates, and Diagnostics says "Uncertain
+  estimate" when less than 20 % was read or an unmeasured rate weighs more
+  than a quarter. The proposal is never less than what the reimport's own
+  reading check needs to read every sheet: on the energy model, the 180 s
+  proposed after 25 s, counting the analysis at the rate measured but not
+  the reading reserve, still stopped reading. Each index records its phase
+  times and counts (`importTimings`).
+- Say what an import that still ran out of time published. A step that
+  cannot be stopped (links, VBA, publication) can still exceed the budget;
+  the error was the bare word "timeout". It now says that no new index was
+  published, whether the previous one remains available, and proposes twice
+  the budget, saying that this is not an estimate; Diagnostics offers the
+  reimport.
+- Say that a partial import's lists of uses may be incomplete. A formula not
+  imported or not analyzed is missing from the uses of the cells it reads;
+  the partial import banner now says so, and the node list and the Data tab
+  say that the import is partial, as the graph already did. The node card
+  says it under the list of uses, and the graph's notice below the
+  dependents it draws (hidden at phone width by the graph package).
+  Diagnostics names the budget that stopped the reading, the analysis or
+  the regions, and after a timeout says that the sheets it lists are those
+  of the previous index.
 - Prepare the Data tab's browsing copy in the background. The first opening
   of the tab copied the whole workbook inside the request and blocked every
   other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB

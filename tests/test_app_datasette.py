@@ -1083,3 +1083,270 @@ def test_a_time_stop_proposes_a_reimport_with_an_estimated_budget(
         assert not errors
     finally:
         page.close()
+
+
+ANALYSIS_META = {
+    "status": "partial",
+    "sheetDetails": [
+        {"name": "Inputs", "status": "complete", "formulas": 20, "diagnostics": []},
+        {
+            "name": "Model",
+            "status": "partial",
+            "reason": "time_budget",
+            "formulas": 1200,
+            "unanalyzedFormulas": 1150,
+            "diagnostics": [
+                "1150 formula(s) not analyzed: the import's time budget ran out."
+            ],
+        },
+    ],
+    "diagnostics": [
+        {
+            "sheet": "Model",
+            "code": "formulas_not_analyzed",
+            "reason": "time_budget",
+            "count": 1150,
+            "message": "1150 formula(s) not analyzed",
+        }
+    ],
+    "dataRegions": {
+        "regions": 0,
+        "rangeLinks": 0,
+        "skipped": {"reason": "time_budget", "sheets": ["Inputs"]},
+    },
+    "importEstimate": {
+        "readSeconds": 3.0,
+        "bytesRead": 50_000,
+        "bytesTotal": 50_000,
+        "budgetSeconds": 20,
+        "seconds": 120,
+        "beyondMaximum": False,
+        "cause": ["analysis", "regions"],
+        "formulasAnalyzed": 70,
+        "formulasPredicted": 1220,
+        "processedShare": 0.0574,
+        "uncertain": True,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "texts"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            [
+                "Analyse des dépendances arrêtée par le budget de 20 s : 70 formules "
+                "analysées sur 1220.",
+                "Budget d’import estimé pour tout importer (lecture, analyse des "
+                "formules et régions) : 120 s.",
+                "Estimation incertaine : seule une petite partie du classeur (6 %) "
+                "a pu être traitée pour mesurer son rythme.",
+                "Régions de données sautées : budget.",
+                "1150 non analysées",
+                "Formules non analysées dans le budget de temps de l’import",
+            ],
+        ),
+        (
+            (390, 844),
+            "en",
+            [
+                "Dependency analysis stopped by the 20 s budget: 70 of 1220 formulas "
+                "analyzed.",
+                "Estimated import budget to import everything (reading, formula "
+                "analysis and regions): 120 s.",
+                "Uncertain estimate: only a small part of the workbook (6%) could "
+                "be processed to measure its rate.",
+                "Data regions skipped: budget.",
+                "1150 not analyzed",
+                "Formulas not analyzed within the import’s time budget",
+            ],
+        ),
+    ],
+)
+def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
+    browser, viewport, language, texts
+):
+    """Lot 2 ter, budget step: formulas not analyzed, regions skipped and an
+    uncertain estimate are said in Diagnostics, in both languages."""
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ANALYSIS_META}
+        },
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        page.locator("#import-estimate").wait_for()
+        shown = page.locator("#diagnostics").inner_text()
+        for text in texts:
+            assert text in shown, text
+        # One spelling, the repository's: "analyzed" (analyzer.py, analyze).
+        assert "analysed" not in page.locator("body").inner_text()
+        assert page.get_by_role(
+            "button",
+            name="Reimport with a budget of 120 s"
+            if language == "en"
+            else "Réimporter avec un budget de 120 s",
+        ).is_visible()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "banner", "nodes", "data"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "les usages listés d’une cellule peuvent être incomplets",
+            "Import partiel ; voir Diagnostics",
+            "Import partiel ; voir Diagnostics. Les feuilles et formules manquantes",
+        ),
+        (
+            (390, 844),
+            "en",
+            "the uses listed for a cell may be incomplete",
+            "Partial import; see Diagnostics",
+            "Partial import; see Diagnostics, which lists the missing sheets",
+        ),
+    ],
+)
+def test_a_partial_import_says_that_listed_uses_may_be_incomplete(
+    browser, viewport, language, banner, nodes, data
+):
+    """Lot 2 ter, budget step: a formula not analyzed, or a sheet not
+    imported, is missing from the uses of the cells it reads. The partial
+    import banner says so; the node list and the Data tab say that the
+    import is partial."""
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ANALYSIS_META}
+        },
+    )
+    try:
+        page.locator("#tab-nodes").click()
+        assert nodes in page.locator("#node-count").inner_text()
+        page.locator("#tab-data").click()
+        page.locator("#data-status").get_by_text(data, exact=False).wait_for()
+        page.locator("#tab-diagnostics").click()
+        status = page.locator("#index-status")
+        status.wait_for()
+        assert banner in status.inner_text()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
+
+
+def _timed_out_import(previous):
+    kept = (
+        "l’index précédent reste consultable."
+        if previous
+        else "ce classeur n’a pas encore d’index."
+    )
+    return {
+        "id": "t1",
+        "projectId": "p",
+        "operation": "import",
+        "status": "failed",
+        "budget": {"seconds": 60, "memoryMb": 1024},
+        "createdAt": 1,
+        "error": {
+            "kind": "timeout",
+            "message": "Import arrêté : le budget de 60 s s’est écoulé à une étape "
+            f"inconnue. Aucun nouvel index n’a été publié ; {kept} Essayez un "
+            "budget plus grand, par exemple le double (120 s) : ce n’est pas une "
+            "estimation.",
+            "suggestedSeconds": 120,
+            "previousIndex": previous,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "previous", "text", "button"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            False,
+            "ce classeur n’a pas encore d’index. Essayez un budget plus grand, par "
+            "exemple le double (120 s) : ce n’est pas une estimation.",
+            "Réimporter avec un budget de 120 s",
+        ),
+        (
+            (390, 844),
+            "en",
+            False,
+            "this workbook has no index yet. Try a larger budget, for example "
+            "twice as long (120 s): this is not an estimate.",
+            "Reimport with a budget of 120 s",
+        ),
+        (
+            (390, 844),
+            "fr",
+            True,
+            "l’index précédent reste consultable.",
+            "Réimporter avec un budget de 120 s",
+        ),
+        (
+            (1440, 900),
+            "en",
+            True,
+            "the previous index remains available.",
+            "Reimport with a budget of 120 s",
+        ),
+    ],
+)
+def test_an_import_that_timed_out_proposes_a_larger_budget(
+    browser, viewport, language, previous, text, button
+):
+    """Lot 2 ter, T7. An import the coordinator stopped at its budget used
+    to show "Import did not complete" and the word "timeout". Diagnostics
+    now says what was published and proposes twice the budget, saying that
+    it is not an estimate, with or without a previous index."""
+    posted = []
+    graph = (
+        {"nodes": [], "edges": [], "lazy": True, "meta": {"status": "complete"}}
+        if previous
+        else None
+    )
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={"graph": graph, "tasks": [_timed_out_import(previous)]},
+    )
+    page.on(
+        "request",
+        lambda request: (
+            posted.append(request.post_data_json)
+            if request.method == "POST" and request.url.endswith("/projects/p/tasks")
+            else None
+        ),
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        remedy = page.locator("#import-timeout")
+        remedy.wait_for()
+        assert text in remedy.inner_text()
+        page.get_by_role("button", name=button).click()
+        for _ in range(50):
+            if any(body.get("operation") == "import" for body in posted):
+                break
+            page.wait_for_timeout(50)
+        imports = [body for body in posted if body.get("operation") == "import"]
+        assert imports and imports[0]["budget"]["seconds"] == 120
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()

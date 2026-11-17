@@ -125,8 +125,9 @@ def _header(store, sheet, r1, c1, r2, c2):
     return None, None
 
 
-def detect_regions(store) -> list[dict]:
-    """Candidate regions of every sheet, described, in sheet order."""
+def detect_regions(store, sheets=None) -> list[dict]:
+    """Candidate regions of every sheet (or of ``sheets``), described, in
+    sheet order."""
     tables: dict[str, list[dict]] = {}
     for (data,) in store.db.execute("SELECT data FROM table_definitions"):
         table = json.loads(data)
@@ -135,7 +136,7 @@ def detect_regions(store) -> list[dict]:
     for sheet, r1, c1, r2, c2 in store.db.execute("SELECT * FROM arrays"):
         arrays.setdefault(sheet, []).append((r1, c1, r2, c2))
     regions: list[dict[str, Any]] = []
-    for sheet in store.import_sheets():
+    for sheet in store.import_sheets() if sheets is None else sheets:
         spans = store.literal_spans(sheet)
         if not spans:
             continue
@@ -297,9 +298,24 @@ def _describe(store, region) -> dict:
     return node
 
 
-def index_regions(store) -> dict:
-    """Store each region as a ``data`` node; link the ranges that read it."""
-    regions = detect_regions(store)
+def index_regions(store, describe=None) -> dict:
+    """Store each region as a ``data`` node; link the ranges that read it.
+
+    ``describe(sheet)``, when given, says whether the regions of a sheet are
+    described: an import skips those it has no time left for. Regions
+    change no value, so a skipped sheet keeps every value and formula; the
+    result lists it under ``skipped``.
+    """
+    if describe is None:
+        regions = detect_regions(store)
+        skipped = []
+    else:
+        regions, skipped = [], []
+        for sheet in store.import_sheets():
+            if describe(sheet):
+                regions.extend(detect_regions(store, [sheet]))
+            else:
+                skipped.append(sheet)
     by_sheet: dict[str, list[dict]] = {}
     for node in regions:
         store.put(node)
@@ -337,9 +353,12 @@ def index_regions(store) -> dict:
                 node["dataRegions"] = found
                 store.put(node)
                 links += len(found)
-    return {
+    result: dict[str, Any] = {
         "regions": len(regions),
         "rangeLinks": links,
         "rule": "lot2ter-v1",
         "minCells": REGION_MIN_CELLS,
     }
+    if skipped:
+        result["skipped"] = {"reason": "time_budget", "sheets": skipped}
+    return result

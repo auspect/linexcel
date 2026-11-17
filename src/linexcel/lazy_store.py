@@ -183,21 +183,75 @@ class ImportBudget:
 
     The reader checks it before each sheet and every 10,000 cells. A sheet it
     stops in is rolled back; that sheet and the following ones are published
-    as not imported, with the reason. ``deadline`` is a wall-clock time;
-    ``max_bytes`` bounds the index file while sheets are read.
+    as not imported, with the reason. ``max_bytes`` bounds the index file
+    while sheets are read.
+
+    ``deadline`` is ``FINAL_SECONDS`` before the end of the task. The
+    import's own work ends earlier still when it read many formulas: the
+    final margin, kept for links, VBA, counts and publication, is
+    ``final_seconds()``, at least ``FINAL_SECONDS`` and growing with the
+    formulas read. The time left must cover the analysis at
+    its fastest (``reserve``, no margin) of the formulas of the sheets read
+    whole: a sheet
+    is not started when it does not, and a sheet being read stops when it no
+    longer does. The formulas of the sheet being read are not counted: it
+    is read while the sheets before it stay protected, and the analysis then
+    covers its formulas as far as time allows, marking the rest not
+    analyzed rather than rolling back a sheet that could be read.
     """
 
-    #: Shares of a task's time budget and of the storage left at its start
-    #: that reading sheets may use; the rest is for dependencies, facts and
-    #: publication, which the coordinator still bounds.
-    READ_TIME_SHARE = 0.6
+    #: Share of the storage left at a task's start that reading may use.
     READ_STORAGE_SHARE = 0.5
     #: The server's bound on a task's time budget.
     MAX_SECONDS = 3600
-    #: Margin over the reading time estimated from the observed rate.
+    #: Margin over predicted or measured phase times in the proposed budget
+    #: and in the decision to describe regions, which nothing interrupts.
     ESTIMATE_MARGIN = 1.25
+    #: Reading reserve: a lower bound of the analysis time of one formula,
+    #: the fastest rate measured, with no margin. Reading stops only when
+    #: the formulas already read could not be analyzed even at that rate.
+    #: A reserve too cautious protects nothing, since the analysis has a
+    #: safety net, and leaves the budget unused: at 0.81 ms (1.25 x 0.65)
+    #: the energy model stopped reading with 29 to 40 % of its budget left.
+    #: Measured: 0.30 ms on a generated workbook of 150,000 formulas (45.3 s);
+    #: 0.41 to 0.52 ms on the public energy model, 0.46 ms on the generated
+    #: financial model (17 November); 0.27 ms on 1,000 formulas only.
+    READ_RESERVE_FORMULA_SECONDS = 0.30e-3
+    #: Cautious analysis time of one formula, for a proposed budget that
+    #: could not measure the import's own rate: 1.5 times about 0.43 ms.
+    FORMULA_SECONDS = 0.65e-3
+    #: Cautious description time of one saved value, for the decision to
+    #: describe regions and for proposals: 1.5 times about 3.6 µs, measured
+    #: on the public election table (64 s).
+    VALUE_SECONDS = 5.5e-6
+    #: Kept at the end of a task for links, VBA, counts and publication,
+    #: which nothing interrupts: at least this, more for many formulas (see
+    #: ``FINAL_SECONDS_PER_FORMULA``). Measured on the corpus: 0.07 to 0.40 s
+    #: after the last phase, 1.2 to 2.2 s with the worker's start and exit.
+    FINAL_SECONDS = 5.0
+    #: The end of an import grows with its formulas (marking those not
+    #: analyzed, links, the region decision, counts, the graph page): from
+    #: the deadline to the task's end, 1.2 s for 150,000 formulas, 3.3 s for
+    #: 450,000, and past the 5 s for 1,000,000, which timed out (generated
+    #: workbooks, 17 November): about 7.5 µs a formula, 7.6 s for a million
+    #: once the margin let it finish. The final margin keeps more than
+    #: twice that, 20 µs a formula read, when it exceeds ``FINAL_SECONDS``.
+    FINAL_SECONDS_PER_FORMULA = 20e-6
+    #: Fewest formulas analyzed, and saved values described in regions, for
+    #: a proposal to use the rate measured on the import itself.
+    MIN_MEASURED_FORMULAS = 2_000
+    MIN_MEASURED_VALUES = 10_000
 
-    def __init__(self, *, deadline=None, max_bytes=None, clock=None, seconds=None):
+    def __init__(
+        self,
+        *,
+        deadline=None,
+        max_bytes=None,
+        clock=None,
+        seconds=None,
+        formula_seconds=None,
+        reserve_seconds=None,
+    ):
         import time
 
         self.deadline = deadline
@@ -205,54 +259,158 @@ class ImportBudget:
         self.clock = clock or time.time
         #: The task's time budget, from which ``deadline`` was set.
         self.seconds = seconds
-        self.started = self.stopped = None
+        self.formula_seconds = (
+            self.FORMULA_SECONDS if formula_seconds is None else formula_seconds
+        )
+        self.reserve_seconds = (
+            self.READ_RESERVE_FORMULA_SECONDS
+            if reserve_seconds is None
+            else reserve_seconds
+        )
+        self.started = self.stopped = self.analysis_stopped = None
+        #: The task's start, from which ``deadline`` counts, when known.
+        self.task_started = None
+        self.final_seconds_per_formula = self.FINAL_SECONDS_PER_FORMULA
+        #: Formulas read so far, set by the reader: the final margin grows
+        #: with them.
+        self.formulas_seen = 0
+
+    def final_margin(self, formulas: float) -> float:
+        """Seconds kept at the end of a task that read ``formulas``."""
+        return max(self.FINAL_SECONDS, self.final_seconds_per_formula * formulas)
+
+    def final_seconds(self) -> float:
+        """The final margin for the formulas read so far."""
+        return self.final_margin(self.formulas_seen)
+
+    def _end(self) -> float | None:
+        """``deadline``, earlier by the final margin beyond ``FINAL_SECONDS``."""
+        if self.deadline is None:
+            return None
+        return self.deadline - (self.final_seconds() - self.FINAL_SECONDS)
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
-        return cls(
-            deadline=started_at + cls.READ_TIME_SHARE * seconds,
+        budget = cls(
+            deadline=started_at + seconds - cls.FINAL_SECONDS,
             max_bytes=None
             if storage_bytes is None
             else int(cls.READ_STORAGE_SHARE * storage_bytes),
             seconds=seconds,
         )
+        budget.task_started = started_at
+        return budget
+
+    def reserve(self, formulas: int) -> float:
+        """Seconds kept after reading for the analysis of ``formulas``: the
+        analysis at its fastest, so that only an analysis that cannot fit
+        at all stops the reading; the safety net covers a slower one."""
+        return self.reserve_seconds * formulas
 
     def start_reading(self) -> None:
         self.started = self.clock()
 
-    def estimate(self, bytes_read: int, bytes_total: int) -> dict | None:
-        """The time budget that reads every sheet, at the rate observed.
+    def proposal(self, timings: dict) -> dict | None:
+        """The time budget that imports the whole workbook.
 
-        ``bytes_read`` of the ``bytes_total`` bytes of worksheet XML were
-        read between the start of reading and the time stop. The budget is
-        rounded up to the minute, with a margin, and is at least a minute more
-        than the task's; above the server's bound it says so.
+        ``timings`` holds this import's phase times and counts
+        (``importTimings``). When reading stopped, its time and the formulas
+        and values it found are extrapolated from the share of worksheet XML
+        read. Analysis and regions use the rates measured on this import
+        when they were measured on enough work (``MIN_MEASURED_FORMULAS``
+        formulas analyzed; regions described), else the cautious rates
+        above. The budget is the predicted time with the margin, plus the
+        final time, and never less than what the reimport's own reading
+        check needs to read every sheet (``readingBound``: the time before
+        reading, the whole reading and the reserve of every formula, plus
+        the final time), rounded up to the minute, at least a minute more than
+        the task's; above the server's bound it says so. ``uncertain`` says
+        that less than 20 % of the workbook was read, or that a rate not
+        measured weighs more than a quarter of the prediction.
         """
-        if self.started is None or self.stopped is None or bytes_read <= 0:
+        total, read = timings["bytesTotal"], timings["bytesRead"]
+        if total <= 0 or read <= 0:
             return None
-        elapsed = self.stopped - self.started
-        if elapsed <= 0 or bytes_total <= 0:
-            return None
-        reading = elapsed * bytes_total / bytes_read
-        needed = reading / self.READ_TIME_SHARE * self.ESTIMATE_MARGIN
-        seconds = math.ceil(needed / 60) * 60
+        stopped = timings["readStopped"]
+        if stopped and self.started is not None and self.stopped is not None:
+            reading = self.stopped - self.started
+        else:
+            reading = timings["reading"]
+        scale = total / read if stopped else 1.0
+        formulas = timings["formulasRead"] * scale
+        values = timings["valuesRead"] * scale
+        analyzed = timings["formulasAnalyzed"]
+        formula_measured = analyzed >= self.MIN_MEASURED_FORMULAS
+        formula_rate = (
+            timings["dependencies"] / analyzed
+            if formula_measured
+            else self.formula_seconds
+        )
+        described = timings["regionValues"]
+        value_measured = described >= self.MIN_MEASURED_VALUES
+        value_rate = (
+            timings["regions"] / described if value_measured else self.VALUE_SECONDS
+        )
+        phases = {
+            "reading": reading * scale,
+            "analysis": formula_rate * formulas,
+            "regions": value_rate * values,
+            "rest": timings["rest"],
+        }
+        predicted = sum(phases.values())
+        final = self.final_margin(formulas)
+        needed = self.ESTIMATE_MARGIN * predicted + final
+        # The reimport must pass its own reading check for the whole
+        # workbook: less the final time, the budget covers the time before
+        # reading, the whole reading and the reserve of every formula.
+        startup = (
+            max(0.0, self.started - self.task_started)
+            if self.started is not None and self.task_started is not None
+            else 0.0
+        )
+        reading_bound = startup + phases["reading"] + self.reserve(formulas) + final
+        seconds = math.ceil(max(needed, reading_bound) / 60) * 60
         if self.seconds:
             seconds = max(seconds, math.ceil(self.seconds) + 60)
+        # The smallest share of the work this import measured its rates on.
+        processed = read / total if stopped else 1.0
+        if formulas and not formula_measured:
+            processed = min(processed, analyzed / formulas)
+        uncertain = (
+            read / total < 0.2
+            or (not formula_measured and phases["analysis"] > 0.25 * predicted)
+            or (not value_measured and phases["regions"] > 0.25 * predicted)
+        )
         return {
-            "readSeconds": round(elapsed, 1),
-            "bytesRead": bytes_read,
-            "bytesTotal": bytes_total,
+            "readSeconds": round(reading, 1),
+            "bytesRead": read,
+            "bytesTotal": total,
             "budgetSeconds": self.seconds,
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
-            "readShare": self.READ_TIME_SHARE,
+            "phases": {name: round(value, 1) for name, value in phases.items()},
+            # What the reimport's reading check needs for the whole workbook.
+            "readingBound": round(reading_bound, 1),
+            "formulasAnalyzed": analyzed,
+            "formulasPredicted": round(formulas),
+            "formulaSeconds": formula_rate,
+            "formulaRateMeasured": formula_measured,
+            "valueSeconds": value_rate,
+            "valueRateMeasured": value_measured,
+            "processedShare": round(processed, 4),
+            "uncertain": uncertain,
         }
 
-    def exhausted(self, index_path) -> str | None:
-        """``"time_budget"``, ``"storage_budget"`` or ``None``."""
-        if self.deadline is not None:
+    def exhausted(self, index_path, formulas: int = 0) -> str | None:
+        """``"time_budget"``, ``"storage_budget"`` or ``None``.
+
+        ``formulas`` are those of the sheets read whole so far: reading stops
+        when the time left no longer covers their analysis.
+        """
+        end = self._end()
+        if end is not None:
             now = self.clock()
-            if now >= self.deadline:
+            if now + self.reserve(formulas) >= end:
                 if self.stopped is None:
                     self.stopped = now
                 return "time_budget"
@@ -266,6 +424,33 @@ class ImportBudget:
             if size >= self.max_bytes:
                 return "storage_budget"
         return None
+
+    def analysis_exhausted(self) -> bool:
+        """Whether the dependency analysis must stop: the deadline is past."""
+        end = self._end()
+        if end is None:
+            return False
+        now = self.clock()
+        if now < end:
+            return False
+        if self.analysis_stopped is None:
+            self.analysis_stopped = now
+        return True
+
+    def regions_fit(self, values: int) -> bool:
+        """Whether describing the regions of ``values`` saved values ends,
+        as predicted with the margin, before the deadline.
+
+        Unlike the reading reserve, this stays cautious (``VALUE_SECONDS``
+        and ``ESTIMATE_MARGIN``): a sheet's description cannot be stopped
+        once started, and running past the end of the task publishes
+        nothing. On the election table it predicted 124.6 s for the 64 s
+        measured, and skipped the regions with 73 s left."""
+        end = self._end()
+        if end is None:
+            return True
+        predicted = self.ESTIMATE_MARGIN * self.VALUE_SECONDS * values
+        return self.clock() + predicted < end
 
 
 class _ImportStopError(Exception):
@@ -288,6 +473,70 @@ _NOT_IMPORTED = {
         "reimport."
     ),
 }
+
+
+#: Written by the reader in every formula and defined-name node, removed by
+#: the dependency analysis from each node it analyses. A node the analysis
+#: did not reach keeps it: every reader of the node sees it, and a
+#: calculation reaching the node is refused.
+NOT_ANALYZED = (
+    "Formula not analyzed within the import's time budget: its sources are "
+    "unknown, so a calculation reading it is refused. Its saved value, when "
+    "the file holds one, is still shown. Reimport with a larger time budget."
+)
+
+
+def _without_not_analyzed(diagnostics):
+    return [d for d in diagnostics if d != NOT_ANALYZED]
+
+
+def _not_analyzed(store, metadata, after):
+    """Mark the sheets whose formulas the analysis did not reach.
+
+    ``after`` is the last ``seq`` analyzed: every formula or name node past
+    it still carries ``NOT_ANALYZED``. Their sheets become ``partial`` for
+    the time budget; values and analyzed formulas are all kept.
+    """
+    counts = dict(
+        store.db.execute(
+            "SELECT sheet,count(*) FROM nodes WHERE kind IN ('cell','name') "
+            "AND seq>? GROUP BY sheet",
+            (after,),
+        ).fetchall()
+    )
+    details = {sheet["name"]: sheet for sheet in metadata["sheetDetails"]}
+    diagnostics = metadata["diagnostics"]
+    for name, count in sorted(counts.items(), key=lambda item: str(item[0])):
+        sheet = details.get(name)
+        if sheet is not None:
+            message = (
+                f"{count} formula(s) not analyzed: the import's time budget ran "
+                "out during the dependency analysis. Their saved values, when "
+                "the file holds them, are still shown; their sources are "
+                "unknown and a calculation reading one "
+                "is refused. The cells they read do not list them among their "
+                "uses."
+            )
+            if sheet["status"] == "complete":
+                sheet["status"] = "partial"
+            sheet.setdefault("reason", "time_budget")
+            sheet["unanalyzedFormulas"] = count
+            sheet["diagnostics"].append(message)
+        else:
+            scope = "defined names" if name is None else name
+            message = (
+                f"{count} formula(s) of {scope} not analyzed: the import's time "
+                "budget ran out during the dependency analysis."
+            )
+        diagnostics.append(
+            {
+                "sheet": name,
+                "code": "formulas_not_analyzed",
+                "reason": "time_budget",
+                "count": count,
+                "message": message,
+            }
+        )
 
 
 def _not_imported(sheet, reason, diagnostics):
@@ -1944,7 +2193,7 @@ def _read_source(path, store, budget=None):
                 "cached_value": None,
                 "cache_status": "unknown",
                 "dependencies": [],
-                "diagnostics": [],
+                "diagnostics": [NOT_ANALYZED],
             }
             literal = _name_literal(node)
             if literal is not None:
@@ -1957,7 +2206,9 @@ def _read_source(path, store, budget=None):
             archive.getinfo(s["part"]).file_size if s["part"] in members else 0
             for s in sheets
         ]
-        bytes_read, estimate = 0, None
+        # Bytes of worksheet XML read when time stopped the reading, if it did.
+        bytes_read, formulas_read, stopped_at = 0, 0, None
+        rolled_back = (0, 0)
         if budget:
             budget.start_reading()
         for sheet, size in zip(sheets, sizes):
@@ -1966,10 +2217,13 @@ def _read_source(path, store, budget=None):
             previous_address = None
             row_hidden = False
             hidden_columns = []
-            stop = budget.exhausted(store.path) if budget else None
+            if budget:
+                # The final margin grows with the formulas read.
+                budget.formulas_seen = formulas_read
+            stop = budget.exhausted(store.path, formulas_read) if budget else None
             if stop:
-                if budget and stop == "time_budget" and estimate is None:
-                    estimate = budget.estimate(bytes_read, sum(sizes))
+                if stop == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
                 continue
@@ -2398,7 +2652,9 @@ def _read_source(path, store, budget=None):
                                     if formula is not None
                                     else "saved_input",
                                     "dependencies": [],
-                                    "diagnostics": problems,
+                                    "diagnostics": problems
+                                    if formula is None
+                                    else [*problems, NOT_ANALYZED],
                                 }
                                 store.put(node)
                                 sheet[
@@ -2406,8 +2662,18 @@ def _read_source(path, store, budget=None):
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
                                     _read_in_transaction(db)
+                                    # The reserve protects the sheets read
+                                    # whole; this sheet's own formulas are
+                                    # analyzed as far as time allows. The
+                                    # final margin counts them all.
+                                    if budget:
+                                        budget.formulas_seen = (
+                                            formulas_read + sheet["formulas"]
+                                        )
                                     if budget and (
-                                        stop := budget.exhausted(store.path)
+                                        stop := budget.exhausted(
+                                            store.path, formulas_read
+                                        )
                                     ):
                                         raise _ImportStopError(stop, source.tell())
                             stack[-2].remove(element)
@@ -2476,10 +2742,10 @@ def _read_source(path, store, budget=None):
                         stack.pop()
             except _ImportStopError as stopped:
                 # Only a budget check raises it: ``budget`` is set here.
-                if budget and stopped.reason == "time_budget" and estimate is None:
-                    estimate = budget.estimate(
-                        bytes_read + stopped.position, sum(sizes)
-                    )
+                if stopped.reason == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read + stopped.position
+                    # What the rolled-back part held, for the reading rate.
+                    rolled_back = (sheet["formulas"], sheet["inputs"])
                 # Roll the sheet back: nothing of it is published, so no cell
                 # of it can be mistaken for the whole sheet.
                 name = sheet["name"]
@@ -2507,6 +2773,9 @@ def _read_source(path, store, budget=None):
                 diagnostics.append({"sheet": sheet["name"], "message": message})
             if sheet["status"] != "not_imported":
                 bytes_read += size
+                formulas_read += sheet["formulas"]
+            if budget:
+                budget.formulas_seen = formulas_read
             sheet.pop("part", None)
             db.commit()
         if not strings_present and (strings_declared or missing_strings):
@@ -2531,7 +2800,14 @@ def _read_source(path, store, budget=None):
             "dateSystem": "1904" if epoch1904 else "1900",
             "calculationSettings": calculation_settings,
             "diagnostics": diagnostics,
-            **({"importEstimate": estimate} if estimate else {}),
+            # Completed into the index's importTimings by build_index.
+            "importTimings": {
+                "bytesRead": bytes_read if stopped_at is None else stopped_at,
+                "bytesTotal": sum(sizes),
+                "readStopped": stopped_at is not None,
+                "formulasRead": formulas_read + rolled_back[0],
+                "valuesRead": sum(s["inputs"] for s in sheets) + rolled_back[1],
+            },
         },
         names,
         links,
@@ -2586,7 +2862,13 @@ def _local_names(formula: str, tokens) -> set[str]:
         return set()
 
 
-def _index_dependencies(store, metadata, names, links, refs_dir):
+def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
+    """Extract each formula's sources, in reading order, within ``budget``.
+
+    At the budget's deadline the analysis stops after the node in hand: the
+    nodes it did not reach keep ``NOT_ANALYZED`` and their sheets are marked
+    partial; every value read stays published.
+    """
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
     db = store.db
@@ -2778,7 +3060,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
             # New blank/range nodes have no formulas. A keyset cursor stays bounded
             # and remains valid across commits and node updates.
             last = 0
-            while True:
+            stopped = False
+            while not stopped:
                 batch = db.execute(
                     (
                         "SELECT seq,data FROM nodes WHERE seq>? "
@@ -2790,8 +3073,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                 if not batch:
                     break
                 for seq, data in batch:
+                    if budget is not None and budget.analysis_exhausted():
+                        stopped = True
+                        break
                     last = seq
                     node = _unpack(data)
+                    node["diagnostics"] = _without_not_analyzed(node["diagnostics"])
                     if node["kind"] == "cell":
                         region = db.execute(
                             (
@@ -2828,6 +3115,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             def resolve_dynamic(reference, current_sheet):
                                 member = dependency(reference, current_sheet, node)
                                 resolved = store[member]
+                                # A formula the analysis has not reached yet
+                                # carries NOT_ANALYZED until it does: its
+                                # source text is read as it was before.
+                                resolved["diagnostics"] = _without_not_analyzed(
+                                    resolved.get("diagnostics", [])
+                                )
                                 expression = _binding_expression(resolved)
                                 if expression is None or resolved.get("diagnostics"):
                                     raise ValueError(
@@ -2998,6 +3291,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         )
                     store.put(node)
                 db.commit()
+            if stopped:
+                _not_analyzed(store, metadata, last)
             # Arrays can include saved literal-looking cells. Mark them in the
             # index so target closures refuse cached array results consistently.
             for sheet, r1, c1, r2, c2 in db.execute("SELECT * FROM arrays"):
@@ -3069,6 +3364,16 @@ def build_index(
                 macro_only = source.read(8).startswith(OLE_MAGIC) or (
                     (filename or path.name).lower().endswith(".xlam")
                 )
+            import time
+
+            started = time.perf_counter()
+            marks = {}
+
+            def mark(phase, since):
+                now = time.perf_counter()
+                marks[phase] = now - since
+                return now
+
             if macro_only:
                 metadata: dict[str, Any] = {
                     "sheets": [],
@@ -3076,16 +3381,69 @@ def build_index(
                     "diagnostics": [],
                     "macroOnly": True,
                 }
+                timings: dict[str, Any] = {
+                    "bytesRead": 0,
+                    "bytesTotal": 0,
+                    "readStopped": False,
+                    "formulasRead": 0,
+                    "valuesRead": 0,
+                }
+                now = mark("reading", started)
+                now = mark("dependencies", now)
             else:
                 metadata, names, links = _read_source(path, store, budget)
-                _index_dependencies(store, metadata, names, links, refs_dir)
+                timings = metadata.pop("importTimings")
+                now = mark("reading", started)
+                _index_dependencies(store, metadata, names, links, refs_dir, budget)
+                now = mark("dependencies", now)
             from linexcel.link_facts import index_facts
 
             index_facts(path, store, metadata)
+            now = mark("facts", now)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
-            from linexcel.data_regions import index_regions
+            now = mark("vba", now)
+            from linexcel.data_regions import REGION_MIN_CELLS, index_regions
 
-            metadata["dataRegions"] = index_regions(store)
+            values = {s["name"]: s["inputs"] for s in metadata["sheetDetails"]}
+            fits = None if budget is None else budget.regions_fit
+
+            def describe(sheet):
+                # A sheet too small for a region costs nothing to look at.
+                count = values.get(sheet, 0)
+                return count < REGION_MIN_CELLS or fits is None or fits(count)
+
+            metadata["dataRegions"] = index_regions(
+                store, None if budget is None else describe
+            )
+            now = mark("regions", now)
+            skipped = set(metadata["dataRegions"].get("skipped", {}).get("sheets", []))
+            unanalyzed = sum(
+                s.get("unanalyzedFormulas", 0) for s in metadata["sheetDetails"]
+            )
+            timings.update(
+                {phase: round(seconds, 3) for phase, seconds in marks.items()},
+                rest=round(marks["facts"] + marks["vba"], 3),
+                formulasAnalyzed=max(0, timings["formulasRead"] - unanalyzed),
+                formulasNotAnalyzed=unanalyzed,
+                regionValues=sum(
+                    count for sheet, count in values.items() if sheet not in skipped
+                ),
+                regionSheetsSkipped=len(skipped),
+            )
+            metadata["importTimings"] = timings
+            if budget is not None and (timings["readStopped"] or unanalyzed or skipped):
+                proposal = budget.proposal(timings)
+                if proposal is not None:
+                    proposal["cause"] = [
+                        cause
+                        for cause, applies in (
+                            ("reading", timings["readStopped"]),
+                            ("analysis", unanalyzed > 0),
+                            ("regions", bool(skipped)),
+                        )
+                        if applies
+                    ]
+                    metadata["importEstimate"] = proposal
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}
                 for warning in metadata["vba"]["warnings"]
@@ -3180,6 +3538,8 @@ def build_index(
             metadata["tableCount"] = store.db.execute(
                 "SELECT count(*) FROM table_definitions"
             ).fetchone()[0]
+            # Up to the metadata; the commit and the publication follow.
+            timings["total"] = round(time.perf_counter() - started, 3)
             store.db.execute(
                 "INSERT INTO metadata VALUES ('meta',?)", (_dump(metadata),)
             )

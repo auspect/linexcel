@@ -448,15 +448,52 @@ Adopted on 15 November 2026, with these choices:
   row above or below no longer excludes it. A region needs 10,000 saved
   values, counted: measured as rows times columns, a column with values in
   rows 1 and 1,048,576 became a region.
-- **Per-sheet publication (F21).** 60 % of the time budget and half of the
-  storage left at the start for reading; the sheet in progress is rolled back
-  and marked `not_imported` with its reason. Limit, measured on 17 November:
-  the budget is checked only while sheets are read; dependency extraction,
-  which follows and dominates a formula model's import, is not. When it runs
-  past the budget the task times out, nothing is published and no reimport
-  is proposed, and the proposed budget, estimated from the reading rate
-  alone, can be too short. On ATB (233,000 formulas, reading 29 s,
-  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
+- **Per-sheet publication (F21).** Half of the storage left at the start for
+  reading; the sheet in progress is rolled back and marked `not_imported`
+  with its reason. As first built, reading had 60 % of the time budget and
+  the budget was checked only while sheets were read: on ATB (233,000
+  formulas, reading 29 s, dependencies 93 s), budgets of 25, 60 and 120 s
+  timed out in the dependency extraction and published nothing (measured on
+  17 November).
+- **Every phase within the time budget (17 November, after that
+  measurement).** The import's own work ends 5 s before the task's end,
+  counted from the coordinator's start; the 5 s cover links, VBA, counts and
+  publication (measured on the corpus: 0.07 to 0.40 s after the last phase,
+  1.2 to 2.2 s with the worker's start and exit). That end grows with the
+  formulas: 1.2 s for 150,000 generated formulas cut by the safety net,
+  3.3 s for 450,000, and a million timed out with 5 s; the margin is now
+  20 µs a formula read when that exceeds 5 s (a million formulas then ended
+  7.6 s after the analysis deadline, with 20 s kept). Reading stops when the time left no
+  longer covers the analysis at its fastest, 0.30 ms per formula with no
+  margin, of the sheets read whole (a first reserve of 1.25 x 0.65 ms left
+  29 to 40 % of the energy model's budget unused, measured on the corpus on
+  17 November) (the sheet being read does not count its own formulas, so a sheet
+  that can be read is never rolled back for them). The analysis
+  checks the deadline before each formula; the formulas it does not reach
+  keep the diagnostic "Formula not analyzed", written by the reader in every
+  formula and name node and removed by the analysis, so nothing is written
+  at the deadline (rewriting 150,000 nodes then would take 8 s) and every
+  read of a node sees it. Their sheets are `partial` with the reason
+  `time_budget`; a calculation reaching such a formula is refused. Data
+  regions are described per sheet only when their predicted time fits. The
+  proposed budget counts reading, analysis and regions, at the rates measured
+  on the import when there was enough work, and says when it is uncertain;
+  it never falls below what the reimport's reading check needs to read every
+  sheet (on the corpus, 180 s proposed after 25 s still stopped the reading
+  of the energy model before that rule).
+  What remains true: a sheet too large to read within the budget is still
+  only "not imported"; links, VBA and publication cannot be stopped, and an
+  import whose final steps outlast the 5 s still times out without a new
+  index (the error then proposes twice the budget, not an estimate);
+  loading a supplied external workbook during the analysis is not
+  interrupted. Measured through serve on 17 November: ATB at 25 s published
+  a partial index and proposed 180 s, which imported it completely in 127 s;
+  at 60 and 120 s, partial indexes within 3.5 and 2.9 s of the budget; at
+  180 s, complete in 129 s (151 s with the code before this step); DGT at
+  600 s complete in 520 s with its regions skipped (predicted 125 s, 64 s
+  measured earlier, 81 s left); fpna at 600 s complete in 209 s. No task
+  timed out. With the first reserve (1.25 x 0.65 ms), the same runs left 29
+  to 40 % of ATB's budget unused and the proposed 180 s stopped reading.
 
 ### Decisions for Philippe
 
