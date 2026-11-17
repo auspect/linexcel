@@ -239,8 +239,10 @@ def test_index_disk_quota_is_independent_of_compressed_upload_limit(tmp_path):
     book = Workbook(write_only=True)
     sheet = book.create_sheet()
     # Formulas stay one record per cell in the index; literal values would
-    # fit in a few hundred kilobytes of grid (index schema 5).
-    for row in range(10000):
+    # fit in a few hundred kilobytes of grid (index schema 5). 6,000 formulas
+    # give an index of about 8.5 MiB, twice the size asserted below; 30,000
+    # gave 42 MiB and an import that outlasted `finish` on a CI Windows runner.
+    for row in range(2000):
         sheet.append([f"={row}+1", f"={row}+2", f"={row}+3"])
     stream = io.BytesIO()
     book.save(stream)
