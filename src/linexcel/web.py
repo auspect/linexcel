@@ -33,6 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
+from linexcel.lazy_store import INDEX_FILENAME, LEGACY_INDEX_FILENAMES
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -69,6 +70,9 @@ class WebConfig:
     total_memory_mb: int = 2048
     max_upload_mb: int = 256
     max_storage_mb: int = 2048
+    #: Default time budget of an import, a graph construction or a report,
+    #: when the request names none; each operation may still choose its own.
+    import_seconds: int = 600
     retention_days: int | None = 7
     max_pending_tasks: int = 32
     ai_enabled: bool = False
@@ -101,6 +105,12 @@ class WebConfig:
             value = getattr(self, key)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{key} must be a positive integer")
+        if (
+            isinstance(self.import_seconds, bool)
+            or not isinstance(self.import_seconds, int)
+            or not 1 <= self.import_seconds <= 3600
+        ):
+            raise ValueError("import_seconds must be an integer from 1 to 3600")
         if any(
             not isinstance(value, bool)
             for value in (
@@ -176,6 +186,42 @@ NO_INDEX_MESSAGE = (
     "Aucun index publié : le dernier import n’a pas abouti. "
     "Consultez Opérations pour la raison."
 )
+OUTDATED_INDEX_MESSAGE = (
+    "Index créé par une version précédente de linexcel : réimportez le "
+    "classeur (le fichier est conservé)."
+)
+#: Files derived from an index, rebuilt from the new one after a reimport.
+_INDEX_DERIVED = ("hierarchy.sqlite", "source-data.sqlite")
+
+
+def _disk_usage(root: Path) -> int:
+    size = 0
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                size += path.stat().st_size
+        except FileNotFoundError:
+            pass  # Another task atomically published its result.
+    return size
+
+
+def outdated_index(path: Path) -> bool:
+    """An earlier schema's index is on disk and the current one is not.
+
+    The old file stays, unused, until the user reimports the project.
+    """
+    return not (path / INDEX_FILENAME).is_file() and any(
+        (path / name).is_file() for name in LEGACY_INDEX_FILENAMES
+    )
+
+
+def remove_outdated_index(path: Path) -> None:
+    """Delete an earlier schema's index and the files derived from it."""
+    if not outdated_index(path):
+        return
+    for name in (*LEGACY_INDEX_FILENAMES, *_INDEX_DERIVED):
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            (path / (name + suffix)).unlink(missing_ok=True)
 
 
 class APIError(Exception):
@@ -416,14 +462,7 @@ class TaskStore:
         )
 
     def _storage_bytes(self) -> int:
-        size = 0
-        for path in self.root.rglob("*"):
-            try:
-                if path.is_file():
-                    size += path.stat().st_size
-            except FileNotFoundError:
-                pass  # Another task atomically published its result.
-        return size
+        return _disk_usage(self.root)
 
     @staticmethod
     def _filename(name: Any) -> str:
@@ -458,7 +497,9 @@ class TaskStore:
         return name, data
 
     def create(self, owner: str, body: dict) -> dict:
-        budget = self.budget(body.get("budget", {}), default_seconds=600)
+        budget = self.budget(
+            body.get("budget", {}), default_seconds=self.config.import_seconds
+        )
         workbook = self._file(body.get("workbook"))
         workspace_name = body.get("name") or workbook[0]
         if not isinstance(workspace_name, str) or len(workspace_name) > 200:
@@ -552,6 +593,7 @@ class TaskStore:
             return {
                 "project": project_revision(_read(path / "project.json"), path),
                 "graph": self._graph(path),
+                "outdatedIndex": outdated_index(path),
                 "tasks": [
                     self.public(t, include_result=False)
                     for t in self.tasks.values()
@@ -561,18 +603,18 @@ class TaskStore:
 
     @staticmethod
     def _graph(path: Path) -> dict | None:
-        if (path / "index.sqlite").is_file():
+        if (path / INDEX_FILENAME).is_file():
             from linexcel.lazy_store import graph_page
 
-            return graph_page(path / "index.sqlite")
+            return graph_page(path / INDEX_FILENAME)
         return _read(path / "graph.json") if (path / "graph.json").is_file() else None
 
     @staticmethod
     def _node(path: Path, node_id: str) -> dict | None:
-        if (path / "index.sqlite").is_file():
+        if (path / INDEX_FILENAME).is_file():
             from linexcel.lazy_store import get_node
 
-            return get_node(path / "index.sqlite", node_id)
+            return get_node(path / INDEX_FILENAME, node_id)
         graph = TaskStore._graph(path)
         return next(
             (n for n in (graph or {}).get("nodes", []) if n["id"] == node_id), None
@@ -609,6 +651,8 @@ class TaskStore:
         )
         if imports and imports[-1]["status"] in {"failed", "cancelled"}:
             return APIError(409, NO_INDEX_MESSAGE)
+        if outdated_index(self.project_path(owner, project_id)):
+            return APIError(409, OUTDATED_INDEX_MESSAGE)
         return APIError(409, fallback)
 
     def _graph_query(self, owner: str, project_id: str, kind: str, query: dict) -> dict:
@@ -644,7 +688,7 @@ class TaskStore:
             )
         with self.lock:
             path = self.project_path(owner, project_id)
-            index = path / "index.sqlite"
+            index = path / INDEX_FILENAME
             if not index.is_file():
                 raise self.missing_index_error(
                     owner,
@@ -813,12 +857,11 @@ class TaskStore:
             raise APIError(
                 400, "Utilisez la préparation de question et son autorisation"
             )
-        if operation in AI_OPERATIONS | {
-            "import",
-            "build_graph",
-            "build_data",
-            "export_html",
-        } and isinstance(budget, dict):
+        if operation in {"import", "build_graph", "export_html"} and isinstance(
+            budget, dict
+        ):
+            budget = {"seconds": self.config.import_seconds, **budget}
+        elif operation in AI_OPERATIONS | {"build_data"} and isinstance(budget, dict):
             budget = {"seconds": 600, **budget}
         budget = self.budget(budget)
         options = {} if options is None else options
@@ -880,25 +923,33 @@ class TaskStore:
             if operation in {"build_graph", "build_data"}:
                 from linexcel.graph_store import generation
 
-                if not (path / "index.sqlite").is_file():
-                    raise APIError(
-                        409, "Importez le classeur avant de construire le graphe"
+                if not (path / INDEX_FILENAME).is_file():
+                    raise self.missing_index_error(
+                        owner,
+                        project_id,
+                        "Importez le classeur avant de construire le graphe",
                     )
-                graph_generation = generation(path / "index.sqlite")
+                graph_generation = generation(path / INDEX_FILENAME)
             if operation == "import" and self._project_exports.get((owner, project_id)):
                 raise APIError(409, "Un export est en cours ; réessayez après sa fin")
             if self._revision(path) != project["revision"]:
                 raise APIError(
                     409, "Sources modifiées sur disque ; importez une nouvelle version"
                 )
+            if operation == "import":
+                # The user reimports: an index of an earlier schema, kept
+                # until now, and its derived views go, freeing their storage.
+                remove_outdated_index(path)
             pattern_id = None
             if operation == "evaluate" or (
                 operation == "document" and node_id is not None
             ):
                 if not isinstance(node_id, str) or not any(
-                    (path / name).is_file() for name in ("index.sqlite", "graph.json")
+                    (path / name).is_file() for name in (INDEX_FILENAME, "graph.json")
                 ):
-                    raise APIError(409, "Importez le graphe avant le recalcul")
+                    raise self.missing_index_error(
+                        owner, project_id, "Importez le graphe avant le recalcul"
+                    )
                 node = self._node(path, node_id)
                 if node is None:
                     raise APIError(404, "Nœud introuvable")
@@ -930,9 +981,13 @@ class TaskStore:
                 if operation == "document":
                     if not any(
                         (path / name).is_file()
-                        for name in ("index.sqlite", "graph.json")
+                        for name in (INDEX_FILENAME, "graph.json")
                     ):
-                        raise APIError(409, "Importez le graphe avant la documentation")
+                        raise self.missing_index_error(
+                            owner,
+                            project_id,
+                            "Importez le graphe avant la documentation",
+                        )
                     completed = [
                         t
                         for t in self.tasks.values()
@@ -951,10 +1006,10 @@ class TaskStore:
                             completed, key=lambda t: t["createdAt"], reverse=True
                         )[: 1 if node_id is not None else 4]
                     ]
-                    if (path / "index.sqlite").is_file():
+                    if (path / INDEX_FILENAME).is_file():
                         from linexcel.lazy_store import evidence_graph
 
-                        graph = evidence_graph(path / "index.sqlite", node_id)
+                        graph = evidence_graph(path / INDEX_FILENAME, node_id)
                     else:
                         graph = _read(path / "graph.json")
                     ai_snapshot = evidence(
@@ -1241,8 +1296,8 @@ class TaskStore:
                         payload = {**payload, "screenshots": screenshots}
                     if task["operation"] == "import":
                         project = root.parent.parent
-                        if (root / "index.sqlite").is_file():
-                            (root / "index.sqlite").replace(project / "index.sqlite")
+                        if (root / INDEX_FILENAME).is_file():
+                            (root / INDEX_FILENAME).replace(project / INDEX_FILENAME)
                             (project / "graph.json").unlink(missing_ok=True)
                         else:
                             _write(project / "graph.json", payload)
@@ -1265,7 +1320,7 @@ class TaskStore:
 
                         project = root.parent.parent
                         if (
-                            generation(project / "index.sqlite")
+                            generation(project / INDEX_FILENAME)
                             != task["graphGeneration"]
                         ):
                             raise ValueError(
@@ -1279,7 +1334,7 @@ class TaskStore:
 
                         project = root.parent.parent
                         if (
-                            generation(project / "index.sqlite")
+                            generation(project / INDEX_FILENAME)
                             != task["graphGeneration"]
                             or payload.get("generation") != task["graphGeneration"]
                         ):
@@ -1310,10 +1365,10 @@ class TaskStore:
                         "request.json",
                         "ai_input.json",
                         "report-input.json",
-                        "index.sqlite",
-                        "index.sqlite-journal",
-                        "index.sqlite-wal",
-                        "index.sqlite-shm",
+                        INDEX_FILENAME,
+                        INDEX_FILENAME + "-journal",
+                        INDEX_FILENAME + "-wal",
+                        INDEX_FILENAME + "-shm",
                         "hierarchy.sqlite",
                         "hierarchy.sqlite-journal",
                         "hierarchy.sqlite-wal",
@@ -1323,7 +1378,7 @@ class TaskStore:
                     ):
                         (root / scratch).unlink(missing_ok=True)
                     for scratch in [
-                        *root.glob("index.sqlite.*.building*"),
+                        *root.glob(INDEX_FILENAME + ".*.building*"),
                         *root.glob("data-*.building*"),
                     ]:
                         scratch.unlink(missing_ok=True)
@@ -1368,6 +1423,15 @@ class TaskStore:
             "options": task.get("options", {}),
             "tokens": task["budget"].get("tokens", self.config.ai_token_budget),
         }
+        if task["operation"] == "import":
+            # The import stops reading sheets within these budgets and
+            # publishes the rest as not imported (F21).
+            request.update(
+                seconds=task["budget"]["seconds"],
+                storageBytes=max(
+                    0, self.config.max_storage_mb * 1048576 - _disk_usage(self.root)
+                ),
+            )
         _write(root / "request.json", request)
         child_env = os.environ.copy()
         if sys.platform == "linux":
@@ -2069,6 +2133,7 @@ class WebApp:
                 "limits": {
                     "memoryMb": self.config.total_memory_mb,
                     "uploadMb": self.config.max_upload_mb,
+                    "importSeconds": self.config.import_seconds,
                     "retentionDays": self.config.retention_days,
                 },
             }
@@ -2221,6 +2286,7 @@ def serve(args) -> int:
         retention_days=args.retention_days,
         max_upload_mb=args.max_upload_mb,
         max_storage_mb=args.max_storage_mb,
+        import_seconds=getattr(args, "import_seconds", 600),
         allow_local_import=not args.no_local_import,
         local_profile=True,
         ai_enabled=args.ai,

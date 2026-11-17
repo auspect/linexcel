@@ -76,7 +76,9 @@ def _input_engine_value(node: dict) -> Any:
 def _load_inputs(engine, inputs, sheet_alias: dict, chunk_rows: int = INPUT_CHUNK_ROWS):
     """Write selected literal inputs into the engine, in vertical runs.
 
-    ``inputs`` are ordered by sheet, row and column. Consecutive rows of one
+    ``inputs`` are ordered by sheet, row and column; each has at least its
+    position, saved value and storage type (``selected_input_cells``).
+    Consecutive rows of one
     column form a run, written with one ``set_values_batch`` call per chunk of
     at most ``chunk_rows`` rows. A blank input is never written, so it ends a
     run, and so does any position that is not a selected input: a batch never
@@ -593,8 +595,9 @@ def _evaluate_index(
     result["dependency_count"] = total_nodes
     # Source inputs stay in the disk set even for million-cell ranges. Check
     # every selected input before starting an engine; an unreadable value must
-    # never silently become a blank or let a partial calculation proceed.
-    for node in nodes.selected_inputs():
+    # never silently become a blank or let a partial calculation proceed. Only
+    # inputs stored as nodes can carry a diagnostic: a grid cell has none.
+    for node in nodes.selected_stored_inputs():
         if node["id"] in closure:
             continue
         for message in node.get("diagnostics", []):
@@ -980,7 +983,7 @@ def _evaluate_index(
                 column,
                 rewrite_formula(evaluation_formula, sheet),
             )
-    _load_inputs(engine, nodes.selected_inputs(), external_sheets)
+    _load_inputs(engine, nodes.selected_input_cells(), external_sheets)
     array_anchors = [
         nodes[nid] for nid in reversed(topological) if nodes[nid].get("arrayBounds")
     ]

@@ -113,7 +113,12 @@ is reused across sessions and invalidated after a successful structural reimport
 
 Import and graph construction have a separate default time budget of 600 seconds;
 targeted recalculation keeps its 120-second default. Both are adjustable under
-**Limits per operation**. Exact node references use the index directly; other
+**Limits per operation**, and `--import-seconds` sets the server's default for
+imports. When an import's time budget stops it before every sheet is read,
+Diagnostics proposes a reimport with a budget estimated from the reading rate.
+The budget is checked only while sheets are read: in a workbook rich in
+formulas, the dependency extraction that follows can still exceed it, and
+then nothing is published. Exact node references use the index directly; other
 searches still match substrings and can take longer on very large workbooks.
 
 Selecting a formula automatically starts a targeted calculation after a short
@@ -289,7 +294,7 @@ local profile. Its one-use session link connects a browser to that profile;
 `linexcel session-link --data-dir ~/.linexcel` creates another link while the
 server is running. Projects survive browser changes and server restarts.
 `--mount-path`, `--data-dir`, `--workers`,
-`--memory-mb` and `--retention-days` configure the launcher. The default data
+`--memory-mb`, `--retention-days` and `--import-seconds` configure the launcher. The default data
 directory is `~/.linexcel`; uploaded files and diagnostic formula text are private.
 
 Use **one application coordinator per data directory** (an exclusive lock

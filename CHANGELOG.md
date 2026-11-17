@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Describe each block of at least 10,000 saved values without formulas as a
+  data region node, with its header names, a type per column, a fingerprint
+  and a preview. A range that reads a region names it with the exact
+  sub-range read, and the neighbourhood shows the link.
+- Offer to reimport a workbook whose sheets were not all read within the
+  import's time budget. Diagnostics says how long the sheets were read (60 %
+  of the import's budget is kept for that) and how much of them was read,
+  and proposes a reimport with the budget estimated to read every sheet at
+  that rate, with a margin, at most 3600 s. On the public DGT election table,
+  the default 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
+  imported it completely in 580 s. The estimate counts only the reading
+  rate, so it can be too short for a workbook rich in formulas, whose
+  dependency extraction follows the reading (see the per-sheet publication
+  limit below).
+- Set the default time budget of imports, graph constructions and reports
+  with `linexcel serve --import-seconds N` (1 to 3600; default 600 s,
+  unchanged). The "Import and graph" field starts at that value, and each
+  operation can still choose its own.
+
 ### Fixed
 
 - Show a cell read only through a range as used. In the graph of
@@ -73,6 +94,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Store literal values in per-sheet grids: index schema 5. **Projects
+  imported by an earlier version must be reimported**; they say so and keep
+  their workbook, and their old index is deleted only when you launch the
+  reimport. Calculations read their inputs from the grid. Every cell
+  reads back as before, except that the XML spelling of a stored literal
+  (`rawXmlValue`) is no longer kept: its provenance is its sheet plus the
+  value. In the Data tab, `raw_xml_value` is empty for those cells.
+  On the public corpus, the index of the DGT election table (103 MB, 18
+  million values) takes 92 MB instead of 10,969 MB and imports in 569 s
+  instead of 1,310 s; the ONS population tables take 26 MB instead of
+  6,717 MB (321 s instead of 733 s); the generated fpna model 357 MB instead
+  of 2,022 MB (188 s instead of 265 s), where `Forecast!D2` is calculated in
+  6.6 s instead of 57 s and `Summary!B2` in 1.5 s instead of 16 s. Models
+  made mostly of formulas gain less: ATB 369 MB instead of 454 MB, TAG
+  139 MB instead of 169 MB. Searching the node list compares each stored
+  value in Python instead of SQLite: on fpna a search for "EUR" takes about
+  6 s instead of 2 s, and a search with no match about 4.7 s instead of
+  3.6 s.
+- Publish the sheets an import reads within its time budget and the storage
+  quota. An import stopped there published nothing; the sheet in progress and
+  the following ones are now marked "Sheet not imported" with the reason, and
+  a formula reading them is refused rather than calculated on absent cells.
+  Limit: the time budget is checked only while sheets are read. The work
+  that follows, mainly extracting the formulas' dependencies, is not; when it
+  runs past the budget the task still times out, nothing is published and no
+  reimport is proposed. On ATB, a model of 233,000 formulas (reading 29 s,
+  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
 - Prepare the Data tab's browsing copy in the background. The first opening
   of the tab copied the whole workbook inside the request and blocked every
   other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB

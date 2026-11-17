@@ -140,6 +140,75 @@ reused as current calculations. Keep archives private when their sources are
 private. Older browser-owned projects can be recovered explicitly from the
 local workspace; recovery preserves the original project.
 
+### The disk index
+
+Each project keeps its structural index in `index-v5.sqlite` (index schema 5).
+Formulas, names, ranges and any unusual cell keep one record each. A literal
+value that can be rebuilt exactly is stored as one value in a row of its
+sheet's grid instead of a compressed record with three SQLite indexes on top.
+Reading a cell gives back the same node as before, field by field, with
+one exception: the provenance of a stored value is now its sheet (workbook
+SHA-256, worksheet part, sheet state) plus the value, and the XML spelling of
+the number or the shared-string index (`rawXmlValue`) is no longer kept for
+grid cells. Formula caches and cells kept as records still have it.
+
+Measured on the public corpus (Windows, quiet machine): the index of the DGT
+election table (103 MB of workbook, 18.1 million values, no formula) takes
+92 MB and imports in 569 s; the ONS population tables (50 MB, 11.2 million
+values) 26 MB in 321 s; the generated fpna model (20 MB, 2.5 million values
+and 175,000 formulas) 357 MB in 188 s, of which 230 MB are its formulas.
+Schema 4 needed 10,969 MB, 6,717 MB and 2,022 MB. The Data tab still copies
+every cell into a database of its own: 9,830 MB for DGT and 6,027 MB for ONS,
+prepared in 585 s and 390 s. With the default storage quota of 2048 MiB that
+preparation stops on the quota and the tab says so. With a larger
+`--max-storage-mb` the preparation completes, but the Excel presentation still
+refuses sheets this large (its size limit).
+
+A project imported by an earlier version keeps its old `index.sqlite` on disk,
+unused: the project shows "Index created by an earlier version of linexcel:
+reimport the workbook (the file is kept)" with a reimport button, every view
+that reads the index says the same, and library search leaves the project out.
+Nothing is deleted when the server starts. Launching the reimport deletes the
+old index and the graph and data views built from it, then builds the new
+index from the kept workbook. Archives never contained indexes, so an archive
+made by either version restores and reimports.
+
+An import publishes the sheets it reads within its budgets. Reading sheets may
+use 60 % of the import's time budget and half of the storage left when it
+starts; the rest is kept for dependencies and publication. The sheet the
+import stops in is rolled back; it and the following sheets are marked "Sheet
+not imported" in Diagnostics, with the reason. A formula reading such a sheet
+is refused: its cells are unknown, never blank. A memory stop still ends the
+import without an index.
+
+The time budget is checked only while sheets are read. The work that
+follows, mainly extracting the formulas' dependencies, is not, and in a
+workbook made of formulas it is most of the import. When it runs past the
+budget, the task still times out: nothing is published, not even the sheets
+already read, and no reimport is proposed. On a model of 233,000 formulas
+(reading 29 s, dependencies 93 s), budgets of 25, 60 and 120 s published
+nothing.
+
+When time stops the reading, Diagnostics says how long the import read and
+how much of the worksheet XML it read, and proposes a reimport with the time
+budget estimated to read every sheet at that rate: the reading time over the
+60 % share, plus 25 %, rounded up to the minute, at least a minute more than
+the budget used, at most 3600 s. Above that maximum it says that reading
+everything would need more than 3600 s, and the button still offers 3600 s.
+The estimate counts only the reading rate, so it can be too short for a
+workbook rich in formulas. The default budget of an import, a graph construction
+or a report is 600 s; `linexcel serve --import-seconds N` sets another
+default (1 to 3600), and the "Import and graph" field still lets each
+operation choose its own.
+
+A block of at least 10,000 saved values without formulas becomes a data
+region: one node of kind `data` with its bounds, header names, a type per
+column, a fingerprint and a bounded preview. A range node that reads a region
+lists it under `dataRegions` with the exact sub-range read, and the
+neighbourhood shows the link. Calculation still reads every cell of a range.
+The detection rule and its mixed cases are in
+`docs/reading_resilience_data_node.md`.
+
 The application imports a structural index, then loads node pages and bounded
 neighborhoods as you explore. Selecting a formula cell immediately starts a
 fresh targeted calculation of that cell and its dependency closure, including

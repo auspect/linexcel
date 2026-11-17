@@ -466,9 +466,12 @@ def test_a_storage_quota_stop_says_what_happened(tmp_path):
     try:
         book = Workbook()
         sheet = book.active
-        for row in range(1, 6001):
-            for column in range(1, 5):
-                sheet.cell(row, column, row * column)
+        # Long formulas stay one record each (literals would fit in a grid);
+        # under 10,000 cells, the import's own budget check never runs inside
+        # the sheet, so the coordinator's quota stop ends the task (F21 only
+        # publishes sheets read within the budget).
+        for row in range(1, 9001):
+            sheet.cell(row, 1, "=" + "+".join([str(row)] * 150))
         data = workbook_bytes(book)
         assert len(data) < 512 * 1024  # the upload fits, the index does not
         code, imported = call(
@@ -647,30 +650,44 @@ def test_the_data_tab_answers_at_once_while_a_task_builds_its_copy(serve):
     assert code == 200 and rows["rows"][0]["A"] == "item 1"
 
 
-def test_a_failed_copy_says_why_and_can_be_prepared_again(tmp_path):
-    from linexcel.lazy_store import build_index
+def _settled_storage(app, seconds=120):
+    """Storage once background work (the library catalog) has finished."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not any(app.store.root.rglob("*.building")):
+            time.sleep(0.5)
+            if not any(app.store.root.rglob("*.building")):
+                return app.store._storage_bytes()
+        time.sleep(0.2)
+    pytest.fail("background work did not finish")
 
+
+def test_a_failed_copy_says_why_and_can_be_prepared_again(tmp_path):
     data = workbook_bytes(data_book(20_000))
-    probe = tmp_path / "probe.xlsx"
-    probe.write_bytes(data)
-    build_index(probe, tmp_path / "probe.sqlite")
-    index_mb = (tmp_path / "probe.sqlite").stat().st_size / 1048576
-    # Room for the workbook and its index, not for a second copy of its cells.
-    quota = int(index_mb + len(data) / 1048576) + 2
+    upload = {"workbook": {"name": "d.xlsx", "data": base64.b64encode(data).decode()}}
+    # What the workbook, its index and the library catalog take, measured on
+    # a first server. The catalog is built after the import: with the smaller
+    # index of schema 5 it no longer fits in a margin of 2 MiB.
+    measure = create_app(tmp_path / "measure", resolve_user=lambda env: env.get("user"))
+    try:
+        code, imported = call(measure, "POST", "/api/projects", upload)
+        assert code == 200, imported
+        assert finish(measure, imported["task"]["id"])["status"] == "succeeded"
+        used = _settled_storage(measure)
+    finally:
+        measure.close()
+    # Room for all of that, not for a second copy of the cells.
+    quota = int(used / 1048576) + 2
     app = create_app(
         tmp_path / "app",
         resolve_user=lambda env: env.get("user"),
         max_storage_mb=quota,
     )
     try:
-        code, imported = call(
-            app,
-            "POST",
-            "/api/projects",
-            {"workbook": {"name": "d.xlsx", "data": base64.b64encode(data).decode()}},
-        )
+        code, imported = call(app, "POST", "/api/projects", upload)
         assert code == 200, imported
         assert finish(app, imported["task"]["id"])["status"] == "succeeded"
+        assert _settled_storage(app) < quota * 1048576
         project = imported["project"]["id"]
         first = data_state(app, project)
         assert finish(app, first["taskId"], seconds=300)["status"] == "failed"

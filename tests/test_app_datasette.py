@@ -32,6 +32,7 @@ def open_app(
     presentation=None,
     project=None,
     data_error=None,
+    limits=None,
 ):
     page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
     requests, errors, pending = [], [], []
@@ -92,7 +93,10 @@ def open_app(
                 ),
             )
         elif path == "/api/config":
-            fulfill(route, {"limits": {"memoryMb": 2048, "uploadMb": 64}})
+            fulfill(
+                route,
+                {"limits": {"memoryMb": 2048, "uploadMb": 64, **(limits or {})}},
+            )
         elif path == "/api/projects":
             fulfill(route, {"projects": projects})
         elif path in {"/api/projects/p", "/api/projects/q"}:
@@ -975,6 +979,106 @@ def test_a_presentation_reason_is_visible_on_a_phone(browser, language):
         status.filter(has_text=text).wait_for(state="attached")
         assert not page.locator("#data-options").evaluate("element => element.open")
         assert status.is_visible()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_the_import_budget_field_starts_at_the_servers_default(browser):
+    """Batch 2 ter: ``linexcel serve --import-seconds`` sets the budget the
+    "Import and graph" field proposes; the user can still change it."""
+    page, _, errors, _, _ = open_app(
+        browser, (1440, 900), limits={"importSeconds": 1500}
+    )
+    try:
+        assert page.locator("#import-seconds").input_value() == "1500"
+        assert not errors
+    finally:
+        page.close()
+
+
+ESTIMATE_META = {
+    "status": "partial",
+    "sheetDetails": [
+        {"name": "Small", "status": "complete", "formulas": 0, "diagnostics": []},
+        {
+            "name": "Feuil1",
+            "status": "not_imported",
+            "reason": "time_budget",
+            "formulas": 0,
+            "diagnostics": [],
+        },
+    ],
+    "diagnostics": [],
+    "importEstimate": {
+        "readSeconds": 355.2,
+        "bytesRead": 563_000_000,
+        "bytesTotal": 796_018_668,
+        "budgetSeconds": 600,
+        "seconds": 1080,
+        "beyondMaximum": False,
+        "readShare": 0.6,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "rate", "button"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "La lecture des feuilles dispose de 60 % du budget de l’import, soit "
+            "360 s sur 600 s : elle s’est arrêtée après 355 s, avec 71 % de leur "
+            "contenu lu.",
+            "Réimporter avec un budget de 1080 s",
+        ),
+        (
+            (390, 844),
+            "en",
+            "Reading the sheets gets 60% of the import's budget, 360 s of 600 s: "
+            "it stopped after 355 s, with 71% of their content read.",
+            "Reimport with a budget of 1080 s",
+        ),
+    ],
+)
+def test_a_time_stop_proposes_a_reimport_with_an_estimated_budget(
+    browser, viewport, language, rate, button
+):
+    """Batch 2 ter: a sheet not read within the import's time budget gets a
+    reimport proposal with the budget estimated from the observed rate."""
+    posted = []
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ESTIMATE_META}
+        },
+    )
+    page.on(
+        "request",
+        lambda request: (
+            posted.append(request.post_data_json)
+            if request.method == "POST" and request.url.endswith("/projects/p/tasks")
+            else None
+        ),
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        proposal = page.locator("#import-estimate")
+        proposal.wait_for()
+        assert rate in proposal.inner_text()
+        page.get_by_role("button", name=button).click()
+        for _ in range(50):
+            if any(body.get("operation") == "import" for body in posted):
+                break
+            page.wait_for_timeout(50)
+        imports = [body for body in posted if body.get("operation") == "import"]
+        assert imports and imports[0]["budget"]["seconds"] == 1080
+        assert imports[0]["force"] is True
+        assert page.locator("#import-seconds").input_value() == "1080"
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
         assert not errors
     finally:

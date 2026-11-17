@@ -22,6 +22,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.worksheet.table import Table
 
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import create_app
 
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "linexcel"
@@ -139,7 +140,7 @@ def question_tools(project, tmp_path):
     from linexcel.lazy_store import WorkbookIndex
 
     app, owner, pid, path = project
-    with WorkbookIndex(path / "index.sqlite") as index:
+    with WorkbookIndex(path / INDEX_FILENAME) as index:
         sha, sheets = index.meta["sha256"], index.meta["sheets"]
     scope = {
         "attachment": None,
@@ -187,7 +188,7 @@ def catalog(project, tmp_path):
     from linexcel.catalog import Catalog, CatalogLimits, Source
 
     _, _, pid, path = project
-    source = Source(pid, "reads.xlsx", path / "index.sqlite")
+    source = Source(pid, "reads.xlsx", path / INDEX_FILENAME)
     built = Catalog(tmp_path / "catalog", CatalogLimits())
     built.ensure([source])
     return built, source
@@ -376,7 +377,7 @@ def test_presentation_window_shows_saved_values_within_its_byte_budget(
 
     _, _, _, path = project
     window = sheet_presentation(
-        path / "workbook.xlsx", path / "index.sqlite", "Data", rows=6, columns=4
+        path / "workbook.xlsx", path / INDEX_FILENAME, "Data", rows=6, columns=4
     )
     cells = {
         c["address"]: (c["display"], c["valueStatus"], c["formula"])
@@ -391,7 +392,7 @@ def test_presentation_window_shows_saved_values_within_its_byte_budget(
     assert cells["D6"] == ("", "missing", "=B6*2")
     monkeypatch.setattr("linexcel.excel_presentation.MAX_PRESENTATION_BYTES", 10)
     with pytest.raises(PresentationLimitError, match="Zone de présentation"):
-        sheet_presentation(path / "workbook.xlsx", path / "index.sqlite", "Data")
+        sheet_presentation(path / "workbook.xlsx", path / INDEX_FILENAME, "Data")
 
 
 def test_header_bands_scan_cells_outside_described_tables(project):
@@ -406,7 +407,7 @@ def test_header_bands_scan_cells_outside_described_tables(project):
         "headers": ["Region", "Amount", "Flag", "Double"],
         "bounds": [1, 1, 6, 4],
     }
-    with WorkbookIndex(path / "index.sqlite") as index:
+    with WorkbookIndex(path / INDEX_FILENAME) as index:
         labels = HeaderBands(index, "Labels", [], CatalogLimits(), lambda: False)
         alone = HeaderBands(index, "Data", [], CatalogLimits(), lambda: False)
         covered = HeaderBands(index, "Data", [table], CatalogLimits(), lambda: False)
@@ -426,7 +427,7 @@ def test_calculation_step_of_a_wide_range_counts_the_members_it_omits(project):
 
     _, _, _, path = project
     result = evaluate_node(
-        path / "workbook.xlsx", "Calc!B6", index_path=path / "index.sqlite"
+        path / "workbook.xlsx", "Calc!B6", index_path=path / INDEX_FILENAME
     )
     assert (result["status"], result["value"]) == ("completed", 45150.0)
     step = next(s for s in result["steps"] if s["nodeId"] == "Big!A1:A300")
@@ -443,7 +444,7 @@ def source_data(project, tmp_path):
 
     _, _, _, path = project
     output = tmp_path / "source-data.sqlite"
-    summary = build_source_database(path / "index.sqlite", output, max_bytes=2**40)
+    summary = build_source_database(path / INDEX_FILENAME, output, max_bytes=2**40)
     db = sqlite3.connect(output)
     try:
         yield summary, db
@@ -557,7 +558,7 @@ def test_import_records_the_bounds_of_every_local_range(project):
     from linexcel.lazy_store import WorkbookIndex
 
     _, _, _, path = project
-    with WorkbookIndex(path / "index.sqlite") as index:
+    with WorkbookIndex(path / INDEX_FILENAME) as index:
         ranges = index.db.execute(
             "SELECT * FROM lineage_ranges ORDER BY rowid"
         ).fetchall()
@@ -575,7 +576,7 @@ def hierarchy(project, tmp_path):
 
     _, _, _, path = project
     output = tmp_path / "hierarchy.sqlite"
-    built = build_graph(path / "index.sqlite", output)
+    built = build_graph(path / INDEX_FILENAME, output)
 
     def view(**where):
         return read_view(output, built["generation"], **where)

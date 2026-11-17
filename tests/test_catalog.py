@@ -15,7 +15,7 @@ from openpyxl.worksheet.table import Table
 from test_web_index import call
 
 from linexcel.catalog import Catalog, CatalogLimits, IndexPool, Source, parse_handle
-from linexcel.lazy_store import build_index
+from linexcel.lazy_store import INDEX_FILENAME, build_index
 from linexcel.web import create_app
 
 
@@ -32,7 +32,7 @@ def source(tmp_path, number=1, *, rows=12, table=False, text="Chiffre d’affair
     if table:
         sheet.add_table(Table(displayName="Résultats", ref=f"A1:B{rows}"))
     book.save(directory / "workbook.xlsx")
-    index = directory / "index.sqlite"
+    index = directory / INDEX_FILENAME
     build_index(directory / "workbook.xlsx", index, filename="same.xlsx")
     return Source(f"{number:032x}", "same.xlsx", index, 1)
 
@@ -253,7 +253,7 @@ def test_api_owner_isolation_including_other_owners_handles(tmp_path):
     project = tmp_path / "data" / owner / "projects" / item.project_id
     project.mkdir(parents=True)
     (project / "references").mkdir()
-    (project / "index.sqlite").write_bytes(item.path.read_bytes())
+    (project / INDEX_FILENAME).write_bytes(item.path.read_bytes())
     (project / "workbook.xlsx").write_bytes(
         (item.path.parent / "workbook.xlsx").read_bytes()
     )
@@ -487,7 +487,7 @@ def test_cli_redirected_bytes_are_utf8_under_a_cp1252_locale(tmp_path, filename)
     project = data / owner / "projects" / item.project_id
     project.mkdir(parents=True)
     (project / "references").mkdir()
-    (project / "index.sqlite").write_bytes(item.path.read_bytes())
+    (project / INDEX_FILENAME).write_bytes(item.path.read_bytes())
     (project / "project.json").write_text(
         json.dumps(
             {

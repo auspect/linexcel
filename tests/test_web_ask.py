@@ -12,6 +12,7 @@ from test_ask import FakeProvider, call, select_handle
 from test_web import request, wait, workbook
 
 from linexcel.ask import encoded
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import APIError, _read, _write, create_app
 
 
@@ -227,7 +228,7 @@ def test_actual_foreign_owner_handle_cannot_enter_question_scope(app):
 
     bob = hashlib.sha256(b"bob").hexdigest()
     with WorkbookIndex(
-        app.store.project_path(bob, foreign["id"]) / "index.sqlite"
+        app.store.project_path(bob, foreign["id"]) / INDEX_FILENAME
     ) as index:
         foreign_handle = cell_handle(
             revision(foreign["id"], index.meta["sha256"]), "Sheet!A1"
@@ -415,7 +416,7 @@ def test_completed_answer_is_invalidated_when_pin_or_catalog_changes(app, mutati
             == (mutation != "unrelated_pin")
         )
         with WorkbookIndex(
-            app.store.project_path(owner, target["id"]) / "index.sqlite"
+            app.store.project_path(owner, target["id"]) / INDEX_FILENAME
         ) as index:
             sha = index.meta["sha256"]
         if mutation in {"pin", "unrelated_pin"}:

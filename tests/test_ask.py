@@ -12,6 +12,7 @@ from linexcel.aidoc import TokenUsage
 from linexcel.ask import AskLimits, QuestionRun, encoded
 from linexcel.ask_provider import ToolResponse
 from linexcel.ask_tools import QuestionTools, calculate
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import TaskStore, WebConfig, _write
 
 
@@ -56,7 +57,7 @@ def tools(tmp_path):
     )
     root = store.root / owner / "projects" / source.project_id
     root.mkdir(parents=True)
-    (root / "index.sqlite").write_bytes(source.path.read_bytes())
+    (root / INDEX_FILENAME).write_bytes(source.path.read_bytes())
     _write(
         root / "project.json",
         {
@@ -257,7 +258,7 @@ def test_answer_handles_must_be_issued_current_and_owned(tools, candidate):
                 / engine.owner
                 / "projects"
                 / source.project_id
-                / "index.sqlite"
+                / INDEX_FILENAME
             )
             from openpyxl import Workbook
 
@@ -535,7 +536,7 @@ def test_injected_values_labels_sheet_names_and_formulas_cannot_widen_scope(
 
     root = engine.store.root / engine.owner / "projects" / hostile.project_id
     root.mkdir()
-    (root / "index.sqlite").write_bytes(hostile.path.read_bytes())
+    (root / INDEX_FILENAME).write_bytes(hostile.path.read_bytes())
     _write(
         root / "project.json",
         {
@@ -622,7 +623,7 @@ def test_private_question_catalog_honors_owner_pins_and_pin_changes(tools, tmp_p
     for source in [duplicate, reader]:
         root = engine.store.root / engine.owner / "projects" / source.project_id
         root.mkdir()
-        (root / "index.sqlite").write_bytes(source.path.read_bytes())
+        (root / INDEX_FILENAME).write_bytes(source.path.read_bytes())
         _write(
             root / "project.json",
             {

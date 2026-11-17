@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 import pytest
 from openpyxl import Workbook
 
-from linexcel.lazy_store import build_index
+from linexcel.lazy_store import INDEX_FILENAME, build_index
 from linexcel.web import _write, create_app
 from linexcel.web_data import MAX_INSTANCES, DataLimitError, build_source_database
 
@@ -101,7 +101,7 @@ def data_app(tmp_path):
         path / "project.json",
         {"id": project, "filename": "sources.xlsx", "revision": revision},
     )
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
     prepare_data(app, project)
     try:
         yield app, project, path
@@ -246,7 +246,7 @@ def test_failed_storage_limit_does_not_publish_partial_database(data_app):
     _, _, path = data_app
     output = path / "limited.sqlite"
     with pytest.raises(DataLimitError):
-        build_source_database(path / "index.sqlite", output, max_bytes=1)
+        build_source_database(path / INDEX_FILENAME, output, max_bytes=1)
     assert not output.exists()
     assert not list(Path(path).glob("data-*.building"))
 
@@ -264,7 +264,7 @@ def test_rebuilt_source_invalidates_datasette_and_pages_remain_complete(data_app
     metadata = json.loads((path / "project.json").read_text())
     metadata["revision"] = app.store._revision(path)
     _write(path / "project.json", metadata)
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
     assert prepare_data(app, project)["sheets"][0]["rowCount"] == 151
     rows = []
     query = "_shape=objects&_size=50"
@@ -298,7 +298,7 @@ def test_blank_dependency_placeholders_are_not_source_cells(data_app):
     metadata = json.loads((path / "project.json").read_text())
     metadata["revision"] = app.store._revision(path)
     _write(path / "project.json", metadata)
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
     prefix = f"/tools/api/projects/{project}"
     sheet = prepare_data(app, project)["sheets"][0]
     assert sheet["rowCount"] == 1 and sheet["cellCount"] == 1
@@ -368,7 +368,7 @@ def test_real_datasette_eviction_bounds_writers_and_releases_connections(data_ap
         if number:
             path = source_path.with_name(current)
             (path / "references").mkdir(parents=True)
-            for filename in ("workbook.xlsx", "index.sqlite"):
+            for filename in ("workbook.xlsx", INDEX_FILENAME):
                 shutil.copyfile(source_path / filename, path / filename)
             _write(
                 path / "project.json",

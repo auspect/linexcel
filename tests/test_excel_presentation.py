@@ -262,7 +262,7 @@ def test_cumulative_node_limit_precedes_retaining_the_whole_window(
     with WorkbookIndex(index) as store:
         sizes = [
             len(zlib.decompress(packed))
-            for (packed,) in store.db.execute("SELECT data FROM nodes ORDER BY row")
+            for packed in store.window_records("Sheet", (1, 1, 8, 1), 1 << 20)
         ]
     assert len(sizes) == 8
     monkeypatch.setattr(presentation, "MAX_PRESENTATION_BYTES", sum(sizes[:2]))

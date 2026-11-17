@@ -158,6 +158,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disk quota including pending uploads and task outputs in MiB.",
     )
     serve.add_argument(
+        "--import-seconds",
+        type=int,
+        default=600,
+        help="Default time budget of an import, a graph construction or a report, "
+        "in seconds, from 1 to 3600 (default: 600). Users can still choose "
+        "another budget for each operation.",
+    )
+    serve.add_argument(
         "--no-local-import",
         action="store_true",
         help="Disable importing workbook paths from the loopback web interface.",

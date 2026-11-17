@@ -78,14 +78,17 @@ def test_fifty_thousand_repeats_are_one_entry_with_exact_bounded_occurrences(tmp
     }
     assert catalog.status()["coverage"]["entries"] == 2
     with WorkbookIndex(item.path) as index:
-        after = index.db.execute(
-            "SELECT seq FROM nodes WHERE row=49998 AND col=1"
-        ).fetchone()
+        # The opaque position of A49998 in its sheet's cell order.
+        after = next(
+            position
+            for position, _, row, _, _ in index.sheet_cells_after("Repeated", 0, 50_000)
+            if row == 49998
+        )
     page = catalog.occurrences(
         [item],
         generation=hit["occurrenceGroup"]["generation"],
         group=hit["occurrenceGroup"]["id"],
-        after=after[0],
+        after=after,
         limit=5,
     )
     assert {ref["address"] for ref in page["results"]} == {"A49999", "A50000"}

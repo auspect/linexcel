@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, 'codex/**']
+    branches: [main, 'codex/**', 'auspect/**', 'claude/**']
   # Lets publish.yml replay the whole CI before releasing to PyPI.
   workflow_call:
 
