@@ -213,3 +213,28 @@ def test_a_formula_not_analyzed_is_explained_in_french(browser, viewport):
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_a_saved_value_is_said_shown_only_when_the_file_holds_one(browser, language):
+    """U3. "Its saved value is shown" beside "Saved cache: Not available":
+    the message now says the saved value stays shown when the file holds one,
+    and the cell shows it when it does."""
+    page, errors = open_app(browser, (1440, 900), language)
+    when = (
+        "quand le fichier en porte une"
+        if language == "fr"
+        else "when the file holds one"
+    )
+    try:
+        for node_id, cache in (("Third!A7", None), ("Third!A8", "24")):
+            select(page, node_id)
+            detail = page.locator("#node-detail")
+            detail.get_by_text(when, exact=False).first.wait_for()
+            text = detail.inner_text()
+            assert "Its saved value is shown" not in text
+            if cache:
+                assert cache in page.locator(".inspector-summary").inner_text()
+        assert not errors
+    finally:
+        page.close()

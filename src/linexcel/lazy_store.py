@@ -405,8 +405,8 @@ _NOT_IMPORTED = {
 #: calculation reaching the node is refused.
 NOT_ANALYZED = (
     "Formula not analyzed within the import's time budget: its sources are "
-    "unknown, so a calculation reading it is refused. Its saved value is "
-    "shown. Reimport with a larger time budget."
+    "unknown, so a calculation reading it is refused. Its saved value, when "
+    "the file holds one, is still shown. Reimport with a larger time budget."
 )
 
 
@@ -435,8 +435,9 @@ def _not_analyzed(store, metadata, after):
         if sheet is not None:
             message = (
                 f"{count} formula(s) not analyzed: the import's time budget ran "
-                "out during the dependency analysis. Their saved values are "
-                "shown; their sources are unknown and a calculation reading one "
+                "out during the dependency analysis. Their saved values, when "
+                "the file holds them, are still shown; their sources are "
+                "unknown and a calculation reading one "
                 "is refused. The cells they read do not list them among their "
                 "uses."
             )

@@ -193,7 +193,8 @@ import without an index.
 
 The formula analysis that follows checks the deadline before each formula.
 The formulas it does not reach keep the diagnostic "Formula not analyzed":
-their saved values are shown, their sources are unknown, and a calculation
+their saved values, when the file holds them, are still shown, their sources
+are unknown, and a calculation
 reaching one is refused; formulas analyzed that read only values are
 calculated. Their sheets are published as partial for the time budget, with
 the number of formulas not analyzed. Every formula and defined name carries
