@@ -42,6 +42,10 @@ def search_workbook():
     plan["A4"] = True
     plan["A5"] = -7
     plan["A6"] = 1e20
+    # Text in a cell formatted as a date, and text that reads as a boolean.
+    plan["C1"] = "15/03/2024"
+    plan["C1"].number_format = "dd/mm/yyyy"
+    plan["C2"] = "TRUE"
     plan["B12"] = "x"
     plan["B120"] = "y"
     data = book.create_sheet("Données")
@@ -82,6 +86,8 @@ CASES = [
     ("true", None, 200),
     ("-7", None, 200),
     ("e+20", None, 200),
+    ("15/03", None, 200),
+    ("03-15", None, 200),
     # Sheet filter.
     ("e", "Texte", 200),
     ("a1", "Données", 200),
@@ -134,7 +140,7 @@ EXPECTED = {
     ),
     ("É", None, 200): (3, ["Texte!A1", "Texte!B1", "Texte!A3"]),
     ("e", None, 200): (
-        46,
+        47,
         [
             "Texte!A1",
             "Texte!B1",
@@ -149,6 +155,7 @@ EXPECTED = {
             "Texte!A10",
             "Texte!A11",
             "Texte!A12",
+            "'Plan 2'!C2",
             "'Plan 2'!A4",
             "'Plan 2'!A6",
             "'Données'!A1",
@@ -185,7 +192,7 @@ EXPECTED = {
         ],
     ),
     ("E", None, 200): (
-        46,
+        47,
         [
             "Texte!A1",
             "Texte!B1",
@@ -200,6 +207,7 @@ EXPECTED = {
             "Texte!A10",
             "Texte!A11",
             "Texte!A12",
+            "'Plan 2'!C2",
             "'Plan 2'!A4",
             "'Plan 2'!A6",
             "'Données'!A1",
@@ -251,10 +259,12 @@ EXPECTED = {
     ("plan 2!", None, 200): (0, []),
     ("texte!a1", None, 200): (4, ["Texte!A1", "Texte!A10", "Texte!A11", "Texte!A12"]),
     ("'plan", None, 200): (
-        8,
+        10,
         [
             "'Plan 2'!A1",
+            "'Plan 2'!C1",
             "'Plan 2'!A2",
+            "'Plan 2'!C2",
             "'Plan 2'!A3",
             "'Plan 2'!A4",
             "'Plan 2'!A5",
@@ -266,9 +276,11 @@ EXPECTED = {
     ("12.5", None, 200): (1, ["'Plan 2'!A1"]),
     ("0.3", None, 200): (1, ["'Plan 2'!A2"]),
     ("2024-03", None, 200): (1, ["'Plan 2'!A3"]),
-    ("true", None, 200): (1, ["'Plan 2'!A4"]),
+    ("true", None, 200): (2, ["'Plan 2'!C2", "'Plan 2'!A4"]),
     ("-7", None, 200): (1, ["'Plan 2'!A5"]),
     ("e+20", None, 200): (1, ["'Plan 2'!A6"]),
+    ("15/03", None, 200): (1, ["'Plan 2'!C1"]),
+    ("03-15", None, 200): (1, ["'Plan 2'!A3"]),
     ("e", "Texte", 200): (
         13,
         [
@@ -323,7 +335,7 @@ EXPECTED = {
             "'Données'!A5",
         ],
     ),
-    ("a", None, 5): (50, ["Texte!A1", "Texte!A2", "Texte!A3", "Texte!A4", "Texte!A5"]),
+    ("a", None, 5): (52, ["Texte!A1", "Texte!A2", "Texte!A3", "Texte!A4", "Texte!A5"]),
 }
 
 
