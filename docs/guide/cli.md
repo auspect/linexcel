@@ -179,9 +179,13 @@ task; those seconds are kept for links, VBA, counts and publication
 (measured at 0.2 to 1.3 s). Reading sheets may use half of the storage left
 when the import starts. Reading stops before a sheet, or after every 10,000
 cells, as soon as the time left no longer covers the predicted analysis of
-the formulas already read: 1.25 x 0.65 ms a formula, 1.5 times the rate
-measured on a 233,000-formula model, with the margin of the proposal below.
-A sheet of values alone may therefore use most of the budget. The sheet the
+the formulas of the sheets already read whole: 1.25 x 0.65 ms a formula,
+1.5 times the rate measured on a 233,000-formula model, with the margin of
+the proposal below. The formulas of the sheet being read are not counted:
+it is read as long as the sheets before it stay covered, and its formulas
+are then analysed as far as time allows, the rest marked "not analysed"
+(below), rather than rolling back a sheet that could be read. A sheet of
+values alone may therefore use most of the budget. The sheet the
 import stops in is rolled back; it and the following sheets are marked "Sheet
 not imported" in Diagnostics, with the reason. A formula reading such a sheet
 is refused: its cells are unknown, never blank. A memory stop still ends the

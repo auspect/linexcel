@@ -350,3 +350,41 @@ def test_an_estimate_from_too_little_work_is_uncertain():
     assert not values["valueRateMeasured"] and values["uncertain"]
     # Beyond the server's bound, it says so.
     assert values["seconds"] == 3600 and values["beyondMaximum"]
+
+
+def _formula_sheet(sheet, formulas=25_000):
+    sheet.title = "Formulas"
+    for row in range(1, formulas + 1):
+        sheet.cell(row, 1, f"=ROW()*{row % 7}")
+
+
+@pytest.mark.parametrize("values_first", [False, True])
+def test_a_formula_sheet_that_can_be_read_is_not_rolled_back(tmp_path, values_first):
+    """Lot 2 ter, reprise. Inside a sheet, the reserve counted the formulas of
+    that very sheet: a sheet that could be read within the budget was rolled
+    back and published "not imported" as soon as their predicted analysis
+    no longer fitted. The analysis safety net would have published all its
+    values and analysed what time allowed. Inside a sheet the reserve now
+    protects only the sheets already read whole."""
+    book = Workbook()
+    if values_first:
+        book.active.title = "Values"
+        book.active["A1"] = 1
+        _formula_sheet(book.create_sheet())
+    else:
+        _formula_sheet(book.active)
+    path = tmp_path / "formulas.xlsx"
+    book.save(path)
+    budget = ImportBudget.for_task(0.0, 30)  # deadline 25
+    # Readings: start, before each sheet, Formulas at its 10,000th and
+    # 20,000th cell: 10 s, when 20,000 formulas predict 16.25 s of analysis.
+    readings = [0.0, 1.0] + ([2.0] if values_first else []) + [3.0, 10.0]
+    budget.clock = _Readings(*readings)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, meta = _details(index)
+    assert details["Formulas"]["status"] == "complete", details["Formulas"]
+    assert details["Formulas"]["formulas"] == 25_000
+    # The clock stays at 10 s: the analysis had the time to finish.
+    assert meta["importTimings"]["formulasNotAnalysed"] == 0
+    assert "importEstimate" not in meta

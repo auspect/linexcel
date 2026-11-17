@@ -188,9 +188,13 @@ class ImportBudget:
 
     ``deadline`` is the wall-clock time by which the import's own work ends:
     ``FINAL_SECONDS`` before the end of the task, which are kept for links,
-    VBA, counts and publication. Reading stops as soon as the time left
-    before it no longer covers the predicted analysis of the formulas
-    already read (``reserve``), so that every sheet read is also analysed.
+    VBA, counts and publication. The time left must cover the predicted
+    analysis (``reserve``) of the formulas of the sheets read whole: a sheet
+    is not started when it does not, and a sheet being read stops when it no
+    longer does. The formulas of the sheet being read are not counted: it
+    is read while the sheets before it stay protected, and the analysis then
+    covers its formulas as far as time allows, marking the rest not
+    analysed rather than rolling back a sheet that could be read.
     """
 
     #: Share of the storage left at a task's start that reading may use.
@@ -333,8 +337,8 @@ class ImportBudget:
     def exhausted(self, index_path, formulas: int = 0) -> str | None:
         """``"time_budget"``, ``"storage_budget"`` or ``None``.
 
-        ``formulas`` were read so far: reading stops when the time left no
-        longer covers their analysis.
+        ``formulas`` are those of the sheets read whole so far: reading stops
+        when the time left no longer covers their analysis.
         """
         if self.deadline is not None:
             now = self.clock()
@@ -2578,10 +2582,12 @@ def _read_source(path, store, budget=None):
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
                                     _read_in_transaction(db)
+                                    # The reserve protects the sheets read
+                                    # whole; this sheet's own formulas are
+                                    # analysed as far as time allows.
                                     if budget and (
                                         stop := budget.exhausted(
-                                            store.path,
-                                            formulas_read + sheet["formulas"],
+                                            store.path, formulas_read
                                         )
                                     ):
                                         raise _ImportStopError(stop, source.tell())
