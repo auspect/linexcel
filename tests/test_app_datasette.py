@@ -1137,7 +1137,7 @@ ANALYSIS_META = {
             (1440, 900),
             "fr",
             [
-                "Analyse des dépendances arrêtée par le budget : 70 formules "
+                "Analyse des dépendances arrêtée par le budget de 20 s : 70 formules "
                 "analysées sur 1220.",
                 "Budget d’import estimé pour tout importer (lecture, analyse des "
                 "formules et régions) : 120 s.",
@@ -1152,7 +1152,7 @@ ANALYSIS_META = {
             (390, 844),
             "en",
             [
-                "Dependency analysis stopped by the budget: 70 of 1220 formulas "
+                "Dependency analysis stopped by the 20 s budget: 70 of 1220 formulas "
                 "analyzed.",
                 "Estimated import budget to import everything (reading, formula "
                 "analysis and regions): 120 s.",

@@ -284,3 +284,43 @@ def test_the_uses_of_a_node_warn_that_they_may_be_incomplete(
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "texts"),
+    [
+        (
+            "fr",
+            [
+                "Lecture des feuilles arrêtée par le budget de 20 s après 3 s, "
+                "avec 99 % de leur contenu lu.",
+                "Analyse des dépendances arrêtée par le budget de 20 s : 17 formules "
+                "analysées sur 243.",
+                "Régions de données sautées faute de temps dans le budget de 20 s.",
+            ],
+        ),
+        (
+            "en",
+            [
+                "Reading the sheets stopped by the 20 s budget after 3 s, with 99% "
+                "of their content read.",
+                "Dependency analysis stopped by the 20 s budget: 17 of 243 formulas "
+                "analyzed.",
+                "Data regions skipped for lack of time within the 20 s budget.",
+            ],
+        ),
+    ],
+)
+def test_the_stops_name_the_budget_used(browser, language, texts):
+    """U5. "stopped by the budget" did not say which budget: the user could
+    not compare it with the budget proposed."""
+    page, errors = open_app(browser, (1440, 900), language)
+    try:
+        page.locator("#tab-diagnostics").click()
+        page.locator("#import-estimate").wait_for()
+        shown = page.locator("#import-estimate").inner_text()
+        for text in texts:
+            assert text in shown, (text, shown)
+        assert not errors
+    finally:
+        page.close()
