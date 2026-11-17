@@ -173,30 +173,48 @@ old index and the graph and data views built from it, then builds the new
 index from the kept workbook. Archives never contained indexes, so an archive
 made by either version restores and reimports.
 
-An import publishes the sheets it reads within its budgets. Reading sheets may
-use 60 % of the import's time budget and half of the storage left when it
-starts; the rest is kept for dependencies and publication. The sheet the
+An import publishes what it does within its budgets. Its own work ends 5 s
+before the end of the time budget, counted from the server's start of the
+task; those seconds are kept for links, VBA, counts and publication
+(measured at 0.2 to 1.3 s). Reading sheets may use half of the storage left
+when the import starts. Reading stops before a sheet, or after every 10,000
+cells, as soon as the time left no longer covers the predicted analysis of
+the formulas already read: 1.25 x 0.65 ms a formula, 1.5 times the rate
+measured on a 233,000-formula model, with the margin of the proposal below.
+A sheet of values alone may therefore use most of the budget. The sheet the
 import stops in is rolled back; it and the following sheets are marked "Sheet
 not imported" in Diagnostics, with the reason. A formula reading such a sheet
 is refused: its cells are unknown, never blank. A memory stop still ends the
 import without an index.
 
-The time budget is checked only while sheets are read. The work that
-follows, mainly extracting the formulas' dependencies, is not, and in a
-workbook made of formulas it is most of the import. When it runs past the
-budget, the task still times out: nothing is published, not even the sheets
-already read, and no reimport is proposed. On a model of 233,000 formulas
-(reading 29 s, dependencies 93 s), budgets of 25, 60 and 120 s published
-nothing.
+The formula analysis that follows checks the deadline before each formula.
+The formulas it does not reach keep the diagnostic "Formula not analysed":
+their saved values are shown, their sources are unknown, and a calculation
+reaching one is refused; formulas analysed that read only values are
+calculated. Their sheets are published as partial for the time budget, with
+the number of formulas not analysed. Every formula and defined name carries
+that diagnostic from the moment it is read until it is analysed, so nothing
+is written at the deadline and every view of the node sees it. Data regions
+are described only for the sheets whose predicted description (1.25 x
+5.5 µs a saved value) ends before the deadline; the others are listed as
+"Data regions skipped: budget", with every value and formula complete. In a
+partial import, the uses listed for a cell can miss a formula not imported or
+not analysed; the banner, the node list and the Data tab say that the import
+is partial.
 
-When time stops the reading, Diagnostics says how long the import read and
-how much of the worksheet XML it read, and proposes a reimport with the time
-budget estimated to read every sheet at that rate: the reading time over the
-60 % share, plus 25 %, rounded up to the minute, at least a minute more than
-the budget used, at most 3600 s. Above that maximum it says that reading
-everything would need more than 3600 s, and the button still offers 3600 s.
-The estimate counts only the reading rate, so it can be too short for a
-workbook rich in formulas. The default budget of an import, a graph construction
+When time cut the import, Diagnostics says what stopped (reading, analysis,
+regions) and proposes a reimport with a budget that counts the whole import:
+the reading time and the formulas and values found, extrapolated from the
+share of worksheet XML read; the analysis of every formula and the regions,
+at the rates measured on this import when it analysed at least 2,000
+formulas or described at least 10,000 values, else at the cautious rates
+above; links and VBA as measured. The total plus 25 % and the final 5 s is
+rounded up to the minute, at least a minute more than the budget used, at
+most 3600 s. Above that maximum it says so and the published sheets remain
+available. It adds "Uncertain estimate" when less than 20 % of the workbook
+was read or a rate that was not measured weighs more than a quarter of the
+prediction. Each index records its phase times and counts under
+`importTimings`. The default budget of an import, a graph construction
 or a report is 600 s; `linexcel serve --import-seconds N` sets another
 default (1 to 3600), and the "Import and graph" field still lets each
 operation choose its own.

@@ -448,15 +448,34 @@ Adopted on 15 November 2026, with these choices:
   row above or below no longer excludes it. A region needs 10,000 saved
   values, counted: measured as rows times columns, a column with values in
   rows 1 and 1,048,576 became a region.
-- **Per-sheet publication (F21).** 60 % of the time budget and half of the
-  storage left at the start for reading; the sheet in progress is rolled back
-  and marked `not_imported` with its reason. Limit, measured on 17 November:
-  the budget is checked only while sheets are read; dependency extraction,
-  which follows and dominates a formula model's import, is not. When it runs
-  past the budget the task times out, nothing is published and no reimport
-  is proposed, and the proposed budget, estimated from the reading rate
-  alone, can be too short. On ATB (233,000 formulas, reading 29 s,
-  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
+- **Per-sheet publication (F21).** Half of the storage left at the start for
+  reading; the sheet in progress is rolled back and marked `not_imported`
+  with its reason. As first built, reading had 60 % of the time budget and
+  the budget was checked only while sheets were read: on ATB (233,000
+  formulas, reading 29 s, dependencies 93 s), budgets of 25, 60 and 120 s
+  timed out in the dependency extraction and published nothing (measured on
+  17 November).
+- **Every phase within the time budget (17 November, after that
+  measurement).** The import's own work ends 5 s before the task's end,
+  counted from the coordinator's start; the 5 s cover links, VBA, counts and
+  publication (measured 0.2 to 1.3 s). Reading stops when the time left no
+  longer covers 1.25 x 0.65 ms of analysis per formula read. The analysis
+  checks the deadline before each formula; the formulas it does not reach
+  keep the diagnostic "Formula not analysed", written by the reader in every
+  formula and name node and removed by the analysis, so nothing is written
+  at the deadline (rewriting 150,000 nodes then would take 8 s) and every
+  read of a node sees it. Their sheets are `partial` with the reason
+  `time_budget`; a calculation reaching such a formula is refused. Data
+  regions are described per sheet only when their predicted time fits. The
+  proposed budget counts reading, analysis and regions, at the rates measured
+  on the import when there was enough work, and says when it is uncertain.
+  What remains true: a sheet too large to read within the budget is still
+  only "not imported"; links, VBA and publication cannot be stopped, and an
+  import whose final steps outlast the 5 s still times out without a new
+  index (the error then proposes twice the budget, not an estimate);
+  loading a supplied external workbook during the analysis is not
+  interrupted. Verified on generated workbooks; the real-corpus runs (ATB at
+  25, 60 and 120 s, DGT and fpna at 600 s) await approval.
 
 ### Decisions for Philippe
 
