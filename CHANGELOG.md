@@ -109,9 +109,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   6.6 s instead of 57 s and `Summary!B2` in 1.5 s instead of 16 s. Models
   made mostly of formulas gain less: ATB 369 MB instead of 454 MB, TAG
   139 MB instead of 169 MB. Searching the node list compares each stored
-  value in Python instead of SQLite: on fpna a search for "EUR" takes about
-  6 s instead of 2 s, and a search with no match about 4.7 s instead of
-  3.6 s.
+  value in Python instead of SQLite, so it stays slower than with schema 4:
+  on fpna a search for "EUR" takes about 3.8 s instead of 1.8 to 2.2 s, and
+  a search with no match about 3.8 s instead of 3.5 to 3.7 s (see the next
+  entry).
+- Search the node list with less work per literal cell. A query without a
+  digit is tested against a cell's address once per sheet and column, ASCII
+  text is folded with `str.lower`, and a text value is compared directly.
+  The results are unchanged: same totals, pages and values on 21 searches of
+  the fpna model, and the case folding still matches SQLite's `LIKE`. On fpna
+  (2.7 million cells), best of 9 searches each, alternated with the previous
+  code: "EUR" 3.79 s instead of 5.55 s, "acc" 3.78 s instead of 5.56 s,
+  "2024-03" 3.61 s instead of 4.24 s, "12.5" 3.58 s instead of 4.22 s, no
+  match 3.75 s instead of 4.37 s.
 - Publish the sheets an import reads within its time budget and the storage
   quota. An import stopped there published nothing; the sheet in progress and
   the following ones are now marked "Sheet not imported" with the reason, and
