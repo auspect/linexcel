@@ -113,8 +113,8 @@ def test_a_task_budget_leaves_time_and_storage_for_the_rest_of_the_import(
     clock = iter([1100.0, 1100.0, 1100.0, 1600.0])
     budget.clock = lambda: next(clock)
     assert budget.exhausted(index) is None
-    # 1,100 + 700,000 x 1.25 x 0.65 ms of predicted analysis > 1,595.
-    assert budget.exhausted(index, formulas=700_000) == "time_budget"
+    # 1,100 + 2,000,000 x 0.30 ms, the analysis at its fastest, > 1,595.
+    assert budget.exhausted(index, formulas=2_000_000) == "time_budget"
     (tmp_path / "index.sqlite-journal").write_bytes(b"x" * 1_000)
     assert budget.exhausted(index) == "storage_budget"
     assert budget.exhausted(index) == "time_budget"
@@ -215,8 +215,8 @@ def test_reading_stops_when_the_time_left_no_longer_covers_the_analysis(tmp_path
     left does not cover the predicted analysis of the formulas read."""
     path = _formula_book(tmp_path)
     budget = ImportBudget.for_task(0.0, 100)
-    # 40 ms a formula: after F1, 50 s of reserve; after F2, 100 s.
-    budget.formula_seconds = 0.04
+    # 50 ms a formula: after F1, 50 s of reserve; after F2, 100 s.
+    budget.reserve_seconds = 0.05
     # Readings: start, before Values, F1, F2, F3 (the reading clock only).
     budget.clock = _Readings(0.0, 1.0, 2.0, 3.0, 4.0)
     index = tmp_path / "index.sqlite"
@@ -256,11 +256,32 @@ def test_a_values_sheet_may_take_most_of_the_budget(tmp_path):
     assert "importEstimate" not in meta
 
 
-def test_the_reserve_uses_the_cautious_rate_and_the_margin():
+def test_the_reserve_is_the_analysis_at_its_fastest_without_margin():
+    """Reprise after the corpus runs. The reserve predicted the analysis at
+    the cautious rate with the 1.25 margin (0.81 ms a formula), while the
+    energy model analyzes at 0.41 to 0.52 ms: reading stopped with 29 to 40 %
+    of the budget unused. It is now the fastest rate measured, 0.30 ms, with
+    no margin; the cautious rate stays for proposals that measured none."""
     budget = ImportBudget()
     assert budget.reserve(0) == 0
-    assert budget.reserve(1_000) == pytest.approx(1.25 * 0.65)
-    assert ImportBudget(formula_seconds=0.01).reserve(100) == pytest.approx(1.25)
+    assert budget.reserve(1_000) == pytest.approx(0.30)
+    assert budget.formula_seconds == pytest.approx(0.65e-3)
+    assert ImportBudget(reserve_seconds=0.01).reserve(100) == pytest.approx(1.0)
+
+
+def test_reading_goes_on_while_the_fastest_analysis_still_fits(tmp_path):
+    """Reprise. With 24,000 formulas read and 15 s left before the deadline,
+    the cautious reserve (19.5 s) stopped the reading; the analysis at its
+    fastest (7.2 s) fits, so the third sheet is read too."""
+    path = _formula_book(tmp_path, formulas=12_000)
+    budget = ImportBudget.for_task(0.0, 100)  # deadline 95
+    # Readings: start, before Values, F1, its 10,000th cell, F2, its
+    # 10,000th cell, F3 (24,000 formulas read, at 80 s), its 10,000th cell.
+    budget.clock = _Readings(0.0, 1.0, 2.0, 3.0, 60.0, 61.0, 80.0, 81.0, 82.0)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, _ = _details(index)
+    assert [details[s]["status"] for s in ("F1", "F2", "F3")] == ["complete"] * 3
 
 
 def test_no_estimate_when_every_sheet_is_read(tmp_path):

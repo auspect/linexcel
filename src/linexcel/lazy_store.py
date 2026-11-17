@@ -188,8 +188,9 @@ class ImportBudget:
 
     ``deadline`` is the wall-clock time by which the import's own work ends:
     ``FINAL_SECONDS`` before the end of the task, which are kept for links,
-    VBA, counts and publication. The time left must cover the predicted
-    analysis (``reserve``) of the formulas of the sheets read whole: a sheet
+    VBA, counts and publication. The time left must cover the analysis at
+    its fastest (``reserve``, no margin) of the formulas of the sheets read
+    whole: a sheet
     is not started when it does not, and a sheet being read stops when it no
     longer does. The formulas of the sheet being read are not counted: it
     is read while the sheets before it stay protected, and the analysis then
@@ -201,19 +202,29 @@ class ImportBudget:
     READ_STORAGE_SHARE = 0.5
     #: The server's bound on a task's time budget.
     MAX_SECONDS = 3600
-    #: Margin over predicted or measured phase times, in the reading reserve
-    #: and in the proposed budget alike: a proposal that used another factor
-    #: would make the reserve stop the reading it proposes.
+    #: Margin over predicted or measured phase times in the proposed budget
+    #: and in the decision to describe regions, which nothing interrupts.
     ESTIMATE_MARGIN = 1.25
-    #: Dependency analysis time of one formula, cautious for a slower
-    #: machine: 1.5 times about 0.43 ms. Measured: 0.40 ms on the public
-    #: energy model (233,410 formulas in 92.7 s), 0.30 ms on a generated
-    #: workbook.
+    #: Reading reserve: a lower bound of the analysis time of one formula,
+    #: the fastest rate measured, with no margin. Reading stops only when
+    #: the formulas already read could not be analyzed even at that rate.
+    #: A reserve too cautious protects nothing, since the analysis has a
+    #: safety net, and leaves the budget unused: at 0.81 ms (1.25 x 0.65)
+    #: the energy model stopped reading with 29 to 40 % of its budget left.
+    #: Measured: 0.30 ms on a generated workbook of 150,000 formulas (45.3 s);
+    #: 0.41 to 0.52 ms on the public energy model, 0.46 ms on the generated
+    #: financial model (17 November); 0.27 ms on 1,000 formulas only.
+    READ_RESERVE_FORMULA_SECONDS = 0.30e-3
+    #: Cautious analysis time of one formula, for a proposed budget that
+    #: could not measure the import's own rate: 1.5 times about 0.43 ms.
     FORMULA_SECONDS = 0.65e-3
-    #: Data region description time of one saved value: 1.5 times about
-    #: 3.6 µs, measured on the public election table (64 s).
+    #: Cautious description time of one saved value, for the decision to
+    #: describe regions and for proposals: 1.5 times about 3.6 µs, measured
+    #: on the public election table (64 s).
     VALUE_SECONDS = 5.5e-6
-    #: Kept at the end of a task for links, VBA, counts and publication.
+    #: Kept at the end of a task for links, VBA, counts and publication,
+    #: which nothing interrupts. Measured on the corpus: 0.07 to 0.31 s
+    #: after the last phase, 1.3 to 2.0 s with the worker's start and exit.
     FINAL_SECONDS = 5.0
     #: Fewest formulas analyzed, and saved values described in regions, for
     #: a proposal to use the rate measured on the import itself.
@@ -228,6 +239,7 @@ class ImportBudget:
         clock=None,
         seconds=None,
         formula_seconds=None,
+        reserve_seconds=None,
     ):
         import time
 
@@ -238,6 +250,11 @@ class ImportBudget:
         self.seconds = seconds
         self.formula_seconds = (
             self.FORMULA_SECONDS if formula_seconds is None else formula_seconds
+        )
+        self.reserve_seconds = (
+            self.READ_RESERVE_FORMULA_SECONDS
+            if reserve_seconds is None
+            else reserve_seconds
         )
         self.started = self.stopped = self.analysis_stopped = None
 
@@ -252,8 +269,10 @@ class ImportBudget:
         )
 
     def reserve(self, formulas: int) -> float:
-        """Seconds kept after reading for the analysis of ``formulas``."""
-        return self.ESTIMATE_MARGIN * self.formula_seconds * formulas
+        """Seconds kept after reading for the analysis of ``formulas``: the
+        analysis at its fastest, so that only an analysis that cannot fit
+        at all stops the reading; the safety net covers a slower one."""
+        return self.reserve_seconds * formulas
 
     def start_reading(self) -> None:
         self.started = self.clock()

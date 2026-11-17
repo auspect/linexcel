@@ -459,8 +459,10 @@ Adopted on 15 November 2026, with these choices:
   measurement).** The import's own work ends 5 s before the task's end,
   counted from the coordinator's start; the 5 s cover links, VBA, counts and
   publication (measured 0.2 to 1.3 s). Reading stops when the time left no
-  longer covers 1.25 x 0.65 ms of analysis per formula of the sheets read
-  whole (the sheet being read does not count its own formulas, so a sheet
+  longer covers the analysis at its fastest, 0.30 ms per formula with no
+  margin, of the sheets read whole (a first reserve of 1.25 x 0.65 ms left
+  29 to 40 % of the energy model's budget unused, measured on the corpus on
+  17 November) (the sheet being read does not count its own formulas, so a sheet
   that can be read is never rolled back for them). The analysis
   checks the deadline before each formula; the formulas it does not reach
   keep the diagnostic "Formula not analyzed", written by the reader in every

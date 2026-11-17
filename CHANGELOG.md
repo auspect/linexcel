@@ -131,8 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   budget was checked only while sheets were read; on ATB, a model of
   233,000 formulas (reading 29 s, dependencies 93 s), budgets of 25, 60 and
   120 s timed out and published nothing. Reading now stops as soon as the
-  time left does not cover the predicted analysis of the formulas of the
-  sheets read whole (1.25 x 0.65 ms a formula), instead of at a fixed 60 %
+  time left does not cover the analysis at its fastest (0.30 ms a formula,
+  no margin) of the formulas of the sheets read whole, instead of at a fixed 60 %
   of the budget, so a sheet of values alone may use most of the budget. The
   sheet being read does not count its own formulas: a sheet that can be
   read is published with its values, its formulas analyzed as far as time

@@ -179,9 +179,13 @@ task; those seconds are kept for links, VBA, counts and publication
 (measured at 0.2 to 1.3 s). Reading sheets may use half of the storage left
 when the import starts. Reading stops before a sheet, or after every 10,000
 cells, as soon as the time left no longer covers the predicted analysis of
-the formulas of the sheets already read whole: 1.25 x 0.65 ms a formula,
-1.5 times the rate measured on a 233,000-formula model, with the margin of
-the proposal below. The formulas of the sheet being read are not counted:
+the formulas of the sheets already read whole at its fastest: 0.30 ms a
+formula, the fastest rate measured, with no margin. Reading thus stops only
+when that analysis could not fit even at best; a slower analysis is covered
+by the safety net below. With the earlier reserve, 1.25 x 0.65 ms, the
+public energy model (233,410 formulas, analyzed at 0.41 to 0.52 ms) stopped
+reading with 29 to 40 % of its budget unused and whole sheets not imported.
+The formulas of the sheet being read are not counted:
 it is read as long as the sheets before it stay covered, and its formulas
 are then analyzed as far as time allows, the rest marked "not analyzed"
 (below), rather than rolling back a sheet that could be read. A sheet of
