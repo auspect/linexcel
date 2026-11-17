@@ -386,3 +386,18 @@ def test_the_scan_folds_case_as_sqlite_like_does(text, query):
     finally:
         db.close()
     assert _like_search(query)(text) is bool(row[0])
+
+
+def test_a_text_cell_searches_by_its_own_text(index):
+    # The scan compares text values directly, without search_text.
+    from linexcel.lazy_store import WorkbookIndex
+
+    with WorkbookIndex(index) as store:
+        texts = [
+            raw
+            for name in store.grid.sheets
+            for _, _, *raw in store.grid.scan(name)
+            if type(raw[0]) is str
+        ]
+        assert len(texts) > 40
+        assert all(store.grid.search_text(raw) == raw[0] for raw in texts)
