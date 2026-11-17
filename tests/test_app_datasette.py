@@ -1083,3 +1083,114 @@ def test_a_time_stop_proposes_a_reimport_with_an_estimated_budget(
         assert not errors
     finally:
         page.close()
+
+
+ANALYSIS_META = {
+    "status": "partial",
+    "sheetDetails": [
+        {"name": "Inputs", "status": "complete", "formulas": 20, "diagnostics": []},
+        {
+            "name": "Model",
+            "status": "partial",
+            "reason": "time_budget",
+            "formulas": 1200,
+            "unanalysedFormulas": 1150,
+            "diagnostics": [
+                "1150 formula(s) not analysed: the import's time budget ran out."
+            ],
+        },
+    ],
+    "diagnostics": [
+        {
+            "sheet": "Model",
+            "code": "formulas_not_analysed",
+            "reason": "time_budget",
+            "count": 1150,
+            "message": "1150 formula(s) not analysed",
+        }
+    ],
+    "dataRegions": {
+        "regions": 0,
+        "rangeLinks": 0,
+        "skipped": {"reason": "time_budget", "sheets": ["Inputs"]},
+    },
+    "importEstimate": {
+        "readSeconds": 3.0,
+        "bytesRead": 50_000,
+        "bytesTotal": 50_000,
+        "budgetSeconds": 20,
+        "seconds": 120,
+        "beyondMaximum": False,
+        "cause": ["analysis", "regions"],
+        "formulasAnalysed": 70,
+        "formulasPredicted": 1220,
+        "processedShare": 0.0574,
+        "uncertain": True,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "texts"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            [
+                "Analyse des dépendances arrêtée par le budget : 70 formules "
+                "analysées sur 1220.",
+                "Budget d’import estimé pour tout importer (lecture, analyse des "
+                "formules et régions) : 120 s.",
+                "Estimation incertaine : seule une petite partie du classeur (6 %) "
+                "a pu être traitée pour mesurer son rythme.",
+                "Régions de données sautées : budget.",
+                "1150 non analysées",
+                "Formules non analysées dans le budget de temps de l’import",
+            ],
+        ),
+        (
+            (390, 844),
+            "en",
+            [
+                "Dependency analysis stopped by the budget: 70 of 1220 formulas "
+                "analysed.",
+                "Estimated import budget to import everything (reading, formula "
+                "analysis and regions): 120 s.",
+                "Uncertain estimate: only a small part of the workbook (6%) could "
+                "be processed to measure its rate.",
+                "Data regions skipped: budget.",
+                "1150 not analysed",
+                "Formulas not analysed within the import’s time budget",
+            ],
+        ),
+    ],
+)
+def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
+    browser, viewport, language, texts
+):
+    """Lot 2 ter, budget step: formulas not analysed, regions skipped and an
+    uncertain estimate are said in Diagnostics, in both languages."""
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ANALYSIS_META}
+        },
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        page.locator("#import-estimate").wait_for()
+        shown = page.locator("#diagnostics").inner_text()
+        for text in texts:
+            assert text in shown, text
+        assert page.get_by_role(
+            "button",
+            name="Reimport with a budget of 120 s"
+            if language == "en"
+            else "Réimporter avec un budget de 120 s",
+        ).is_visible()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()

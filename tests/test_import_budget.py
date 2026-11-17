@@ -168,8 +168,19 @@ def test_a_time_stop_estimates_the_budget_that_reads_every_sheet(tmp_path):
     # Small and Big1 whole, then part of Big2 up to its stop.
     assert sizes[0] + sizes[1] < estimate["bytesRead"] < sum(sizes)
     assert estimate["readSeconds"] == 6.0
-    # Values only: reading at the observed rate, the margin, the final time.
-    needed = 6.0 * sum(sizes) / estimate["bytesRead"] * 1.25 + 5
+    # Past the deadline, the regions of Big1 were skipped too.
+    assert estimate["cause"] == ["reading", "regions"]
+    phases = estimate["phases"]
+    # Reading at the observed rate over the whole workbook.
+    assert phases["reading"] == pytest.approx(
+        6.0 * sum(sizes) / estimate["bytesRead"], abs=0.05
+    )
+    # No formula; regions at the code's rate, never measured here.
+    assert phases["analysis"] == 0
+    assert not estimate["valueRateMeasured"]
+    assert estimate["valueSeconds"] == ImportBudget.VALUE_SECONDS
+    # The margin over the predicted phases, the final time, to the minute.
+    needed = 1.25 * sum(phases.values()) + 5
     assert estimate["seconds"] == max(160, math.ceil(needed / 60) * 60)
     assert estimate["budgetSeconds"] == 100 and not estimate["beyondMaximum"]
 
@@ -258,3 +269,84 @@ def test_no_estimate_when_every_sheet_is_read(tmp_path):
     build_index(path, index, budget=ImportBudget(deadline=1e9, seconds=600))
     _, meta = _details(index)
     assert "importEstimate" not in meta
+
+
+def test_every_index_records_its_phase_times_and_counts(tmp_path):
+    """Lot 2 ter: each index says how long each phase took, on what."""
+    path = _book(tmp_path)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index)
+    _, meta = _details(index)
+    timings = meta["importTimings"]
+    for phase in ("reading", "dependencies", "facts", "vba", "regions", "total"):
+        assert timings[phase] >= 0
+    assert (timings["formulasRead"], timings["formulasAnalysed"]) == (3, 3)
+    assert timings["valuesRead"] == 5 and not timings["readStopped"]
+    assert timings["bytesRead"] == timings["bytesTotal"] > 0
+    assert "importEstimate" not in meta
+
+
+def _timings(**changes):
+    timings = {
+        "bytesRead": 1_000,
+        "bytesTotal": 1_000,
+        "readStopped": False,
+        "reading": 30.0,
+        "formulasRead": 200_000,
+        "formulasAnalysed": 100_000,
+        "dependencies": 40.0,
+        "valuesRead": 100_000,
+        "regionValues": 100_000,
+        "regions": 0.5,
+        "rest": 1.0,
+    }
+    timings.update(changes)
+    return timings
+
+
+def test_the_proposal_counts_reading_analysis_and_regions():
+    """Lot 2 ter, T2 in figures: the proposal used to count the reading
+    alone. It now adds the analysis of every formula, at the rate measured
+    on the import, the regions and the rest, with the margin."""
+    budget = ImportBudget(seconds=60)
+    proposal = budget.proposal(_timings())
+    assert proposal["formulaRateMeasured"] and proposal["valueRateMeasured"]
+    assert proposal["formulaSeconds"] == pytest.approx(0.4e-3)
+    assert proposal["phases"] == {
+        "reading": 30.0,
+        "analysis": 80.0,
+        "regions": 0.5,
+        "rest": 1.0,
+    }
+    # 1.25 x 111.5 + 5 = 144.4 s: 180 s.
+    assert proposal["seconds"] == 180 and not proposal["uncertain"]
+    # A reading stopped at a quarter: reading and counts times four.
+    stopped = budget.proposal(_timings(bytesRead=250, readStopped=True))
+    assert stopped["phases"]["reading"] == 120.0
+    assert stopped["phases"]["analysis"] == pytest.approx(320.0)
+    assert stopped["formulasPredicted"] == 800_000
+
+
+def test_an_estimate_from_too_little_work_is_uncertain():
+    budget = ImportBudget(seconds=25)
+    # Less than 20 % of the workbook read.
+    assert budget.proposal(_timings(bytesRead=150, readStopped=True))["uncertain"]
+    # Too few formulas analysed to measure a rate that weighs most.
+    few = budget.proposal(_timings(formulasAnalysed=500, dependencies=0.2))
+    assert not few["formulaRateMeasured"]
+    assert few["formulaSeconds"] == ImportBudget.FORMULA_SECONDS
+    assert few["uncertain"]
+    assert few["processedShare"] == pytest.approx(500 / 200_000)
+    # Regions never described while they weigh most.
+    values = budget.proposal(
+        _timings(
+            formulasRead=0,
+            formulasAnalysed=0,
+            valuesRead=10**9,
+            regions=0.0,
+            regionValues=0,
+        )
+    )
+    assert not values["valueRateMeasured"] and values["uncertain"]
+    # Beyond the server's bound, it says so.
+    assert values["seconds"] == 3600 and values["beyondMaximum"]

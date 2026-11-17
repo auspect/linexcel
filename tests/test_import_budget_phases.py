@@ -180,6 +180,16 @@ def test_an_analysis_past_the_budget_publishes_what_it_analysed(app, monkeypatch
     # Most of Slow and all of Third were left.
     assert details["Third"]["unanalysedFormulas"] == 120
     assert meta["status"] == "partial"
+    # T2. The proposal counts the analysis, not only the reading. Too few
+    # formulas were analysed to measure their rate: it says it is uncertain.
+    estimate = meta["importEstimate"]
+    assert estimate["cause"] == ["analysis"]
+    assert estimate["formulasAnalysed"] < estimate["formulasPredicted"] == 243
+    assert estimate["phases"]["analysis"] > 0
+    assert not estimate["formulaRateMeasured"] and estimate["uncertain"]
+    assert estimate["seconds"] >= BUDGET + 60
+    timings = meta["importTimings"]
+    assert timings["formulasNotAnalysed"] == 243 - estimate["formulasAnalysed"]
     assert any(
         d.get("code") == "formulas_not_analysed" and d.get("sheet") == "Third"
         for d in meta["diagnostics"]

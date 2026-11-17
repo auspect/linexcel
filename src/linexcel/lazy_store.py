@@ -211,6 +211,10 @@ class ImportBudget:
     VALUE_SECONDS = 5.5e-6
     #: Kept at the end of a task for links, VBA, counts and publication.
     FINAL_SECONDS = 5.0
+    #: Fewest formulas analysed, and saved values described in regions, for
+    #: a proposal to use the rate measured on the import itself.
+    MIN_MEASURED_FORMULAS = 2_000
+    MIN_MEASURED_VALUES = 10_000
 
     def __init__(
         self,
@@ -250,37 +254,80 @@ class ImportBudget:
     def start_reading(self) -> None:
         self.started = self.clock()
 
-    def estimate(
-        self, bytes_read: int, bytes_total: int, formulas_read: int = 0
-    ) -> dict | None:
-        """The time budget that reads and analyses every sheet.
+    def proposal(self, timings: dict) -> dict | None:
+        """The time budget that imports the whole workbook.
 
-        ``bytes_read`` of the ``bytes_total`` bytes of worksheet XML, holding
-        ``formulas_read`` formulas, were read between the start of reading
-        and the time stop. Reading and formulas are extrapolated to the whole
-        workbook at that rate; analysis is predicted per formula. The budget
-        is rounded up to the minute, with a margin, and is at least a minute
-        more than the task's; above the server's bound it says so.
+        ``timings`` holds this import's phase times and counts
+        (``importTimings``). When reading stopped, its time and the formulas
+        and values it found are extrapolated from the share of worksheet XML
+        read. Analysis and regions use the rates measured on this import
+        when they were measured on enough work (``MIN_MEASURED_FORMULAS``
+        formulas analysed; regions described), else the cautious rates
+        above. The budget is the predicted time with the margin, plus the
+        final time, rounded up to the minute, at least a minute more than
+        the task's; above the server's bound it says so. ``uncertain`` says
+        that less than 20 % of the workbook was read, or that a rate not
+        measured weighs more than a quarter of the prediction.
         """
-        if self.started is None or self.stopped is None or bytes_read <= 0:
+        total, read = timings["bytesTotal"], timings["bytesRead"]
+        if total <= 0 or read <= 0:
             return None
-        elapsed = self.stopped - self.started
-        if elapsed <= 0 or bytes_total <= 0:
-            return None
-        scale = bytes_total / bytes_read
-        reading = elapsed * scale
-        analysis = self.formula_seconds * formulas_read * scale
-        needed = self.ESTIMATE_MARGIN * (reading + analysis) + self.FINAL_SECONDS
+        stopped = timings["readStopped"]
+        if stopped and self.started is not None and self.stopped is not None:
+            reading = self.stopped - self.started
+        else:
+            reading = timings["reading"]
+        scale = total / read if stopped else 1.0
+        formulas = timings["formulasRead"] * scale
+        values = timings["valuesRead"] * scale
+        analysed = timings["formulasAnalysed"]
+        formula_measured = analysed >= self.MIN_MEASURED_FORMULAS
+        formula_rate = (
+            timings["dependencies"] / analysed
+            if formula_measured
+            else self.formula_seconds
+        )
+        described = timings["regionValues"]
+        value_measured = described >= self.MIN_MEASURED_VALUES
+        value_rate = (
+            timings["regions"] / described if value_measured else self.VALUE_SECONDS
+        )
+        phases = {
+            "reading": reading * scale,
+            "analysis": formula_rate * formulas,
+            "regions": value_rate * values,
+            "rest": timings["rest"],
+        }
+        predicted = sum(phases.values())
+        needed = self.ESTIMATE_MARGIN * predicted + self.FINAL_SECONDS
         seconds = math.ceil(needed / 60) * 60
         if self.seconds:
             seconds = max(seconds, math.ceil(self.seconds) + 60)
+        # The smallest share of the work this import measured its rates on.
+        processed = read / total if stopped else 1.0
+        if formulas and not formula_measured:
+            processed = min(processed, analysed / formulas)
+        uncertain = (
+            read / total < 0.2
+            or (not formula_measured and phases["analysis"] > 0.25 * predicted)
+            or (not value_measured and phases["regions"] > 0.25 * predicted)
+        )
         return {
-            "readSeconds": round(elapsed, 1),
-            "bytesRead": bytes_read,
-            "bytesTotal": bytes_total,
+            "readSeconds": round(reading, 1),
+            "bytesRead": read,
+            "bytesTotal": total,
             "budgetSeconds": self.seconds,
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
+            "phases": {name: round(value, 1) for name, value in phases.items()},
+            "formulasAnalysed": analysed,
+            "formulasPredicted": round(formulas),
+            "formulaSeconds": formula_rate,
+            "formulaRateMeasured": formula_measured,
+            "valueSeconds": value_rate,
+            "valueRateMeasured": value_measured,
+            "processedShare": round(processed, 4),
+            "uncertain": uncertain,
         }
 
     def exhausted(self, index_path, formulas: int = 0) -> str | None:
@@ -2078,7 +2125,9 @@ def _read_source(path, store, budget=None):
             archive.getinfo(s["part"]).file_size if s["part"] in members else 0
             for s in sheets
         ]
-        bytes_read, formulas_read, estimate = 0, 0, None
+        # Bytes of worksheet XML read when time stopped the reading, if it did.
+        bytes_read, formulas_read, stopped_at = 0, 0, None
+        rolled_back = (0, 0)
         if budget:
             budget.start_reading()
         for sheet, size in zip(sheets, sizes):
@@ -2089,8 +2138,8 @@ def _read_source(path, store, budget=None):
             hidden_columns = []
             stop = budget.exhausted(store.path, formulas_read) if budget else None
             if stop:
-                if budget and stop == "time_budget" and estimate is None:
-                    estimate = budget.estimate(bytes_read, sum(sizes), formulas_read)
+                if stop == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
                 continue
@@ -2602,12 +2651,10 @@ def _read_source(path, store, budget=None):
                         stack.pop()
             except _ImportStopError as stopped:
                 # Only a budget check raises it: ``budget`` is set here.
-                if budget and stopped.reason == "time_budget" and estimate is None:
-                    estimate = budget.estimate(
-                        bytes_read + stopped.position,
-                        sum(sizes),
-                        formulas_read + sheet["formulas"],
-                    )
+                if stopped.reason == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read + stopped.position
+                    # What the rolled-back part held, for the reading rate.
+                    rolled_back = (sheet["formulas"], sheet["inputs"])
                 # Roll the sheet back: nothing of it is published, so no cell
                 # of it can be mistaken for the whole sheet.
                 name = sheet["name"]
@@ -2660,7 +2707,14 @@ def _read_source(path, store, budget=None):
             "dateSystem": "1904" if epoch1904 else "1900",
             "calculationSettings": calculation_settings,
             "diagnostics": diagnostics,
-            **({"importEstimate": estimate} if estimate else {}),
+            # Completed into the index's importTimings by build_index.
+            "importTimings": {
+                "bytesRead": bytes_read if stopped_at is None else stopped_at,
+                "bytesTotal": sum(sizes),
+                "readStopped": stopped_at is not None,
+                "formulasRead": formulas_read + rolled_back[0],
+                "valuesRead": sum(s["inputs"] for s in sheets) + rolled_back[1],
+            },
         },
         names,
         links,
@@ -3217,6 +3271,16 @@ def build_index(
                 macro_only = source.read(8).startswith(OLE_MAGIC) or (
                     (filename or path.name).lower().endswith(".xlam")
                 )
+            import time
+
+            started = time.perf_counter()
+            marks = {}
+
+            def mark(phase, since):
+                now = time.perf_counter()
+                marks[phase] = now - since
+                return now
+
             if macro_only:
                 metadata: dict[str, Any] = {
                     "sheets": [],
@@ -3224,25 +3288,69 @@ def build_index(
                     "diagnostics": [],
                     "macroOnly": True,
                 }
+                timings: dict[str, Any] = {
+                    "bytesRead": 0,
+                    "bytesTotal": 0,
+                    "readStopped": False,
+                    "formulasRead": 0,
+                    "valuesRead": 0,
+                }
+                now = mark("reading", started)
+                now = mark("dependencies", now)
             else:
                 metadata, names, links = _read_source(path, store, budget)
+                timings = metadata.pop("importTimings")
+                now = mark("reading", started)
                 _index_dependencies(store, metadata, names, links, refs_dir, budget)
+                now = mark("dependencies", now)
             from linexcel.link_facts import index_facts
 
             index_facts(path, store, metadata)
+            now = mark("facts", now)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
+            now = mark("vba", now)
             from linexcel.data_regions import REGION_MIN_CELLS, index_regions
 
             values = {s["name"]: s["inputs"] for s in metadata["sheetDetails"]}
+            fits = None if budget is None else budget.regions_fit
 
             def describe(sheet):
                 # A sheet too small for a region costs nothing to look at.
                 count = values.get(sheet, 0)
-                return count < REGION_MIN_CELLS or budget.regions_fit(count)
+                return count < REGION_MIN_CELLS or fits is None or fits(count)
 
             metadata["dataRegions"] = index_regions(
                 store, None if budget is None else describe
             )
+            now = mark("regions", now)
+            skipped = set(metadata["dataRegions"].get("skipped", {}).get("sheets", []))
+            unanalysed = sum(
+                s.get("unanalysedFormulas", 0) for s in metadata["sheetDetails"]
+            )
+            timings.update(
+                {phase: round(seconds, 3) for phase, seconds in marks.items()},
+                rest=round(marks["facts"] + marks["vba"], 3),
+                formulasAnalysed=max(0, timings["formulasRead"] - unanalysed),
+                formulasNotAnalysed=unanalysed,
+                regionValues=sum(
+                    count for sheet, count in values.items() if sheet not in skipped
+                ),
+                regionSheetsSkipped=len(skipped),
+            )
+            metadata["importTimings"] = timings
+            if budget is not None and (timings["readStopped"] or unanalysed or skipped):
+                proposal = budget.proposal(timings)
+                if proposal is not None:
+                    proposal["cause"] = [
+                        cause
+                        for cause, applies in (
+                            ("reading", timings["readStopped"]),
+                            ("analysis", unanalysed > 0),
+                            ("regions", bool(skipped)),
+                        )
+                        if applies
+                    ]
+                    metadata["importEstimate"] = proposal
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}
                 for warning in metadata["vba"]["warnings"]
@@ -3337,6 +3445,8 @@ def build_index(
             metadata["tableCount"] = store.db.execute(
                 "SELECT count(*) FROM table_definitions"
             ).fetchone()[0]
+            # Up to the metadata; the commit and the publication follow.
+            timings["total"] = round(time.perf_counter() - started, 3)
             store.db.execute(
                 "INSERT INTO metadata VALUES ('meta',?)", (_dump(metadata),)
             )
