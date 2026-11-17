@@ -1194,3 +1194,52 @@ def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "banner", "nodes", "data"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "les usages listés d’une cellule peuvent être incomplets",
+            "Import partiel ; voir Diagnostics",
+            "Import partiel ; voir Diagnostics. Les feuilles et formules manquantes",
+        ),
+        (
+            (390, 844),
+            "en",
+            "the uses listed for a cell may be incomplete",
+            "Partial import; see Diagnostics",
+            "Partial import; see Diagnostics, which lists the missing sheets",
+        ),
+    ],
+)
+def test_a_partial_import_says_that_listed_uses_may_be_incomplete(
+    browser, viewport, language, banner, nodes, data
+):
+    """Lot 2 ter, budget step: a formula not analysed, or a sheet not
+    imported, is missing from the uses of the cells it reads. The partial
+    import banner says so; the node list and the Data tab say that the
+    import is partial."""
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={
+            "graph": {"nodes": [], "edges": [], "lazy": True, "meta": ANALYSIS_META}
+        },
+    )
+    try:
+        page.locator("#tab-nodes").click()
+        assert nodes in page.locator("#node-count").inner_text()
+        page.locator("#tab-data").click()
+        page.locator("#data-status").get_by_text(data, exact=False).wait_for()
+        page.locator("#tab-diagnostics").click()
+        status = page.locator("#index-status")
+        status.wait_for()
+        assert banner in status.inner_text()
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
