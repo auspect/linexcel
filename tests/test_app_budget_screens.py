@@ -324,3 +324,72 @@ def test_the_stops_name_the_budget_used(browser, language, texts):
         assert not errors
     finally:
         page.close()
+
+
+def _timed_out(previous):
+    return {
+        "id": "t1",
+        "projectId": "p1",
+        "operation": "import",
+        "status": "failed",
+        "budget": {"seconds": 20, "memoryMb": 1024},
+        "createdAt": 1,
+        "error": {
+            "kind": "timeout",
+            "message": "Import arrêté : le budget de 20 s s’est écoulé à une étape "
+            "inconnue. Aucun nouvel index n’a été publié ; l’index précédent reste "
+            "consultable. Essayez un budget plus grand, par exemple le double "
+            "(40 s) : ce n’est pas une estimation.",
+            "suggestedSeconds": 40,
+            "previousIndex": previous,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("language", "heading", "sentence"),
+    [
+        (
+            "fr",
+            "Index précédent · Import complet",
+            "Les feuilles ci-dessous sont celles de l’index précédent",
+        ),
+        (
+            "en",
+            "Previous index · Import complete",
+            "The sheets below are those of the previous index",
+        ),
+    ],
+)
+def test_after_a_timeout_the_sheets_shown_are_said_to_be_the_previous_index(
+    browser, language, heading, sentence
+):
+    """U6. "Import complete" followed the "Import stopped" notice, and nothing
+    said that the sheets listed were those of the previous index."""
+    complete = {
+        "nodes": GRAPH["nodes"][2:],
+        "edges": GRAPH["edges"],
+        "meta": {
+            "status": "complete",
+            "sheetDetails": [
+                {
+                    "name": "First",
+                    "status": "complete",
+                    "formulas": 1,
+                    "diagnostics": [],
+                }
+            ],
+            "diagnostics": [],
+        },
+    }
+    page, errors = open_app(
+        browser, (1440, 900), language, tasks=[_timed_out(True)], graph=complete
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        page.locator("#import-timeout").wait_for()
+        text = page.locator("#diagnostics").inner_text()
+        assert heading in text and sentence in text, text
+        assert not errors
+    finally:
+        page.close()
