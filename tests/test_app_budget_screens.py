@@ -195,3 +195,21 @@ def test_the_refused_result_badge_is_translated(browser, viewport):
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("viewport", VIEWPORTS)
+def test_a_formula_not_analyzed_is_explained_in_french(browser, viewport):
+    """U2. The refusal of a formula not analyzed showed the server's English
+    message in the French interface."""
+    page, errors = open_app(browser, viewport, "fr")
+    try:
+        select(page, "Third!A7")
+        detail = page.locator("#node-detail")
+        detail.get_by_text(
+            "Third!A7: Formule non analysée dans le budget de temps de l’import",
+            exact=False,
+        ).first.wait_for()
+        assert "Formula not analyzed" not in detail.inner_text()
+        assert not errors
+    finally:
+        page.close()
