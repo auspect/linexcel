@@ -257,3 +257,48 @@ def test_regions_that_do_not_fit_the_time_left_are_skipped(app, monkeypatch):
     assert {s["status"] for s in meta["sheetDetails"]} == {"complete"}
     total = evaluate(app, project, "Total!A1")
     assert total["status"] == "completed"
+
+
+#: The VBA phase, which cannot be stopped, sleeps ten times the budget.
+SLOW_VBA = f"""
+import time
+import linexcel.macros as macros
+_index_vba = macros.index_vba
+def _slow(*args, **kwargs):
+    time.sleep({10 * BUDGET})
+    return _index_vba(*args, **kwargs)
+macros.index_vba = _slow
+"""
+
+
+def test_an_import_that_still_times_out_says_what_to_try(app, monkeypatch):
+    """T6. A phase that cannot be stopped can still outlast the budget: the
+    task times out and publishes nothing. The error used to be the bare word
+    "timeout"; it now says that no new index was published, whether the
+    previous one remains, and proposes a larger budget, without claiming an
+    estimate. The previous index stays available."""
+    project, first = upload(app, model_book(), seconds=600)
+    assert first["status"] == "succeeded", first.get("error")
+    slowed_worker(monkeypatch, SLOW_VBA)
+    code, submitted = call(
+        app,
+        "POST",
+        f"/api/projects/{project}/tasks",
+        {"operation": "import", "budget": {"seconds": BUDGET}, "force": True},
+    )
+    assert code == 200, submitted
+    task = finish(app, submitted["task"]["id"])
+    assert task["status"] == "failed"
+    error = task["error"]
+    assert error["kind"] == "timeout"
+    assert error["suggestedSeconds"] == 2 * BUDGET
+    assert error["previousIndex"] is True
+    message = error["message"]
+    assert f"budget de {BUDGET} s" in message
+    assert "l’index précédent reste consultable" in message
+    assert f"le double ({2 * BUDGET} s)" in message
+    assert "ce n’est pas une estimation" in message
+    # The previous index is still published and read.
+    code, nodes = call(app, "GET", f"/api/projects/{project}/nodes")
+    assert code == 200, nodes
+    assert node(app, project, "First!A1")["formula"] == "=Third!B1*2"

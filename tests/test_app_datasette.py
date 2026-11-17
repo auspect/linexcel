@@ -1243,3 +1243,108 @@ def test_a_partial_import_says_that_listed_uses_may_be_incomplete(
         assert not errors
     finally:
         page.close()
+
+
+def _timed_out_import(previous):
+    kept = (
+        "l’index précédent reste consultable."
+        if previous
+        else "ce classeur n’a pas encore d’index."
+    )
+    return {
+        "id": "t1",
+        "projectId": "p",
+        "operation": "import",
+        "status": "failed",
+        "budget": {"seconds": 60, "memoryMb": 1024},
+        "createdAt": 1,
+        "error": {
+            "kind": "timeout",
+            "message": "Import arrêté : le budget de 60 s s’est écoulé à une étape "
+            f"inconnue. Aucun nouvel index n’a été publié ; {kept} Essayez un "
+            "budget plus grand, par exemple le double (120 s) : ce n’est pas une "
+            "estimation.",
+            "suggestedSeconds": 120,
+            "previousIndex": previous,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "previous", "text", "button"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            False,
+            "ce classeur n’a pas encore d’index. Essayez un budget plus grand, par "
+            "exemple le double (120 s) : ce n’est pas une estimation.",
+            "Réimporter avec un budget de 120 s",
+        ),
+        (
+            (390, 844),
+            "en",
+            False,
+            "this workbook has no index yet. Try a larger budget, for example "
+            "twice as long (120 s): this is not an estimate.",
+            "Reimport with a budget of 120 s",
+        ),
+        (
+            (390, 844),
+            "fr",
+            True,
+            "l’index précédent reste consultable.",
+            "Réimporter avec un budget de 120 s",
+        ),
+        (
+            (1440, 900),
+            "en",
+            True,
+            "the previous index remains available.",
+            "Reimport with a budget of 120 s",
+        ),
+    ],
+)
+def test_an_import_that_timed_out_proposes_a_larger_budget(
+    browser, viewport, language, previous, text, button
+):
+    """Lot 2 ter, T7. An import the coordinator stopped at its budget used
+    to show "Import did not complete" and the word "timeout". Diagnostics
+    now says what was published and proposes twice the budget, saying that
+    it is not an estimate, with or without a previous index."""
+    posted = []
+    graph = (
+        {"nodes": [], "edges": [], "lazy": True, "meta": {"status": "complete"}}
+        if previous
+        else None
+    )
+    page, _, errors, _, _ = open_app(
+        browser,
+        viewport,
+        language=language,
+        project={"graph": graph, "tasks": [_timed_out_import(previous)]},
+    )
+    page.on(
+        "request",
+        lambda request: (
+            posted.append(request.post_data_json)
+            if request.method == "POST" and request.url.endswith("/projects/p/tasks")
+            else None
+        ),
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        remedy = page.locator("#import-timeout")
+        remedy.wait_for()
+        assert text in remedy.inner_text()
+        page.get_by_role("button", name=button).click()
+        for _ in range(50):
+            if any(body.get("operation") == "import" for body in posted):
+                break
+            page.wait_for_timeout(50)
+        imports = [body for body in posted if body.get("operation") == "import"]
+        assert imports and imports[0]["budget"]["seconds"] == 120
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()

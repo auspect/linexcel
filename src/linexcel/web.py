@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
-from linexcel.lazy_store import INDEX_FILENAME, LEGACY_INDEX_FILENAMES
+from linexcel.lazy_store import INDEX_FILENAME, LEGACY_INDEX_FILENAMES, ImportBudget
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -186,6 +186,29 @@ NO_INDEX_MESSAGE = (
     "Aucun index publié : le dernier import n’a pas abouti. "
     "Consultez Opérations pour la raison."
 )
+
+
+def import_timeout_message(seconds, suggested, previous_index):
+    """What an import that ran out of time published, and what to try.
+
+    The import stops each phase it can within its budget; one that still
+    runs past it (links, VBA, publication) is stopped by the coordinator,
+    which does not know at which step. The larger budget is twice the one
+    used, not an estimate.
+    """
+    kept = (
+        "l’index précédent reste consultable."
+        if previous_index
+        else "ce classeur n’a pas encore d’index."
+    )
+    return (
+        f"Import arrêté : le budget de {seconds} s s’est écoulé à une étape "
+        f"inconnue. Aucun nouvel index n’a été publié ; {kept} Essayez un budget "
+        f"plus grand, par exemple le double ({suggested} s) : ce n’est pas une "
+        "estimation."
+    )
+
+
 OUTDATED_INDEX_MESSAGE = (
     "Index créé par une version précédente de linexcel : réimportez le "
     "classeur (le fichier est conservé)."
@@ -1533,7 +1556,17 @@ class TaskStore:
             failure = _failure_details("crashed", process.returncode, diagnostic)
             kind = reason or failure["kind"]
             message = reason or failure["summary"]
-            if kind == "memory_limit":
+            remedy: dict[str, Any] = {}
+            if kind == "timeout" and task["operation"] == "import":
+                seconds = task["budget"]["seconds"]
+                remedy = {
+                    "suggestedSeconds": min(2 * seconds, ImportBudget.MAX_SECONDS),
+                    "previousIndex": (root.parent.parent / INDEX_FILENAME).is_file(),
+                }
+                message = import_timeout_message(
+                    seconds, remedy["suggestedSeconds"], remedy["previousIndex"]
+                )
+            elif kind == "memory_limit":
                 message = (
                     f"Budget mémoire de {request['memoryMb']} Mio insuffisant pour "
                     "cette opération. Augmentez le budget puis réessayez ; "
@@ -1555,6 +1588,7 @@ class TaskStore:
                     else diagnostic,
                     "exitCode": process.returncode,
                     **memory.evidence(),
+                    **remedy,
                 }
             }
         if (root / "result.json").stat().st_size > MAX_RESULT_BYTES:
