@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-17T07:14:03.489847+00:00",
+  "capturedAt": "2026-11-17T07:52:49.634961+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -23,7 +23,7 @@
   },
   "fixture": {
     "name": "fy26_commercial_review.xlsx",
-    "sha256": "70033d9fc20608ee34ced28bd63a441ff7a1123a5b6268d849aff9b763a6fa8e",
+    "sha256": "0cabfde6e050ecab25d495491e3ffa832823cfcc0c041d58d1944f417dbcf908",
     "generator": "validation_workbooks.build_sales_workbook",
     "generatorSha256": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
     "verification": "All nonempty cells and formulas match the synthetic generator; recalculated caches are allowed."
@@ -31,7 +31,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "2c8b47f731dde0f8b99d59c2210ad5a295d6cf8003c65b07919f5851c10ae639",
+      "sha256": "182ae2b2ec3406a5b14ccd3ee59fe39270a87baf968bb87345885adc53a63a61",
       "pixels": [
         2880,
         1800
@@ -39,7 +39,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
-      "sha256": "438837c41fea2669c75441dcebfc3b48bdc0c5f668f012ca577be91ae68d0bcb",
+      "sha256": "6723ee6e80dc2bda16ffe66c59003a97d50e143741d892dd033f5ca5b403dd88",
       "pixels": [
         2880,
         1800
@@ -47,7 +47,7 @@
     },
     "app_node_documented.png": {
       "caption": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
-      "sha256": "5afb56b4462b6d8c6d125da484b87c6eaec68a3d2eabba7111b93a14bf6b5553",
+      "sha256": "52e5c96f6ffca633bdb994a525ded8f60cfccc1585cf20b6a272f061a1baab1b",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "faafcf98682cd0492ebd700be335f89d9d1888fd631b528cf5a3074679c94fb1",
+      "sha256": "3c52e86a5de382181aa993318cc7a5f1af62abac26b5db99cd011c4543d1739c",
       "pixels": [
         2880,
         1800
@@ -63,7 +63,7 @@
     },
     "app_import.png": {
       "caption": "Accessible main-workbook and reference-file selection",
-      "sha256": "e76a7792c27901a3a82104f59a3042b42780807b56c75b62b4b58434881c0179",
+      "sha256": "bd77dc8babbdf8872ec58bec45a4348c460008de80aaa1eefc9da6a88b23aea9",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "c9331203489e40f2adab8d5d41b9c34c",
+    "taskId": "d5ceeb5dfe934119ac151915870dcca0",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
