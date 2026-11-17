@@ -389,7 +389,13 @@ class ImportBudget:
 
     def regions_fit(self, values: int) -> bool:
         """Whether describing the regions of ``values`` saved values ends,
-        as predicted with the margin, before the deadline."""
+        as predicted with the margin, before the deadline.
+
+        Unlike the reading reserve, this stays cautious (``VALUE_SECONDS``
+        and ``ESTIMATE_MARGIN``): a sheet's description cannot be stopped
+        once started, and running past the end of the task publishes
+        nothing. On the election table it predicted 124.6 s for the 64 s
+        measured, and skipped the regions with 73 s left."""
         if self.deadline is None:
             return True
         predicted = self.ESTIMATE_MARGIN * self.VALUE_SECONDS * values

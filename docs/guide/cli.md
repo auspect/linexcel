@@ -206,7 +206,11 @@ that diagnostic from the moment it is read until it is analyzed, so nothing
 is written at the deadline and every view of the node sees it. Data regions
 are described only for the sheets whose predicted description (1.25 x
 5.5 µs a saved value) ends before the deadline; the others are listed as
-"Data regions skipped: budget", with every value and formula complete. In a
+"Data regions skipped: budget", with every value and formula complete. This
+rate, like the final 5 s, stays cautious: a region description cannot be
+stopped once started, and running past the end of the task would publish
+nothing. On the public election table it predicted 125 s for 64 s measured
+and skipped the regions with 73 s left. In a
 partial import, the uses listed for a cell can miss a formula not imported or
 not analyzed; the banner, the node list and the Data tab say that the import
 is partial.

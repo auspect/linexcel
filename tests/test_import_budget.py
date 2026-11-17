@@ -409,3 +409,15 @@ def test_a_formula_sheet_that_can_be_read_is_not_rolled_back(tmp_path, values_fi
     # The clock stays at 10 s: the analysis had the time to finish.
     assert meta["importTimings"]["formulasNotAnalyzed"] == 0
     assert "importEstimate" not in meta
+
+
+def test_what_has_no_safety_net_stays_cautious():
+    """Reprise. Region description cannot be stopped once started and the
+    final steps cannot be stopped at all: a miss there publishes nothing.
+    They keep the cautious rate with the margin, and the 5 s final time."""
+    budget = ImportBudget(deadline=100.0, clock=lambda: 0.0)
+    # 16 M values: 88 s at 5.5 us, 110 s with the 1.25 margin.
+    assert not budget.regions_fit(16_000_000)
+    assert budget.regions_fit(14_000_000)  # 96.25 s with the margin
+    assert ImportBudget.FINAL_SECONDS == 5.0
+    assert ImportBudget.for_task(0.0, 60).deadline == 55.0
