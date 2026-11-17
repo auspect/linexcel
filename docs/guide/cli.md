@@ -181,12 +181,22 @@ not imported" in Diagnostics, with the reason. A formula reading such a sheet
 is refused: its cells are unknown, never blank. A memory stop still ends the
 import without an index.
 
+The time budget is checked only while sheets are read. The work that
+follows, mainly extracting the formulas' dependencies, is not, and in a
+workbook made of formulas it is most of the import. When it runs past the
+budget, the task still times out: nothing is published, not even the sheets
+already read, and no reimport is proposed. On a model of 233,000 formulas
+(reading 29 s, dependencies 93 s), budgets of 25, 60 and 120 s published
+nothing.
+
 When time stops the reading, Diagnostics says how long the import read and
 how much of the worksheet XML it read, and proposes a reimport with the time
 budget estimated to read every sheet at that rate: the reading time over the
 60 % share, plus 25 %, rounded up to the minute, at least a minute more than
 the budget used, at most 3600 s. Above that maximum it says that reading
-everything would need more than 3600 s, and the button still offers 3600 s. The default budget of an import, a graph construction
+everything would need more than 3600 s, and the button still offers 3600 s.
+The estimate counts only the reading rate, so it can be too short for a
+workbook rich in formulas. The default budget of an import, a graph construction
 or a report is 600 s; `linexcel serve --import-seconds N` sets another
 default (1 to 3600), and the "Import and graph" field still lets each
 operation choose its own.

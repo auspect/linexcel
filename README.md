@@ -115,7 +115,10 @@ Import and graph construction have a separate default time budget of 600 seconds
 targeted recalculation keeps its 120-second default. Both are adjustable under
 **Limits per operation**, and `--import-seconds` sets the server's default for
 imports. When an import's time budget stops it before every sheet is read,
-Diagnostics proposes a reimport with a budget estimated from the reading rate. Exact node references use the index directly; other
+Diagnostics proposes a reimport with a budget estimated from the reading rate.
+The budget is checked only while sheets are read: in a workbook rich in
+formulas, the dependency extraction that follows can still exceed it, and
+then nothing is published. Exact node references use the index directly; other
 searches still match substrings and can take longer on very large workbooks.
 
 Selecting a formula automatically starts a targeted calculation after a short

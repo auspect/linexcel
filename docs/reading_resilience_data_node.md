@@ -450,7 +450,13 @@ Adopted on 15 November 2026, with these choices:
   rows 1 and 1,048,576 became a region.
 - **Per-sheet publication (F21).** 60 % of the time budget and half of the
   storage left at the start for reading; the sheet in progress is rolled back
-  and marked `not_imported` with its reason.
+  and marked `not_imported` with its reason. Limit, measured on 17 November:
+  the budget is checked only while sheets are read; dependency extraction,
+  which follows and dominates a formula model's import, is not. When it runs
+  past the budget the task times out, nothing is published and no reimport
+  is proposed, and the proposed budget, estimated from the reading rate
+  alone, can be too short. On ATB (233,000 formulas, reading 29 s,
+  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
 
 ### Decisions for Philippe
 

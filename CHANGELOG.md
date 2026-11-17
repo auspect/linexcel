@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and proposes a reimport with the budget estimated to read every sheet at
   that rate, with a margin, at most 3600 s. On the public DGT election table,
   the default 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
-  imported it completely in 580 s.
+  imported it completely in 580 s. The estimate counts only the reading
+  rate, so it can be too short for a workbook rich in formulas, whose
+  dependency extraction follows the reading (see the per-sheet publication
+  limit below).
 - Set the default time budget of imports, graph constructions and reports
   with `linexcel serve --import-seconds N` (1 to 3600; default 600 s,
   unchanged). The "Import and graph" field starts at that value, and each
@@ -113,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quota. An import stopped there published nothing; the sheet in progress and
   the following ones are now marked "Sheet not imported" with the reason, and
   a formula reading them is refused rather than calculated on absent cells.
+  Limit: the time budget is checked only while sheets are read. The work
+  that follows, mainly extracting the formulas' dependencies, is not; when it
+  runs past the budget the task still times out, nothing is published and no
+  reimport is proposed. On ATB, a model of 233,000 formulas (reading 29 s,
+  dependencies 93 s), budgets of 25, 60 and 120 s published nothing.
 - Prepare the Data tab's browsing copy in the background. The first opening
   of the tab copied the whole workbook inside the request and blocked every
   other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB
