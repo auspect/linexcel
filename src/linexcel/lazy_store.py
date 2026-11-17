@@ -231,7 +231,7 @@ class ImportBudget:
         self.formula_seconds = (
             self.FORMULA_SECONDS if formula_seconds is None else formula_seconds
         )
-        self.started = self.stopped = None
+        self.started = self.stopped = self.analysis_stopped = None
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
@@ -306,6 +306,17 @@ class ImportBudget:
                 return "storage_budget"
         return None
 
+    def analysis_exhausted(self) -> bool:
+        """Whether the dependency analysis must stop: the deadline is past."""
+        if self.deadline is None:
+            return False
+        now = self.clock()
+        if now < self.deadline:
+            return False
+        if self.analysis_stopped is None:
+            self.analysis_stopped = now
+        return True
+
 
 class _ImportStopError(Exception):
     def __init__(self, reason, position=0):
@@ -327,6 +338,69 @@ _NOT_IMPORTED = {
         "reimport."
     ),
 }
+
+
+#: Written by the reader in every formula and defined-name node, removed by
+#: the dependency analysis from each node it analyses. A node the analysis
+#: did not reach keeps it: every reader of the node sees it, and a
+#: calculation reaching the node is refused.
+NOT_ANALYSED = (
+    "Formula not analysed within the import's time budget: its sources are "
+    "unknown, so a calculation reading it is refused. Its saved value is "
+    "shown. Reimport with a larger time budget."
+)
+
+
+def _without_not_analysed(diagnostics):
+    return [d for d in diagnostics if d != NOT_ANALYSED]
+
+
+def _not_analysed(store, metadata, after):
+    """Mark the sheets whose formulas the analysis did not reach.
+
+    ``after`` is the last ``seq`` analysed: every formula or name node past
+    it still carries ``NOT_ANALYSED``. Their sheets become ``partial`` for
+    the time budget; values and analysed formulas are all kept.
+    """
+    counts = dict(
+        store.db.execute(
+            "SELECT sheet,count(*) FROM nodes WHERE kind IN ('cell','name') "
+            "AND seq>? GROUP BY sheet",
+            (after,),
+        ).fetchall()
+    )
+    details = {sheet["name"]: sheet for sheet in metadata["sheetDetails"]}
+    diagnostics = metadata["diagnostics"]
+    for name, count in sorted(counts.items(), key=lambda item: str(item[0])):
+        sheet = details.get(name)
+        if sheet is not None:
+            message = (
+                f"{count} formula(s) not analysed: the import's time budget ran "
+                "out during the dependency analysis. Their saved values are "
+                "shown; their sources are unknown and a calculation reading one "
+                "is refused. The cells they read do not list them among their "
+                "uses."
+            )
+            if sheet["status"] == "complete":
+                sheet["status"] = "partial"
+            sheet.setdefault("reason", "time_budget")
+            sheet["unanalysedFormulas"] = count
+            sheet["diagnostics"].append(message)
+        else:
+            scope = "defined names" if name is None else name
+            message = (
+                f"{count} formula(s) of {scope} not analysed: the import's time "
+                "budget ran out during the dependency analysis."
+            )
+        diagnostics.append(
+            {
+                "sheet": name,
+                "code": "formulas_not_analysed",
+                "reason": "time_budget",
+                "count": count,
+                "message": message,
+            }
+        )
 
 
 def _not_imported(sheet, reason, diagnostics):
@@ -1983,7 +2057,7 @@ def _read_source(path, store, budget=None):
                 "cached_value": None,
                 "cache_status": "unknown",
                 "dependencies": [],
-                "diagnostics": [],
+                "diagnostics": [NOT_ANALYSED],
             }
             literal = _name_literal(node)
             if literal is not None:
@@ -2437,7 +2511,9 @@ def _read_source(path, store, budget=None):
                                     if formula is not None
                                     else "saved_input",
                                     "dependencies": [],
-                                    "diagnostics": problems,
+                                    "diagnostics": problems
+                                    if formula is None
+                                    else [*problems, NOT_ANALYSED],
                                 }
                                 store.put(node)
                                 sheet[
@@ -2631,7 +2707,13 @@ def _local_names(formula: str, tokens) -> set[str]:
         return set()
 
 
-def _index_dependencies(store, metadata, names, links, refs_dir):
+def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
+    """Extract each formula's sources, in reading order, within ``budget``.
+
+    At the budget's deadline the analysis stops after the node in hand: the
+    nodes it did not reach keep ``NOT_ANALYSED`` and their sheets are marked
+    partial; every value read stays published.
+    """
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
     db = store.db
@@ -2823,7 +2905,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
             # New blank/range nodes have no formulas. A keyset cursor stays bounded
             # and remains valid across commits and node updates.
             last = 0
-            while True:
+            stopped = False
+            while not stopped:
                 batch = db.execute(
                     (
                         "SELECT seq,data FROM nodes WHERE seq>? "
@@ -2835,8 +2918,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                 if not batch:
                     break
                 for seq, data in batch:
+                    if budget is not None and budget.analysis_exhausted():
+                        stopped = True
+                        break
                     last = seq
                     node = _unpack(data)
+                    node["diagnostics"] = _without_not_analysed(node["diagnostics"])
                     if node["kind"] == "cell":
                         region = db.execute(
                             (
@@ -2873,6 +2960,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             def resolve_dynamic(reference, current_sheet):
                                 member = dependency(reference, current_sheet, node)
                                 resolved = store[member]
+                                # A formula the analysis has not reached yet
+                                # carries NOT_ANALYSED until it does: its
+                                # source text is read as it was before.
+                                resolved["diagnostics"] = _without_not_analysed(
+                                    resolved.get("diagnostics", [])
+                                )
                                 expression = _binding_expression(resolved)
                                 if expression is None or resolved.get("diagnostics"):
                                     raise ValueError(
@@ -3043,6 +3136,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         )
                     store.put(node)
                 db.commit()
+            if stopped:
+                _not_analysed(store, metadata, last)
             # Arrays can include saved literal-looking cells. Mark them in the
             # index so target closures refuse cached array results consistently.
             for sheet, r1, c1, r2, c2 in db.execute("SELECT * FROM arrays"):
@@ -3123,7 +3218,7 @@ def build_index(
                 }
             else:
                 metadata, names, links = _read_source(path, store, budget)
-                _index_dependencies(store, metadata, names, links, refs_dir)
+                _index_dependencies(store, metadata, names, links, refs_dir, budget)
             from linexcel.link_facts import index_facts
 
             index_facts(path, store, metadata)
