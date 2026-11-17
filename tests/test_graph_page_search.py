@@ -343,3 +343,34 @@ def test_search_finds_what_it_found_before(index, query, sheet, limit):
     total, ids = EXPECTED[(query, sheet, limit)]
     assert page["pagination"]["total"] == total
     assert [node["id"] for node in page["nodes"]] == ids
+
+
+#: Texts and queries whose case folding differs between ASCII-only folding
+#: and Unicode lower-casing (the Kelvin sign lowers to "k" in Python).
+FOLDING = [
+    "ÉtÉ",
+    "Straße",
+    "İstanbul",
+    "K",
+    "K",
+    "ABC xyz [@`{]",
+    "Ǆ",
+    "ΣΑΣ",
+    "",
+]
+
+
+@pytest.mark.parametrize("text", FOLDING)
+@pytest.mark.parametrize("query", [*FOLDING[:-1], "k", "abc", "é", "ss"])
+def test_the_scan_folds_case_as_sqlite_like_does(text, query):
+    import sqlite3
+
+    from linexcel.lazy_store import _filters, _like_search
+
+    _, args = _filters(None, query, None)
+    db = sqlite3.connect(":memory:")
+    try:
+        row = db.execute("SELECT ? LIKE ? ESCAPE '\\'", (text, args[0])).fetchone()
+    finally:
+        db.close()
+    assert _like_search(query)(text) is bool(row[0])
