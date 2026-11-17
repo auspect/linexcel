@@ -3354,6 +3354,10 @@ def graph_page(
                 needle = _ascii_lower(query)
                 prefixes: dict[str, tuple[str, bool, bool]] = {}
                 letters: dict[int, str] = {}
+                columns: dict[tuple[str, int], bool] = {}
+                # The row number ends an id, so a query without a digit can
+                # only lie in ``Sheet!B``: one test per sheet and column.
+                digits = any(c.isdigit() for c in needle)
 
                 def accept(name, row, col, raw):
                     # The id, ``Sheet!B12``, built once per sheet and column.
@@ -3373,11 +3377,20 @@ def graph_page(
                     if prefix[1]:
                         return True
                     if prefix[2]:
-                        column = letters.get(col)
-                        if column is None:
-                            column = letters[col] = num_to_col(col)
-                        if like(prefix[0] + column + str(row)):
-                            return True
+                        if not digits:
+                            hit = columns.get((name, col))
+                            if hit is None:
+                                hit = columns[(name, col)] = like(
+                                    prefix[0] + num_to_col(col)
+                                )
+                            if hit:
+                                return True
+                        else:
+                            column = letters.get(col)
+                            if column is None:
+                                column = letters[col] = num_to_col(col)
+                            if like(prefix[0] + column + str(row)):
+                                return True
                     return like(search(raw))
 
             grid = kind in {None, "input"}
