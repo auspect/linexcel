@@ -221,7 +221,10 @@ the reading time and the formulas and values found, extrapolated from the
 share of worksheet XML read; the analysis of every formula and the regions,
 at the rates measured on this import when it analyzed at least 2,000
 formulas or described at least 10,000 values, else at the cautious rates
-above; links and VBA as measured. The total plus 25 % and the final 5 s is
+above; links and VBA as measured. The total plus 25 % and the final 5 s,
+and never less than what the reimport's own reading check needs to read
+every sheet (the time before reading, the whole reading and the reserve of
+every formula, plus the final 5 s), is
 rounded up to the minute, at least a minute more than the budget used, at
 most 3600 s. Above that maximum it says so and the published sheets remain
 available. It adds "Uncertain estimate" when less than 20 % of the workbook

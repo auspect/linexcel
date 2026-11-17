@@ -421,3 +421,30 @@ def test_what_has_no_safety_net_stays_cautious():
     assert budget.regions_fit(14_000_000)  # 96.25 s with the margin
     assert ImportBudget.FINAL_SECONDS == 5.0
     assert ImportBudget.for_task(0.0, 60).deadline == 55.0
+
+
+def test_the_proposed_budget_reads_every_sheet_when_reimported(tmp_path):
+    """Reprise, the invariant that was missing. On the corpus, 25 s proposed
+    180 s, and the reimport with 180 s still stopped reading. The proposal
+    used the analysis rate measured on the import, the reserve its own: the
+    proposed budget, less the final time, must cover the whole reading plus
+    the reserve of every formula. Reimported with the proposal, at the same
+    simulated rates, the workbook is read whole."""
+    path = _formula_book(tmp_path, sheets=6, formulas=12_000)
+
+    def run(seconds, name):
+        budget = ImportBudget.for_task(0.0, seconds)
+        budget.reserve_seconds = 2e-3  # 24 s of reserve a sheet
+        budget.clock = _Clock()  # 1 s a reading: reading, analysis, regions
+        index = tmp_path / name
+        build_index(path, index, budget=budget)
+        return _details(index)
+
+    details, meta = run(60, "first.sqlite")
+    assert any(d["status"] == "not_imported" for d in details.values())
+    proposed = meta["importEstimate"]["seconds"]
+    details, _ = run(proposed, "again.sqlite")
+    assert {d["status"] for d in details.values()} - {"partial"} == {"complete"}, (
+        proposed,
+        {n: d["status"] for n, d in details.items()},
+    )

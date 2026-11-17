@@ -257,16 +257,20 @@ class ImportBudget:
             else reserve_seconds
         )
         self.started = self.stopped = self.analysis_stopped = None
+        #: The task's start, from which ``deadline`` counts, when known.
+        self.task_started = None
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
-        return cls(
+        budget = cls(
             deadline=started_at + seconds - cls.FINAL_SECONDS,
             max_bytes=None
             if storage_bytes is None
             else int(cls.READ_STORAGE_SHARE * storage_bytes),
             seconds=seconds,
         )
+        budget.task_started = started_at
+        return budget
 
     def reserve(self, formulas: int) -> float:
         """Seconds kept after reading for the analysis of ``formulas``: the
@@ -287,7 +291,10 @@ class ImportBudget:
         when they were measured on enough work (``MIN_MEASURED_FORMULAS``
         formulas analyzed; regions described), else the cautious rates
         above. The budget is the predicted time with the margin, plus the
-        final time, rounded up to the minute, at least a minute more than
+        final time, and never less than what the reimport's own reading
+        check needs to read every sheet (``readingBound``: the time before
+        reading, the whole reading and the reserve of every formula, plus
+        the final time), rounded up to the minute, at least a minute more than
         the task's; above the server's bound it says so. ``uncertain`` says
         that less than 20 % of the workbook was read, or that a rate not
         measured weighs more than a quarter of the prediction.
@@ -323,7 +330,18 @@ class ImportBudget:
         }
         predicted = sum(phases.values())
         needed = self.ESTIMATE_MARGIN * predicted + self.FINAL_SECONDS
-        seconds = math.ceil(needed / 60) * 60
+        # The reimport must pass its own reading check for the whole
+        # workbook: less the final time, the budget covers the time before
+        # reading, the whole reading and the reserve of every formula.
+        startup = (
+            max(0.0, self.started - self.task_started)
+            if self.started is not None and self.task_started is not None
+            else 0.0
+        )
+        reading_bound = (
+            startup + phases["reading"] + self.reserve(formulas) + self.FINAL_SECONDS
+        )
+        seconds = math.ceil(max(needed, reading_bound) / 60) * 60
         if self.seconds:
             seconds = max(seconds, math.ceil(self.seconds) + 60)
         # The smallest share of the work this import measured its rates on.
@@ -343,6 +361,8 @@ class ImportBudget:
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
             "phases": {name: round(value, 1) for name, value in phases.items()},
+            # What the reimport's reading check needs for the whole workbook.
+            "readingBound": round(reading_bound, 1),
             "formulasAnalyzed": analyzed,
             "formulasPredicted": round(formulas),
             "formulaSeconds": formula_rate,

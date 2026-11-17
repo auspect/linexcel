@@ -149,8 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   regions, at the rates measured on the import when enough work was done to
   measure them, else at cautious rates, and Diagnostics says "Uncertain
   estimate" when less than 20 % was read or an unmeasured rate weighs more
-  than a quarter. Each index records its phase times and counts
-  (`importTimings`).
+  than a quarter. The proposal is never less than what the reimport's own
+  reading check needs to read every sheet: on the energy model, the 180 s
+  proposed after 25 s, counting the analysis at the rate measured but not
+  the reading reserve, still stopped reading. Each index records its phase
+  times and counts (`importTimings`).
 - Say what an import that still ran out of time published. A step that
   cannot be stopped (links, VBA, publication) can still exceed the budget;
   the error was the bare word "timeout". It now says that no new index was

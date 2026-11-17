@@ -472,7 +472,10 @@ Adopted on 15 November 2026, with these choices:
   `time_budget`; a calculation reaching such a formula is refused. Data
   regions are described per sheet only when their predicted time fits. The
   proposed budget counts reading, analysis and regions, at the rates measured
-  on the import when there was enough work, and says when it is uncertain.
+  on the import when there was enough work, and says when it is uncertain;
+  it never falls below what the reimport's reading check needs to read every
+  sheet (on the corpus, 180 s proposed after 25 s still stopped the reading
+  of the energy model before that rule).
   What remains true: a sheet too large to read within the budget is still
   only "not imported"; links, VBA and publication cannot be stopped, and an
   import whose final steps outlast the 5 s still times out without a new
