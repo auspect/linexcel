@@ -448,3 +448,26 @@ def test_the_proposed_budget_reads_every_sheet_when_reimported(tmp_path):
         proposed,
         {n: d["status"] for n, d in details.items()},
     )
+
+
+def test_the_final_margin_grows_with_the_formulas_read(tmp_path):
+    """Diagnostic of the end of an import stopped by the safety net. Marking
+    the sheets, links, regions, counts and publication take longer as the
+    formulas grow: 1.2 s after the deadline for 150,000 formulas, 3.3 s for
+    450,000, past the 5 s kept for a million. The final margin now grows
+    with the formulas read (never under 5 s), and the analysis stops that
+    much earlier."""
+    path = _formula_book(tmp_path, sheets=1, formulas=1_000)
+    budget = ImportBudget.for_task(0.0, 60)  # 55 s with the 5 s margin
+    # 10 ms of final work a formula here: 1,000 formulas keep 10 s.
+    budget.final_seconds_per_formula = 0.01
+    # Reading early; the analysis then reads 52 s, past 60 - 10 s.
+    budget.clock = _Readings(0.0, 1.0, 2.0, 52.0)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, meta = _details(index)
+    assert details["F1"]["status"] == "partial"
+    assert meta["importTimings"]["formulasNotAnalyzed"] == 1_000
+    assert budget.final_seconds() == pytest.approx(10.0)
+    # Never under the fixed 5 s.
+    assert ImportBudget().final_seconds() == ImportBudget.FINAL_SECONDS

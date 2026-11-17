@@ -141,8 +141,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not analyzed", their sheets are published as partial for the time budget
   with the count left, every value is kept, and a calculation reaching such a
   formula is refused. Data regions are described only when their predicted
-  time fits ("Data regions skipped: budget"). The last 5 s of the budget are
-  kept for links, VBA, counts and publication (measured on the corpus: 0.07
+  time fits ("Data regions skipped: budget"). The end of the budget is
+  kept for links, VBA, counts and publication: 5 s, or 20 µs a formula read
+  when more (20 s for a million formulas: that end grows by about 7.5 µs a
+  formula, and a generated million-formula import cut by the analysis
+  safety net timed out with 5 s) (measured on the corpus: 0.07
   to 0.40 s after the last phase, 1.2 to 2.2 s with the worker's start and
   exit). Measured through serve on 17 November: ATB at 25 s published 6
   complete sheets, 2 partial (14,036 formulas not analyzed) and proposed

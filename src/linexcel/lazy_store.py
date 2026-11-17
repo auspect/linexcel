@@ -186,9 +186,11 @@ class ImportBudget:
     as not imported, with the reason. ``max_bytes`` bounds the index file
     while sheets are read.
 
-    ``deadline`` is the wall-clock time by which the import's own work ends:
-    ``FINAL_SECONDS`` before the end of the task, which are kept for links,
-    VBA, counts and publication. The time left must cover the analysis at
+    ``deadline`` is ``FINAL_SECONDS`` before the end of the task. The
+    import's own work ends earlier still when it read many formulas: the
+    final margin, kept for links, VBA, counts and publication, is
+    ``final_seconds()``, at least ``FINAL_SECONDS`` and growing with the
+    formulas read. The time left must cover the analysis at
     its fastest (``reserve``, no margin) of the formulas of the sheets read
     whole: a sheet
     is not started when it does not, and a sheet being read stops when it no
@@ -223,9 +225,18 @@ class ImportBudget:
     #: on the public election table (64 s).
     VALUE_SECONDS = 5.5e-6
     #: Kept at the end of a task for links, VBA, counts and publication,
-    #: which nothing interrupts. Measured on the corpus: 0.07 to 0.31 s
-    #: after the last phase, 1.3 to 2.0 s with the worker's start and exit.
+    #: which nothing interrupts: at least this, more for many formulas (see
+    #: ``FINAL_SECONDS_PER_FORMULA``). Measured on the corpus: 0.07 to 0.40 s
+    #: after the last phase, 1.2 to 2.2 s with the worker's start and exit.
     FINAL_SECONDS = 5.0
+    #: The end of an import grows with its formulas (marking those not
+    #: analyzed, links, the region decision, counts, the graph page): from
+    #: the deadline to the task's end, 1.2 s for 150,000 formulas, 3.3 s for
+    #: 450,000, and past the 5 s for 1,000,000, which timed out (generated
+    #: workbooks, 17 November): about 7.5 µs a formula, 7.6 s for a million
+    #: once the margin let it finish. The final margin keeps more than
+    #: twice that, 20 µs a formula read, when it exceeds ``FINAL_SECONDS``.
+    FINAL_SECONDS_PER_FORMULA = 20e-6
     #: Fewest formulas analyzed, and saved values described in regions, for
     #: a proposal to use the rate measured on the import itself.
     MIN_MEASURED_FORMULAS = 2_000
@@ -259,6 +270,24 @@ class ImportBudget:
         self.started = self.stopped = self.analysis_stopped = None
         #: The task's start, from which ``deadline`` counts, when known.
         self.task_started = None
+        self.final_seconds_per_formula = self.FINAL_SECONDS_PER_FORMULA
+        #: Formulas read so far, set by the reader: the final margin grows
+        #: with them.
+        self.formulas_seen = 0
+
+    def final_margin(self, formulas: float) -> float:
+        """Seconds kept at the end of a task that read ``formulas``."""
+        return max(self.FINAL_SECONDS, self.final_seconds_per_formula * formulas)
+
+    def final_seconds(self) -> float:
+        """The final margin for the formulas read so far."""
+        return self.final_margin(self.formulas_seen)
+
+    def _end(self) -> float | None:
+        """``deadline``, earlier by the final margin beyond ``FINAL_SECONDS``."""
+        if self.deadline is None:
+            return None
+        return self.deadline - (self.final_seconds() - self.FINAL_SECONDS)
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
@@ -329,7 +358,8 @@ class ImportBudget:
             "rest": timings["rest"],
         }
         predicted = sum(phases.values())
-        needed = self.ESTIMATE_MARGIN * predicted + self.FINAL_SECONDS
+        final = self.final_margin(formulas)
+        needed = self.ESTIMATE_MARGIN * predicted + final
         # The reimport must pass its own reading check for the whole
         # workbook: less the final time, the budget covers the time before
         # reading, the whole reading and the reserve of every formula.
@@ -338,9 +368,7 @@ class ImportBudget:
             if self.started is not None and self.task_started is not None
             else 0.0
         )
-        reading_bound = (
-            startup + phases["reading"] + self.reserve(formulas) + self.FINAL_SECONDS
-        )
+        reading_bound = startup + phases["reading"] + self.reserve(formulas) + final
         seconds = math.ceil(max(needed, reading_bound) / 60) * 60
         if self.seconds:
             seconds = max(seconds, math.ceil(self.seconds) + 60)
@@ -379,9 +407,10 @@ class ImportBudget:
         ``formulas`` are those of the sheets read whole so far: reading stops
         when the time left no longer covers their analysis.
         """
-        if self.deadline is not None:
+        end = self._end()
+        if end is not None:
             now = self.clock()
-            if now + self.reserve(formulas) >= self.deadline:
+            if now + self.reserve(formulas) >= end:
                 if self.stopped is None:
                     self.stopped = now
                 return "time_budget"
@@ -398,10 +427,11 @@ class ImportBudget:
 
     def analysis_exhausted(self) -> bool:
         """Whether the dependency analysis must stop: the deadline is past."""
-        if self.deadline is None:
+        end = self._end()
+        if end is None:
             return False
         now = self.clock()
-        if now < self.deadline:
+        if now < end:
             return False
         if self.analysis_stopped is None:
             self.analysis_stopped = now
@@ -416,10 +446,11 @@ class ImportBudget:
         once started, and running past the end of the task publishes
         nothing. On the election table it predicted 124.6 s for the 64 s
         measured, and skipped the regions with 73 s left."""
-        if self.deadline is None:
+        end = self._end()
+        if end is None:
             return True
         predicted = self.ESTIMATE_MARGIN * self.VALUE_SECONDS * values
-        return self.clock() + predicted < self.deadline
+        return self.clock() + predicted < end
 
 
 class _ImportStopError(Exception):
@@ -2186,6 +2217,9 @@ def _read_source(path, store, budget=None):
             previous_address = None
             row_hidden = False
             hidden_columns = []
+            if budget:
+                # The final margin grows with the formulas read.
+                budget.formulas_seen = formulas_read
             stop = budget.exhausted(store.path, formulas_read) if budget else None
             if stop:
                 if stop == "time_budget" and stopped_at is None:
@@ -2630,7 +2664,12 @@ def _read_source(path, store, budget=None):
                                     _read_in_transaction(db)
                                     # The reserve protects the sheets read
                                     # whole; this sheet's own formulas are
-                                    # analyzed as far as time allows.
+                                    # analyzed as far as time allows. The
+                                    # final margin counts them all.
+                                    if budget:
+                                        budget.formulas_seen = (
+                                            formulas_read + sheet["formulas"]
+                                        )
                                     if budget and (
                                         stop := budget.exhausted(
                                             store.path, formulas_read
@@ -2735,6 +2774,8 @@ def _read_source(path, store, budget=None):
             if sheet["status"] != "not_imported":
                 bytes_read += size
                 formulas_read += sheet["formulas"]
+            if budget:
+                budget.formulas_seen = formulas_read
             sheet.pop("part", None)
             db.commit()
         if not strings_present and (strings_declared or missing_strings):

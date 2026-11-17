@@ -177,7 +177,11 @@ An import publishes what it does within its budgets. Its own work ends 5 s
 before the end of the time budget, counted from the server's start of the
 task; those seconds are kept for links, VBA, counts and publication
 (measured on the corpus at 0.07 to 0.40 s after the last phase, 1.2 to 2.2 s
-with the worker's start and exit, the election table included). Reading sheets may use half of the storage left
+with the worker's start and exit, the election table included). That end
+grows with the formulas read (about 7 µs a formula: 1.2 s for 150,000
+formulas, 3.3 s for 450,000; 1,000,000 formulas overran 5 s and the task
+timed out; 7.6 s once the margin let it finish), so the margin is 20 µs a
+formula read when that is more than 5 s: 20 s for a million formulas. Reading sheets may use half of the storage left
 when the import starts. Reading stops before a sheet, or after every 10,000
 cells, as soon as the time left no longer covers the predicted analysis of
 the formulas of the sheets already read whole at its fastest: 0.30 ms a

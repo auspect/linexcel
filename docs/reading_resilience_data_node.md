@@ -459,7 +459,11 @@ Adopted on 15 November 2026, with these choices:
   measurement).** The import's own work ends 5 s before the task's end,
   counted from the coordinator's start; the 5 s cover links, VBA, counts and
   publication (measured on the corpus: 0.07 to 0.40 s after the last phase,
-  1.2 to 2.2 s with the worker's start and exit). Reading stops when the time left no
+  1.2 to 2.2 s with the worker's start and exit). That end grows with the
+  formulas: 1.2 s for 150,000 generated formulas cut by the safety net,
+  3.3 s for 450,000, and a million timed out with 5 s; the margin is now
+  20 µs a formula read when that exceeds 5 s (a million formulas then ended
+  7.6 s after the analysis deadline, with 20 s kept). Reading stops when the time left no
   longer covers the analysis at its fastest, 0.30 ms per formula with no
   margin, of the sheets read whole (a first reserve of 1.25 x 0.65 ms left
   29 to 40 % of the energy model's budget unused, measured on the corpus on
