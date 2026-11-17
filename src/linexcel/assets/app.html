@@ -977,7 +977,7 @@ function renderDetail(){$('view-nodes').classList.toggle('has-selection',!!selec
 }
 function arrangeNodeInspector(root,n,r,cache,status){
  const heading=root.firstElementChild,steps=$('calculation-steps').parentElement,actions=$('recalculate').parentElement,ai=$('node-ai'),alerts=[...root.children].filter(e=>e.matches('.notice.error,.node-access-error')),evidence=document.createElement('details');evidence.className='inspector-evidence';evidence.innerHTML='<summary>'+uiText('Formule canonique et traçabilité')+'</summary>';
- const summary=document.createElement('div');summary.className='inspector-summary';summary.innerHTML='<code class="formula" data-no-i18n>'+formulaHTML(n.sourceFormula||n.canonicalFormula||n.formula||uiText('Donnée source'))+'</code><div class="inspector-values"><span>'+uiText('Cache enregistré : ')+esc(show(cache))+'</span><span>'+uiText('Résultat Linexcel')+' · '+esc(r?.status==='completed'?show(r.value):status)+'</span></div>';
+ const summary=document.createElement('div');summary.className='inspector-summary';summary.innerHTML='<code class="formula" data-no-i18n>'+formulaHTML(n.sourceFormula||n.canonicalFormula||n.formula||uiText('Donnée source'))+'</code><div class="inspector-values"><span>'+uiText('Cache enregistré : ')+esc(show(cache))+'</span><span>'+uiText('Résultat Linexcel')+' · '+esc(r?.status==='completed'?show(r.value):uiText(status))+'</span></div>';
  for(const child of [...root.children])if(![heading,steps,actions,ai,...alerts].includes(child))evidence.append(child);
  steps.classList.add('inspector-decomposition');root.replaceChildren(heading,summary,actions,...alerts,steps,evidence,ai);root.scrollTop=0;
 

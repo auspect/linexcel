@@ -1,0 +1,197 @@
+"""Screens of an import cut by its time budget (lot 2 ter, budget step,
+reprise after the independent visual review).
+
+A mounted application with a partial index: a formula not analyzed with a
+saved value, one without, and the refused calculation the server returns
+for them, as the import and lazy.py produce them.
+"""
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+from graph_test_helpers import open_workspace_menu
+
+from linexcel.lazy_store import NOT_ANALYZED
+
+playwright = pytest.importorskip("playwright.sync_api")
+APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
+
+
+@pytest.fixture(scope="module")
+def browser():
+    with playwright.sync_playwright() as driver:
+        instance = driver.chromium.launch(
+            channel=os.environ.get("LINEXCEL_BROWSER_CHANNEL") or None
+        )
+        yield instance
+        instance.close()
+
+
+def _formula(cell, cached):
+    return {
+        "id": f"Third!{cell}",
+        "sheet": "Third",
+        "cell": cell,
+        "kind": "cell",
+        "formula": f"=B{cell[1:]}*3",
+        "cachedValue": cached,
+        "cached_value": cached,
+        "valueSource": "saved_cache",
+        "dependencies": [],
+        "diagnostics": [NOT_ANALYZED],
+    }
+
+
+META = {
+    "status": "partial",
+    "sheetDetails": [
+        {"name": "First", "status": "complete", "formulas": 1, "diagnostics": []},
+        {
+            "name": "Third",
+            "status": "partial",
+            "reason": "time_budget",
+            "formulas": 2,
+            "unanalyzedFormulas": 2,
+            "diagnostics": [],
+        },
+    ],
+    "diagnostics": [],
+    "importEstimate": {
+        "readSeconds": 3.0,
+        "bytesRead": 50_000,
+        "bytesTotal": 50_000,
+        "budgetSeconds": 20,
+        "seconds": 80,
+        "beyondMaximum": False,
+        "cause": ["reading", "analysis", "regions"],
+        "formulasAnalyzed": 17,
+        "formulasPredicted": 243,
+        "processedShare": 0.07,
+        "uncertain": True,
+    },
+}
+GRAPH = {
+    "nodes": [
+        _formula("A7", None),
+        _formula("A8", 24),
+        {
+            "id": "Third!B7",
+            "sheet": "Third",
+            "cell": "B7",
+            "kind": "input",
+            "value": 70,
+            "cachedValue": 70,
+            "valueSource": "saved_input",
+            "dependencies": [],
+            "diagnostics": [],
+        },
+        {
+            "id": "First!A1",
+            "sheet": "First",
+            "cell": "A1",
+            "kind": "cell",
+            "formula": "=Third!B7*2",
+            "cachedValue": 140,
+            "valueSource": "saved_cache",
+            "dependencies": ["Third!B7"],
+            "diagnostics": [],
+        },
+    ],
+    "edges": [{"source": "Third!B7", "target": "First!A1"}],
+    "meta": META,
+}
+
+
+def open_app(browser, viewport, language, *, tasks=None, graph=GRAPH):
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "p1", "name": "model.xlsx", "revision": 1}
+    created = []
+
+    def handle(route):
+        request = route.request
+        if request.url.endswith(("app-graph.js", "app-graph.css")):
+            route.fulfill(
+                body=(APP.parent / request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type="text/css"
+                if request.url.endswith(".css")
+                else "application/javascript",
+            )
+            return
+        path = request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
+        if not path:
+            route.fulfill(
+                body=APP.read_text(encoding="utf-8"), content_type="text/html"
+            )
+            return
+        if path == "api/config":
+            body = {"limits": {"memoryMb": 1024, "uploadMb": 64}}
+        elif path == "api/projects":
+            body = {"projects": [project]}
+        elif path == "api/projects/p1":
+            body = {"project": project, "graph": graph, "tasks": tasks or []}
+        elif path == "api/projects/p1/tasks" and request.method == "POST":
+            body_in = request.post_data_json
+            if body_in.get("operation") != "evaluate":
+                route.fulfill(status=409, json={"error": {"message": "fixture"}})
+                return
+            node_id = body_in.get("nodeId")
+            task = {
+                "id": str(len(created)),
+                "operation": "evaluate",
+                "nodeId": node_id,
+                "status": "succeeded",
+                "result": {
+                    "nodeId": node_id,
+                    "status": "unsupported",
+                    "value": None,
+                    "diagnostics": [f"{node_id}: {NOT_ANALYZED}"],
+                    "steps": [],
+                },
+            }
+            created.append(task)
+            body = {"task": task}
+        elif path.startswith("api/tasks/"):
+            task = next(t for t in created if t["id"] == path.rsplit("/", 1)[-1])
+            body = {"task": task}
+        else:
+            route.fulfill(status=404, json={"error": {"message": "fixture"}})
+            return
+        route.fulfill(body=json.dumps(body), content_type="application/json")
+
+    page.route("**/*", handle)
+    page.goto(f"http://localhost/mounted/?lang={language}")
+    open_workspace_menu(page)
+    page.locator("[data-project='p1']").click()
+    page.locator("[data-node]").first.wait_for()
+    return page, errors
+
+
+def select(page, node_id):
+    if page.locator("#node-back-list").is_visible():
+        page.locator("#node-back-list").click()
+    page.locator(f"[data-node='{node_id}']").first.click()
+    page.locator("#node-detail").wait_for()
+
+
+VIEWPORTS = [(1440, 900), (390, 844)]
+
+
+@pytest.mark.parametrize("viewport", VIEWPORTS)
+def test_the_refused_result_badge_is_translated(browser, viewport):
+    """U1. "Linexcel result · Non pris en charge" in the English interface:
+    the status of the inspector summary did not go through translation."""
+    page, errors = open_app(browser, viewport, "en")
+    try:
+        select(page, "Third!A7")
+        summary = page.locator(".inspector-summary")
+        summary.get_by_text("Linexcel result · Unsupported").wait_for()
+        assert "Non pris en charge" not in page.locator("body").inner_text()
+        assert not errors
+    finally:
+        page.close()
