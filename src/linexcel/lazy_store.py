@@ -305,8 +305,9 @@ def _not_imported(sheet, reason, diagnostics):
 
 
 def _ascii_lower(text: str) -> str:
-    # SQLite's LIKE folds ASCII letters only.
-    return text.translate(_ASCII_LOWER)
+    # SQLite's LIKE folds ASCII letters only. On ASCII text, str.lower does
+    # the same, faster than translate.
+    return text.lower() if text.isascii() else text.translate(_ASCII_LOWER)
 
 
 _ASCII_LOWER = {c: c + 32 for c in range(65, 91)}
