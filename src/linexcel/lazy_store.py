@@ -3392,6 +3392,11 @@ def graph_page(
                                 column = letters[col] = num_to_col(col)
                             if like(prefix[0] + column + str(row)):
                                 return True
+                    value = raw[0]
+                    if type(value) is str:
+                        # The grid keeps text with a text type and no date
+                        # kind, so its search text is the text itself.
+                        return needle in _ascii_lower(value)
                     return like(search(raw))
 
             grid = kind in {None, "input"}
