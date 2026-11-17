@@ -238,3 +238,49 @@ def test_a_saved_value_is_said_shown_only_when_the_file_holds_one(browser, langu
         assert not errors
     finally:
         page.close()
+
+
+@pytest.mark.parametrize(
+    ("viewport", "language", "note"),
+    [
+        (
+            (1440, 900),
+            "fr",
+            "Liste peut-être incomplète : une formule non importée ou non analysée "
+            "n’y figure pas.",
+        ),
+        (
+            (390, 844),
+            "en",
+            "This list may be incomplete: a formula not imported or not analyzed "
+            "is missing from it.",
+        ),
+    ],
+)
+def test_the_uses_of_a_node_warn_that_they_may_be_incomplete(
+    browser, viewport, language, note
+):
+    """U4. The warning that listed uses may be incomplete stood only in
+    Diagnostics; it now stands beside the list of uses of a node."""
+    page, errors = open_app(browser, viewport, language)
+    try:
+        select(page, "Third!B7")
+        # The lists of sources and uses stand in the card's provenance.
+        page.locator("#node-detail .inspector-evidence > summary").click()
+        page.locator("#node-detail").get_by_text(note).first.wait_for()
+        # The graph's notice, below the dependents it draws, says it too.
+        # The graph package hides that notice at phone width (app-graph.css,
+        # frontend/, outside this step): it is checked as text there.
+        page.locator("#tab-graph").click()
+        notice = page.locator("#graph-notice")
+        if viewport[0] > 900:
+            notice.get_by_text(note.split(":")[0], exact=False).wait_for()
+        else:
+            page.wait_for_function(
+                "text => document.querySelector('#graph-notice')"
+                ".textContent.includes(text)",
+                arg=note.split(":")[0],
+            )
+        assert not errors
+    finally:
+        page.close()
