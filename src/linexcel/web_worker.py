@@ -28,10 +28,12 @@ def main():
                 root / INDEX_FILENAME,
                 project / "references",
                 filename=metadata["filename"],
-                # The worker starts after the coordinator's clock: its own
-                # deadline is a little later, within the reading share.
+                # The coordinator's start, written just before it started
+                # this worker: the import ends before the coordinator's limit.
                 budget=ImportBudget.for_task(
-                    started, request["seconds"], request.get("storageBytes")
+                    request.get("startedAt", started),
+                    request["seconds"],
+                    request.get("storageBytes"),
                 )
                 if "seconds" in request
                 else None,

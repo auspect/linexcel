@@ -183,21 +183,44 @@ class ImportBudget:
 
     The reader checks it before each sheet and every 10,000 cells. A sheet it
     stops in is rolled back; that sheet and the following ones are published
-    as not imported, with the reason. ``deadline`` is a wall-clock time;
-    ``max_bytes`` bounds the index file while sheets are read.
+    as not imported, with the reason. ``max_bytes`` bounds the index file
+    while sheets are read.
+
+    ``deadline`` is the wall-clock time by which the import's own work ends:
+    ``FINAL_SECONDS`` before the end of the task, which are kept for links,
+    VBA, counts and publication. Reading stops as soon as the time left
+    before it no longer covers the predicted analysis of the formulas
+    already read (``reserve``), so that every sheet read is also analysed.
     """
 
-    #: Shares of a task's time budget and of the storage left at its start
-    #: that reading sheets may use; the rest is for dependencies, facts and
-    #: publication, which the coordinator still bounds.
-    READ_TIME_SHARE = 0.6
+    #: Share of the storage left at a task's start that reading may use.
     READ_STORAGE_SHARE = 0.5
     #: The server's bound on a task's time budget.
     MAX_SECONDS = 3600
-    #: Margin over the reading time estimated from the observed rate.
+    #: Margin over predicted or measured phase times, in the reading reserve
+    #: and in the proposed budget alike: a proposal that used another factor
+    #: would make the reserve stop the reading it proposes.
     ESTIMATE_MARGIN = 1.25
+    #: Dependency analysis time of one formula, cautious for a slower
+    #: machine: 1.5 times about 0.43 ms. Measured: 0.40 ms on the public
+    #: energy model (233,410 formulas in 92.7 s), 0.30 ms on a generated
+    #: workbook.
+    FORMULA_SECONDS = 0.65e-3
+    #: Data region description time of one saved value: 1.5 times about
+    #: 3.6 µs, measured on the public election table (64 s).
+    VALUE_SECONDS = 5.5e-6
+    #: Kept at the end of a task for links, VBA, counts and publication.
+    FINAL_SECONDS = 5.0
 
-    def __init__(self, *, deadline=None, max_bytes=None, clock=None, seconds=None):
+    def __init__(
+        self,
+        *,
+        deadline=None,
+        max_bytes=None,
+        clock=None,
+        seconds=None,
+        formula_seconds=None,
+    ):
         import time
 
         self.deadline = deadline
@@ -205,36 +228,49 @@ class ImportBudget:
         self.clock = clock or time.time
         #: The task's time budget, from which ``deadline`` was set.
         self.seconds = seconds
+        self.formula_seconds = (
+            self.FORMULA_SECONDS if formula_seconds is None else formula_seconds
+        )
         self.started = self.stopped = None
 
     @classmethod
     def for_task(cls, started_at, seconds, storage_bytes=None):
         return cls(
-            deadline=started_at + cls.READ_TIME_SHARE * seconds,
+            deadline=started_at + seconds - cls.FINAL_SECONDS,
             max_bytes=None
             if storage_bytes is None
             else int(cls.READ_STORAGE_SHARE * storage_bytes),
             seconds=seconds,
         )
 
+    def reserve(self, formulas: int) -> float:
+        """Seconds kept after reading for the analysis of ``formulas``."""
+        return self.ESTIMATE_MARGIN * self.formula_seconds * formulas
+
     def start_reading(self) -> None:
         self.started = self.clock()
 
-    def estimate(self, bytes_read: int, bytes_total: int) -> dict | None:
-        """The time budget that reads every sheet, at the rate observed.
+    def estimate(
+        self, bytes_read: int, bytes_total: int, formulas_read: int = 0
+    ) -> dict | None:
+        """The time budget that reads and analyses every sheet.
 
-        ``bytes_read`` of the ``bytes_total`` bytes of worksheet XML were
-        read between the start of reading and the time stop. The budget is
-        rounded up to the minute, with a margin, and is at least a minute more
-        than the task's; above the server's bound it says so.
+        ``bytes_read`` of the ``bytes_total`` bytes of worksheet XML, holding
+        ``formulas_read`` formulas, were read between the start of reading
+        and the time stop. Reading and formulas are extrapolated to the whole
+        workbook at that rate; analysis is predicted per formula. The budget
+        is rounded up to the minute, with a margin, and is at least a minute
+        more than the task's; above the server's bound it says so.
         """
         if self.started is None or self.stopped is None or bytes_read <= 0:
             return None
         elapsed = self.stopped - self.started
         if elapsed <= 0 or bytes_total <= 0:
             return None
-        reading = elapsed * bytes_total / bytes_read
-        needed = reading / self.READ_TIME_SHARE * self.ESTIMATE_MARGIN
+        scale = bytes_total / bytes_read
+        reading = elapsed * scale
+        analysis = self.formula_seconds * formulas_read * scale
+        needed = self.ESTIMATE_MARGIN * (reading + analysis) + self.FINAL_SECONDS
         seconds = math.ceil(needed / 60) * 60
         if self.seconds:
             seconds = max(seconds, math.ceil(self.seconds) + 60)
@@ -245,14 +281,17 @@ class ImportBudget:
             "budgetSeconds": self.seconds,
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
-            "readShare": self.READ_TIME_SHARE,
         }
 
-    def exhausted(self, index_path) -> str | None:
-        """``"time_budget"``, ``"storage_budget"`` or ``None``."""
+    def exhausted(self, index_path, formulas: int = 0) -> str | None:
+        """``"time_budget"``, ``"storage_budget"`` or ``None``.
+
+        ``formulas`` were read so far: reading stops when the time left no
+        longer covers their analysis.
+        """
         if self.deadline is not None:
             now = self.clock()
-            if now >= self.deadline:
+            if now + self.reserve(formulas) >= self.deadline:
                 if self.stopped is None:
                     self.stopped = now
                 return "time_budget"
@@ -1957,7 +1996,7 @@ def _read_source(path, store, budget=None):
             archive.getinfo(s["part"]).file_size if s["part"] in members else 0
             for s in sheets
         ]
-        bytes_read, estimate = 0, None
+        bytes_read, formulas_read, estimate = 0, 0, None
         if budget:
             budget.start_reading()
         for sheet, size in zip(sheets, sizes):
@@ -1966,10 +2005,10 @@ def _read_source(path, store, budget=None):
             previous_address = None
             row_hidden = False
             hidden_columns = []
-            stop = budget.exhausted(store.path) if budget else None
+            stop = budget.exhausted(store.path, formulas_read) if budget else None
             if stop:
                 if budget and stop == "time_budget" and estimate is None:
-                    estimate = budget.estimate(bytes_read, sum(sizes))
+                    estimate = budget.estimate(bytes_read, sum(sizes), formulas_read)
                 _not_imported(sheet, stop, diagnostics)
                 sheet.pop("part", None)
                 continue
@@ -2407,7 +2446,10 @@ def _read_source(path, store, budget=None):
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
                                     _read_in_transaction(db)
                                     if budget and (
-                                        stop := budget.exhausted(store.path)
+                                        stop := budget.exhausted(
+                                            store.path,
+                                            formulas_read + sheet["formulas"],
+                                        )
                                     ):
                                         raise _ImportStopError(stop, source.tell())
                             stack[-2].remove(element)
@@ -2478,7 +2520,9 @@ def _read_source(path, store, budget=None):
                 # Only a budget check raises it: ``budget`` is set here.
                 if budget and stopped.reason == "time_budget" and estimate is None:
                     estimate = budget.estimate(
-                        bytes_read + stopped.position, sum(sizes)
+                        bytes_read + stopped.position,
+                        sum(sizes),
+                        formulas_read + sheet["formulas"],
                     )
                 # Roll the sheet back: nothing of it is published, so no cell
                 # of it can be mistaken for the whole sheet.
@@ -2507,6 +2551,7 @@ def _read_source(path, store, budget=None):
                 diagnostics.append({"sheet": sheet["name"], "message": message})
             if sheet["status"] != "not_imported":
                 bytes_read += size
+                formulas_read += sheet["formulas"]
             sheet.pop("part", None)
             db.commit()
         if not strings_present and (strings_declared or missing_strings):

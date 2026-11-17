@@ -21,7 +21,7 @@ class _StopAfter(ImportBudget):
         super().__init__()
         self.checks, self.reason, self.calls = checks, reason, 0
 
-    def exhausted(self, index_path):
+    def exhausted(self, index_path, formulas=0):
         self.calls += 1
         return self.reason if self.calls > self.checks else None
 
@@ -106,13 +106,15 @@ def test_a_task_budget_leaves_time_and_storage_for_the_rest_of_the_import(
     tmp_path,
 ):
     budget = ImportBudget.for_task(1000.0, 600, storage_bytes=8_000)
-    assert budget.deadline == pytest.approx(1000 + 0.6 * 600)
+    assert budget.deadline == pytest.approx(1000 + 600 - ImportBudget.FINAL_SECONDS)
     assert budget.max_bytes == 4_000
     index = tmp_path / "index.sqlite"
     index.write_bytes(b"x" * 3_000)
-    clock = iter([1100.0, 1100.0, 1400.0])
+    clock = iter([1100.0, 1100.0, 1100.0, 1600.0])
     budget.clock = lambda: next(clock)
     assert budget.exhausted(index) is None
+    # 1,100 + 700,000 x 1.25 x 0.65 ms of predicted analysis > 1,595.
+    assert budget.exhausted(index, formulas=700_000) == "time_budget"
     (tmp_path / "index.sqlite-journal").write_bytes(b"x" * 1_000)
     assert budget.exhausted(index) == "storage_budget"
     assert budget.exhausted(index) == "time_budget"
@@ -166,13 +168,88 @@ def test_a_time_stop_estimates_the_budget_that_reads_every_sheet(tmp_path):
     # Small and Big1 whole, then part of Big2 up to its stop.
     assert sizes[0] + sizes[1] < estimate["bytesRead"] < sum(sizes)
     assert estimate["readSeconds"] == 6.0
-    needed = 6.0 * sum(sizes) / estimate["bytesRead"]
-    assert estimate["seconds"] == max(
-        160, math.ceil(needed / ImportBudget.READ_TIME_SHARE * 1.25 / 60) * 60
-    )
+    # Values only: reading at the observed rate, the margin, the final time.
+    needed = 6.0 * sum(sizes) / estimate["bytesRead"] * 1.25 + 5
+    assert estimate["seconds"] == max(160, math.ceil(needed / 60) * 60)
     assert estimate["budgetSeconds"] == 100 and not estimate["beyondMaximum"]
-    # The reading share, so that the interface can explain the numbers.
-    assert estimate["readShare"] == ImportBudget.READ_TIME_SHARE
+
+
+class _Readings:
+    """A clock that returns the given readings, then the last one."""
+
+    def __init__(self, *readings):
+        self.readings = list(readings)
+
+    def __call__(self):
+        return self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+
+
+def _formula_book(tmp_path, sheets=3, formulas=1_000):
+    book = Workbook()
+    book.active.title = "Values"
+    book.active["A1"] = 2
+    for index in range(1, sheets + 1):
+        sheet = book.create_sheet(f"F{index}")
+        for row in range(1, formulas + 1):
+            sheet.cell(row, 1, f"=Values!A1*{row}")
+    path = tmp_path / "formulas.xlsx"
+    book.save(path)
+    return path
+
+
+def test_reading_stops_when_the_time_left_no_longer_covers_the_analysis(tmp_path):
+    """Lot 2 ter, T3. Reading used to stop at a fixed 60 % of the budget,
+    however many formulas it had read: the analysis of those formulas could
+    then outlast the task. It now stops before a sheet as soon as the time
+    left does not cover the predicted analysis of the formulas read."""
+    path = _formula_book(tmp_path)
+    budget = ImportBudget.for_task(0.0, 100)
+    # 40 ms a formula: after F1, 50 s of reserve; after F2, 100 s.
+    budget.formula_seconds = 0.04
+    # Readings: start, before Values, F1, F2, F3 (the reading clock only).
+    budget.clock = _Readings(0.0, 1.0, 2.0, 3.0, 4.0)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, _ = _details(index)
+    assert [details[s]["status"] for s in ("Values", "F1", "F2", "F3")] == [
+        "complete",
+        "complete",
+        "complete",
+        "not_imported",
+    ]
+    assert details["F3"]["reason"] == "time_budget"
+
+
+def test_a_values_sheet_may_take_most_of_the_budget(tmp_path):
+    """Lot 2 ter, T4. A sheet of values needs no analysis: its reading may
+    use the budget up to the final margin, not only 60 % of it."""
+    book = Workbook()
+    book.active.title = "Values"
+    for row in range(1, 12_501):
+        book.active.cell(row, 1, row)
+        book.active.cell(row, 2, -row)
+    book.create_sheet("After")["A1"] = 1
+    path = tmp_path / "values.xlsx"
+    book.save(path)
+    budget = ImportBudget.for_task(0.0, 100)
+    # Readings: start, before Values, its 10,000th and 20,000th cell (70 %
+    # of the budget), before After.
+    budget.clock = _Readings(0.0, 1.0, 35.0, 70.0, 72.0)
+    index = tmp_path / "index.sqlite"
+    build_index(path, index, budget=budget)
+    details, meta = _details(index)
+    assert [details[s]["status"] for s in ("Values", "After")] == [
+        "complete",
+        "complete",
+    ]
+    assert "importEstimate" not in meta
+
+
+def test_the_reserve_uses_the_cautious_rate_and_the_margin():
+    budget = ImportBudget()
+    assert budget.reserve(0) == 0
+    assert budget.reserve(1_000) == pytest.approx(1.25 * 0.65)
+    assert ImportBudget(formula_seconds=0.01).reserve(100) == pytest.approx(1.25)
 
 
 def test_no_estimate_when_every_sheet_is_read(tmp_path):

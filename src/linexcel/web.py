@@ -1424,13 +1424,16 @@ class TaskStore:
             "tokens": task["budget"].get("tokens", self.config.ai_token_budget),
         }
         if task["operation"] == "import":
-            # The import stops reading sheets within these budgets and
-            # publishes the rest as not imported (F21).
+            from linexcel._process_budget import wall_clock
+
+            # The import stops each phase within these budgets, counted from
+            # this start, and publishes what it could not do as such (F21).
             request.update(
                 seconds=task["budget"]["seconds"],
                 storageBytes=max(
                     0, self.config.max_storage_mb * 1048576 - _disk_usage(self.root)
                 ),
+                startedAt=wall_clock(),
             )
         _write(root / "request.json", request)
         child_env = os.environ.copy()
