@@ -201,3 +201,49 @@ def test_an_analysis_past_the_budget_publishes_what_it_analysed(app, monkeypatch
     assert (read["status"], read["value"]) == ("completed", 20)
     total = evaluate(app, project, "First!A3")
     assert (total["status"], total["value"]) == ("completed", 60)
+
+
+#: Region description predicted far beyond any budget, and truly that slow:
+#: describing the large sheet would sleep ten times the budget. A sheet too
+#: small to hold a region is still looked at, which costs nothing.
+SLOW_REGIONS = f"""
+import time
+import linexcel.data_regions as regions
+import linexcel.lazy_store as lazy_store
+lazy_store.ImportBudget.VALUE_SECONDS = 1.0
+_detect = regions.detect_regions
+def _slow(store, sheets=None):
+    if sheets is None or "Table" in sheets:
+        time.sleep({10 * BUDGET})
+    return _detect(store, sheets)
+regions.detect_regions = _slow
+"""
+
+
+def table_book():
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Table"
+    sheet.append(["Year", "Amount"])
+    for row in range(2, 6_002):
+        sheet.append([2000 + row % 20, row])
+    book.create_sheet("Total")["A1"] = "=SUM(Table!B2:B6001)"
+    stream = io.BytesIO()
+    book.save(stream)
+    return base64.b64encode(stream.getvalue()).decode()
+
+
+def test_regions_that_do_not_fit_the_time_left_are_skipped(app, monkeypatch):
+    """T5. Data regions change no value: when their predicted description
+    does not fit the time left, they are skipped and the index says so."""
+    slowed_worker(monkeypatch, SLOW_REGIONS)
+    project, task = upload(app, table_book())
+    assert task["status"] == "succeeded", task.get("error")
+    meta = meta_of(app, project)
+    regions = meta["dataRegions"]
+    assert regions["regions"] == 0
+    assert regions["skipped"] == {"reason": "time_budget", "sheets": ["Table"]}
+    # Values and formulas are complete: only the descriptions are missing.
+    assert {s["status"] for s in meta["sheetDetails"]} == {"complete"}
+    total = evaluate(app, project, "Total!A1")
+    assert total["status"] == "completed"

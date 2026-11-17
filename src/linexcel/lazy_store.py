@@ -317,6 +317,14 @@ class ImportBudget:
             self.analysis_stopped = now
         return True
 
+    def regions_fit(self, values: int) -> bool:
+        """Whether describing the regions of ``values`` saved values ends,
+        as predicted with the margin, before the deadline."""
+        if self.deadline is None:
+            return True
+        predicted = self.ESTIMATE_MARGIN * self.VALUE_SECONDS * values
+        return self.clock() + predicted < self.deadline
+
 
 class _ImportStopError(Exception):
     def __init__(self, reason, position=0):
@@ -3223,9 +3231,18 @@ def build_index(
 
             index_facts(path, store, metadata)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
-            from linexcel.data_regions import index_regions
+            from linexcel.data_regions import REGION_MIN_CELLS, index_regions
 
-            metadata["dataRegions"] = index_regions(store)
+            values = {s["name"]: s["inputs"] for s in metadata["sheetDetails"]}
+
+            def describe(sheet):
+                # A sheet too small for a region costs nothing to look at.
+                count = values.get(sheet, 0)
+                return count < REGION_MIN_CELLS or budget.regions_fit(count)
+
+            metadata["dataRegions"] = index_regions(
+                store, None if budget is None else describe
+            )
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}
                 for warning in metadata["vba"]["warnings"]
