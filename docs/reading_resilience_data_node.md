@@ -458,7 +458,8 @@ Adopted on 15 November 2026, with these choices:
 - **Every phase within the time budget (17 November, after that
   measurement).** The import's own work ends 5 s before the task's end,
   counted from the coordinator's start; the 5 s cover links, VBA, counts and
-  publication (measured 0.2 to 1.3 s). Reading stops when the time left no
+  publication (measured on the corpus: 0.07 to 0.40 s after the last phase,
+  1.2 to 2.2 s with the worker's start and exit). Reading stops when the time left no
   longer covers the analysis at its fastest, 0.30 ms per formula with no
   margin, of the sheets read whole (a first reserve of 1.25 x 0.65 ms left
   29 to 40 % of the energy model's budget unused, measured on the corpus on
@@ -481,8 +482,14 @@ Adopted on 15 November 2026, with these choices:
   import whose final steps outlast the 5 s still times out without a new
   index (the error then proposes twice the budget, not an estimate);
   loading a supplied external workbook during the analysis is not
-  interrupted. Verified on generated workbooks; the real-corpus runs (ATB at
-  25, 60 and 120 s, DGT and fpna at 600 s) await approval.
+  interrupted. Measured through serve on 17 November: ATB at 25 s published
+  a partial index and proposed 180 s, which imported it completely in 127 s;
+  at 60 and 120 s, partial indexes within 3.5 and 2.9 s of the budget; at
+  180 s, complete in 129 s (151 s with the code before this step); DGT at
+  600 s complete in 520 s with its regions skipped (predicted 125 s, 64 s
+  measured earlier, 81 s left); fpna at 600 s complete in 209 s. No task
+  timed out. With the first reserve (1.25 x 0.65 ms), the same runs left 29
+  to 40 % of ATB's budget unused and the proposed 180 s stopped reading.
 
 ### Decisions for Philippe
 

@@ -142,8 +142,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the count left, every value is kept, and a calculation reaching such a
   formula is refused. Data regions are described only when their predicted
   time fits ("Data regions skipped: budget"). The last 5 s of the budget are
-  kept for links, VBA, counts and publication (measured: 0.2 to 1.3 s).
-  Measured on generated workbooks only; the real-corpus runs await approval.
+  kept for links, VBA, counts and publication (measured on the corpus: 0.07
+  to 0.40 s after the last phase, 1.2 to 2.2 s with the worker's start and
+  exit). Measured through serve on 17 November: ATB at 25 s published 6
+  complete sheets, 2 partial (14,036 formulas not analyzed) and proposed
+  180 s, which imported it completely in 127 s; at 60 s and 120 s it
+  published partial indexes using the budget to within 3.5 s and 2.9 s; at
+  180 s it was complete in 129 s (151 s before this step). The DGT election
+  table imported completely in 520 s at 600 s, its regions skipped; the
+  generated fpna model completely in 209 s. No task timed out. A first
+  reserve, 1.25 x 0.65 ms a formula, had left 29 to 40 % of ATB's budget
+  unused and its proposed 180 s short of a complete import.
 - Propose a reimport budget that counts the whole import. It extrapolated
   the reading alone; it now adds the analysis of every formula and the
   regions, at the rates measured on the import when enough work was done to
