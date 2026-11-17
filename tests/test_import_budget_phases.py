@@ -162,9 +162,9 @@ def app(tmp_path):
         application.close()
 
 
-def test_an_analysis_past_the_budget_publishes_what_it_analysed(app, monkeypatch):
+def test_an_analysis_past_the_budget_publishes_what_it_analyzed(app, monkeypatch):
     """T1. The analysis stops at the deadline; the index is published with
-    every value; the formulas left are marked not analysed, their sheets
+    every value; the formulas left are marked not analyzed, their sheets
     partial for the time budget, and a calculation reaching one is refused.
     """
     slowed_worker(monkeypatch, SLOW_ANALYSIS)
@@ -176,37 +176,37 @@ def test_an_analysis_past_the_budget_publishes_what_it_analysed(app, monkeypatch
     for name in ("Slow", "Third"):
         assert details[name]["status"] == "partial", details[name]
         assert details[name]["reason"] == "time_budget"
-        assert details[name]["unanalysedFormulas"] >= 1
+        assert details[name]["unanalyzedFormulas"] >= 1
     # Most of Slow and all of Third were left.
-    assert details["Third"]["unanalysedFormulas"] == 120
+    assert details["Third"]["unanalyzedFormulas"] == 120
     assert meta["status"] == "partial"
     # T2. The proposal counts the analysis, not only the reading. Too few
-    # formulas were analysed to measure their rate: it says it is uncertain.
+    # formulas were analyzed to measure their rate: it says it is uncertain.
     estimate = meta["importEstimate"]
     assert estimate["cause"] == ["analysis"]
-    assert estimate["formulasAnalysed"] < estimate["formulasPredicted"] == 243
+    assert estimate["formulasAnalyzed"] < estimate["formulasPredicted"] == 243
     assert estimate["phases"]["analysis"] > 0
     assert not estimate["formulaRateMeasured"] and estimate["uncertain"]
     assert estimate["seconds"] >= BUDGET + 60
     timings = meta["importTimings"]
-    assert timings["formulasNotAnalysed"] == 243 - estimate["formulasAnalysed"]
+    assert timings["formulasNotAnalyzed"] == 243 - estimate["formulasAnalyzed"]
     assert any(
-        d.get("code") == "formulas_not_analysed" and d.get("sheet") == "Third"
+        d.get("code") == "formulas_not_analyzed" and d.get("sheet") == "Third"
         for d in meta["diagnostics"]
     )
-    # Values stay, as saved values; a formula not analysed says so.
+    # Values stay, as saved values; a formula not analyzed says so.
     assert node(app, project, "Third!B7")["value"] == 70
     left = node(app, project, "Third!A7")
-    assert any("not analysed" in d for d in left["diagnostics"])
+    assert any("not analyzed" in d for d in left["diagnostics"])
     assert left["dependencies"] == []
     # Refused, with the reason named, never calculated without its sources.
     refused = evaluate(app, project, "Third!A7")
     assert refused["status"] != "completed" and refused["value"] is None
-    assert any("not analysed" in d for d in refused["diagnostics"])
+    assert any("not analyzed" in d for d in refused["diagnostics"])
     reaching = evaluate(app, project, "First!A2")
     assert reaching["status"] != "completed" and reaching["value"] is None
-    assert any("not analysed" in d for d in reaching["diagnostics"])
-    # An analysed formula reading only values of that sheet is calculated.
+    assert any("not analyzed" in d for d in reaching["diagnostics"])
+    # An analyzed formula reading only values of that sheet is calculated.
     read = evaluate(app, project, "First!A1")
     assert (read["status"], read["value"]) == ("completed", 20)
     total = evaluate(app, project, "First!A3")

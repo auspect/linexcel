@@ -463,7 +463,7 @@ Adopted on 15 November 2026, with these choices:
   whole (the sheet being read does not count its own formulas, so a sheet
   that can be read is never rolled back for them). The analysis
   checks the deadline before each formula; the formulas it does not reach
-  keep the diagnostic "Formula not analysed", written by the reader in every
+  keep the diagnostic "Formula not analyzed", written by the reader in every
   formula and name node and removed by the analysis, so nothing is written
   at the deadline (rewriting 150,000 nodes then would take 8 s) and every
   read of a node sees it. Their sheets are `partial` with the reason

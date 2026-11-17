@@ -194,7 +194,7 @@ class ImportBudget:
     longer does. The formulas of the sheet being read are not counted: it
     is read while the sheets before it stay protected, and the analysis then
     covers its formulas as far as time allows, marking the rest not
-    analysed rather than rolling back a sheet that could be read.
+    analyzed rather than rolling back a sheet that could be read.
     """
 
     #: Share of the storage left at a task's start that reading may use.
@@ -215,7 +215,7 @@ class ImportBudget:
     VALUE_SECONDS = 5.5e-6
     #: Kept at the end of a task for links, VBA, counts and publication.
     FINAL_SECONDS = 5.0
-    #: Fewest formulas analysed, and saved values described in regions, for
+    #: Fewest formulas analyzed, and saved values described in regions, for
     #: a proposal to use the rate measured on the import itself.
     MIN_MEASURED_FORMULAS = 2_000
     MIN_MEASURED_VALUES = 10_000
@@ -266,7 +266,7 @@ class ImportBudget:
         and values it found are extrapolated from the share of worksheet XML
         read. Analysis and regions use the rates measured on this import
         when they were measured on enough work (``MIN_MEASURED_FORMULAS``
-        formulas analysed; regions described), else the cautious rates
+        formulas analyzed; regions described), else the cautious rates
         above. The budget is the predicted time with the margin, plus the
         final time, rounded up to the minute, at least a minute more than
         the task's; above the server's bound it says so. ``uncertain`` says
@@ -284,10 +284,10 @@ class ImportBudget:
         scale = total / read if stopped else 1.0
         formulas = timings["formulasRead"] * scale
         values = timings["valuesRead"] * scale
-        analysed = timings["formulasAnalysed"]
-        formula_measured = analysed >= self.MIN_MEASURED_FORMULAS
+        analyzed = timings["formulasAnalyzed"]
+        formula_measured = analyzed >= self.MIN_MEASURED_FORMULAS
         formula_rate = (
-            timings["dependencies"] / analysed
+            timings["dependencies"] / analyzed
             if formula_measured
             else self.formula_seconds
         )
@@ -310,7 +310,7 @@ class ImportBudget:
         # The smallest share of the work this import measured its rates on.
         processed = read / total if stopped else 1.0
         if formulas and not formula_measured:
-            processed = min(processed, analysed / formulas)
+            processed = min(processed, analyzed / formulas)
         uncertain = (
             read / total < 0.2
             or (not formula_measured and phases["analysis"] > 0.25 * predicted)
@@ -324,7 +324,7 @@ class ImportBudget:
             "seconds": min(seconds, self.MAX_SECONDS),
             "beyondMaximum": seconds > self.MAX_SECONDS,
             "phases": {name: round(value, 1) for name, value in phases.items()},
-            "formulasAnalysed": analysed,
+            "formulasAnalyzed": analyzed,
             "formulasPredicted": round(formulas),
             "formulaSeconds": formula_rate,
             "formulaRateMeasured": formula_measured,
@@ -403,23 +403,23 @@ _NOT_IMPORTED = {
 #: the dependency analysis from each node it analyses. A node the analysis
 #: did not reach keeps it: every reader of the node sees it, and a
 #: calculation reaching the node is refused.
-NOT_ANALYSED = (
-    "Formula not analysed within the import's time budget: its sources are "
+NOT_ANALYZED = (
+    "Formula not analyzed within the import's time budget: its sources are "
     "unknown, so a calculation reading it is refused. Its saved value is "
     "shown. Reimport with a larger time budget."
 )
 
 
-def _without_not_analysed(diagnostics):
-    return [d for d in diagnostics if d != NOT_ANALYSED]
+def _without_not_analyzed(diagnostics):
+    return [d for d in diagnostics if d != NOT_ANALYZED]
 
 
-def _not_analysed(store, metadata, after):
+def _not_analyzed(store, metadata, after):
     """Mark the sheets whose formulas the analysis did not reach.
 
-    ``after`` is the last ``seq`` analysed: every formula or name node past
-    it still carries ``NOT_ANALYSED``. Their sheets become ``partial`` for
-    the time budget; values and analysed formulas are all kept.
+    ``after`` is the last ``seq`` analyzed: every formula or name node past
+    it still carries ``NOT_ANALYZED``. Their sheets become ``partial`` for
+    the time budget; values and analyzed formulas are all kept.
     """
     counts = dict(
         store.db.execute(
@@ -434,7 +434,7 @@ def _not_analysed(store, metadata, after):
         sheet = details.get(name)
         if sheet is not None:
             message = (
-                f"{count} formula(s) not analysed: the import's time budget ran "
+                f"{count} formula(s) not analyzed: the import's time budget ran "
                 "out during the dependency analysis. Their saved values are "
                 "shown; their sources are unknown and a calculation reading one "
                 "is refused. The cells they read do not list them among their "
@@ -443,18 +443,18 @@ def _not_analysed(store, metadata, after):
             if sheet["status"] == "complete":
                 sheet["status"] = "partial"
             sheet.setdefault("reason", "time_budget")
-            sheet["unanalysedFormulas"] = count
+            sheet["unanalyzedFormulas"] = count
             sheet["diagnostics"].append(message)
         else:
             scope = "defined names" if name is None else name
             message = (
-                f"{count} formula(s) of {scope} not analysed: the import's time "
+                f"{count} formula(s) of {scope} not analyzed: the import's time "
                 "budget ran out during the dependency analysis."
             )
         diagnostics.append(
             {
                 "sheet": name,
-                "code": "formulas_not_analysed",
+                "code": "formulas_not_analyzed",
                 "reason": "time_budget",
                 "count": count,
                 "message": message,
@@ -2116,7 +2116,7 @@ def _read_source(path, store, budget=None):
                 "cached_value": None,
                 "cache_status": "unknown",
                 "dependencies": [],
-                "diagnostics": [NOT_ANALYSED],
+                "diagnostics": [NOT_ANALYZED],
             }
             literal = _name_literal(node)
             if literal is not None:
@@ -2574,7 +2574,7 @@ def _read_source(path, store, budget=None):
                                     "dependencies": [],
                                     "diagnostics": problems
                                     if formula is None
-                                    else [*problems, NOT_ANALYSED],
+                                    else [*problems, NOT_ANALYZED],
                                 }
                                 store.put(node)
                                 sheet[
@@ -2584,7 +2584,7 @@ def _read_source(path, store, budget=None):
                                     _read_in_transaction(db)
                                     # The reserve protects the sheets read
                                     # whole; this sheet's own formulas are
-                                    # analysed as far as time allows.
+                                    # analyzed as far as time allows.
                                     if budget and (
                                         stop := budget.exhausted(
                                             store.path, formulas_read
@@ -2779,7 +2779,7 @@ def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
     """Extract each formula's sources, in reading order, within ``budget``.
 
     At the budget's deadline the analysis stops after the node in hand: the
-    nodes it did not reach keep ``NOT_ANALYSED`` and their sheets are marked
+    nodes it did not reach keep ``NOT_ANALYZED`` and their sheets are marked
     partial; every value read stays published.
     """
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
@@ -2991,7 +2991,7 @@ def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
                         break
                     last = seq
                     node = _unpack(data)
-                    node["diagnostics"] = _without_not_analysed(node["diagnostics"])
+                    node["diagnostics"] = _without_not_analyzed(node["diagnostics"])
                     if node["kind"] == "cell":
                         region = db.execute(
                             (
@@ -3029,9 +3029,9 @@ def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
                                 member = dependency(reference, current_sheet, node)
                                 resolved = store[member]
                                 # A formula the analysis has not reached yet
-                                # carries NOT_ANALYSED until it does: its
+                                # carries NOT_ANALYZED until it does: its
                                 # source text is read as it was before.
-                                resolved["diagnostics"] = _without_not_analysed(
+                                resolved["diagnostics"] = _without_not_analyzed(
                                     resolved.get("diagnostics", [])
                                 )
                                 expression = _binding_expression(resolved)
@@ -3205,7 +3205,7 @@ def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
                     store.put(node)
                 db.commit()
             if stopped:
-                _not_analysed(store, metadata, last)
+                _not_analyzed(store, metadata, last)
             # Arrays can include saved literal-looking cells. Mark them in the
             # index so target closures refuse cached array results consistently.
             for sheet, r1, c1, r2, c2 in db.execute("SELECT * FROM arrays"):
@@ -3330,28 +3330,28 @@ def build_index(
             )
             now = mark("regions", now)
             skipped = set(metadata["dataRegions"].get("skipped", {}).get("sheets", []))
-            unanalysed = sum(
-                s.get("unanalysedFormulas", 0) for s in metadata["sheetDetails"]
+            unanalyzed = sum(
+                s.get("unanalyzedFormulas", 0) for s in metadata["sheetDetails"]
             )
             timings.update(
                 {phase: round(seconds, 3) for phase, seconds in marks.items()},
                 rest=round(marks["facts"] + marks["vba"], 3),
-                formulasAnalysed=max(0, timings["formulasRead"] - unanalysed),
-                formulasNotAnalysed=unanalysed,
+                formulasAnalyzed=max(0, timings["formulasRead"] - unanalyzed),
+                formulasNotAnalyzed=unanalyzed,
                 regionValues=sum(
                     count for sheet, count in values.items() if sheet not in skipped
                 ),
                 regionSheetsSkipped=len(skipped),
             )
             metadata["importTimings"] = timings
-            if budget is not None and (timings["readStopped"] or unanalysed or skipped):
+            if budget is not None and (timings["readStopped"] or unanalyzed or skipped):
                 proposal = budget.proposal(timings)
                 if proposal is not None:
                     proposal["cause"] = [
                         cause
                         for cause, applies in (
                             ("reading", timings["readStopped"]),
-                            ("analysis", unanalysed > 0),
+                            ("analysis", unanalyzed > 0),
                             ("regions", bool(skipped)),
                         )
                         if applies

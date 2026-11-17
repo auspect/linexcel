@@ -115,7 +115,7 @@ Import and graph construction have a separate default time budget of 600 seconds
 targeted recalculation keeps its 120-second default. Both are adjustable under
 **Limits per operation**, and `--import-seconds` sets the server's default for
 imports. An import publishes what it could do within its time budget: the
-sheets it read, their formulas analysed or marked "not analysed" (a
+sheets it read, their formulas analyzed or marked "not analyzed" (a
 calculation reaching one is refused), and data regions only when time is
 left. Diagnostics then proposes a reimport with a budget that counts reading,
 formula analysis and regions, and says when that estimate is uncertain. A

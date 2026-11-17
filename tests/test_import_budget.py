@@ -280,7 +280,7 @@ def test_every_index_records_its_phase_times_and_counts(tmp_path):
     timings = meta["importTimings"]
     for phase in ("reading", "dependencies", "facts", "vba", "regions", "total"):
         assert timings[phase] >= 0
-    assert (timings["formulasRead"], timings["formulasAnalysed"]) == (3, 3)
+    assert (timings["formulasRead"], timings["formulasAnalyzed"]) == (3, 3)
     assert timings["valuesRead"] == 5 and not timings["readStopped"]
     assert timings["bytesRead"] == timings["bytesTotal"] > 0
     assert "importEstimate" not in meta
@@ -293,7 +293,7 @@ def _timings(**changes):
         "readStopped": False,
         "reading": 30.0,
         "formulasRead": 200_000,
-        "formulasAnalysed": 100_000,
+        "formulasAnalyzed": 100_000,
         "dependencies": 40.0,
         "valuesRead": 100_000,
         "regionValues": 100_000,
@@ -331,8 +331,8 @@ def test_an_estimate_from_too_little_work_is_uncertain():
     budget = ImportBudget(seconds=25)
     # Less than 20 % of the workbook read.
     assert budget.proposal(_timings(bytesRead=150, readStopped=True))["uncertain"]
-    # Too few formulas analysed to measure a rate that weighs most.
-    few = budget.proposal(_timings(formulasAnalysed=500, dependencies=0.2))
+    # Too few formulas analyzed to measure a rate that weighs most.
+    few = budget.proposal(_timings(formulasAnalyzed=500, dependencies=0.2))
     assert not few["formulaRateMeasured"]
     assert few["formulaSeconds"] == ImportBudget.FORMULA_SECONDS
     assert few["uncertain"]
@@ -341,7 +341,7 @@ def test_an_estimate_from_too_little_work_is_uncertain():
     values = budget.proposal(
         _timings(
             formulasRead=0,
-            formulasAnalysed=0,
+            formulasAnalyzed=0,
             valuesRead=10**9,
             regions=0.0,
             regionValues=0,
@@ -364,7 +364,7 @@ def test_a_formula_sheet_that_can_be_read_is_not_rolled_back(tmp_path, values_fi
     that very sheet: a sheet that could be read within the budget was rolled
     back and published "not imported" as soon as their predicted analysis
     no longer fitted. The analysis safety net would have published all its
-    values and analysed what time allowed. Inside a sheet the reserve now
+    values and analyzed what time allowed. Inside a sheet the reserve now
     protects only the sheets already read whole."""
     book = Workbook()
     if values_first:
@@ -386,5 +386,5 @@ def test_a_formula_sheet_that_can_be_read_is_not_rolled_back(tmp_path, values_fi
     assert details["Formulas"]["status"] == "complete", details["Formulas"]
     assert details["Formulas"]["formulas"] == 25_000
     # The clock stays at 10 s: the analysis had the time to finish.
-    assert meta["importTimings"]["formulasNotAnalysed"] == 0
+    assert meta["importTimings"]["formulasNotAnalyzed"] == 0
     assert "importEstimate" not in meta

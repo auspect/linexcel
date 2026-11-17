@@ -183,7 +183,7 @@ the formulas of the sheets already read whole: 1.25 x 0.65 ms a formula,
 1.5 times the rate measured on a 233,000-formula model, with the margin of
 the proposal below. The formulas of the sheet being read are not counted:
 it is read as long as the sheets before it stay covered, and its formulas
-are then analysed as far as time allows, the rest marked "not analysed"
+are then analyzed as far as time allows, the rest marked "not analyzed"
 (below), rather than rolling back a sheet that could be read. A sheet of
 values alone may therefore use most of the budget. The sheet the
 import stops in is rolled back; it and the following sheets are marked "Sheet
@@ -192,25 +192,25 @@ is refused: its cells are unknown, never blank. A memory stop still ends the
 import without an index.
 
 The formula analysis that follows checks the deadline before each formula.
-The formulas it does not reach keep the diagnostic "Formula not analysed":
+The formulas it does not reach keep the diagnostic "Formula not analyzed":
 their saved values are shown, their sources are unknown, and a calculation
-reaching one is refused; formulas analysed that read only values are
+reaching one is refused; formulas analyzed that read only values are
 calculated. Their sheets are published as partial for the time budget, with
-the number of formulas not analysed. Every formula and defined name carries
-that diagnostic from the moment it is read until it is analysed, so nothing
+the number of formulas not analyzed. Every formula and defined name carries
+that diagnostic from the moment it is read until it is analyzed, so nothing
 is written at the deadline and every view of the node sees it. Data regions
 are described only for the sheets whose predicted description (1.25 x
 5.5 µs a saved value) ends before the deadline; the others are listed as
 "Data regions skipped: budget", with every value and formula complete. In a
 partial import, the uses listed for a cell can miss a formula not imported or
-not analysed; the banner, the node list and the Data tab say that the import
+not analyzed; the banner, the node list and the Data tab say that the import
 is partial.
 
 When time cut the import, Diagnostics says what stopped (reading, analysis,
 regions) and proposes a reimport with a budget that counts the whole import:
 the reading time and the formulas and values found, extrapolated from the
 share of worksheet XML read; the analysis of every formula and the regions,
-at the rates measured on this import when it analysed at least 2,000
+at the rates measured on this import when it analyzed at least 2,000
 formulas or described at least 10,000 values, else at the cautious rates
 above; links and VBA as measured. The total plus 25 % and the final 5 s is
 rounded up to the minute, at least a minute more than the budget used, at

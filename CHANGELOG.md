@@ -132,10 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sheets read whole (1.25 x 0.65 ms a formula), instead of at a fixed 60 %
   of the budget, so a sheet of values alone may use most of the budget. The
   sheet being read does not count its own formulas: a sheet that can be
-  read is published with its values, its formulas analysed as far as time
+  read is published with its values, its formulas analyzed as far as time
   allows, instead of being rolled back. The analysis checks the
   deadline before each formula: the formulas it did not reach keep "Formula
-  not analysed", their sheets are published as partial for the time budget
+  not analyzed", their sheets are published as partial for the time budget
   with the count left, every value is kept, and a calculation reaching such a
   formula is refused. Data regions are described only when their predicted
   time fits ("Data regions skipped: budget"). The last 5 s of the budget are
@@ -155,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the budget, saying that this is not an estimate; Diagnostics offers the
   reimport.
 - Say that a partial import's lists of uses may be incomplete. A formula not
-  imported or not analysed is missing from the uses of the cells it reads;
+  imported or not analyzed is missing from the uses of the cells it reads;
   the partial import banner now says so, and the node list and the Data tab
   say that the import is partial, as the graph already did.
 - Prepare the Data tab's browsing copy in the background. The first opening

@@ -1094,19 +1094,19 @@ ANALYSIS_META = {
             "status": "partial",
             "reason": "time_budget",
             "formulas": 1200,
-            "unanalysedFormulas": 1150,
+            "unanalyzedFormulas": 1150,
             "diagnostics": [
-                "1150 formula(s) not analysed: the import's time budget ran out."
+                "1150 formula(s) not analyzed: the import's time budget ran out."
             ],
         },
     ],
     "diagnostics": [
         {
             "sheet": "Model",
-            "code": "formulas_not_analysed",
+            "code": "formulas_not_analyzed",
             "reason": "time_budget",
             "count": 1150,
-            "message": "1150 formula(s) not analysed",
+            "message": "1150 formula(s) not analyzed",
         }
     ],
     "dataRegions": {
@@ -1122,7 +1122,7 @@ ANALYSIS_META = {
         "seconds": 120,
         "beyondMaximum": False,
         "cause": ["analysis", "regions"],
-        "formulasAnalysed": 70,
+        "formulasAnalyzed": 70,
         "formulasPredicted": 1220,
         "processedShare": 0.0574,
         "uncertain": True,
@@ -1153,14 +1153,14 @@ ANALYSIS_META = {
             "en",
             [
                 "Dependency analysis stopped by the budget: 70 of 1220 formulas "
-                "analysed.",
+                "analyzed.",
                 "Estimated import budget to import everything (reading, formula "
                 "analysis and regions): 120 s.",
                 "Uncertain estimate: only a small part of the workbook (6%) could "
                 "be processed to measure its rate.",
                 "Data regions skipped: budget.",
-                "1150 not analysed",
-                "Formulas not analysed within the import’s time budget",
+                "1150 not analyzed",
+                "Formulas not analyzed within the import’s time budget",
             ],
         ),
     ],
@@ -1168,7 +1168,7 @@ ANALYSIS_META = {
 def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
     browser, viewport, language, texts
 ):
-    """Lot 2 ter, budget step: formulas not analysed, regions skipped and an
+    """Lot 2 ter, budget step: formulas not analyzed, regions skipped and an
     uncertain estimate are said in Diagnostics, in both languages."""
     page, _, errors, _, _ = open_app(
         browser,
@@ -1184,6 +1184,8 @@ def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
         shown = page.locator("#diagnostics").inner_text()
         for text in texts:
             assert text in shown, text
+        # One spelling, the repository's: "analyzed" (analyzer.py, analyze).
+        assert "analysed" not in page.locator("body").inner_text()
         assert page.get_by_role(
             "button",
             name="Reimport with a budget of 120 s"
@@ -1218,7 +1220,7 @@ def test_an_analysis_stop_says_what_was_left_and_proposes_a_budget(
 def test_a_partial_import_says_that_listed_uses_may_be_incomplete(
     browser, viewport, language, banner, nodes, data
 ):
-    """Lot 2 ter, budget step: a formula not analysed, or a sheet not
+    """Lot 2 ter, budget step: a formula not analyzed, or a sheet not
     imported, is missing from the uses of the cells it reads. The partial
     import banner says so; the node list and the Data tab say that the
     import is partial."""
