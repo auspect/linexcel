@@ -369,6 +369,25 @@ def test_library_search_states_are_traced_and_accessible(browser, state, viewpor
             assert "0 internal relationships grouped" in english_counts
             assert "0 synthetic links" in english_counts
             page.locator("#ui-language").select_option("fr")
+            # Changing the language remounts the graph: its cards are drawn one
+            # animation frame later and fitted one frame after that. Reading
+            # the minimap before then found no node, skipped the zoom and
+            # dragged a viewport that the first fit then replaced.
+            page.wait_for_function(
+                """() => {
+                  const canvas = document.querySelector('.library-graph-canvas');
+                  const minimap = canvas?.querySelector('.react-flow__minimap');
+                  if (!minimap) return false;
+                  const drawn = minimap.querySelectorAll(
+                    '.react-flow__minimap-node').length;
+                  return minimap.querySelector('title')?.textContent
+                      === 'Carte du graphe'
+                    && drawn > 0
+                    && drawn === canvas.querySelectorAll('.react-flow__node').length
+                    && canvas.querySelector('.react-flow__viewport').style.transform
+                      !== 'translate(0px, 0px) scale(1)';
+                }"""
+            )
             assert (
                 page.locator(".library-graph-canvas .flow-card.is-selected").count()
                 == 0
