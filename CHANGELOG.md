@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Translate the calculation status beside "Linexcel result" in the node
+  card: a refused calculation read "Linexcel result · Non pris en charge" in
+  the English interface.
 - Show a cell read only through a range as used. In the graph of
   `linexcel serve`, `C5` read by `=SUM(C2:C11)` had no neighbour; it now links
   to the range `C2:C11`, labelled as range membership, and through it to the
@@ -157,7 +160,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Say that a partial import's lists of uses may be incomplete. A formula not
   imported or not analyzed is missing from the uses of the cells it reads;
   the partial import banner now says so, and the node list and the Data tab
-  say that the import is partial, as the graph already did.
+  say that the import is partial, as the graph already did. The node card
+  says it under the list of uses, and the graph's notice below the
+  dependents it draws (hidden at phone width by the graph package).
+  Diagnostics names the budget that stopped the reading, the analysis or
+  the regions, and after a timeout says that the sheets it lists are those
+  of the previous index.
 - Prepare the Data tab's browsing copy in the background. The first opening
   of the tab copied the whole workbook inside the request and blocked every
   other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB
