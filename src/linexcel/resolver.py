@@ -964,6 +964,32 @@ def _collect_ref_strings(ast_dict: dict) -> list[str]:
     return out
 
 
+def _range_end_refs(ast_dict: dict) -> set[str]:
+    """References written as an end of a range operator, ``A:B``.
+
+    Such a range reads everything between its ends, which neither end says
+    alone.
+    """
+    ends: set[str] = set()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("node_type") == "BinaryOp" and node.get("operator") == ":":
+                for side in (node.get("left"), node.get("right")):
+                    if isinstance(side, dict) and side.get("node_type") == "Reference":
+                        ref = side.get("reference")
+                        if ref:
+                            ends.add(str(ref))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(ast_dict)
+    return ends
+
+
 def _bound_names(ast_dict: dict) -> set[str]:
     """Upper-cased names bound by any ``LET`` or ``LAMBDA`` in the formula.
 

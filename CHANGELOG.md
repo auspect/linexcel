@@ -21,9 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named after the reference as its only precedent, although its value was
   calculated; it now links to the cells of the column. A formula copied down a
   table column is one group in the graph: it links to the rows its cells read
-  in each column it names. A targeted analysis (`--target`) no longer stops at
-  such a reference: it goes up to the cells the table holds. A reference the
-  table resolver refuses stays an unresolved node, as before.
+  in each column it names, as one range when those rows form more than eight
+  separate runs. A targeted analysis (`--target`) goes up through such a
+  reference to the cells the table holds, when it traced them. A reference
+  stays an unresolved node, as before, when the table resolver refuses it,
+  when it is an end of a range (`Table[Jan]:Table[Mar]`), and when none of
+  the cells it reads is on the graph: a table without cells, or cells a
+  targeted analysis did not trace.
 
 ## [1.19.2] — 2026-11-13
 

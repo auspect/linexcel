@@ -282,28 +282,34 @@ def batch_table_resolver(data: bytes):
     return resolve, tuple(names)
 
 
-#: Refusals that depend on the cell holding the formula: another cell of the
-#: same copied formula may still resolve the reference.
-_CELL_REFUSALS = frozenset(
-    {"table_missing", "table_row_unavailable", "table_disjoint_rows"}
-)
+#: Refusals about the row of the cell holding the formula: another cell of the
+#: same copied formula may still resolve a reference that names its table.
+_ROW_REFUSALS = frozenset({"table_row_unavailable", "table_disjoint_rows"})
+
+#: Separate runs of rows one copied formula may read down one column span.
+#: Past it they are read as one range, from the first row to the last.
+MAX_ROW_RUNS = 8
 
 
-def _reads_its_cell(text: str) -> bool:
-    """Whether a table reference depends on the cell that holds it.
+def _reads_its_cell(text: str) -> tuple[bool, bool]:
+    """Whether a table reference depends on the cell that holds it, and
+    whether it names its table.
 
-    It does when it names no table, which means the table the cell is in, or
-    when it asks for the current row.
+    It depends on the cell when it names no table, which means the table the
+    cell is in, or when it asks for the current row.
     """
     _prefix, body = split_sheet_prefix(text)
     opening = body.find("[")
     if opening <= 0:
-        return opening == 0
+        return opening == 0, False
     try:
         parts, _separators, _end = _bracket(body, opening)
     except TableReferenceError:
-        return False
-    return any(special and value.casefold() == "#this row" for value, special in parts)
+        return False, True
+    return (
+        any(special and value.casefold() == "#this row" for value, special in parts),
+        True,
+    )
 
 
 def member_rectangles(
@@ -313,15 +319,21 @@ def member_rectangles(
 
     ``resolve`` comes from ``batch_table_resolver``; ``cells`` are the
     ``(row, column)`` positions of the formula. Returns ``None`` when ``text``
-    is not a table reference. Otherwise the rectangles read, merged down each
-    column span where their rows touch, and whether every cell resolved the
-    reference.
+    is not a table reference. Otherwise the rectangles read and whether every
+    cell resolved the reference.
 
-    A reference that no cell can resolve is asked about once, not once per
-    cell. After such a refusal the remaining cells are not asked: the result
-    is then incomplete, with what the cells before it resolved.
+    The rectangles are merged down each column span where their rows touch.
+    More than ``MAX_ROW_RUNS`` separate runs down one span are read as one
+    range from the first row to the last, as a copied A1 reference is read
+    over the box of its cells: one precedent per row would bury the graph.
+
+    A refusal that cannot depend on the cell is asked about once. Which table
+    an unnamed reference means, and which row a current-row reference reads,
+    depend on the cell: after such a refusal the other cells are still asked.
+    The result is then incomplete, with what the other cells resolved.
     """
-    if not _reads_its_cell(text):
+    reads_its_cell, names_its_table = _reads_its_cell(text)
+    if not reads_its_cell:
         try:
             selection = resolve(text, sheet)
         except TableReferenceError:
@@ -334,25 +346,28 @@ def member_rectangles(
             selection = resolve(text, sheet, row, column)
         except TableReferenceError as error:
             complete = False
-            if error.code not in _CELL_REFUSALS:
+            if names_its_table and error.code not in _ROW_REFUSALS:
+                # The table or the column is refused, whatever the cell.
                 break
             continue
         if selection is None:
             return None
         found.add(selection.rectangle)
-    merged: list[Rect] = []
+    spans: dict[tuple[str | None, int, int], list[Rect]] = {}
     for rect in sorted(found, key=lambda r: (r.sheet, r.c1, r.c2, r.r1, r.r2)):
-        last = merged[-1] if merged else None
-        if (
-            last is not None
-            and (last.sheet, last.c1, last.c2) == (rect.sheet, rect.c1, rect.c2)
-            and rect.r1 <= last.r2 + 1
-        ):
-            merged[-1] = Rect(
+        runs = spans.setdefault((rect.sheet, rect.c1, rect.c2), [])
+        if runs and rect.r1 <= runs[-1].r2 + 1:
+            last = runs[-1]
+            runs[-1] = Rect(
                 last.sheet, last.r1, last.c1, max(last.r2, rect.r2), last.c2
             )
         else:
-            merged.append(rect)
+            runs.append(rect)
+    merged: list[Rect] = []
+    for (span_sheet, c1, c2), runs in spans.items():
+        if len(runs) > MAX_ROW_RUNS:
+            runs = [Rect(span_sheet, runs[0].r1, c1, runs[-1].r2, c2)]
+        merged.extend(runs)
     return merged, complete
 
 
