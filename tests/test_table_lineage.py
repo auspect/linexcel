@@ -105,7 +105,15 @@ def test_many_separate_rows_of_a_column_are_read_as_one_range():
     assert len(inputs) == 2
 
 
-def test_a_range_between_two_table_references_stays_unresolved():
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(SalesTable[Jan]:SalesTable[Mar])",
+        # The ends of the range are computed from the references.
+        "=SUM(INDEX(SalesTable[Jan],1):INDEX(SalesTable[Mar],2))",
+    ],
+)
+def test_a_range_between_two_table_references_stays_unresolved(formula):
     # Jan:Mar reads Feb too, which neither end names. Linking the two ends
     # alone would show a formula that reads less than it does.
     book = Workbook()
@@ -115,7 +123,7 @@ def test_a_range_between_two_table_references_stays_unresolved():
         sales.append(values)
     sales.add_table(Table(displayName="SalesTable", ref="A1:D3"))
     report = book.create_sheet("Report")
-    report["B1"] = "=SUM(SalesTable[Jan]:SalesTable[Mar])"
+    report["B1"] = formula
     result, edges = graph(saved(book))
     assert precedents(edges, "c:Report!B1") == {
         "x:SalesTable[Jan]",
@@ -326,14 +334,21 @@ def test_a_refusal_that_cannot_depend_on_the_cell_is_asked_about_once(text):
 )
 def test_a_refusal_that_depends_on_the_cell_does_not_stop_the_others(text):
     resolve, calls = counted(sales_book())
-    # Column 9 is outside the table, on every row from 1 to 199; then come
-    # the three cells of the Total column, asked last.
-    cells = CELLS[3:] + CELLS[:3]
-    rectangles, complete = structured_refs.member_rectangles(
-        resolve, text, "Sales", cells
+    # Every cell of the first list is refused under both writings: column 9
+    # is outside the table, and rows 5 to 199 are no data row of it. The
+    # three cells of the Total column come last and are still asked.
+    refused = [(row, 9) for row in range(5, 200)]
+    cells = refused + [(2, 4), (3, 4), (4, 4)]
+    assert structured_refs.member_rectangles(resolve, text, "Sales", refused) == (
+        [],
+        False,
     )
-    assert not complete
-    assert Rect("Sales", 2, 2, 4, 2) in rectangles
+    del calls[:]
+    assert structured_refs.member_rectangles(resolve, text, "Sales", cells) == (
+        [Rect("Sales", 2, 2, 4, 2)],
+        False,
+    )
+    assert len(calls) == len(cells)
 
 
 def every_other_row(count):

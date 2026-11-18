@@ -965,28 +965,30 @@ def _collect_ref_strings(ast_dict: dict) -> list[str]:
 
 
 def _range_end_refs(ast_dict: dict) -> set[str]:
-    """References written as an end of a range operator, ``A:B``.
+    """References written as an end of a range operator ``A:B``, or inside
+    an expression that is one, as in ``INDEX(A, 1):INDEX(B, 3)``.
 
-    Such a range reads everything between its ends, which neither end says
-    alone.
+    Such a range reads everything between its ends, which no reference in it
+    says alone.
     """
     ends: set[str] = set()
 
-    def walk(node) -> None:
+    def walk(node, in_range: bool) -> None:
         if isinstance(node, dict):
-            if node.get("node_type") == "BinaryOp" and node.get("operator") == ":":
-                for side in (node.get("left"), node.get("right")):
-                    if isinstance(side, dict) and side.get("node_type") == "Reference":
-                        ref = side.get("reference")
-                        if ref:
-                            ends.add(str(ref))
+            if in_range and node.get("node_type") == "Reference":
+                ref = node.get("reference")
+                if ref:
+                    ends.add(str(ref))
+            in_range = in_range or (
+                node.get("node_type") == "BinaryOp" and node.get("operator") == ":"
+            )
             for v in node.values():
-                walk(v)
+                walk(v, in_range)
         elif isinstance(node, list):
             for v in node:
-                walk(v)
+                walk(v, in_range)
 
-    walk(ast_dict)
+    walk(ast_dict, False)
     return ends
 
 

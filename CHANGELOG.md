@@ -25,9 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate runs. A targeted analysis (`--target`) goes up through such a
   reference to the cells the table holds, when it traced them. A reference
   stays an unresolved node, as before, when the table resolver refuses it,
-  when it is an end of a range (`Table[Jan]:Table[Mar]`), and when none of
-  the cells it reads is on the graph: a table without cells, or cells a
-  targeted analysis did not trace.
+  when it takes part in a range operator (`Table[Jan]:Table[Mar]`,
+  `INDEX(Table[Jan],1):INDEX(Table[Mar],3)`), and when none of the cells it
+  reads is on the graph: a table without cells, or cells a targeted analysis
+  did not trace.
 
 ## [1.19.2] — 2026-11-13
 

@@ -30,9 +30,10 @@ declared table reference to the cells it reads. A formula copied down a table
 column is one group node, linked to the rows its cells read in each column it
 names; more than eight separate runs of rows are read as one range. A
 reference stays an unresolved node when the table resolver refuses it, when it
-is an end of a range such as `Table[Jan]:Table[Mar]`, or when none of the
-cells it reads is on the graph (a table without cells, cells a targeted
-analysis did not trace). A table reference built by `INDIRECT` has no
+takes part in a range operator such as `Table[Jan]:Table[Mar]` or
+`INDEX(Table[Jan],1):INDEX(Table[Mar],3)`, or when none of the cells it reads
+is on the graph (a table without cells, cells a targeted analysis did not
+trace). A table reference built by `INDIRECT` has no
 precedent in the graph. The step-by-step decomposition can still show a table
 reference without its value, with or without `#This Row`. `FORMULATEXT`
 retains the saved reading with an explicit limitation, because

@@ -506,7 +506,8 @@ class GraphBuilder:
                     detail is None
                     and self.table_resolver is not None
                     # ``Table[Jan]:Table[Mar]`` reads February too, which
-                    # neither end says: the ends of a range stay named.
+                    # neither end says: what a range is written with stays
+                    # named, ``INDEX(Table[Jan], 1)`` as an end included.
                     and ref not in range_ends
                 ):
                     # A table reference reads the declared table's cells. Its
