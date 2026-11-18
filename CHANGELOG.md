@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.3] — 2026-11-18
+
+### Changed
+
+- Building from source requires hatchling 1.33.0 or later, and the `docs`
+  extra requires mkdocstrings 1.0.8 or later.
+
+### Fixed
+
+- Follow declared table references in the dependency graph of
+  `linexcel analyze`. `=SUM(SalesTable[Revenue])` had a single unresolved node
+  named after the reference as its only precedent, although its value was
+  calculated; it now links to the cells of the column. A formula copied down a
+  table column is one group in the graph: it links to the rows its cells read
+  in each column it names, as one range when those rows form more than eight
+  separate runs. A targeted analysis (`--target`) goes up through such a
+  reference to the cells the table holds, when it traced them. A reference
+  stays an unresolved node, as before, when the table resolver refuses it,
+  when it takes part in a range operator (`Table[Jan]:Table[Mar]`,
+  `INDEX(Table[Jan],1):INDEX(Table[Mar],3)`), and when none of the cells it
+  reads is on the graph: a table without cells, or cells a targeted analysis
+  did not trace.
+
 ## [1.19.2] — 2026-11-13
 
 ### Fixed

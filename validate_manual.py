@@ -153,8 +153,10 @@ CASES = {
         checks=(
             "'Errors' nodes — every Excel error value should render as #DIV/0!,",
             "  #N/A and so on, never as a raw engine object.",
-            "'Cross Refs' — external links, 3-D and structured references become",
-            "  grey 'external reference' nodes rather than silent wrong edges.",
+            "'Cross Refs' — external links and 3-D references become grey",
+            "  'external reference' nodes rather than silent wrong edges. The two",
+            "  table references lead to cells of 'Sales Data': B5 to the Revenue",
+            "  column (F2:F251), B6 to Units on its own row (D6).",
             "  The circular pair (B15/B16) must not hang or vanish.",
             "'Hostile Text' — no dialog may appear, and the payloads must read",
             "  back verbatim: </script>, __TITLE__, $&, the U+2028 line.",
