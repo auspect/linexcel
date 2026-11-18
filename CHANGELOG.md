@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.3] — 2026-11-18
+
+### Changed
+
+- Building from source requires hatchling 1.33.0 or later, and the `docs`
+  extra requires mkdocstrings 1.0.8 or later.
+
 ### Fixed
 
 - Follow declared table references in the dependency graph of
