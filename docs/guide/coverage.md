@@ -25,10 +25,14 @@ not extend historical batch measurements or establish full Excel equivalence.
 | Iterative cycles | Source iteration settings and explicit native convergence telemetry | Disabled/malformed settings, nonconvergence and incompatible external settings |
 
 Batch calculation also resolves declared table references and applies the bounded
-visibility adapter and supported 3D aggregate expansion. Its graph still keeps
-structured references as opaque nodes; previews needing `#This Row` context can
-remain unavailable. `FORMULATEXT` retains the saved reading with an explicit
-limitation, because engine-normalized syntax does not establish Excel's original
+visibility adapter and supported 3D aggregate expansion. Its graph follows a
+declared table reference to the cells it reads. A formula copied down a table
+column is one group node, linked to the rows its cells read in each column it
+names. A reference the table resolver refuses stays an unresolved node, and a
+table reference built by `INDIRECT` has no precedent in the graph. The
+step-by-step decomposition can still show a table reference without its
+value, with or without `#This Row`. `FORMULATEXT` retains the saved reading
+with an explicit limitation, because engine-normalized syntax does not establish Excel's original
 formula text. External ranges retain their types and dimensions, with external
 reading provenance carried through their dependent calculations; this batch
 path reads supplied files' saved values rather than recalculating their closure.

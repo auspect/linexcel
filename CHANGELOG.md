@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Follow declared table references in the dependency graph of
+  `linexcel analyze`. `=SUM(SalesTable[Revenue])` had a single unresolved node
+  named after the reference as its only precedent, although its value was
+  calculated; it now links to the cells of the column. A formula copied down a
+  table column is one group in the graph: it links to the rows its cells read
+  in each column it names. A targeted analysis (`--target`) no longer stops at
+  such a reference: it goes up to the cells the table holds. A reference the
+  table resolver refuses stays an unresolved node, as before.
+
 ## [1.19.2] — 2026-11-13
 
 ### Fixed
