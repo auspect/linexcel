@@ -40,6 +40,7 @@ from linexcel.structure import (
     inspect_workbook,  # noqa: F401  (re-exported: public API)
     read_structure,
 )
+from linexcel.structured_refs import batch_table_resolver
 from linexcel.sweep import sweep_sheets
 from linexcel.tables import _build_table_index
 
@@ -363,6 +364,8 @@ def analyze_workbook(
         warnings,
         reporter,
         max_nodes_per_sheet=max_nodes_per_sheet,
+        # The tables as the engine resolved them when it loaded the workbook.
+        table_resolver=batch_table_resolver(data)[0],
     )
     builder.select_nodes(groups)
     nodes = builder.nodes

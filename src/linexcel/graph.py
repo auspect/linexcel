@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from linexcel.powerquery import Query, QuerySource
 from linexcel.refs import Rect, a1, parse_ref, parse_ref_detailed, stretch_ref
 from linexcel.resolver import _collect_ref_strings, _external_name, _ValueResolver
 from linexcel.structure import MAX_NODES_PER_SHEET
+from linexcel.structured_refs import member_rectangles
 from linexcel.sweep import FormulaGroup, _target_ranges
 from linexcel.tables import _enrich_with_table
 from linexcel.values import _jsonable
@@ -138,10 +140,13 @@ class GraphBuilder:
         reporter: Any,
         *,
         max_nodes_per_sheet: int | None = None,
+        table_resolver: Callable[..., Any] | None = None,
     ) -> None:
         self.max_nodes_per_sheet = limit_or_default(
             "max_nodes_per_sheet", max_nodes_per_sheet, MAX_NODES_PER_SHEET
         )
+        #: Resolves a declared table reference to the rectangle it reads.
+        self.table_resolver = table_resolver
         self.resolver = resolver
         self.sheet_dims = sheet_dims
         self.table_index = table_index
@@ -483,6 +488,20 @@ class GraphBuilder:
             agg_rects: list[Rect] = []
             for ref in refs:
                 detail = parse_ref_detailed(ref, default_sheet=sheet)
+                if detail is None and self.table_resolver is not None:
+                    # A table reference reads the declared table's cells. Its
+                    # rectangles are already those of every cell of the group:
+                    # they are not stretched like a relative A1 reference.
+                    reads = member_rectangles(
+                        self.table_resolver, ref, sheet, grp.cells
+                    )
+                    if reads is not None:
+                        rectangles, complete = reads
+                        agg_rects.extend(rectangles)
+                        if not complete:
+                            # What the resolver refused stays named as written.
+                            self.add_edge(self.ensure_opaque_node(ref), node_id, "dep")
+                        continue
                 if detail is None:
                     up = ref.upper()
                     if up in self.name_nodes:

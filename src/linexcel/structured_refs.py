@@ -282,6 +282,80 @@ def batch_table_resolver(data: bytes):
     return resolve, tuple(names)
 
 
+#: Refusals that depend on the cell holding the formula: another cell of the
+#: same copied formula may still resolve the reference.
+_CELL_REFUSALS = frozenset(
+    {"table_missing", "table_row_unavailable", "table_disjoint_rows"}
+)
+
+
+def _reads_its_cell(text: str) -> bool:
+    """Whether a table reference depends on the cell that holds it.
+
+    It does when it names no table, which means the table the cell is in, or
+    when it asks for the current row.
+    """
+    _prefix, body = split_sheet_prefix(text)
+    opening = body.find("[")
+    if opening <= 0:
+        return opening == 0
+    try:
+        parts, _separators, _end = _bracket(body, opening)
+    except TableReferenceError:
+        return False
+    return any(special and value.casefold() == "#this row" for value, special in parts)
+
+
+def member_rectangles(
+    resolve, text: str, sheet: str, cells
+) -> tuple[list[Rect], bool] | None:
+    """What one table reference reads for the cells holding one copied formula.
+
+    ``resolve`` comes from ``batch_table_resolver``; ``cells`` are the
+    ``(row, column)`` positions of the formula. Returns ``None`` when ``text``
+    is not a table reference. Otherwise the rectangles read, merged down each
+    column span where their rows touch, and whether every cell resolved the
+    reference.
+
+    A reference that no cell can resolve is asked about once, not once per
+    cell. After such a refusal the remaining cells are not asked: the result
+    is then incomplete, with what the cells before it resolved.
+    """
+    if not _reads_its_cell(text):
+        try:
+            selection = resolve(text, sheet)
+        except TableReferenceError:
+            return [], False
+        return None if selection is None else ([selection.rectangle], True)
+    found: set[Rect] = set()
+    complete = True
+    for row, column in cells:
+        try:
+            selection = resolve(text, sheet, row, column)
+        except TableReferenceError as error:
+            complete = False
+            if error.code not in _CELL_REFUSALS:
+                break
+            continue
+        if selection is None:
+            return None
+        found.add(selection.rectangle)
+    merged: list[Rect] = []
+    for rect in sorted(found, key=lambda r: (r.sheet, r.c1, r.c2, r.r1, r.r2)):
+        last = merged[-1] if merged else None
+        if (
+            last is not None
+            and (last.sheet, last.c1, last.c2) == (rect.sheet, rect.c1, rect.c2)
+            and rect.r1 <= last.r2 + 1
+        ):
+            merged[-1] = Rect(
+                last.sheet, last.r1, last.c1, max(last.r2, rect.r2), last.c2
+            )
+        else:
+            merged.append(rect)
+    return merged, complete
+
+
 def _resolve_table_reference(lookup, text, sheet, row, column):
     prefix, body = split_sheet_prefix(text)
     if prefix is not None and "[" in prefix:
