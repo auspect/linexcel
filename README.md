@@ -56,7 +56,7 @@ previous results remain available after a task failure.
 The backend is Python (WSGI and isolated calculation workers). The browser
 interface is HTML, CSS and JavaScript, with a bundled React Flow graph and
 Dagre layered layout; it does not run Python in the browser or need Node on
-the user’s machine. The graph includes a minimap, fit controls and a focus mode.
+the user's machine. The graph includes a minimap, fit controls and a focus mode.
 The workspace uses the full screen width; the desktop sidebar can be collapsed.
 The separate standalone HTML report retains its Cytoscape renderer. Choose English or French in the interface, or
 open `/?lang=en`. This choice is independent of the AI documentation language.
@@ -100,7 +100,7 @@ Captures are served as individual images with thumbnails, without embedding ever
 image in the project response. Rendering remains an explicit, budgeted operation.
 
 Opening **Graph** automatically starts a cancellable server task and saves a
-workbook → sheets → R1C1 formula groups → cells hierarchy on disk.
+hierarchy of workbook, sheets, R1C1 formula groups and cells on disk.
 **Explore the workbook graph** can also start this operation explicitly. It does not start Formualizer. Each view contains at most 32
 groups or cells, plus the rest of the workbook. Click a group to expand it, use
 the breadcrumb to go back, or search for an exact cell reference to jump to its
@@ -329,7 +329,7 @@ relationships and chosen captures. It works with JavaScript disabled. See
 
 ### Command line
 
-No install needed — `uvx` fetches and runs it in one step:
+No install is needed. `uvx` fetches and runs it in one step:
 
 ```Shell
 uvx linexcel analyze workbook.xlsx           # -> workbook_lineage.html
@@ -340,7 +340,7 @@ uvx linexcel analyze workbook.xlsx --refs-dir ./linked   # workbooks it reads
 A workbook that reads `'[Budget FY26.xlsx]Annual'!B4` depends on a file
 linexcel does not have. It always names that file and the path the workbook
 declares; `--refs-dir` points at a folder holding them, and the reference is
-then read for real — the same folder is searched for the `.xlam`/`.xla`
+then read for real. The same folder is searched for the `.xlam`/`.xla`
 add-ins whose VBA the workbook calls.
 
 The default is deterministic: lineage only, no network, no key. `--ai-docs`
@@ -379,7 +379,7 @@ result.warnings               # list[str]
 ```
 
 Everything above is local and needs no key. AI documentation is optional, and
-you choose the provider — nothing is sent anywhere until you name one:
+you choose the provider. Nothing is sent anywhere until you name one:
 
 ```python
 # A local runtime keeps the workbook on your machine and costs nothing
@@ -388,8 +388,8 @@ overview = result.document_workbook(base_url="http://localhost:11434/v1", model=
 result.save_html("out.html", docs=docs, workbook_doc=overview, language="en")
 ```
 
-Any OpenAI-compatible endpoint works the same way — a local Ollama or vLLM
-runtime, a gateway such as OpenRouter, a vendor's own API — and `provider=`
+Any OpenAI-compatible endpoint works the same way, including a local Ollama or vLLM
+runtime, a gateway such as OpenRouter, or a vendor's own API. `provider=`
 takes any callable for anything else. See
 [Choosing an AI provider](https://auspect.github.io/linexcel/guide/providers/).
 
@@ -441,39 +441,39 @@ and [targeted analysis examples](https://auspect.github.io/linexcel/guide/cli/#t
 
 ## Features
 
-- **Sheet filtering** — focus the interactive graph on one worksheet while retaining its directly connected cross-sheet neighbors
-- **Targeted analysis** — trace selected output cells and their upstream dependencies with `--target` or `targets=`
+- **Sheet filtering.** Focus the interactive graph on one worksheet while retaining its directly connected cross-sheet neighbors.
+- **Targeted analysis.** Trace selected output cells and their upstream dependencies with `--target` or `targets=`.
 - **Formula extraction** via [formualizer](https://pypi.org/project/formualizer/) (Rust engine)
-- **Stretched pattern grouping** — 1000 identical formulas → 1 node
-- **Dependency graph** — cells, ranges, defined names, VBA procedures, Power Query queries
-- **Power Query lineage** — each query with its M source, what it reads and the range it fills, so data from Get &amp; Transform is not a dead end
-- **Step-by-step evaluation** — each operator/function evaluated individually
-- **Standalone HTML viewer** — Cytoscape.js embedded, fully offline, keyboard-navigable, light by default with a dark toggle
-- **Values you can check** — what the file stores and what linexcel recomputed, always side by side, each named and each stated when it is missing; a stretched formula is compared cell by cell over a sample spanning the whole group
-- **Honest about what it cannot compute** — volatile formulas (`TODAY`, `NOW`, `RAND`) are shown as *not recalculated* rather than compared against the clock, and a cell reading another workbook names that file, its path, and whether it was read
-- **Dependencies you can supply** — `--refs-dir` resolves linked workbooks and reads the VBA of the add-ins a file calls into
-- **Workbook context** — sheet previews, comments, merged ranges, frozen panes and hidden columns, plus optional LibreOffice-rendered screenshots
-- **AI documentation** — vendor-neutral, grounded in deterministic lineage, with token accounting and a spend ceiling
-- **Screenshots a model can read** — optional, opt-in: a multimodal model describes each rendered sheet, for the colour conventions and layout no extraction reaches
-- **Nine interface languages** — for both the report and the AI prompts
-- **Command line** — `uvx linexcel analyze workbook.xlsx`, no install required
+- **Stretched pattern grouping.** 1000 identical formulas become 1 node.
+- **Dependency graph.** Includes cells, ranges, defined names, VBA procedures, and Power Query queries.
+- **Power Query lineage.** Records each query with its M source, what it reads and the range it fills, so data from Get &amp; Transform is not a dead end.
+- **Step-by-step evaluation.** Evaluates each operator and function individually.
+- **Standalone HTML viewer.** Cytoscape.js is embedded, fully offline, keyboard-navigable, and light by default with a dark toggle.
+- **Values you can check.** What the file stores and what linexcel recomputed appear side by side, each named and each stated when it is missing; a stretched formula is compared cell by cell over a sample spanning the whole group.
+- **Honest about what it cannot compute.** Volatile formulas (`TODAY`, `NOW`, `RAND`) are shown as *not recalculated* rather than compared against the clock, and a cell reading another workbook names that file, its path, and whether it was read.
+- **Dependencies you can supply.** `--refs-dir` resolves linked workbooks and reads the VBA of the add-ins a file calls into.
+- **Workbook context.** Extracts sheet previews, comments, merged ranges, frozen panes and hidden columns, plus optional LibreOffice-rendered screenshots.
+- **AI documentation.** Vendor-neutral, grounded in deterministic lineage, with token accounting and a spend ceiling.
+- **Screenshots a model can read.** Optional and opt-in. A multimodal model describes each rendered sheet, for the colour conventions and layout no extraction reaches.
+- **Nine interface languages.** Available for both the report and the AI prompts.
+- **Command line.** Run `uvx linexcel analyze workbook.xlsx`, with no install required.
 
 ## Roadmap
 
 Shipped:
 
-- [x] Deterministic lineage — formula extraction, stretched-pattern grouping, dependency graph, VBA
+- [x] Deterministic lineage: formula extraction, stretched-pattern grouping, dependency graph, VBA
 - [x] Step-by-step evaluation, with every value checked against the one stored in the file
 - [x] Standalone offline HTML viewer, in nine languages
 - [x] Workbook context and LibreOffice-rendered sheet screenshots
-- [x] AI documentation — any OpenAI-compatible endpoint, token accounting, spend ceiling
+- [x] AI documentation: any OpenAI-compatible endpoint, token accounting, spend ceiling
 - [x] Command-line interface, installable-free through `uvx`
-- [x] Power Query lineage ([#34](https://github.com/auspect/linexcel/issues/34)) — queries as nodes, with their M source, their sources and the range they fill
-- [x] Vision ([#46](https://github.com/auspect/linexcel/issues/46)) — an optional multimodal description of each sheet screenshot, for what a text dossier cannot carry
+- [x] Power Query lineage ([#34](https://github.com/auspect/linexcel/issues/34)). Queries appear as nodes, with their M source, their sources and the range they fill.
+- [x] Vision ([#46](https://github.com/auspect/linexcel/issues/46)), an optional multimodal description of each sheet screenshot for what a text dossier cannot carry.
 
 Planned:
 
-- [ ] **`formulas` as a fallback** ([#37](https://github.com/auspect/linexcel/issues/37)) — a second parser for the workbooks formualizer cannot read, so an unsupported construct degrades the graph instead of failing the analysis.
+- [ ] **`formulas` as a fallback** ([#37](https://github.com/auspect/linexcel/issues/37)). A second parser for the workbooks formualizer cannot read, so an unsupported construct degrades the graph instead of failing the analysis.
 
 ## Documentation
 
@@ -560,7 +560,7 @@ this supplementary sample does not replace the full acceptance workflow.
 ## Security
 
 Analysis is entirely local. AI documentation sends dossiers only to the provider
-you configure — see
+you configure. See
 [Data handling](https://auspect.github.io/linexcel/guide/data-handling/).
 
 Please report vulnerabilities privately according to
@@ -573,6 +573,6 @@ See [CHANGELOG.md](https://github.com/auspect/linexcel/blob/main/CHANGELOG.md).
 
 ## License
 
-Project source: MIT — see [LICENSE](https://github.com/auspect/linexcel/blob/main/LICENSE).
+Project source: MIT. See [LICENSE](https://github.com/auspect/linexcel/blob/main/LICENSE).
 The distribution also includes JavaScript libraries under MIT, Apache-2.0,
 BSD-3-Clause and ISC; see the [third-party notices](https://github.com/auspect/linexcel/blob/main/THIRD_PARTY_NOTICES.md).

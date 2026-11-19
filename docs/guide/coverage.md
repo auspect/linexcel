@@ -70,7 +70,7 @@ executed or refreshed by linexcel.
 | Formulas | Extracted formula source, calculation status and available decomposition. Batch analysis can group cells sharing an R1C1 pattern; the index retains individual cells with separate pattern metadata |
 | Cells and ranges | Precedent and dependent edges, including across sheets |
 | Defined names | Workbook-scoped and sheet-scoped, resolved to the cells they point at |
-| VBA | Procedures as nodes, their internal call graph, and the ranges they read and write when the reference is written literally — `Range("A1")`, `Cells(2, 3)`, `[A1:B4]`, `Worksheets("X").Range(...)` |
+| VBA | Procedures as nodes, their internal call graph, and the ranges they read and write when the reference is written literally, such as `Range("A1")`, `Cells(2, 3)`, `[A1:B4]`, and `Worksheets("X").Range(...)` |
 | Power Query | Each query as a node with its M source, the range it loads into, the sources it names and the queries it chains from |
 | Values | Source readings and available engine results, shown separately with their provenance |
 
@@ -79,8 +79,8 @@ executed or refreshed by linexcel.
 Unresolved dependencies remain explicit graph nodes and diagnostics. Common
 examples include:
 
-- links to a workbook that was not supplied — `'[1]Annual'!B4`
-- 3-D references outside the supported aggregate contexts — `Sheet1:Sheet3!A1`
+- links to a workbook that was not supplied, such as `'[1]Annual'!B4`
+- 3-D references outside the supported aggregate contexts, such as `Sheet1:Sheet3!A1`
 - structured table references outside the supported source metadata
 - a defined name pointing outside the workbook
 
@@ -92,7 +92,7 @@ precedent is missing is a fact about the workbook, not a gap to hide.
 Power Query extraction is static and covers a subset of M. linexcel does not
 execute M, refresh queries or verify their saved results. Recognized queries
 are in the lineage. Each one is a node carrying its M source, and the
-graph crosses it: `Source!A1:B4` → `BusyProducts` → `Loaded!A1:B3`, where the
+graph crosses it, from `Source!A1:B4` to `BusyProducts` to `Loaded!A1:B3`, where the
 landing range used to sit at the top of the graph with nothing above it.
 
 What is read, and from where:
@@ -101,15 +101,15 @@ What is read, and from where:
 | --- | --- |
 | The M source | the `customXml` part whose schema is `http://schemas.microsoft.com/DataMashup`: base64, then the versioned MS-QDEFF header and package ZIP containing `Formulas/Section1.m` |
 | The destination | `xl/connections.xml` names the query a connection loads, `xl/queryTables/*.xml` ties that connection to a table on a sheet |
-| The sources | read off the M — `Excel.CurrentWorkbook(){[Name="X"]}` is a table or defined name of this file and is linked to it, and a query reading another is an edge between the two |
+| The sources | read off the M. `Excel.CurrentWorkbook(){[Name="X"]}` is a table or defined name of this file and is linked to it, and a query reading another is an edge between the two |
 | External connectors | Literal arguments to recognized calls such as `File.Contents`, `Folder.Files`, `Web.Contents`, `Sql.Database` and `*.Database`, `*.Feed` or `*.DataSource`: named, never opened |
 
-A query that computes without loading anywhere — connection only, or straight
-into the data model — is shown as loading nowhere rather than dropped.
+A query that computes without loading anywhere, whether connection only or straight
+into the data model, is shown as loading nowhere rather than dropped.
 
 Where it stops is the data behind an outside source. A CSV on a share, a REST
 endpoint, a database: the query names them, linexcel does not read them, and
-the panel says so under the source list. And M is a real language — a source
+the panel says so under the source list. M is a real language, so a source
 built at run time rather than written out is invisible to a static reader,
 which is the same limit VBA has below. Comments and text literals are excluded
 from dependency scanning, and query identifiers retain M's case sensitivity.
@@ -121,7 +121,7 @@ tested cases and proposed parser improvements.
 
 ### Formulas the engine does not implement
 
-The range intersection operator — `=SUM(D2:D10 D5:D20)` — is the one met in
+The range intersection operator, such as `=SUM(D2:D10 D5:D20)`, is the one met in
 practice. Such a cell keeps the value stored in the file, says so in its card,
 and is named in the workbook warnings rather than being shown as a
 recalculation that never happened.
@@ -133,7 +133,7 @@ differently every time they are computed, so there is nothing to check them
 against: a value recomputed today can never agree with a file saved last week.
 The batch analysis policy preserves them. The card shows the value the file stores and
 says *Not recalculated (volatile)* in the other column, and the cell is not
-decomposed step by step — every step would carry a figure from today's clock.
+decomposed step by step, because every step would carry a figure from today's clock.
 
 `OFFSET`, `INDIRECT`, `CELL` and `INFO` are volatile to Excel in that they
 recalculate on every edit, but they return the same value for the same
@@ -153,7 +153,7 @@ in decreasing order of certainty:
 
 | | |
 | --- | --- |
-| **named** | always — `xl/externalLinks` carries the file name and the path the workbook declares, and the node is labelled with them |
+| **named** | Always. `xl/externalLinks` carries the file name and the path the workbook declares, and the node is labelled with them. |
 | **cached** | when Excel saved the values it last read across the link, they are used and labelled as coming from that cache |
 | **read** | with `--refs-dir` (`refs_dir=`), the referenced workbook is opened from that folder and the reference evaluates to the value it stands for |
 
@@ -166,6 +166,6 @@ with the file it came from.
 ### VBA the parser cannot follow
 
 Range access is detected only where it is written literally. A reference built
-at run time — `Range(addr)`, `Cells(i, j)` in a loop, `Application.Evaluate` —
+at run time, such as `Range(addr)`, `Cells(i, j)` in a loop, or `Application.Evaluate`,
 is invisible to a static reader, and no static reader can do better. The
 procedure still appears as a node, with its source.

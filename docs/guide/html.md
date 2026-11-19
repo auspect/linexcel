@@ -28,7 +28,7 @@ This bounded report is separate from the full analyzed-workbook viewer below.
 result.save_html("lineage.html")
 ```
 
-Fully offline — Cytoscape.js embedded, no internet needed.
+Fully offline. Cytoscape.js is embedded, so no internet is needed.
 
 ## Focus on a worksheet
 
@@ -62,14 +62,14 @@ open it and Escape to close the results.
 The selected-cell panel keeps the formula, value provenance, decomposition,
 connections and AI explanation together. Copy actions preserve the exact
 reference or formula. Previous/next selection history and selection links
-help return to a finding. “See sheet” opens its presentation context, and the
+help return to a finding. "See sheet" opens its presentation context, and the
 return action restores the graph selection, filters and camera.
 
 On dense graphs, start with the immediate neighborhood and expand when
 needed. Hidden-connection counts and the connection list make the reduced
 view explicit. Coverage categories open their corresponding nodes; their
 counts describe graph nodes, including grouped formulas, not individual
-workbook cells. “Export visible view” saves a PNG of the current graph view.
+workbook cells. "Export visible view" saves a PNG of the current graph view.
 
 Graph layout, zoom and filtering controls belong to the Graph tab. On narrow
 screens, additional options are in the Options dialog. Formula values and
