@@ -35,7 +35,7 @@ MAX_CONTEXT_XML_BYTES = 20 * 1024 * 1024
 MAX_MERGED_RANGES = 30
 MAX_TABLES_PER_SHEET = 50
 MAX_STATIC_TABLES_PER_SHEET = 10
-# ponytail: static-table heuristic scans only this many rows/columns — enough
+# ponytail: static-table heuristic scans only this many rows/columns, enough
 # for a header + a few data rows without walking a whole sheet.
 STATIC_TABLE_SCAN_ROWS = 30
 STATIC_TABLE_SCAN_COLS = 50
@@ -215,8 +215,8 @@ def detect_tables(worksheet) -> list[dict[str, Any]]:
     ``first_col``, ``last_col``), ``headers`` and ``data_rows``.
 
     Dynamic tables come from ``ws.tables`` (what Excel calls a *Table* / List
-    Object). Static tables are ranges that *look* like a table — a header row
-    of text above contiguous data — detected heuristically so a workbook with
+    Object). Static tables are ranges that *look* like a table, with a header
+    row of text above contiguous data, detected heuristically so a workbook with
     no formal tables still benefits from header/index enrichment.
     """
     tables: list[dict[str, Any]] = []
@@ -272,14 +272,14 @@ def _detect_static_tables(
 ) -> list[dict[str, Any]]:
     """Heuristically find header+data blocks not already inside a table.
 
-    A static table is a run of ≥2 contiguous columns whose first row is text
-    and whose following rows hold values, bounded by the first blank row.
+    A static table is a run of at least 2 contiguous columns whose first row is
+    text and whose following rows hold values, bounded by the first blank row.
     """
     max_r = min(getattr(worksheet, "max_row", 1) or 1, STATIC_TABLE_SCAN_ROWS)
     max_c = min(getattr(worksheet, "max_column", 1) or 1, STATIC_TABLE_SCAN_COLS)
     if max_r < 3 or max_c < STATIC_TABLE_MIN_COLS:
         return []
-    # Read the scan window once — ponytail: one iter_rows over a small window.
+    # Read the scan window once. ponytail: one iter_rows over a small window.
     rows: list[list[Any]] = []
     for row in worksheet.iter_rows(min_row=1, max_row=max_r, min_col=1, max_col=max_c):
         rows.append([cell.value for cell in row])
@@ -294,7 +294,7 @@ def static_tables_from_rows(
     Split out of :func:`_detect_static_tables` so the analyzer can run it on a
     window read from the engine: openpyxl only reaches these values by parsing
     the entire workbook, which costs seconds per million cells for a window of
-    at most ``STATIC_TABLE_SCAN_ROWS`` × ``STATIC_TABLE_SCAN_COLS``.
+    at most ``STATIC_TABLE_SCAN_ROWS`` by ``STATIC_TABLE_SCAN_COLS``.
 
     Values are expected as openpyxl's ``data_only=False`` hands them over: a
     formula cell as its ``=…`` text, a blank cell as ``None``.
@@ -348,7 +348,7 @@ def static_tables_from_rows(
             for cr1, cc1, cr2, cc2 in covered
         ):
             continue
-        # ponytail: header cells may hold formulas (=...) or be blank — openpyxl
+        # ponytail: header cells may hold formulas (=...) or be blank. Openpyxl
         # returns the formula text as a str, which would leak into table_column.
         # Fall back to the column letter so the lineage graph stays readable.
         headers: list[Any] = []
@@ -442,7 +442,7 @@ def render_workbook_screenshots(
     Excel process is needed. It exports the workbook to PDF, then ``pdftoppm``
     creates one PNG per rendered page.
 
-    With ``per_sheet`` — the default — LibreOffice is asked to put each sheet on
+    With ``per_sheet``, the default, LibreOffice is asked to put each sheet on
     a single page, so the result is a ``{sheet name: [png]}`` mapping keyed by
     the workbook's own sheet names, and the report shows each image under the
     sheet it belongs to. Sheets are not split across pages, so a long one comes
@@ -452,8 +452,8 @@ def render_workbook_screenshots(
     instead, as the page setup of the workbook lays them out.
 
     The mapping is only returned when LibreOffice produced exactly one page per
-    sheet. When it did not — an older build ignoring the option, a page setup
-    that overrides it — the flat page list is returned rather than a guessed
+    sheet. When it did not, because an older build ignored the option or a page
+    setup overrode it, the flat page list is returned rather than a guessed
     mapping, because a screenshot filed under the wrong sheet is worse than one
     filed under none.
     """
@@ -550,7 +550,7 @@ def render_workbook_screenshots(
 
 
 def _sheet_names(data: bytes | Path) -> list[str]:
-    """Sheet names in workbook order — the order LibreOffice paginates in.
+    """Sheet names in workbook order, which is the order LibreOffice paginates in.
 
     Hidden sheets and chartsheets included: LibreOffice gives them a page like
     any other, so dropping them here would shift names or lose the mapping.

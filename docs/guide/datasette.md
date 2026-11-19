@@ -111,7 +111,7 @@ host filesystem quotas are still needed for a hard disk ceiling.
 Datasette uses immutable SQLite connections. Arbitrary SQL queries and database
 downloads are disabled; native table filters, facets, sorting, pagination, row
 details, JSON and CSV exports remain available. Requests to introspection,
-actor management and other databases are outside this mounted surface.
+actor management and other databases are outside these mounted routes.
 
 ## HTTP contract
 

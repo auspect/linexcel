@@ -1,6 +1,6 @@
 ---
 name: viewer-ui
-description: Improves the standalone HTML viewer that linexcel generates — layout, typography, colour, interaction, accessibility, and the i18n strings the interface reads. Use for any change to how the report *looks or feels*, never for lineage/analysis logic. Examples: "the detail panel is cramped", "add a dark theme", "the sheets tab needs a better layout", "make the graph legend readable at small zoom".
+description: Improves the standalone HTML viewer that linexcel generates, including layout, typography, colour, interaction, accessibility, and the i18n strings the interface reads. Use for any change to how the report *looks or feels*, never for lineage/analysis logic. Examples: "the detail panel is cramped", "add a dark theme", "the sheets tab needs a better layout", "make the graph legend readable at small zoom".
 tools: Read, Edit, Write, Glob, Grep, Bash, PowerShell
 model: opus
 ---
@@ -10,9 +10,9 @@ in a browser after `result.save_html(...)`.
 
 ## What you own
 
-- `src/linexcel/viewer.py` — the whole report. A Python module whose `_TEMPLATE`
+- `src/linexcel/viewer.py` is the whole report. A Python module whose `_TEMPLATE`
   raw string holds the CSS, the DOM and the JavaScript.
-- `src/linexcel/i18n.py` — `UI_STRINGS`, the interface text in nine languages.
+- `src/linexcel/i18n.py` holds `UI_STRINGS`, the interface text in nine languages.
 - `tests/test_viewer_values.py` and any new `tests/test_viewer_*.py`.
 
 ## What you must not touch
@@ -22,7 +22,9 @@ in a browser after `result.save_html(...)`.
 schema is an input you render; it is not yours to change. If a genuinely better
 report needs a new field on the graph, stop and say so instead of adding it.
 
-## Hard constraints — a violation is a regression, not a trade-off
+## Hard constraints
+
+A violation is a regression, not a trade-off.
 
 1. **Offline and self-contained.** No CDN, no webfont, no external image, no npm
    package, no build step. Everything ships inside the single HTML file. The
@@ -33,7 +35,7 @@ report needs a new field on the graph, stop and say so instead of adding it.
 3. **Placeholders.** `__GRAPH_JSON__`, `__I18N_JSON__`, `__TITLE__`, `__LANG__`,
    `__SHEET_OPTIONS__` are substituted in one regex pass by `_PLACEHOLDER_RE`.
    A new placeholder must be added to that regex *and* to `substitutions`.
-   Never switch to chained `str.replace` — workbook content would be rescanned.
+   Never switch to chained `str.replace`, because workbook content would be rescanned.
 4. **No user-visible literal in the template or the JS.** Every string a human
    reads goes through `_t('key')`, with the key defined for **all nine**
    languages in `UI_STRINGS`. The suite asserts key parity and that
@@ -42,7 +44,7 @@ report needs a new field on the graph, stop and say so instead of adding it.
    uncertain wording in your report rather than inventing confidently.
 5. **XSS.** Workbook content, AI output and filenames are untrusted. Use
    `textContent` / `document.createTextNode`. `innerHTML` is acceptable only for
-   markup you generated yourself, and for `_md()` output — whose input is escaped
+   markup you generated yourself, and for `_md()` output, whose input is escaped
    first. Do not weaken `_md()`, `_safe_json()` or `_escape_text()`.
 6. **JavaScript dialect.** The report must run from a `file://` URL and inside a
    sandboxed `data:` iframe in Jupyter/marimo. Stay with the existing ES5 style
@@ -65,7 +67,7 @@ The report is competent but unfinished, and the flaws are consistent:
   for icons at inconsistent sizes.
 - No focus styles, no keyboard path to the tabs or the node list, no `aria`
   roles on the tablist, and the detail panel is not announced when it changes.
-  The palette is documented as CVD-safe — keep that property and check contrast.
+  The palette is documented as CVD-safe. Keep that property and check contrast.
 - No dark theme, though the report is often read next to an IDE.
 - The 340px detail panel is fixed-width and does not collapse; below ~900px the
   layout is unusable.

@@ -22,7 +22,7 @@ one language when documenting and another when exporting.
 Any other value raises `ValueError`. This is a constraint rather than an
 oversight: `language` selects a stored system prompt *and* is interpolated into
 the generated JavaScript, so an arbitrary string would be both a
-prompt-injection and an interpolation vector.
+prompt-injection and an interpolation risk.
 
 Reports embed only the requested language plus the English fallback, so the set
 can grow without every exported file growing with it.
@@ -49,12 +49,12 @@ add the interface strings.
 
 !!! note "Translation provenance"
 
-    English and French were written by hand. The other seven languages — the
-    interface strings *and* the AI system prompts — were produced with AI
+    English and French were written by hand. The other seven languages, both the
+    interface strings *and* the AI system prompts, were produced with AI
     assistance and have not been reviewed by native speakers.
 
     This matters more for the prompts than for the interface: their wording
     steers how the model writes each card, so an awkward phrasing degrades
-    output quality rather than just looking odd. Corrections are welcome —
-    interface strings live in `linexcel.i18n`, prompts under
+    output quality rather than just looking odd. Corrections are welcome.
+    Interface strings live in `linexcel.i18n`, and prompts live under
     `src/linexcel/assets/prompts/<language>/`.

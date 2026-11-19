@@ -28,9 +28,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The `openai` package is the client for every OpenAI-compatible endpoint —
-# a local Ollama or vLLM runtime, a hosted gateway, a vendor API — not a choice
-# of vendor. `openai` is kept as an alias of `ai` for callers already using it.
+# The `openai` package is the client for every OpenAI-compatible endpoint,
+# including a local Ollama or vLLM runtime, a hosted gateway or a vendor API,
+# not a choice of vendor. `openai` is kept as an alias of `ai` for callers
+# already using it.
 ai = ["openai>=1.55.3", "httpx>=0.28,<1"]
 openai = ["openai>=1.55.3", "httpx>=0.28,<1"]
 all = ["openai>=1.55.3", "httpx>=0.28,<1", "rich>=13.0"]

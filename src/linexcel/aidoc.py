@@ -3,10 +3,10 @@
 Vendor-neutral by construction: no provider is named in the code and none is
 chosen for you. There are exactly two ways in:
 
-- ``base_url=`` — any OpenAI-compatible endpoint (a local Ollama, vLLM or
+- ``base_url=``, for any OpenAI-compatible endpoint (a local Ollama, vLLM or
   LM Studio runtime; a hosted gateway such as OpenRouter; OpenAI itself;
   anything else that speaks ``/chat/completions``)
-- ``provider=`` — your own callable or :class:`LLMProvider` object, for an API
+- ``provider=``, for your own callable or :class:`LLMProvider` object, for an API
   that speaks something else entirely
 
 Each node is presented with deterministic evidence from the graph and source
@@ -66,7 +66,7 @@ MAX_DOSSIER_COMMENT_CHARS = 300
 #: Ceiling on one native image region sent to a vision model, before base64.
 #: A larger original is covered by native crops, each checked independently.
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-#: Suffix → media type, for the data URI a vision call carries.
+#: Mapping from suffix to media type, for the data URI a vision call carries.
 IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -84,9 +84,9 @@ def _prompts(kind: str) -> dict[str, str]:
     They are prose, one document per language, and they lived as 380 lines of
     triple-quoted strings in this module: correcting a phrasing in Japanese
     meant a diff in a 1,400-line file, and adding a language meant editing
-    Python and cutting a release. As files they are what they are — text a
-    translator can open — and a missing one is a missing language, which the
-    key-parity test catches.
+    Python and cutting a release. As files they are plain text a translator can
+    open, and a missing one is a missing language, which the key-parity test
+    catches.
     """
     found = {
         path.parent.name: path.read_text(encoding="utf-8").strip()
@@ -140,9 +140,10 @@ _REVIEW_TASK = (
 )
 
 # The one prompt whose evidence is not the dossier. A screenshot carries what
-# no extraction reaches — colour conventions, conditional formatting, charts,
-# the shape of a layout — so the rule here is the mirror of the others: say
-# what is visible, and nothing that would have to be computed to be known.
+# no extraction reaches, such as colour conventions, conditional formatting,
+# charts, and the shape of a layout, so the rule here is the mirror of the
+# others: say what is visible, and nothing that would have to be computed to be
+# known.
 _VISION_SYSTEM = _prompts("vision")
 
 
@@ -173,10 +174,10 @@ def estimate_tokens(text: str) -> int:
     """Approximate the token count of ``text``.
 
     Only a fallback: :class:`TokenUsage` prefers the counts the provider
-    reports. Latin script is counted as words × 4/3 (the usual 1 token ≈ 0.75
-    words ratio); CJK characters are counted individually, because a Japanese
-    or Chinese sentence carries no spaces and would otherwise register as a
-    single word.
+    reports. Latin script is counted as words times 4/3 (the usual 1 token to
+    roughly 0.75 words ratio); CJK characters are counted individually, because
+    a Japanese or Chinese sentence carries no spaces and would otherwise
+    register as a single word.
 
     >>> estimate_tokens("the quick brown fox jumps")
     6
@@ -196,7 +197,7 @@ class TokenUsage:
 
     ``estimated`` is ``True`` as soon as any request in the tally had to be
     approximated by :func:`estimate_tokens` instead of being reported by the
-    provider — treat such a total as an order of magnitude, not a bill.
+    provider. Treat such a total as an order of magnitude, not a bill.
     """
 
     input_tokens: int = 0
@@ -256,7 +257,7 @@ def _check_budget(token_budget: int | None, usage: TokenUsage | None) -> None:
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    """Minimal protocol: system + user prompt → text response."""
+    """Minimal protocol mapping a system and user prompt to a text response."""
 
     def generate(
         self,
@@ -395,9 +396,9 @@ def _resolve_provider(
     Providers are chosen explicitly; no vendor is preferred and none is
     implicit:
 
-    1. `provider` — custom callable or LLMProvider instance
-    2. `base_url` set (param or ``LINEXCEL_AI_BASE_URL`` / ``OPENAI_BASE_URL``)
-       → OpenAI-compatible client, whatever sits behind that URL
+    1. `provider`, a custom callable or LLMProvider instance
+    2. `base_url` set (param or ``LINEXCEL_AI_BASE_URL`` / ``OPENAI_BASE_URL``),
+       producing an OpenAI-compatible client for whatever sits behind that URL
 
     Anything else raises :class:`AiDocError` rather than picking for you.
     """
@@ -467,7 +468,7 @@ def _rejected_parameter(exc: Exception) -> str | None:
 class OpenAICompatProvider:
     """A client for anything exposing an OpenAI-compatible chat API.
 
-    The wire format is the only thing assumed — which vendor, gateway or local
+    The wire format is the only thing assumed. Which vendor, gateway or local
     runtime answers at ``base_url`` is the caller's business.
 
     ``base_url`` may contain ``{model}`` in its hostname or path. The model
@@ -1062,9 +1063,10 @@ class OpenAICompatProvider:
         kwargs: dict[str, Any] = {"temperature": temperature, **self._request_options()}
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        # The fallback estimate counts the prompts only — an image is worth
-        # hundreds of tokens that no character count can see — so a run whose
-        # endpoint reports nothing is under-counted, and says it is estimated.
+        # The fallback estimate counts the prompts only, because an image is
+        # worth hundreds of tokens that no character count can see, so a run
+        # whose endpoint reports nothing is under-counted, and says it is
+        # estimated.
         if not hasattr(self, "_vision_state"):
             self._vision_state = local()
         self._vision_state.active = True
@@ -1670,7 +1672,7 @@ def build_workbook_dossier(
 
     ``context`` is a :attr:`linexcel.LineageResult.workbook_context` mapping.
     The graph alone describes how a workbook *computes*; it says nothing about
-    what a reader sees on opening it — titles sitting above a table, the labels
+    what a reader sees on opening it: titles sitting above a table, the labels
     in the first column, cell comments, hidden columns, frozen panes. Those cues
     are exactly what the sheet screenshots show, and merging them into each
     sheet entry lets a text-only model describe the file as it looks without any
@@ -1877,9 +1879,9 @@ def _merge_presentation(
 ) -> list[dict[str, Any]]:
     """Enrich each sheet entry with what a reader sees, keyed by sheet name.
 
-    Sheets the analysis never reached — a data-only tab holds no formula, so it
-    contributes no lineage node — are appended rather than dropped: a workbook
-    overview that omits its input sheets misreads the file.
+    Sheets the analysis never reached, because a data-only tab holds no formula
+    and contributes no lineage node, are appended rather than dropped: a
+    workbook overview that omits its input sheets misreads the file.
     """
     by_name = {sheet["name"]: sheet for sheet in sheets if sheet.get("name")}
     merged = list(sheets)
@@ -2064,8 +2066,9 @@ def render_markdown_table(
     *,
     caption: str | None = None,
 ) -> str:
-    """Render a Markdown pipe table from structured data — the only place in
-    linexcel where table syntax is written.
+    """Render a Markdown pipe table from structured data.
+
+    This is the only place in linexcel where table syntax is written.
 
     A column whose cells all parse as numbers is right-aligned (``---:``),
     so amounts line up on their decimal separator. Rows shorter than the
@@ -2104,7 +2107,7 @@ def _insert_tables(text: str) -> str:
 
     The structured payload travels in trailing ```json_tables fenced
     blocks; the blocks themselves are removed from the returned text.
-    Unparseable or incomplete payloads degrade to prose — a placeholder
+    Unparseable or incomplete payloads degrade to prose. A placeholder
     whose table is missing is dropped, never left as raw braces in the
     output, and neither is a placeholder that arrived with no block at all.
     """
@@ -2271,14 +2274,14 @@ def document_workbook(
     """Generate a Markdown overview grounded in the workbook dossier.
 
     Provider resolution (first match wins; no implicit default):
-    1. `provider` — custom LLMProvider instance or callable
-    2. `base_url` + `model` (or `LINEXCEL_AI_BASE_URL` + `LINEXCEL_AI_MODEL`) —
-       any OpenAI-compatible endpoint
+    1. `provider`, a custom LLMProvider instance or callable
+    2. `base_url` + `model` (or `LINEXCEL_AI_BASE_URL` + `LINEXCEL_AI_MODEL`),
+       for any OpenAI-compatible endpoint
 
-    ``context`` is the workbook presentation context — the sheet previews,
-    comments, merged cells, frozen panes and hidden columns a reader sees when
-    opening the file. Pass it to describe the workbook as it looks, not only as
-    it computes; see :func:`build_workbook_dossier`.
+    ``context`` is the workbook presentation context, including the sheet
+    previews, comments, merged cells, frozen panes and hidden columns a reader
+    sees when opening the file. Pass it to describe the workbook as it looks,
+    not only as it computes; see :func:`build_workbook_dossier`.
 
     If a :class:`TokenUsage` is passed as ``usage``, what the call consumed is
     accumulated into it. ``token_budget`` caps cumulative spend across that

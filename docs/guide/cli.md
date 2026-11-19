@@ -25,7 +25,7 @@ Writing `<workbook>_lineage.html` next to the workbook is the default.
 |---|---|
 | `-o`, `--output PATH` | Where the HTML goes. `-` writes to stdout. |
 | `--json PATH` | Also write the graph as JSON. `-` writes to stdout. |
-| `--no-html` | Skip the viewer — use with `--json`. |
+| `--no-html` | Skip the viewer. Use with `--json`. |
 | `--language {en,fr,es,de,it,pt,nl,ja,zh}` | Interface and AI prompt language (default `en`). See [Languages](languages.md). |
 
 Progress, statistics and warnings go to **stderr**, so `-` is safe to pipe:
@@ -82,7 +82,7 @@ not a CLI option for excluding worksheets from analysis.
 ## Watching it run
 
 `--verbose` draws progress per sheet through the two phases that take the
-time — reading the values the file stores, and sweeping it for formulas —
+time, reading the values the file stores and sweeping it for formulas,
 then prints what each phase cost. It writes to stderr, so it never mixes into
 `-o -` or `--json -`, and it draws bars only when stderr is a terminal: a CI
 log gets one plain line per phase instead of thousands of redraws.
@@ -97,12 +97,12 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 
 | Option | |
 |---|---|
-| `--refs-dir DIR` | Folder holding the workbooks this one links to, and the add-ins whose VBA it calls. Without it a cell reading another file is named, never resolved — see [Other workbooks](coverage.md#other-workbooks). |
+| `--refs-dir DIR` | Folder holding the workbooks this one links to, and the add-ins whose VBA it calls. Without it a cell reading another file is named, never resolved. See [Other workbooks](coverage.md#other-workbooks). |
 | `--screenshots DIR` | Render each sheet to a PNG and show it in the report. Needs LibreOffice and Poppler; see [Screenshots](context.md#screenshots). |
 | `-v`, `--verbose` | Progress while it runs, and per-phase timing, on stderr. |
 | `--time-budget SECONDS` | Ceiling on the step-by-step decomposition (default 300). Past it, cells keep their values and lose only their breakdown, and the report says so. |
 | `--target SHEET!A1` | Trace the static upstream lineage of this cell without requesting global recalculation. Repeatable; comma-separated cells are accepted, with Excel quotes around sheet names containing commas (`'Costs, FY26'!A1`). Only relevant names, VBA and Power Query context remain. Dynamic references (INDIRECT/OFFSET) or a truncated trace can cause the engine to evaluate dependencies omitted from the graph; the report states this limitation. |
-| `--dry-run` | Say what the file declares — sheets, declared size, linked workbooks, the ceilings that will apply — and stop without analysing it. |
+| `--dry-run` | Say what the file declares: sheets, declared size, linked workbooks and the ceilings that will apply. Stop without analysing it. |
 
 ## Lazy application
 
@@ -212,7 +212,7 @@ runtime before setting it.
 
 ## AI documentation
 
-Opt-in, and it needs the `ai` extra — which `uvx` can add on the fly:
+Opt-in, and it needs the `ai` extra, which `uvx` can add on the fly:
 
 ```bash
 uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
@@ -220,7 +220,7 @@ uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
 ```
 
 No provider is chosen for you. Name the endpoint on the command line, or set
-`LINEXCEL_AI_BASE_URL`, `LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY` — see
+`LINEXCEL_AI_BASE_URL`, `LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY`. See
 [Choosing an AI provider](providers.md#environment-variables).
 
 | Option | |

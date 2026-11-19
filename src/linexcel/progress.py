@@ -1,7 +1,7 @@
 """Telling the user what is happening while it happens.
 
-A large workbook takes minutes, and the two phases that take them — reading
-the values the file carries, and sweeping it for formulas — are exactly the
+A large workbook takes minutes, and the two phases that take them, reading
+the values the file carries and sweeping it for formulas, are exactly the
 ones a pathological file makes pathological. Before this, ``verbose`` printed
 each phase's duration *after* it ended: a 50 MB file was several minutes of
 silence, then a wall of timings. Silence is what makes someone kill the
@@ -12,7 +12,7 @@ drawn only when stderr is a terminal: a CI log or a redirect gets the plain
 one-line-per-phase form instead of thousands of redraw escapes.
 
 ``rich`` draws it when it is installed (``pip install 'linexcel[progress]'``).
-Without it nothing is lost but the bars — the same phases and the same timings
+Without it nothing is lost but the bars. The same phases and the same timings
 are printed as plain lines, so no behaviour depends on whether it is there.
 """
 

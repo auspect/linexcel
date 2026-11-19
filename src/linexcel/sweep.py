@@ -3,7 +3,7 @@
 Extracted mechanically from analyzer.py: read formulas in bounded chunks,
 re-inject the formulas quarantined by ``engine.boot_engine`` so they still
 show in the lineage, and group cells sharing the same R1C1-canonicalized
-formula into one FormulaGroup — a column of 50,000 copied formulas becomes
+formula into one FormulaGroup, so a column of 50,000 copied formulas becomes
 ONE entry.
 
 A targeted analysis (``reachable`` set by ``boot_engine``) sweeps only the

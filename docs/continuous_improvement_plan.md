@@ -47,7 +47,7 @@ generation and review records remain in ignored validation directories.
 | P0 | `linexcel serve` navigation and responsive forms | Reproduce sheet selection, left-side overflow and graph readability in the live application; correct observed defects and add browser regressions for the failing interactions. |
 | P0 | Current acceptance | Run both generated workbooks with node documentation, overviews, screenshots and image analysis in every language requested by each fixture (Sales: French and English; Stress: English); inspect `validation.json`, then complete independent factual and desktop/mobile review. |
 | P1 | Specialized AI review | Version a source-grounded review rubric and compare the same sample before/after prompt changes. Keep lexical quotation checks as one check, with factual review recorded separately. |
-| P1 | Exact source lineage | Retain separate original XML formula text, parser canonical formula and decomposition expressions. Attribute an “exact source” quotation only to the immutable original field and workbook hash; expose normalization and shared-formula expansion status. |
+| P1 | Exact source lineage | Retain separate original XML formula text, parser canonical formula and decomposition expressions. Attribute an "exact source" quotation only to the immutable original field and workbook hash; expose normalization and shared-formula expansion status. |
 | P1 | Excelize formatting trial | Use an optional development oracle; compare raw, typed and formatted readings separately. Adopt a display adapter only after correctness, reproducibility, packaging and performance gates. See [package research](package_research.md#excelize-for-python). |
 | P1 | Open issue #65 | Repair the scaling experiment, measure worker memory and actual graph size, and report usable browser interactions rather than completion alone. |
 | P1 | Markdown consolidation | Eleven obsolete mandates and scoped reviews are preserved under [Historical records](history/index.md), with their original bodies and search exclusion. Current policy and evidence gates remain here and in local acceptance. |
@@ -147,7 +147,7 @@ exact source. Keep these source records separate from calculated values and AI
 prose.
 
 Acceptance should replay the parenthesis fixture, function case/spelling and
-shared-master/slave cases. Require “exact source” quotations to match the original
+shared-master/slave cases. Require "exact source" quotations to match the original
 field; label canonical or expanded expressions explicitly and test their
 attribution independently of numerical agreement. An omitted or unavailable
 original field must remain a provenance limit rather than an exact-source claim.

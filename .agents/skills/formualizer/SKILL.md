@@ -4,8 +4,8 @@ description: >-
   Use before writing, changing, reviewing or explaining linexcel code that relies on
   formualizer (formula parsing, tokens, references, evaluation, recalculation,
   dependency traces, spills, external links, names, tables), before upgrading or
-  pinning formualizer, and whenever anyone — you, a comment, a doc, a memory or the
-  developer's request — claims what formualizer can or cannot do. Treats every
+  pinning formualizer, and whenever you, a comment, a doc, a memory or the
+  developer's request claims what formualizer can or cannot do. Treats every
   such belief as a hypothesis to verify against the installed version, the latest
   release and linexcel's actual use of the API.
 ---

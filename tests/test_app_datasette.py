@@ -1,4 +1,4 @@
-"""Data navigation uses the protected Datasette surface without stale frames."""
+"""Data navigation uses the protected Datasette view without stale frames."""
 
 import json
 import os

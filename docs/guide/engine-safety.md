@@ -253,7 +253,7 @@ cells and 20,000 formulas total. Each stage was timed separately with
 below are milliseconds; SD is the sample standard deviation, not a
 confidence interval.
 
-| Stage | Before median | Before min–max | Before SD | After median | After min–max | After SD |
+| Stage | Before median | Before min to max | Before SD | After median | After min to max | After SD |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Error-overlay extraction | 21.31 | 18.91–21.78 | 1.54 | 5.76 | 5.72–8.56 | 1.63 |
 | Cache loading | 82.00 | 77.00–91.62 | 7.43 | 67.23 | 65.52–76.90 | 6.13 |

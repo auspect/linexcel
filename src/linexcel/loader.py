@@ -2,14 +2,14 @@
 
 Every formula cell of a saved workbook holds two things: the formula, and the
 result the spreadsheet application last computed for it. This module reads the
-second — the value the user actually saw on screen — which is what the report
+second, the value the user actually saw on screen, which is what the report
 compares its own recalculation against, and the only source for a cell no
 engine can compute.
 
 Two readers, on purpose. python-calamine is the fast one and returns native
 Python types, so a date is a date rather than a number wearing a format
 string. openpyxl is the lazy one, and it takes over for a file calamine cannot
-open or must not be handed: it builds a sheet as a dense rows × columns array
+open or must not be handed: it builds a sheet as a dense rows by columns array
 before returning anything, and a workbook declaring `A1:XFD1048576` would ask
 the allocator for 512 GiB. That is why :func:`declared_cells` exists, and why
 it is consulted before anything reads a cell.
@@ -34,7 +34,7 @@ from linexcel.progress import Reporter
 from linexcel.refs import col_to_num
 
 #: Ceiling on the formula sweep of a single sheet. It is not there to keep the
-#: analysis quick — sweeping costs about 0.7 µs per cell, so the 2.4M cells
+#: analysis quick. Sweeping costs about 0.7 µs per cell, so the 2.4M cells
 #: this used to cut from the reference workbook bought 1.6 s of a 95 s run,
 #: and cost the sheet its tail. It is there for the file that *declares* far
 #: more than it holds: one stray cell at XFD1048576 makes the used range 17
@@ -42,7 +42,7 @@ from linexcel.refs import col_to_num
 #: real used range (a full-height sheet 60 columns wide) and still bounded.
 MAX_CELLS_PER_SHEET = 64_000_000
 #: The largest declared rectangle python-calamine is allowed to attempt.
-#: It builds a sheet as a dense rows × columns array — about 32 bytes a cell —
+#: It builds a sheet as a dense rows by columns array, at about 32 bytes a cell,
 #: before returning anything to Python, so the limit is memory, not time, and
 #: it is separate from the sweep budget above. 20M cells is roughly 640 MB:
 #: past any honest sheet's dense form, and far below the 512 GiB that one
@@ -110,7 +110,7 @@ _DIMENSION_WINDOW = 4096
 def declared_cells(data: bytes) -> int:
     """The largest rectangle any sheet of the package *declares*, in cells.
 
-    Not what it holds — what it says it uses. The two differ wildly: one stray
+    Not what it holds, but what it says it uses. The two differ wildly: one stray
     cell at XFD1048576, and a sheet with three numbers in it declares 17
     billion. Read from the ``<dimension>`` element rather than from the cells,
     because the whole point is to know the size before reading anything.
@@ -164,9 +164,9 @@ def load_cached_values(
     number formatted as a date but stored as a float) covered.
 
     A sheet that declares more than :data:`MAX_DENSE_CELLS` never reaches
-    calamine at all. It builds a sheet as a dense rows × columns array before
+    calamine at all. It builds a sheet as a dense rows by columns array before
     returning anything to Python, so ``A1:XFD1048576`` asks the allocator for
-    512 GiB — and an allocation failure in Rust *aborts the process*. That is
+    512 GiB, and an allocation failure in Rust *aborts the process*. That is
     not an exception, and no ``try`` around this call would see it. openpyxl's
     read-only reader is lazy and already bounded, so it takes the file instead.
     """
@@ -268,8 +268,8 @@ def _error_cached_values(data: bytes) -> dict[tuple[str, int, int], str]:
     an error (``<c t="e"><v>#DIV/0!</v></c>``), so those cells are absent from
     ``to_python`` and would read back as *not stored* even though the file
     carries a real value. openpyxl reads them fine; this is the calamine side
-    paying that difference back. ``#SPILL!`` is not here — calamine refuses a
-    value it does not know and the loader falls back to openpyxl.
+    paying that difference back. ``#SPILL!`` is not here because calamine
+    refuses a value it does not know and the loader falls back to openpyxl.
     """
     out: dict[tuple[str, int, int], str] = {}
     try:
@@ -312,7 +312,7 @@ def _load_cached_values_calamine(
 ) -> CachedValues:
     """Fast path: read cached values via python-calamine.
 
-    ``to_python(skip_empty_area=False)`` preserves the cell coordinates —
+    ``to_python(skip_empty_area=False)`` preserves the cell coordinates.
     linexcel keys values by ``(sheet, row, col)`` 1-indexed, and the default
     ``skip_empty_area=True`` would shift everything toward the top-left.
     Empty cells come back as ``""`` (calamine) or ``None``; both are skipped,

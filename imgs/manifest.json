@@ -1,11 +1,11 @@
 {
   "captured": "2026-11-10",
   "sources": {
-    "scripts/capture_viewer.py": "07f9dd839b10c4f507ffd6c212f027c7be58dd1272c983bb4b194fda5e97bd95",
-    "validation_workbooks.py": "38f75484b144267bab1e4fa8d29893fda653474e6c1aaf27f9c667526c528023",
-    "src/linexcel/viewer.py": "822eed057876fc7d8cc2bf353a87f94c0ff11e1ede563eaed7bc49f6326edd37",
+    "scripts/capture_viewer.py": "bd39403a472a0f0307c918cb4965396a2b3d9fb6c5246f0bf5dd5e24237b9aca",
+    "validation_workbooks.py": "ded18b6896d065a7fbf90694be23211cffab9c9120700f99aa6842526a41a951",
+    "src/linexcel/viewer.py": "3fcc5a78f628e9b472a10981e20a470369b4701dd008d3cb5546dd91d9485197",
     "src/linexcel/assets/viewer.html": "12a693d135b673e8c82a776e63ab960f54e5fbe10c2e408dccd4a28b86aa7846",
-    "src/linexcel/i18n.py": "fefa0b810f72f0cb8e3850b47962bd921e493f428e30b1850a7d70701a708099"
+    "src/linexcel/i18n.py": "e494c642eced3c419259625af5e11f71115378cdf02a67a43f9b525308047d33"
   },
   "images": {
     "viewer_graph.png": "Dependency graph, workbook-wide",
@@ -32,5 +32,6 @@
     "aiNodeDocumentation": false,
     "aiWorkbookOverview": false,
     "aiImageDescriptions": false
-  }
+  },
+  "accepted_without_recapture": "2026-11-19"
 }

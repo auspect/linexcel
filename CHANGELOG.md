@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.4] — 2026-11-19
+
+### Fixed
+
+- Link a formula to the cells of a range written with the higher column first
+  in `linexcel analyze`. `=SUM(B5:A7)` had no precedent in the graph, and its
+  decomposition reported a range of zero cells. It now links to `A5:B7`. A
+  group of formulas copied from such a range (`=SUM(B$2:A$3)` filled right)
+  lost the outer column on each side and now links to all of them. Excel
+  reorders the ends of a range itself when a formula is entered or filled, so
+  this entry and the next concern workbooks written by other tools.
+- Link a group of copied formulas to every cell its formulas read when one end
+  of a range is anchored with `$` and the other end moves past it. Ten rows
+  holding `=SUM(A1:$A$5)` to `=SUM(A10:$A$5)` linked their group to `A1:A5`
+  only, and `A6:A10` were missing from the lineage. The same happened across
+  columns. The group now links to the smallest range that holds what its
+  formulas read.
+- Keep a cell selected in the local application (`linexcel serve`) when the
+  user selects it while the workbook overview is still loading, as happens
+  right after an import. The overview used to replace the selection when it
+  arrived, so the reader closed and no calculation was shown. Selecting a cell
+  or choosing a sheet now cancels the pending overview, and its task stays
+  listed in Operations. Opening the Graph tab with a cell already selected no
+  longer loads the overview on its own. The Overview button still does.
+- Show English text where the English interface of the local application
+  still showed French: the status of a node that has no calculation yet
+  (`À la sélection`), the source of a value in a dependency card (`Inconnue`,
+  `Entrée du classeur`, `Cellule vide`, `Recalcul ciblé`), the words of the
+  hidden-location notice (`feuille`, `ligne`, `colonne`), the active limits
+  line of the Diagnostics tab, and thirteen other labels, placeholders and
+  notices.
+
 ## [1.19.3] — 2026-11-18
 
 ### Changed

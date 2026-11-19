@@ -1,8 +1,9 @@
 """Tests for how the viewer surfaces value provenance, dates and the result.
 
 These build graph dictionaries by hand instead of going through ``analyze``:
-the point here is the *rendering* contract — which strings, data and wiring end
-up in the generated document — not the value resolution that produces them.
+the point here is the *rendering* contract, meaning which strings, data and
+wiring end up in the generated document, not the value resolution that produces
+them.
 
 The panel itself is built client-side, so a Python-level test can only assert
 on what the document ships: the graph JSON, the localized strings, and the
@@ -697,7 +698,7 @@ class TestSearchAll:
 
     def test_framing_is_capped_so_a_lone_match_keeps_its_neighbourhood(self):
         """A single card fitted to the viewport would fill the screen and push
-        every neighbour out of frame — the context the selection is about."""
+        every neighbour out of frame, losing the context the selection is about."""
         script = render_html(search_graph())
         assert "var FOCUS_MAX_ZOOM = 1.2;" in script
         assert "function frameEles(cy, eles, duration)" in script
@@ -853,7 +854,7 @@ class TestPowerQueryPanel:
 
     def test_the_query_kind_has_its_own_colour(self):
         """Every kind is a card since the viewer refresh; kind is told by
-        colour, and the query keeps its own — magenta, never recycled."""
+        colour, and the query keeps its own, magenta, which is never recycled."""
         html = render_html(query_graph())
         assert "query: { color: PALETTE.magenta, shape: 'round-rectangle'" in html
         assert "'#a3348e'" in html  # the canvas cannot resolve var()
@@ -967,7 +968,7 @@ class TestSeparatorsAreNotADisagreement:
     The engine writes numbers with a dot because that is what engines do; a
     workbook saved on a French machine stores a comma because that is what
     that machine does. Reporting it as a divergence blames the workbook for a
-    regional setting — and it took a human opening a real French file to
+    regional setting, and it took a human opening a real French file to
     notice, because nothing in the suite spoke anything but English.
     """
 
@@ -1011,7 +1012,7 @@ def test_no_verdict_label_outgrows_the_badge_it_sits_in():
     """Three verdicts share one line beside an icon; a sentence does not fit.
 
     The first draft of the third one ran to 111 characters in German and
-    failed the lint before it failed the eye — both were telling the same
+    failed the lint before it failed the eye. Both were telling the same
     thing.
     """
     from linexcel.i18n import LANGUAGES, UI_STRINGS

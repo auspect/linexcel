@@ -174,7 +174,7 @@ parsing calls and warns against globally monkey-patching stdlib XML.
 
 Introduce one parsing policy for workbook metadata, styles, relationships and
 DataMashup XML, with `forbid_dtd=True`. Catch its rejection exceptions explicitly
-and surface an actionable limitation. Audit openpyxl's XML path separately.
+and report an actionable limitation. Audit openpyxl's XML path separately.
 This is hardening work, not a reproduced exploit claim.
 
 XML parser hardening does not bound ZIP expansion, large ordinary XML or base64

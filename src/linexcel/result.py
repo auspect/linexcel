@@ -8,7 +8,7 @@ Minimal example, without backend or AI key:
     result.save_html("out.html")
     print(result.stats)
 
-AI documentation is optional — pick a provider explicitly (no default):
+AI documentation is optional. Pick a provider explicitly (no default):
 
     result.document(base_url="http://localhost:11434/v1", model="qwen3.8")
 """
@@ -336,7 +336,7 @@ class LineageResult:
         only the non-rendered context is needed.
 
         By default each sheet is rendered whole, onto one image, and the result
-        is a ``{sheet name: [png]}`` mapping — the shape :meth:`to_html` shows
+        is a ``{sheet name: [png]}`` mapping, the shape :meth:`to_html` shows
         under each sheet in its Sheets tab:
 
             >>> result.save_html(                          # doctest: +SKIP
@@ -352,7 +352,7 @@ class LineageResult:
         sheets they may not belong to.
 
         Raises :class:`linexcel.insights.WorkbookRenderError` when the
-        renderer is missing or fails — the message says what was not found
+        renderer is missing or fails. The message says what was not found
         and how to install it, so callers (the CLI does) can show it and
         still write the report without screenshots.
         """
@@ -391,9 +391,9 @@ class LineageResult:
         Provider resolution (first match wins, no implicit default and no
         preferred vendor):
 
-        1. ``provider`` — custom LLMProvider instance or callable
+        1. ``provider``, a custom LLMProvider instance or callable
         2. ``base_url`` + ``model`` (or ``LINEXCEL_AI_BASE_URL`` +
-           ``LINEXCEL_AI_MODEL``) — any OpenAI-compatible endpoint, local or
+           ``LINEXCEL_AI_MODEL``), for any OpenAI-compatible endpoint, local or
            hosted
 
         ``language`` selects the system prompt; see :data:`linexcel.i18n.LANGUAGES`.
@@ -411,7 +411,7 @@ class LineageResult:
         ``token_budget`` caps what the whole documentation run may cost, input
         and output tokens together. It is counted against :attr:`token_usage`,
         which spans the result's lifetime, so one ceiling covers this call and
-        every earlier one — the figure to set is the total you are willing to
+        every earlier one. The figure to set is the total you are willing to
         pay for this workbook, not a per-node allowance. Nodes still queued when
         the budget is reached are left undocumented with a :class:`UserWarning`
         rather than silently billed; requests already in flight are allowed to
@@ -468,10 +468,11 @@ class LineageResult:
 
         ``include_context`` adds :attr:`workbook_context` to the dossier: the
         sheet previews, cell comments, merged ranges, frozen panes and hidden
-        columns — the same cues the sheet screenshots show. Without it the model
-        sees how the workbook computes but not what it looks like, and describes
-        a graph rather than a file. Set it to ``False`` to keep cell contents
-        local; the lineage (formulas and their values) is sent either way.
+        columns, which are the same cues the sheet screenshots show. Without it
+        the model sees how the workbook computes but not what it looks like, and
+        describes a graph rather than a file. Set it to ``False`` to keep cell
+        contents local; the lineage (formulas and their values) is sent either
+        way.
 
         Provider resolution is the same as :meth:`document`, and tokens
         consumed are added to :attr:`token_usage`. ``max_tokens`` caps the
@@ -577,7 +578,7 @@ class LineageResult:
         screenshot_docs: dict[str, str] | None = None,
         language: str = "en",
     ) -> str:
-        """Standalone HTML document (Cytoscape) — openable in a browser.
+        """Standalone HTML document (Cytoscape), openable in a browser.
 
         If ``docs`` is provided (from :meth:`document`), AI documentation
         for each node is embedded in the detail panel. If ``workbook_doc`` is

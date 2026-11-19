@@ -74,8 +74,8 @@ def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
 
     The head of a stretch is made of near-identical neighbours: sampling
     ``B2, C2, B3`` out of 400,000 cells says nothing about the far end, which
-    is exactly where a pattern that broke — a hard-coded cell dropped into the
-    middle of a column — shows up. First and last are always included.
+    is exactly where a pattern that broke, such as a hard-coded cell dropped
+    into the middle of a column, shows up. First and last are always included.
     """
     ordered = sorted(cells)
     if n < 2:
@@ -172,7 +172,7 @@ class GraphBuilder:
         self.cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
         self.ast_cache: dict[str, Any] = {}
         self.kept_groups: list[tuple[str, FormulaGroup]] = []
-        #: Largest self-referencing group seen, in cells — a running-total
+        #: Largest self-referencing group seen, in cells. A running-total
         #: column is one group whose members chain through each other, so its
         #: size is the order of magnitude of a chain no inter-node path sees.
         self.intra_chain = 0
@@ -220,7 +220,7 @@ class GraphBuilder:
 
         An external reference is one of those, but it is not opaque to the
         *reader*: the file says which workbook it points at, and the node
-        carries that — with the value, when the workbook could be read.
+        carries that, with the value when the workbook could be read.
         """
         external = parse_external_refs(ref)
         if not external:
@@ -301,8 +301,8 @@ class GraphBuilder:
     ) -> bool:
         """Wire a referenced range to ``node_id``; say whether it met a node.
 
-        A formula, a name or a query *reads* a range: edges run precedent →
-        ``node_id``. A VBA write *feeds* the range instead — direction
+        A formula, a name or a query *reads* a range: edges run from precedent to
+        ``node_id``. A VBA write *feeds* the range instead, so direction
         reverses, an out-of-bounds range still gets an edge to the address as
         given (a macro can write past the sheet's current extent, unlike a
         read which then has nothing to point at), and a huge range is not
@@ -325,7 +325,7 @@ class GraphBuilder:
 
         sheet = rect.sheet
         if sheet not in self.sheet_dims:
-            # A sheet this file does not have: another workbook, most often —
+            # A sheet this file does not have, another workbook most often:
             # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
             opaque = (
                 self.ensure_input_node(rect, opaque_label=rect.to_a1())
@@ -588,7 +588,7 @@ class GraphBuilder:
                 # A group stands for every cell it folds: its verdict is the
                 # worst of the representative cell and the sampled ones. Taken
                 # from the representative alone, it can say "matches" over a
-                # sample that drifted — a green banner on a red row. Cells with
+                # sample that drifted, giving a green banner on a red row. Cells with
                 # no recorded verdict (nothing cached to compare against) simply
                 # do not vote: an uncomparable cell must not downgrade a group,
                 # and a group with no verdict anywhere stays without one.

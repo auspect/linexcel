@@ -40,7 +40,7 @@ jobs:
         run: |
           # A workflow_dispatch replay must select the tag as its ref. Run from
           # a branch and the build is a +dev version, which the consistency
-          # check below would reject anyway — but later, and less clearly.
+          # check below would reject anyway, but later and less clearly.
           if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
             echo "::error::publish must run on a v* tag, but ref is ${GITHUB_REF_NAME} (${GITHUB_REF_TYPE}). Re-run this workflow selecting the tag as the ref."
             exit 1
@@ -95,8 +95,8 @@ jobs:
       - name: Publish to PyPI
         # --check-url makes a re-run survivable. Without it, a release that
         # got as far as uploading and then failed can never be finished: the
-        # retry is refused for a duplicate file, and github-release — which
-        # needs this job — is skipped, so the tag keeps its release forever
+        # retry is refused for a duplicate file, and github-release, which
+        # needs this job, is skipped, so the tag keeps its release forever
         # missing. That is exactly how v1.3.1 ended up on PyPI with no GitHub
         # release. With it, files already on the index are skipped and the run
         # carries on to the part that had not happened yet.
@@ -153,7 +153,7 @@ jobs:
           flags=()
           [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
           # A release drafted from the web UI is already there by the time this
-          # runs — the tag it created is what started the workflow — and its
+          # runs, since the tag it created is what started the workflow, and its
           # body is whatever the UI generated. Replace it with the changelog
           # section rather than leaving the generated one in place.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then

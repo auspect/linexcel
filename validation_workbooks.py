@@ -5,18 +5,18 @@ Two fixtures, with different jobs:
 ``build_sales_workbook`` is a realistic B2B commercial and margin review
 workbook (``Summary``, ``Sales``, ``Catalog``, ``Assumptions``). It is what the
 README screenshots are captured from, so it combines corporate spreadsheet
-conventions — an executive KPI scorecard, regional plan vs. actuals, a 40-order
-B2B ledger, a product pricing catalog, defined policy parameters, charts,
-comments, frozen panes, merged banners and hidden cost/baseline columns — while
-keeping its lineage graph readable at a glance through stretched-formula
+conventions, including an executive KPI scorecard, regional plan vs. actuals, a
+40-order B2B ledger, a product pricing catalog, defined policy parameters,
+charts, comments, frozen panes, merged banners and hidden cost/baseline columns,
+while keeping its lineage graph readable at a glance through stretched-formula
 grouping.
 
 ``build_stress_workbook`` is the opposite. It is an English workbook built to
 break things: every Excel error value, references the analyser cannot resolve,
 sheet names that need quoting, a circular pair, formulas past the dossier
 truncation limit, and cell text chosen to escape the generated HTML if the
-escaping is wrong. Nothing in it is meant to look like a real business file —
-each sheet is a category of failure, named after what it attacks.
+escaping is wrong. Nothing in it is meant to look like a real business file.
+Each sheet is a category of failure, named after what it attacks.
 
 Not covered here: VBA. ``openpyxl`` can preserve an existing ``vbaProject.bin``
 but cannot author one, so exercising ``linexcel.vba`` needs a real ``.xlsm``
@@ -40,7 +40,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 # ──────────────────────────────────────────────
-# 1. B2B commercial & margin review — showcase fixture
+# 1. B2B commercial & margin review, showcase fixture
 # ──────────────────────────────────────────────
 
 CATALOG_ITEMS: tuple[tuple[str, str, str, int, int, str], ...] = (
@@ -1034,7 +1034,7 @@ def build_sales_workbook() -> bytes:
 
 
 # ──────────────────────────────────────────────
-# 2. Stress workbook — the hostile one
+# 2. Stress workbook, the hostile one
 # ──────────────────────────────────────────────
 
 #: Rows in the stretched table. Large enough that grouping must collapse it to a
@@ -1199,7 +1199,7 @@ def _stress_lookups(wb: Workbook) -> None:
 
 
 def _nested_if(depth: int) -> str:
-    """``=IF(A1>1, IF(A1>2, … , 0), 0)`` — a chain the decomposer must walk."""
+    """``=IF(A1>1, IF(A1>2, … , 0), 0)``, a chain the decomposer must walk."""
     formula = "0"
     for level in range(depth, 0, -1):
         formula = f"IF('Sales Data'!K2>{level}, {formula}, {level})"
@@ -1248,7 +1248,7 @@ def _stress_errors(wb: Workbook) -> None:
 
 
 def _stress_volatile(wb: Workbook) -> None:
-    """Functions whose value depends on when — or on a string built at runtime."""
+    """Functions whose value depends on when, or on a string built at runtime."""
     ws = wb.create_sheet("Volatile")
     rows = [
         ("TODAY", "=TODAY()"),
@@ -1256,7 +1256,7 @@ def _stress_volatile(wb: Workbook) -> None:
         ("RAND", "=RAND()"),
         ("RANDBETWEEN", "=RANDBETWEEN(1, 100)"),
         # INDIRECT and OFFSET build their target at evaluation time, so no static
-        # analysis can draw the edge — these must land as unresolved, not wrong.
+        # analysis can draw the edge. These must land as unresolved, not wrong.
         ("INDIRECT literal", "=INDIRECT(\"'Sales Data'!F2\")"),
         ("INDIRECT computed", "=INDIRECT(\"'Sales Data'!F\" & 2 + 3)"),
         ("OFFSET", "=OFFSET('Sales Data'!A1, 5, 5)"),
@@ -1395,7 +1395,7 @@ def _stress_names(wb: Workbook) -> None:
 
 
 def _print_wide(ws) -> None:
-    """Landscape A3, fitted to width — keeps the rendered PNGs legible."""
+    """Landscape A3, fitted to width, to keep the rendered PNGs legible."""
     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
     ws.page_setup.paperSize = ws.PAPERSIZE_A3
     ws.page_setup.fitToWidth = 1

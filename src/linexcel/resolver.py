@@ -1,4 +1,4 @@
-"""The value of a cell, and where it came from — under budget.
+"""The value of a cell, and where it came from, under budget.
 
 Single entry point for reading a cell: engine value, per-cell recalculation,
 isolated re-evaluation in the scratch sheet (with the IFERROR/IFNA fallback
@@ -51,11 +51,11 @@ from linexcel.values import (
 MAX_SCRATCH_EVALS = 4_000
 #: Wall-clock ceiling on the step decomposition, in seconds. A count of
 #: evaluations cannot bound time: each one asks the engine to walk the dirty
-#: dependency graph, so on a workbook of cumulative sums — running totals, the
-#: most ordinary thing a spreadsheet does — one evaluation costs O(graph) and
-#: the count budget expires hours after anyone stopped waiting. This is the
-#: bound that holds whatever the file looks like. Past it, cells keep their
-#: values and lose only their step-by-step breakdown, and the report says so.
+#: dependency graph, so on a workbook of cumulative sums, such as running
+#: totals, one evaluation costs O(graph) and the count budget expires hours
+#: after anyone stopped waiting. This is the bound that holds whatever the file
+#: looks like. Past it, cells keep their values and lose only their step-by-step
+#: breakdown, and the report says so.
 DEFAULT_STEP_SECONDS = 300.0
 MAX_VALUE_WARNINGS = 25
 # Chained recovery: how deep the precedent walk goes, and how wide a referenced
@@ -64,8 +64,8 @@ MAX_VALUE_WARNINGS = 25
 MAX_CHAIN_DEPTH = 24
 MAX_CHAIN_RANGE_CELLS = 4_096
 #: Functions that answer with the clock or with chance. Excel calls a wider set
-#: "volatile" — OFFSET, INDIRECT, CELL and INFO recalculate on every edit too —
-#: but those return the same value for the same workbook, so linexcel keeps
+#: "volatile", since OFFSET, INDIRECT, CELL and INFO recalculate on every edit
+#: too, but those return the same value for the same workbook, so linexcel keeps
 #: computing them. These cannot be checked against anything: a `=TODAY()`
 #: recomputed today never matches a file saved last week, and calling that a
 #: divergence blames the workbook for the calendar.
@@ -87,7 +87,7 @@ class _Budget:
     The count came first and is not enough on its own: it bounds how many
     expressions are evaluated, not how long one takes, and a dense dependency
     graph makes each one arbitrarily expensive. Both are checked, and either
-    running out ends the decomposition — not the analysis, which finishes with
+    running out ends the decomposition, not the analysis, which finishes with
     values intact and a warning naming what it stopped doing.
     """
 
@@ -101,8 +101,8 @@ class _Budget:
     def take(self, count: int = 1) -> bool:
         """Claim ``count`` evaluations, or refuse once the count is gone.
 
-        Deliberately not time-bounded. This is the path that *recovers values*
-        — the core of a report — and a clock that stopped it would trade the
+        Deliberately not time-bounded. This is the path that *recovers values*,
+        the core of a report, and a clock that stopped it would trade the
         answer for the speed of getting it. Only the decomposition, which
         produces detail on top of an answer already found, honours the
         deadline; a test that asserted values survive a zero deadline is what
@@ -405,8 +405,8 @@ class _ValueResolver:
     def substitute_externals(self, expr: str) -> str:
         """Replace external references by bounded, typed scratch references.
 
-        The engine cannot follow a link to another workbook — nothing in the
-        file it loaded points there — so the reference is turned into the
+        The engine cannot follow a link to another workbook, because nothing in
+        the file it loaded points there, so the reference is turned into the
         scratch reference it stands for before the expression is evaluated.
         Preserve range shape and reference coercion (SUM ignores text/booleans
         in cells, unlike scalar arguments). Incomplete readings are refused;
@@ -463,7 +463,7 @@ class _ValueResolver:
     def _book_for(self, ref: ExternalRef) -> ExternalBook | None:
         """The workbook a reference points at, read on first use.
 
-        A file that registered its links refers to them by index — ``[1]`` —
+        A file that registered its links refers to them by index, such as ``[1]``,
         and those are known up front. A file that did not spells the name out,
         ``[Budget FY26.xlsx]``, and then the reference folder is the only place
         to look; the workbook is read once and remembered.
@@ -557,14 +557,14 @@ class _ValueResolver:
         ``evaluate_cells`` pays that cost once instead of N times.  When
         ``engine_alive`` is False the engine state mutates during
         decomposition (``_remember`` calls ``set_value``), so batching is
-        unsafe — the pre-computed values would be stale.  In that case the
-        cache stays empty and every expression falls back to
+        unsafe, because the pre-computed values would be stale.  In that case
+        the cache stays empty and every expression falls back to
         ``_scratch_eval`` one at a time, exactly as before.
         """
         self._step_cache.clear()
         if not self.scratch_ready or not self._engine_alive or not exprs:
             return
-        # ponytail: dedup preserves order — identical sub-expressions share
+        # ponytail: dedup preserves order, so identical sub-expressions share
         # one scratch cell and one cache entry; _eval_raw pops on first hit
         # so the second occurrence falls through to _scratch_eval, matching
         # the old per-call behaviour.
@@ -587,8 +587,8 @@ class _ValueResolver:
                 continue
             try:
                 # Primed with the sentinel first, exactly as ``_scratch_eval``
-                # does: an expression the engine will not take — a structured
-                # reference it cannot resolve, say — makes ``set_formula``
+                # does: an expression the engine will not take, such as a
+                # structured reference it cannot resolve, makes ``set_formula``
                 # no-op rather than raise, and the cell then still holds the
                 # step value *another node* left in that column. Reported as
                 # this step's own result, that is a value from elsewhere.
@@ -602,14 +602,14 @@ class _ValueResolver:
             return
         # Claim the batch before running it. This call was invisible to the
         # budget: one evaluate_cells per node, each walking the dirty graph,
-        # is exactly the work the budget exists to bound — and skipping it is
+        # is exactly the work the budget exists to bound, and skipping it is
         # how a 4,000-evaluation ceiling turned into three hours.
         if self.budget.expired or not self.budget.take(len(targets)):
             return
         try:
             results = self.engine.evaluate_cells(targets)
         except Exception:
-            return  # a broken reference poisons the batch — fall back
+            return  # a broken reference poisons the batch, so fall back
         for e, val in zip(valid, results):
             if val is not None and val != marker and not _is_uncomputed(val):
                 self._step_cache[e] = (_jsonable(val), True)
@@ -931,7 +931,7 @@ class _ValueResolver:
 def _collect_ref_strings(ast_dict: dict) -> list[str]:
     """Every reference a formula makes, excluding names it binds itself.
 
-    The parser reports a ``LET`` binding — and a ``LAMBDA`` parameter — as a
+    The parser reports a ``LET`` binding, and a ``LAMBDA`` parameter, as a
     ``Reference`` node, because syntactically it looks like one. It is not: the
     name is local to the formula and points at no cell, so treating it as a
     reference put a node on the graph for every intermediate a modeller happened
@@ -997,7 +997,7 @@ def _bound_names(ast_dict: dict) -> set[str]:
 
     ``LET(n1, v1, [n2, v2, ...], calc)`` binds the even-indexed arguments before
     the trailing calculation; ``LAMBDA(p1, ..., calc)`` binds every argument but
-    the last. Only bare identifiers count — ``LET(A1, ...)`` is not legal Excel,
+    the last. Only bare identifiers count. ``LET(A1, ...)`` is not legal Excel,
     so a name that parses as a real reference is left alone.
     """
     bound: set[str] = set()
