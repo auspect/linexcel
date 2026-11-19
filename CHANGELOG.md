@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, and `A6:A10` were missing from the lineage. The same happened across
   columns. The group now links to the smallest range that holds what its
   formulas read.
+- Keep a cell selected in the local application (`linexcel serve`) when the
+  user selects it while the workbook overview is still loading, as happens
+  right after an import. The overview used to replace the selection when it
+  arrived, so the reader closed and no calculation was shown. Selecting a cell
+  or choosing a sheet now cancels the pending overview, and its task stays
+  listed in Operations. Opening the Graph tab with a cell already selected no
+  longer loads the overview on its own. The Overview button still does.
 
 ## [1.19.3] — 2026-11-18
 
