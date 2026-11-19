@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or choosing a sheet now cancels the pending overview, and its task stays
   listed in Operations. Opening the Graph tab with a cell already selected no
   longer loads the overview on its own. The Overview button still does.
+- Show English text where the English interface of the local application
+  still showed French: the status of a node that has no calculation yet
+  (`À la sélection`), the source of a value in a dependency card (`Inconnue`,
+  `Entrée du classeur`, `Cellule vide`, `Recalcul ciblé`), the words of the
+  hidden-location notice (`feuille`, `ligne`, `colonne`), the active limits
+  line of the Diagnostics tab, and thirteen other labels, placeholders and
+  notices.
 
 ## [1.19.3] — 2026-11-18
 

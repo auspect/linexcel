@@ -1470,3 +1470,393 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         assert errors == []
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_english_ui_translates_uncalculated_node_status_and_limits(browser, viewport):
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "en-node", "name": "English audit", "revision": 1}
+    graph = {
+        "nodes": [
+            {
+                "id": "name:*:RebateRate",
+                "label": "RebateRate",
+                "kind": "name",
+                "formula": "=Assumptions!$D$7",
+                "cachedValue": None,
+                "context": {
+                    "nearbyLabels": [
+                        {"cell": "B7", "text": "Rebate", "position": "left"},
+                        {"cell": "D5", "text": "Rate", "position": "above"},
+                    ]
+                },
+            },
+            {
+                "id": "Assumptions!D7",
+                "sheet": "Assumptions",
+                "cell": "D7",
+                "kind": "input",
+                "value": 0.035,
+            },
+        ],
+        "edges": [{"source": "Assumptions!D7", "target": "name:*:RebateRate"}],
+        "meta": {
+            "sheets": ["Assumptions"],
+            "sheetDetails": [
+                {"name": "Assumptions", "status": "complete", "formulas": 0}
+            ],
+        },
+        "formulaPatterns": [],
+    }
+
+    def handle(route):
+        path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
+            )
+            return
+        if not path:
+            route.fulfill(
+                body=APP.read_text(encoding="utf-8"), content_type="text/html"
+            )
+            return
+        if path == "api/config":
+            data = {
+                "limits": {"memoryMb": 2048, "uploadMb": 256},
+                "uploads": {"localImport": True},
+            }
+        elif path == "api/projects":
+            data = {"projects": [project]}
+        elif path == "api/projects/en-node":
+            data = {
+                "project": project,
+                "graph": graph,
+                "tasks": [
+                    {
+                        "id": "loading-import",
+                        "operation": "import",
+                        "status": "running",
+                        "progress": {"phase": "loading"},
+                    }
+                ],
+            }
+        elif path == "api/projects/en-node/data":
+            data = {
+                "available": True,
+                "presentationAvailable": False,
+                "sheets": [],
+                "url": "https://example.invalid/outside",
+            }
+        elif path == "api/tasks/loading-import":
+            data = {
+                "task": {
+                    "id": "loading-import",
+                    "operation": "import",
+                    "status": "running",
+                    "progress": {"phase": "loading"},
+                }
+            }
+        else:
+            data = {}
+        route.fulfill(body=json.dumps(data), content_type="application/json")
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/?lang=en")
+        page.get_by_text("From file to formula.", exact=True).wait_for()
+        # Initial #node-detail and #local-path placeholders before opening a project.
+        initial_detail = page.locator("#node-detail").text_content()
+        assert (
+            "Its formula and saved value appear immediately. "
+            "Selecting it then starts a targeted recalculation in an isolated process."
+            in initial_detail
+        )
+        assert "Sa formule" not in initial_detail
+        assert (
+            page.locator("#local-path").get_attribute("placeholder")
+            == "C:\\folders\\workbook.xlsx"
+        )
+        open_workspace_menu(page)
+        page.locator('[data-project="en-node"]').click()
+        page.locator('[data-node="name:*:RebateRate"]').click()
+        detail = page.locator("#node-detail")
+        assert "À la sélection" not in detail.inner_text()
+        playwright.expect(detail.locator(".inspector-values")).to_contain_text(
+            "Linexcel result · On selection"
+        )
+        detail.locator(".inspector-evidence > summary").click()
+        detail.locator(".detail-section > summary").first.click()
+        evidence_text = detail.locator(".inspector-evidence").inner_text()
+        assert "(to the left)" in evidence_text and "(above)" in evidence_text
+        assert "à gauche" not in evidence_text and "au-dessus" not in evidence_text
+        assert (
+            page.locator("nav.library-navigation").get_attribute("aria-label")
+            == "Main navigation"
+        )
+        assert (
+            page.locator("#library-search-view").get_attribute("aria-label")
+            == "Search the library"
+        )
+        # Toggling UI language switches the status back to French and then English.
+        page.locator("#ui-language").select_option("fr")
+        playwright.expect(detail.locator(".inspector-values")).to_contain_text(
+            "Résultat Linexcel · À la sélection"
+        )
+        page.locator("#ui-language").select_option("en")
+        playwright.expect(detail.locator(".inspector-values")).to_contain_text(
+            "Linexcel result · On selection"
+        )
+        page.locator("#tab-tasks").click()
+        playwright.expect(page.locator("#task-list")).to_contain_text("Loading…")
+        assert "Chargement…" not in page.locator("#task-list").inner_text()
+        page.locator("#tab-data").click()
+        playwright.expect(page.locator("#data-status")).to_contain_text(
+            "Unreadable server response (data)."
+        )
+        assert "Réponse du serveur" not in page.locator("#data-status").inner_text()
+        page.locator("#tab-diagnostics").click()
+        limits_text = page.locator("#runtime-limits").inner_text()
+        assert "Requested budget:" in limits_text
+        assert "Budget demandé" not in limits_text
+        assert "Plafond mémoire" not in limits_text
+        assert errors == []
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_english_ui_translates_provenance_hidden_locations_and_fragments(
+    browser, viewport
+):
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "en-prov", "name": "Provenance audit", "revision": 1}
+    steps = [
+        {
+            "nodeId": "Summary!C10",
+            "formula": "=A1+B1",
+            "evaluationStatus": "calculated",
+            "calculatedValue": 100,
+            "cachedValue": 100,
+            "valueSource": "saved_cache",
+            "dependencies": ["Data!A1"],
+        },
+        {
+            "nodeId": "Data!A1",
+            "evaluationStatus": "input",
+            "cachedValue": 42,
+            "valueSource": "saved_input",
+        },
+        {
+            "nodeId": "Data!B1",
+            "evaluationStatus": "input",
+            "cachedValue": None,
+            "valueSource": "saved_blank",
+        },
+        {
+            "nodeId": "Ref!C1",
+            "evaluationStatus": "input",
+            "cachedValue": 5,
+            "valueSource": "reference_input",
+        },
+        {
+            "nodeId": "Calc!D1",
+            "formula": "=Data!A1*2",
+            "evaluationStatus": "calculated",
+            "calculatedValue": 84,
+            "cachedValue": 84,
+            "valueSource": "targeted_recalculation",
+        },
+        {
+            "nodeId": "name:*:RebateRate",
+            "formula": "=Data!A1",
+            "evaluationStatus": "structural",
+            "cachedValue": None,
+            "valueSource": "unknown",
+        },
+    ]
+    graph = {
+        "nodes": [
+            {
+                "id": "Summary!C10",
+                "sheet": "Summary",
+                "cell": "C10",
+                "kind": "cell",
+                "formula": "=A1+B1",
+                "cachedValue": 100,
+                "valueSource": "saved_cache",
+                "context": {
+                    "sheetState": "hidden",
+                    "rowHidden": True,
+                    "columnHidden": True,
+                },
+            },
+            {
+                "id": "vp:Mod.Run",
+                "kind": "vba",
+                "label": "Mod.Run",
+                "module": "Mod",
+                "procKind": "Sub",
+                "lines": [1, 10],
+                "code": "Sub Run()\nEnd Sub",
+            },
+        ],
+        "edges": [],
+        "meta": {"sheets": ["Summary"]},
+        "formulaPatterns": [],
+    }
+    tasks = [
+        {
+            "id": "eval-1",
+            "operation": "evaluate",
+            "nodeId": "Summary!C10",
+            "status": "succeeded",
+            "resultAvailable": True,
+            "result": {
+                "status": "completed",
+                "nodeId": "Summary!C10",
+                "value": 100,
+                "comparison": "equal",
+                "steps": steps,
+            },
+        },
+        {
+            "id": "doc-wb",
+            "operation": "document",
+            "nodeId": None,
+            "status": "succeeded",
+            "options": {"language": "fr"},
+            "result": {
+                "markdown": "Overview text",
+                "model": "local-doc",
+                "language": "",
+                "generatedAt": None,
+                "sources": {"calculationTaskId": "missing-calc"},
+            },
+        },
+        {
+            "id": "cap-1",
+            "operation": "capture",
+            "status": "succeeded",
+            "createdAt": None,
+            "result": {
+                "screenshots": [{"sheet": "Summary", "url": "data:image/png;base64,AA"}]
+            },
+        },
+    ]
+
+    def handle(route):
+        path = route.request.url.split("/mounted/", 1)[-1].split("?", 1)[0]
+        if path in {"assets/app-graph.js", "assets/app-graph.css"}:
+            route.fulfill(
+                body=(APP.parent / route.request.url.rsplit("/", 1)[-1]).read_text(
+                    encoding="utf-8"
+                ),
+                content_type=(
+                    "text/css"
+                    if route.request.url.endswith(".css")
+                    else "application/javascript"
+                ),
+            )
+            return
+        if not path:
+            route.fulfill(
+                body=APP.read_text(encoding="utf-8"), content_type="text/html"
+            )
+            return
+        if path == "api/config":
+            data = {
+                "ai": {"available": True, "model": "local-doc", "languages": ["fr"]}
+            }
+        elif path == "api/projects":
+            data = {"projects": [project]}
+        elif path == "api/projects/en-prov":
+            data = {"project": project, "graph": graph, "tasks": tasks}
+        else:
+            data = {}
+        route.fulfill(body=json.dumps(data), content_type="application/json")
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/?lang=en")
+        page.get_by_text("From file to formula.", exact=True).wait_for()
+        open_workspace_menu(page)
+        page.locator('[data-project="en-prov"]').click()
+        page.locator('[data-node="Summary!C10"]').click()
+        detail = page.locator("#node-detail")
+        # Expand every dependency card and verify all 6 provenance labels are English.
+        summaries = detail.locator("#calculation-steps .step-card > summary")
+        summaries.first.wait_for()
+        assert summaries.count() == 6
+        for i in range(6):
+            summaries.nth(i).click()
+        steps_text = detail.locator("#calculation-steps").inner_text()
+        for expected in (
+            "Saved Excel cache",
+            "Workbook input",
+            "Blank cell",
+            "Reference workbook input",
+            "Targeted recalculation",
+            "Unknown",
+        ):
+            assert expected in steps_text, f"missing {expected!r} in {steps_text!r}"
+        for french in (
+            "Cache Excel enregistré",
+            "Entrée du classeur",
+            "Cellule vide",
+            "Entrée du fichier de référence",
+            "Recalcul ciblé",
+            "Inconnue",
+        ):
+            assert french not in steps_text, f"leaked {french!r} in {steps_text!r}"
+        # Expand Canonical formula and provenance; verify all 3 hidden-location words.
+        detail.locator(".inspector-evidence > summary").click()
+        evidence_text = detail.locator(".inspector-evidence").inner_text()
+        assert "Hidden location in Excel: sheet, row, column." in evidence_text
+        for french in ("feuille", "ligne", "colonne"):
+            assert french not in evidence_text
+        # Check non-lazy graph notice ("Selected sheet: all." not "toutes").
+        page.locator("#tab-graph").click()
+        if page.locator("#graph-sheet").is_hidden():
+            open_graph_options(page)
+        page.locator("#graph-sheet").select_option("")
+        page.locator("#tab-nodes").click()
+        page.locator("#tab-graph").click()
+        notice_text = page.locator("#graph-notice").inner_text()
+        assert "Selected sheet: all." in notice_text
+        assert "Selected sheet: toutes." not in notice_text
+        # Check VBA line-range fragment in macroSourceHTML.
+        page.locator("#tab-nodes").click()
+        if page.locator("#node-back-list").is_visible():
+            page.locator("#node-back-list").click()
+        page.locator('[data-node="vp:Mod.Run"]').click()
+        vba_text = detail.inner_text()
+        assert "Lines 1–10" in vba_text
+        assert "Lignes 1–10" not in vba_text
+        # Check AI origin/source fragments (not specified / this workbook / timestamp).
+        page.locator("#tab-sheets").click()
+        ai_text = page.locator("#workbook-ai").inner_text()
+        assert "document language not specified" in ai_text
+        assert "non précisée" not in ai_text
+        assert "Source: recalculation snapshot for this workbook" in ai_text
+        assert "ce classeur" not in ai_text
+        # Check capture timestamp inside data-no-i18n span in report dialog.
+        page.locator(".project-utilities > summary").click()
+        page.locator("#report-open").click()
+        cap_text = page.locator("#report-captures").inner_text()
+        assert "timestamp unavailable" in cap_text
+        assert "horodatage indisponible" not in cap_text
+        assert errors == []
+    finally:
+        page.close()
