@@ -1,8 +1,8 @@
 """Orchestrates the phases that build the lineage graph of an Excel workbook:
-structure → external links → cached values → engine boot → tables →
-resolver → formula sweep → graph nodes/edges (names, formulas, VBA, Power
-Query) → assembly. Each phase is a leaf module; this file only sequences
-them and assembles the result.
+structure, external links, cached values, engine boot, tables, resolver,
+formula sweep, graph nodes/edges (names, formulas, VBA, Power Query), and
+assembly. Each phase is a leaf module; this file only sequences them and
+assembles the result.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
     Entries may carry several comma-separated cells, so the CLI can pass its
     repeated ``--target`` flags straight through. A target without a sheet is
     ambiguous in a multi-sheet workbook, and a range is not a target but a
-    set of them — spell those as several targets rather than one span.
+    set of them. Spell those as several targets rather than one span.
     """
     cells: list[tuple[str, int, int]] = []
     seen: set[tuple[str, int, int]] = set()
@@ -82,7 +82,7 @@ def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
             rect = parse_ref(raw)
             if (rect is None or rect.sheet is None) and "!" in raw:
                 # A sheet name with a space is legal unquoted on the command
-                # line — 'My Sheet'!B1 is the formula spelling, not the
+                # line, since 'My Sheet'!B1 is the formula spelling, not the
                 # user's. Split on the last '!': the sheet's existence is
                 # checked against the workbook later either way.
                 sheet, _, body = raw.rpartition("!")
@@ -102,7 +102,7 @@ def _parse_targets(targets: list[str]) -> list[tuple[str, int, int]]:
 
 
 def _longest_dep_chain(nodes: dict[str, Any], edges: dict) -> int:
-    """Longest precedent→dependent path across formula nodes, in steps.
+    """Longest path from precedent to dependent across formula nodes, in steps.
 
     A topological walk avoids recursion and visits each node/edge once.
     Cycles and nodes blocked behind cycles do not contribute to this risk
@@ -144,7 +144,7 @@ def _chain_depth_warning(
 
     The pre-run estimate weighs formulas and counts them but cannot see how
     deep the dependency chains run, and the engine's own evaluation plan only
-    counts layers while cells are still dirty — after ``evaluate_all`` it
+    counts layers while cells are still dirty. After ``evaluate_all`` it
     reads zero. So the measure is taken from the lineage itself: the longest
     path across formula nodes, and the largest self-referencing group (a
     running-total column is one node on the graph but a chain as deep as it

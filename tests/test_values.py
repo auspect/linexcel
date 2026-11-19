@@ -318,7 +318,7 @@ class TestChainedViaGuarded:
 
     def test_an_error_inside_a_range_poisons_the_sum(self):
         # Excel does not skip errors in SUM: SUM({#DIV/0!, 5}) is #DIV/0!, so
-        # the guard fires and the fallback branch — not 6 — is what is shown
+        # the guard fires and the fallback branch, not 6, is what is shown
         graph = graph_of(
             {
                 "A1": "=1/0",
@@ -355,8 +355,8 @@ class TestSiblingIsolation:
 
 class TestNestedGuard:
     def test_nested_guards_are_evaluated_by_the_engine(self):
-        # Excel lets the inner IFERROR absorb the missing sheet — SUM(0) — and
-        # returns 0. Formualizer 0.10.1 evaluates both guards natively.
+        # Excel lets the inner IFERROR absorb the missing sheet, giving SUM(0),
+        # and returns 0. Formualizer 0.10.1 evaluates both guards natively.
         graph = graph_of({"A1": "=IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1)"})
         node = node_of(graph, "c:S!A1")
         assert node["value"] == 0
@@ -562,7 +562,7 @@ class TestRootStep:
 
     Re-evaluating it in the scratch sheet recomputed what the workbook holds,
     and on a root like ``SUM(H2:H200001)`` that means walking 200,000 formula
-    cells a second time — 29 s for a single node on a dense workbook.
+    cells a second time, taking 29 s for a single node on a dense workbook.
     """
 
     def test_the_root_step_reports_the_value_of_the_cell(self):
@@ -618,8 +618,8 @@ class _RefusingEngine:
     """Scratch engine that silently refuses one expression.
 
     ``set_formula`` returning without raising while leaving the cell as it was
-    is what the real engine does with a reference it cannot resolve — a
-    structured ``Table[Column]`` it never loaded, a 3D ``'A:B'!A1``. The cell
+    is what the real engine does with a reference it cannot resolve, such as a
+    structured ``Table[Column]`` it never loaded or a 3D ``'A:B'!A1``. The cell
     then still holds what the previous batch wrote there.
     """
 
@@ -644,8 +644,8 @@ class _RefusingEngine:
 class TestScratchIsolation:
     """Steps share the scratch row, so each cell must be cleared before use.
 
-    ``set_formula`` does not raise on an expression the engine will not take —
-    it leaves the cell alone — and the batch then read back whatever the
+    ``set_formula`` does not raise on an expression the engine will not take.
+    It leaves the cell alone, and the batch then read back whatever the
     *previous* node had computed in that column, reporting another cell's
     value as this step's own. Seen on a workbook whose ``SUM(Sales[Revenue])``
     step showed the text of an unrelated cell.
@@ -796,7 +796,7 @@ class TestAGroupVerdictIsItsWorstSample:
     The verdict used to be the representative cell's alone, so a group whose
     head agreed with the file showed green over a sample row that had drifted
     red. The verdict of a group is the worst verdict among its comparable
-    cells — the banner can no longer be calmer than the calmest lie it hides.
+    cells. The banner can no longer be calmer than the calmest lie it hides.
     """
 
     @staticmethod
@@ -809,7 +809,7 @@ class TestAGroupVerdictIsItsWorstSample:
             ws.cell(row=r, column=1, value=f"=B{r}*2")
         buf = io.BytesIO()
         wb.save(buf)
-        # What Excel would have stored on save — with one cell holding an
+        # What Excel would have stored on save, with one cell holding an
         # error the recalculation does not reproduce.
         data = with_stored_results(
             buf.getvalue(),
@@ -957,10 +957,10 @@ def error(kind: str) -> dict:
 class TestErrorValues:
     """The engine reports errors as a dict; a report must show Excel's text.
 
-    Left alone it reaches the panel as ``{'type': 'Error', 'kind': 'Na'}`` —
-    Python source, where the reader is looking for ``#N/A`` — and, worse, never
-    equals the ``#N/A`` the file stores, so two identical readings are announced
-    as a disagreement.
+    Left alone it reaches the panel as ``{'type': 'Error', 'kind': 'Na'}``,
+    which is Python source where the reader is looking for ``#N/A``, and,
+    worse, never equals the ``#N/A`` the file stores, so two identical readings
+    are announced as a disagreement.
     """
 
     @pytest.mark.parametrize(
@@ -1001,8 +1001,8 @@ class TestErrorValues:
 class TestUncomputableFormulas:
     """A limit of the engine is not a value of the cell.
 
-    ``NImpl`` means the engine met a function or operator it does not implement
-    — the range intersection below — and ``Circ`` a reference cycle. Showing
+    ``NImpl`` means the engine met a function or operator it does not implement,
+    such as the range intersection below, and ``Circ`` a reference cycle. Showing
     either as "the value linexcel recalculated" claims a recalculation that
     never happened, and puts it against the file's own figure as if the
     workbook were wrong.
@@ -1093,8 +1093,8 @@ class TestReadingsAgree:
     """One rule for "do these two readings of a cell say the same thing?".
 
     It used to be two, and they contradicted each other: Python returned "no
-    difference" for every pair of strings — missing a recalculated `non` over
-    a stored `oui` — while the viewer called any difference a disagreement,
+    difference" for every pair of strings, missing a recalculated `non` over
+    a stored `oui`, while the viewer called any difference a disagreement,
     which lit up a French workbook over `6,7 €`.
     """
 
@@ -1764,7 +1764,7 @@ class TestReadingsAgree:
 
         describe() compares the *jsonable* form of the engine value, where an
         error has already become the text Excel shows. That text over a stored
-        number used to fall through to "same" for being of mixed types — as if
+        number used to fall through to "same" for being of mixed types, as if
         ``#VALUE!`` and ``377775.83`` could be two spellings of one value.
         """
         from linexcel.values import readings_agree
@@ -1791,7 +1791,7 @@ def with_stored_results(
     openpyxl writes formulas and an empty ``<v/>``: a generated fixture has no
     stored results at all, so the whole file-against-recalculated comparison
     has nothing to compare. Filling that element is what a real Excel does on
-    save, and it is the only way to exercise the comparison without one —
+    save, and it is the only way to exercise the comparison without one,
     including the case that started this, a French Excel storing ``6,7 €``.
     """
     import re as _re

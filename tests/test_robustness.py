@@ -4,7 +4,7 @@ The rest of the suite asks whether the lineage is right. These ask whether an
 answer comes back at all, on the workbooks a real user turns out to have: one
 touched cell in the far corner, a linked file that is a CSV in disguise, a
 folder that does not hold what the formulas name. Someone whose file kills the
-tool does not open an issue — they stop using it.
+tool does not open an issue. They stop using it.
 
 ``scripts/stress_scenarios.py`` covers the same ground end to end, in a
 subprocess, and reports timings; this is the part that belongs in CI.
@@ -57,7 +57,7 @@ def corner_read(stray_corner):
     """One reading of the corner workbook, shared: it costs seconds.
 
     Sweeping up to the ceiling is the price of not trusting the declaration,
-    and it is paid per call — so the assertions below share one call rather
+    and it is paid per call, so the assertions below share one call rather
     than each buying their own.
     """
     warnings: list[str] = []
@@ -88,11 +88,12 @@ class TestDeclaredRange:
 
 
 class TestTheFastPathIsSkippedRatherThanCrashing:
-    """python-calamine builds a dense rows × columns array before returning.
+    """python-calamine builds a dense rows by columns array before returning.
 
     For a declared `A1:XFD1048576` that is a 512 GiB allocation, and a failed
-    allocation in Rust aborts the process — no exception, nothing to catch. So
-    the size is checked first and openpyxl, which is lazy, reads the file.
+    allocation in Rust aborts the process, with no exception and nothing to
+    catch. So the size is checked first and openpyxl, which is lazy, reads the
+    file.
     """
 
     @pytest.mark.slow
@@ -126,7 +127,7 @@ class TestTheFastPathIsSkippedRatherThanCrashing:
 
 
 class TestALinkedWorkbookThatCannotBeRead:
-    """The same hazard, one file away — and there, refusing is the answer."""
+    """The same hazard, one file away, and there refusing is the answer."""
 
     def test_a_declared_range_too_large_is_refused_by_name(
         self, tmp_path, stray_corner
@@ -203,7 +204,7 @@ class TestTheDecompositionIsBoundedInTime:
     """A count of evaluations cannot bound a run. Only a clock can.
 
     `MAX_SCRATCH_EVALS` was meant to stop the step decomposition running away,
-    and `preload_steps` — added later to batch the calls — never took from it.
+    and `preload_steps`, added later to batch the calls, never took from it.
     Worse, the count was the wrong unit: each evaluation asks the engine to
     walk the dirty dependency graph, so on a workbook of running totals one
     call costs O(graph) and four thousand of them outlast anybody's patience.
@@ -244,8 +245,8 @@ class TestTheDecompositionIsBoundedInTime:
         # the value of the cell survives; only its decomposition does not
         assert self.value_of(cut, "A3") == self.value_of(whole, "A3") == 10
         cut_root = next(n["steps"] for n in cut.nodes if n.get("addr") == "A3")
-        # the root step keeps its value — it is the cell's own, and needs no
-        # scratch pass — while the sub-steps below it go
+        # the root step keeps its value, because it is the cell's own and needs
+        # no scratch pass, while the sub-steps below it go
         assert self.evaluated_steps(cut) < self.evaluated_steps(whole)
         assert cut_root["evaluated"] is True
 
@@ -324,7 +325,7 @@ def workbook_with_cached_error(
 ) -> bytes:
     """A workbook holding one formula cell whose cached value is an error.
 
-    openpyxl never writes caches, and calamine silently drops cached errors —
+    openpyxl never writes caches, and calamine silently drops cached errors,
     so this file is built by hand: exactly the shape Excel writes for a cell
     that errored when the workbook was last saved, ``<c t="e"><f>…</f>
     <v>#DIV/0!</v></c>``.
@@ -389,7 +390,7 @@ class TestAFormulaTooDeepToEvaluate:
     """A formula past the parser or evaluator's native complexity budgets.
 
     ``evaluate_all`` walks the parse tree recursively, and past roughly 1,000
-    nested operations that walk overflows the stack and *aborts the process* —
+    nested operations that walk overflows the stack and *aborts the process*,
     a hard exit, not an exception a try/except can catch
     (https://github.com/PSU3D0/formualizer/issues/411; measured on 0.9.3: a
     700-term chain evaluates, a 1,000-term one aborts). Such formulas are
@@ -434,7 +435,7 @@ class TestAFormulaTooDeepToEvaluate:
         (warning,) = [w for w in result.warnings if "complexity limit" in w]
         assert "evaluator depth" in warning
         assert "S!A1" in warning
-        # the deep cell keeps a node — degraded, readable, no crash
+        # the deep cell keeps a node: degraded, readable, and without a crash
         node = next(n for n in result.nodes if n.get("addr") == "A1")
         assert node["value"] is None
         # and the rest of the workbook is computed as if nothing happened

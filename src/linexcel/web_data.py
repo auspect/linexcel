@@ -612,7 +612,7 @@ class DataBrowser:
         from linexcel.web import APIError
 
         # Keep introspection, plugin endpoints, actor management and other
-        # database names outside this read-only, per-project surface.
+        # database names outside this read-only, per-project view.
         if method not in {"GET", "HEAD"}:
             raise APIError(405, "La vue des données est en lecture seule")
         decoded = unquote(path)

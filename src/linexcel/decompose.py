@@ -7,7 +7,7 @@ its own in a scratch sheet. Everything here is driven by a passed-in
 ``resolver`` and returns plain dicts; nothing reaches back into the analyzer.
 
 The scratch constants live here because the scratch sheet exists *for* step
-decomposition — it is the engine sheet where guarded evaluations happen.
+decomposition. It is the engine sheet where guarded evaluations happen.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ _PRECEDENCE = {
     "^": 5,
 }
 #: Unary minus binds tighter than any binary operator: ``-2^2`` is 4 in Excel,
-#: and the parser agrees — it reads ``-A1^2`` as ``(-A1)^2``.
+#: and the parser agrees, reading ``-A1^2`` as ``(-A1)^2``.
 _UNARY_PRECEDENCE = 6
 
 
@@ -94,7 +94,7 @@ def _collect_step_exprs(ast_dict: dict, *, skip_root: bool = False) -> list[str]
 
     The counter and ``_STEP_KINDS`` filter mirror ``_decompose`` exactly so
     the expressions batch-evaluated here are the same ones looked up later
-    in ``_eval_raw``.  Order is pre-order (parent before children) — it does
+    in ``_eval_raw``.  Order is pre-order (parent before children). It does
     not match the post-order evaluation in ``_decompose`` but that is fine:
     the batch evaluates all at once and the cache is order-independent.
 
@@ -142,7 +142,7 @@ def _decompose(
 
     ``root_value`` is the value the engine already computed for the cell
     itself. The root step *is* the whole formula, so re-evaluating it in the
-    scratch sheet recomputes a value the workbook already holds — and a root
+    scratch sheet recomputes a value the workbook already holds, and a root
     such as ``SUM(Calculs!H2:H200001)`` makes the engine walk 200,000 formula
     cells again, which measured 29 s on one node. Pass it only when it came
     from the engine: a value read from the file, or an error-guarded fallback,
@@ -235,7 +235,7 @@ def _render_expr(node: dict) -> str:
         left_node, right_node = node.get("left", {}), node.get("right", {})
         # Rendered inline rather than through a helper: one Python frame per
         # AST level, and the stress workbook carries a 700-term chain of
-        # additions — two frames per level exhausts the interpreter on it.
+        # additions. Two frames per level exhausts the interpreter on it.
         left = _render_expr(left_node)
         if _needs_parens(left_node, precedence, right_side=False):
             left = f"({left})"
@@ -278,7 +278,7 @@ def _needs_parens(node: dict, parent_precedence: int, right_side: bool) -> bool:
     The parser keeps grouping in the *shape* of the tree and drops the
     parentheses themselves, so rendering a subtree flat changes what the text
     means: ``=D2*(1-Rate)`` came back as ``D2 * 1 - Rate``. That is not only
-    misread by a human — each step is evaluated by re-parsing its own rendered
+    misread by a human. Each step is evaluated by re-parsing its own rendered
     text, so the step reported 2470.06 for a cell holding 1976.208.
 
     A right operand of *equal* precedence is parenthesized too: ``A - (B - C)``
@@ -300,8 +300,8 @@ def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
     The cell is primed with a sentinel first: when the engine cannot compute
     an expression it leaves the previous value in place instead of reporting
     an error, and an unchanged sentinel is the only way to tell. The very
-    first evaluation on a workbook holding a broken reference raises — the
-    engine walks the whole dirty graph — while later ones stay isolated,
+    first evaluation on a workbook holding a broken reference raises, because
+    the engine walks the whole dirty graph, while later ones stay isolated,
     hence the single retry.
     """
     try:
@@ -328,8 +328,8 @@ def _scratch_eval(engine, expr: str, sheet: str) -> tuple[Any, bool]:
 
 def _guard_fallback_expr(expr: str) -> str | None:
     """Fallback branch of a top-level IFERROR/IFNA, as Excel would show it."""
-    # ponytail: only a top-level guard is recovered. With a nested one —
-    # =IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1) — the whole expression fails to
+    # ponytail: only a top-level guard is recovered. With a nested one, such as
+    # =IFERROR(SUM(IFERROR(NOSHEET!A1,0)),1), the whole expression fails to
     # evaluate, so the outer fallback branch is taken (1) where Excel lets the
     # inner guard absorb the broken reference and returns 0. That gap is the
     # accepted ceiling of this recovery.

@@ -12,7 +12,7 @@ surfacing as raw keys in the report or a ``KeyError`` at generation time.
 
 Provenance: ``en`` and ``fr`` were written by hand. The other seven languages,
 here and in the prompt registries, were produced with AI assistance and have not
-been reviewed by native speakers — corrections welcome.
+been reviewed by native speakers. Corrections are welcome.
 """
 
 from __future__ import annotations

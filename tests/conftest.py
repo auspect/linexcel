@@ -18,7 +18,7 @@ def build_lineage_workbook() -> bytes:
         ws.cell(row=r, column=1, value=f"P{r - 1}")
         ws.cell(row=r, column=2, value=r % 7 + 1)
         ws.cell(row=r, column=3, value=10.5 + (r % 13))
-        ws.cell(row=r, column=4, value=f"=B{r}*C{r}")  # stretched formula ×100
+        ws.cell(row=r, column=4, value=f"=B{r}*C{r}")  # stretched 100 times
     ws["A1"].comment = Comment("Exported product category", "Data team")
     ws.freeze_panes = "A2"
     ws.column_dimensions["C"].hidden = True

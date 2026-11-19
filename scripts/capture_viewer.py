@@ -2,13 +2,13 @@
 """Capture the README screenshots from a generated linexcel report.
 
 The images in ``imgs/`` illustrate the viewer, so they go stale the moment
-``viewer.html``, ``viewer.py`` or ``i18n.py`` changes and nobody notices — a
-README showing an interface the package no longer has. This script captures
+``viewer.html``, ``viewer.py`` or ``i18n.py`` changes and nobody notices, leaving
+a README showing an interface the package no longer has. This script captures
 them from a real report, and records which sources they were captured from so
 the ``readme-shots`` prek hook can tell when they no longer match.
 
-Each shot drives the interface the way a reader would — clicking tabs, searching
-for a node — rather than photographing the landing state four times:
+Each shot drives the interface the way a reader would, clicking tabs and
+searching for a node, rather than photographing the landing state four times:
 
     uv run python scripts/capture_viewer.py            # recapture imgs/
     uv run python scripts/capture_viewer.py --check    # are they still current?
@@ -81,7 +81,7 @@ SHOTS = (
         # Summary!C10 (Net Commercial Contribution) combines Gross Profit, Net
         # Revenue, RebateRate and Commission in a pure numeric
         # formula whose cached value agrees identically between LibreOffice and
-        # Formualizer, while showcasing multi-step subexpression evaluation.
+        # Formualizer, and showing multi-step subexpression evaluation.
         # Values and provenance align cleanly without locale comma ambiguity.
         name="viewer_node_documented.png",
         caption="Selected KPI: source formula, values, provenance and calculation steps",
@@ -355,7 +355,7 @@ def apply_shot(page, shot: Shot) -> bool:
 
 def main() -> int:
     # This runs from a commit hook and from CI, where stdout is a pipe and
-    # defaults to cp1252 on Windows — which cannot encode the symbols below.
+    # defaults to cp1252 on Windows, which cannot encode the symbols below.
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is not None:
         reconfigure(encoding="utf-8", errors="replace")

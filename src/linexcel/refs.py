@@ -1,4 +1,4 @@
-"""Excel reference utilities: A1 ↔ (row, col), R1C1, ranges.
+"""Excel reference utilities: A1 and (row, col) conversion, R1C1, ranges.
 
 All conversions are independent of the computation engine so they remain
 unit-testable.
@@ -138,7 +138,7 @@ def quote_sheet(sheet: str) -> str:
 
 
 def split_sheet_prefix(ref: str) -> tuple[str | None, str]:
-    """Split the sheet prefix from a reference ('Sheet 1'!A1 → (Sheet 1, A1)).
+    """Split the sheet prefix from a reference, turning 'Sheet 1'!A1 into (Sheet 1, A1).
 
     >>> split_sheet_prefix("Sheet1!A1")
     ('Sheet1', 'A1')

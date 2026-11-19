@@ -4,7 +4,7 @@ Extracted mechanically from analyzer.py. Declared Excel tables come from the
 package's own ``xl/tables/*.xml`` parts (via the relationship graph of the
 OOXML format), static ones from a heuristic over a small engine window, and
 defined names from openpyxl's read-only workbook. All of it is used only to
-tag lineage nodes — nothing here builds the graph itself.
+tag lineage nodes. Nothing here builds the graph itself.
 """
 
 from __future__ import annotations
@@ -26,16 +26,16 @@ def _build_table_index(
     sheet_dims: dict[str, tuple[int, int]],
     engine_sheets: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Per-sheet table list, for cell→table enrichment of lineage nodes.
+    """Per-sheet table list, for cell-to-table enrichment of lineage nodes.
 
     Two sources, both cheap. Declared tables come from the package's own
     ``xl/tables/*.xml`` parts, which carry the range and the column names that
     structured references (``Sales[Amount]``) resolve against. Static ones stay
-    a heuristic, over a window of at most 30 × 50 cells read from the engine.
+    a heuristic, over a window of at most 30 by 50 cells read from the engine.
 
-    Neither needs openpyxl. Reaching ``ws.tables`` did — read-only mode drops
-    them — and that second, eager parse of the whole workbook cost 45 s of a
-    246 s run on a 2.6M-formula file, to read a handful of definitions.
+    Neither needs openpyxl. Reaching ``ws.tables`` did, because read-only mode
+    drops them, and that second, eager parse of the whole workbook cost 45 s of
+    a 246 s run on a 2.6M-formula file, to read a handful of definitions.
     """
     from linexcel.insights import (
         MAX_TABLES_PER_SHEET,
@@ -101,9 +101,9 @@ def _sheet_window(engine, sheet: str, rows: int, cols: int) -> list[list[Any]]:
 def _declared_tables(data: bytes) -> dict[str, list[dict[str, Any]]]:
     """Table definitions per sheet, read straight from the package parts.
 
-    Follows the relationships the format itself uses: workbook → worksheet
-    parts → the table parts each sheet owns. Anything unreadable is skipped —
-    a missing table only costs a node its ``table_name`` tag.
+    Follows the relationships the format itself uses, from workbook to worksheet
+    parts to the table parts each sheet owns. Anything unreadable is skipped,
+    since a missing table only costs a node its ``table_name`` tag.
     """
     out: dict[str, list[dict[str, Any]]] = defaultdict(list)
     try:
@@ -166,7 +166,7 @@ def _table_entry(root) -> dict[str, Any] | None:
 
 
 def _local_name(tag: str) -> str:
-    """``{namespace}sheet`` → ``sheet``."""
+    """Strip an XML namespace prefix, turning ``{namespace}sheet`` into ``sheet``."""
     return tag.rsplit("}", 1)[-1]
 
 
@@ -255,9 +255,9 @@ def _collect_defined_names(owb) -> dict[str, list[Rect]]:
 
     A name can be declared on a single worksheet, in which case it lives on that
     sheet rather than on the workbook and is invisible to ``owb.defined_names``.
-    Such names are common in real files — a per-sheet ``Total`` or ``Limit`` —
-    and skipping them turned every formula using one into an unresolved
-    reference.
+    Such names are common in real files, such as a per-sheet ``Total`` or
+    ``Limit``, and skipping them turned every formula using one into an
+    unresolved reference.
 
     Scope is not modelled on the node itself: the graph keys names by their text,
     so a workbook-scoped name wins over a sheet-scoped one of the same name, and

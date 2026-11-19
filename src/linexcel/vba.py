@@ -21,7 +21,7 @@ _END_PROC_RE = re.compile(
     r"^[ \t]*End\s+(Sub|Function|Property)\b", re.IGNORECASE | re.MULTILINE
 )
 
-# Worksheets("Name").  /  Sheets("Name").  — captures sheet name
+# Worksheets("Name").  /  Sheets("Name"). Captures the sheet name.
 _SHEET_QUAL = (
     r"(?:(?P<workbook>ThisWorkbook|ActiveWorkbook|\w+)\.)?"
     r"(?:Worksheets|Sheets)\(\s*\"(?P<sheet>[^\"]+)\"\s*\)\s*\."
@@ -89,8 +89,8 @@ def extract_vba_modules(
     A workbook holding no macro yields an empty mapping, and so did every
     failure below: an unreadable VBA project, a module stream olevba chokes on,
     oletools missing altogether. The report then showed a macro workbook as
-    having no code at all and said nothing about it — the one reading it cannot
-    tell "no macros" from "we could not read them". Every such reason is
+    having no code at all and said nothing about it, so the one reading it
+    cannot tell "no macros" from "we could not read them". Every such reason is
     therefore appended to ``warnings`` when a list is given.
 
     A failure part-way through keeps the modules already read. Their procedures
@@ -98,7 +98,7 @@ def extract_vba_modules(
     them would trade a partial answer for none.
 
     olevba dispatches on the file's own header rather than on ``filename``, so
-    a macro workbook is found whatever it is called — including the default name
+    a macro workbook is found whatever it is called, including the default name
     :func:`linexcel.analyze` gives a workbook handed to it as bytes.
     """
     try:
@@ -168,8 +168,8 @@ def extract_vba_modules(
                         "concatenated, original module identity is ambiguous",
                     )
         # Only the case where olevba announces macros and then hands back no
-        # stream at all. A macro-enabled workbook nobody wrote code in — saved
-        # from a template, say — yields the sheet shells and no module, and
+        # stream at all. A macro-enabled workbook nobody wrote code in, such as
+        # one saved from a template, yields the sheet shells and no module, and
         # that is not a defect to report.
         if not streams:
             _warn(
@@ -202,8 +202,8 @@ def _is_attribute_only(code: str) -> bool:
     handful of ``Attribute`` declarations and no statement, so counting them as
     modules reports a workbook with one macro module as having five.
 
-    A sheet module that *does* hold code — a ``Worksheet_Change`` handler, say —
-    has lines beyond the attributes and is kept.
+    A sheet module that *does* hold code, such as a ``Worksheet_Change``
+    handler, has lines beyond the attributes and is kept.
     """
     return all(
         line.strip().lower().startswith("attribute ")
@@ -320,7 +320,7 @@ def _find_calls(
 
     A name reached through a dot counts as a call only when the qualifier is a
     module (``Module1.Taux``, returned qualified); otherwise it is member
-    access on an object (``.Value``, ``.Range``) and is ignored — which matters
+    access on an object (``.Value``, ``.Range``) and is ignored, which matters
     because helper procedures are routinely named ``Value``, ``Add`` or
     ``Count``.
     """

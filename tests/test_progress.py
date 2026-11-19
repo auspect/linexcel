@@ -3,7 +3,7 @@
 Two rules the tests below exist to hold. Nothing is printed unless asked:
 ``analyze()`` is a library call, and one that writes to a terminal nobody
 pointed it at is one people wrap in ``redirect_stderr``. And nothing is
-printed to **stdout**, ever — `--json -` and `-o -` write the payload there,
+printed to **stdout**, ever. `--json -` and `-o -` write the payload there,
 so a progress bar in that stream corrupts a pipe rather than decorating it.
 """
 

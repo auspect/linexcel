@@ -50,8 +50,8 @@ def sheet_bytes(data: bytes) -> int:
     """Uncompressed weight of the sheet parts, without unpacking one.
 
     The zip central directory carries each entry's real size, so this costs a
-    read of the index — microseconds on a file that takes minutes to analyse.
-    That is the whole point: an estimate nobody waits for.
+    read of the index, taking microseconds on a file that takes minutes to
+    analyse. That is the whole point: an estimate nobody waits for.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -105,8 +105,8 @@ def inspect_workbook(
 ) -> dict[str, Any]:
     """What the file says about itself, before anything analyses it.
 
-    Everything here is read from the package headers — sheet dimensions and
-    external link declarations — so it costs milliseconds on a file that would
+    Everything here is read from the package headers, including sheet dimensions
+    and external link declarations, so it costs milliseconds on a file that would
     take minutes to analyse. That is the point: it answers "is this going to
     be long, and will anything be left out?" *before* someone commits to
     finding out the slow way.

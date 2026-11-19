@@ -47,7 +47,7 @@ def _strip_comments_and_docstrings(source: str) -> str:
     """Return ``source`` with comments and docstrings removed.
 
     Prose is free to name endpoints as examples; executable code is not. Other
-    string literals are kept on purpose — a vendor name smuggled in as an
+    string literals are kept on purpose. A vendor name smuggled in as an
     environment variable or a default model is exactly what must be caught.
     """
     import ast
@@ -221,8 +221,8 @@ class TestAnalyze:
     def test_sheet_scoped_defined_names_are_collected(self):
         """A name declared on one sheet is invisible to `owb.defined_names`.
 
-        Per-sheet names are ordinary in real files — a `Total` or `Limit` local
-        to a tab — and skipping them turned every formula using one into an
+        Per-sheet names are ordinary in real files, such as a `Total` or `Limit`
+        local to a tab, and skipping them turned every formula using one into an
         unresolved reference.
         """
         from openpyxl import Workbook
@@ -797,7 +797,7 @@ class TestLanguages:
 
 @pytest.mark.ai
 class TestAiProviders:
-    """Provider resolution and failure handling — no network call involved."""
+    """Provider resolution and failure handling, with no network call involved."""
 
     @staticmethod
     def _calc_ids(result: LineageResult) -> list[str]:
@@ -1201,7 +1201,7 @@ class TestQuarantineReadsTheXml:
     """The suspect scan streams the sheet XML, never the engine.
 
     Reading formulas back from a freshly rebuilt engine builds the dependency
-    graph one cell at a time — quadratic, and the reason a failed
+    graph one cell at a time, which is quadratic and the reason a failed
     ``evaluate_all`` used to turn minutes into hours.
     """
 
@@ -1293,7 +1293,7 @@ class TestQuarantineReadsTheXml:
         """Isolation must not cost a range one of its terms.
 
         `IFERROR(NOSHEET!A1, 456)` has a correct value despite an unresolvable
-        reference. Blanking it does not merely lose that cell — every SUM
+        reference. Blanking it does not merely lose that cell, because every SUM
         spanning it quietly returns a smaller number.
         """
         from openpyxl import Workbook
@@ -1320,7 +1320,7 @@ class TestQuarantineReadsTheXml:
 class TestHostileCellText:
     """Workbook text is attacker-controlled: it must reach the page inert.
 
-    Each payload below has broken some report generator — the first two close
+    Each payload below has broken some report generator: the first two close
     the script tag the graph is embedded in, the next two collide with the
     viewer's own template placeholders, `$&` is a regex replacement reference,
     and U+2028 terminates a JavaScript string literal though not a JSON one.
@@ -2104,7 +2104,7 @@ class _StubVbaParser:
     """Stand-in for ``olevba.VBA_Parser``.
 
     The real one needs a ``vbaProject.bin``, which is an OLE compound file that
-    ``openpyxl`` cannot author — so no generated fixture can carry macros and
+    ``openpyxl`` cannot author, so no generated fixture can carry macros and
     the extraction loop had never run in a test. This drives it with the tuples
     olevba yields, including the shapes that only turn up on real files: a
     module name and a body coming back as undecoded bytes.
@@ -2181,7 +2181,7 @@ class TestScreenshotDescriptions:
 
     Colour conventions, conditional formatting and layout never reach a text
     dossier, so a model is shown the screenshot itself. What matters is that it
-    is *shown* one — a text-only provider must fail loudly rather than have the
+    is *shown* one. A text-only provider must fail loudly rather than have the
     image dropped from the request.
     """
 
@@ -2458,7 +2458,7 @@ class TestSheetClassModules:
 
     Found on the real `macros.xlsm`: a workbook with a single macro module was
     reported as having five, because the four Excel wrote for its sheets and
-    ThisWorkbook are not empty — they hold `Attribute VB_*` declarations.
+    ThisWorkbook are not empty, because they hold `Attribute VB_*` declarations.
     """
 
     SHEET_STUB = (
@@ -2615,7 +2615,7 @@ class TestPowerQueryWorkbook:
         assert "Table.SelectRows" in queries["BusyProducts"]["code"]
 
     def test_the_lineage_crosses_the_query_from_source_to_destination(self):
-        """``Source!A1:B4`` → ``BusyProducts`` → ``Loaded!A1:B3``."""
+        """Trace ``Source!A1:B4`` through ``BusyProducts`` to ``Loaded!A1:B3``."""
         result = analyze(self.WORKBOOK)
         ids = {n["label"]: n["id"] for n in result.nodes}
         edges = {(e["source"], e["target"]): e["kind"] for e in result.graph["edges"]}
@@ -2672,7 +2672,7 @@ def _workbook_with_dynamic_table() -> bytes:
 
 
 def _workbook_with_static_table() -> bytes:
-    """Workbook with no formal table — just a header row over contiguous data."""
+    """Workbook with no formal table, just a header row over contiguous data."""
     from openpyxl import Workbook
 
     wb = Workbook()
@@ -2781,7 +2781,7 @@ class TestTableDetection:
         assert enriched, "at least one node must be tagged with the table"
         node = enriched[0]
         assert node["table_column"] == "Margin"
-        assert node["table_row"] == 0  # representative cell D2 → first data row
+        assert node["table_row"] == 0  # representative cell D2 is in the first data row
 
     def test_static_table_enriches_graph(self):
         data = _workbook_with_static_table()
@@ -2809,7 +2809,7 @@ class TestTableDetection:
         ws = wb.active
         ws.title = "Data"
         ws.append(["A", "B", "Result"])
-        ws.append([10, 20, "=A2+B2"])  # single formula → no stretching
+        ws.append([10, 20, "=A2+B2"])  # single formula, so no stretching
         ws.add_table(Table(displayName="T", ref="A1:C2"))
         buf = io.BytesIO()
         wb.save(buf)
@@ -2824,8 +2824,8 @@ class TestTableDetection:
 class TestScanCeiling:
     """The formula sweep is bounded per sheet, and says what it left out.
 
-    The ceiling exists for a file that *declares* far more than it holds — one
-    stray cell at XFD1048576 makes the used range 17 billion cells — not to
+    The ceiling exists for a file that *declares* far more than it holds, where
+    one stray cell at XFD1048576 makes the used range 17 billion cells, not to
     keep an honest workbook quick: sweeping costs about 0.7 µs per cell.
     """
 

@@ -1,17 +1,17 @@
-"""Power Query (Get & Transform) — the queries a workbook is fed by.
+"""Power Query (Get & Transform) queries that feed a workbook.
 
 Data that arrives through a query has no formula behind it. The cells hold
 values, the calculation engine sees a plain range, and the thing that filled
-it — a CSV on a share, a database, another table of the same workbook — lives
-in a part of the package no spreadsheet engine ever opens. Read it back and
-the range stops being a dead end.
+it, whether a CSV on a share, a database, or another table of the same workbook,
+lives in a part of the package no spreadsheet engine ever opens. Read it back
+and the range stops being a dead end.
 
 Where it sits in the file: a ``customXml`` item whose schema is
 ``http://schemas.microsoft.com/DataMashup`` holds a UTF-16 document whose one
 element is base64. Decoded, that is a ``uint32`` version, a ``uint32`` length,
 then a ZIP whose ``Formulas/Section1.m`` carries the M source of every query
 in plain text. ``xl/connections.xml`` names the query each connection loads,
-and ``xl/queryTables/*.xml`` ties that connection to the table on a sheet — so
+and ``xl/queryTables/*.xml`` ties that connection to the table on a sheet, so
 the landing range is reachable too.
 
 What is read out of the M is deliberately shallow: the sources a query names
@@ -72,13 +72,13 @@ _NEWLINE_RE = re.compile(r"[\r\n\x85\u2028\u2029]")
 _CURRENT_WORKBOOK_RE = re.compile(
     r'(?<![\w.])Excel\.CurrentWorkbook\s*\(\s*\)\s*\{\s*\[\s*Name\s*=\s*"((?:[^"]|"")*)"\s*\]'
 )
-#: ``Namespace.Member("first string argument"`` — the shape every connector
+#: ``Namespace.Member("first string argument"``, the shape every connector
 #: uses to name what it reads.
 _CALL_RE = re.compile(
     r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*\(\s*"((?:[^"]|"")*)"(?=\s*[,)])'
 )
 #: The head of a section member: optional metadata, optional ``shared``, then
-#: the name — quoted when it holds spaces — and the ``=`` that opens its body.
+#: the name, quoted when it holds spaces, and the ``=`` that opens its body.
 _MEMBER_RE = re.compile(
     r'\s*(?:\[[^\]]*\]\s*)?(?:shared\s+)?(?:#"((?:[^"]|"")*)"|([A-Za-z_][\w.]*))\s*=\s*',
     re.DOTALL,
@@ -140,7 +140,7 @@ def read_queries(data: bytes) -> list[Query]:
 
     An empty list means what it says: no Power Query in the file, or a mashup
     part this reader could not make sense of. Either way the analysis carries
-    on — a query that cannot be read costs the graph a node, not a run.
+    on. A query that cannot be read costs the graph a node, not a run.
     """
     section = read_section(data)
     if not section:
@@ -216,7 +216,7 @@ def read_section(data: bytes) -> str | None:
 
 
 def parse_section(text: str) -> dict[str, str]:
-    """``section Section1; shared X = …;`` → ``{name: M source}``.
+    """Parse ``section Section1; shared X = …;`` into ``{name: M source}``.
 
     >>> parse_section('section Section1;\\nshared Sales = let x = 1 in x;')
     {'Sales': 'let x = 1 in x'}
@@ -239,9 +239,9 @@ def scan_sources(m_source: str, other_queries: set[str]) -> list[QuerySource]:
     """What one query reads, read off its M source.
 
     Three kinds of answer: a table or named range of this workbook, another
-    query of the same file, or something outside both — a path, a URL, a
-    server. Targets that require evaluating an expression remain unresolved
-    here.
+    query of the same file, or something outside both, such as a path, a URL,
+    or a server. Targets that require evaluating an expression remain
+    unresolved here.
     """
     found: list[QuerySource] = []
     body = _scrub(m_source, keep_text=True)
@@ -278,10 +278,10 @@ def scan_sources(m_source: str, other_queries: set[str]) -> list[QuerySource]:
 def read_destinations(data: bytes | Path) -> dict[str, list[Destination]]:
     """``{query name, casefolded: [where it loads]}``.
 
-    Follows the chain the format itself uses: worksheet → table part →
-    query table → connection → the query the connection names. A query that
-    loads nowhere — connection only, or straight into the data model — has no
-    entry, which is the difference the report shows.
+    Follows the chain the format itself uses, from worksheet to table part,
+    query table, connection, and the query the connection names. A query that
+    loads nowhere, whether connection only or straight into the data model, has
+    no entry, which is the difference the report shows.
     """
     out: dict[str, list[Destination]] = defaultdict(list)
     try:
@@ -347,7 +347,7 @@ def _mashup_root(raw: bytes) -> Any:
 
 
 def _unpack_mashup(encoded: str) -> str | None:
-    """base64 → ``version | length | ZIP`` → the M source it holds."""
+    """Decode base64 into ``version | length | ZIP`` and return its M source."""
     try:
         blob = base64.b64decode(encoded, validate=False)
     except Exception:
@@ -561,7 +561,7 @@ def _connection_queries(zf: zipfile.ZipFile) -> dict[str, str]:
 
 
 def _mashup_location(connection: str) -> str | None:
-    """``Provider=Microsoft.Mashup.OleDb.1;…;Location=Sales`` → ``Sales``."""
+    """Extract ``Sales`` from ``Provider=Microsoft.Mashup.OleDb.1;…;Location=Sales``."""
     if "Mashup" not in connection:
         return None
     for part in connection.split(";"):
@@ -572,7 +572,7 @@ def _mashup_location(connection: str) -> str | None:
 
 
 def _mashup_command(command: str) -> str | None:
-    """``SELECT * FROM [Sales]`` — the fallback when no Location is given."""
+    """Extract ``Sales`` from ``SELECT * FROM [Sales]`` when no Location is given."""
     match = re.search(r"FROM\s*\[([^\]]+)\]", command, re.IGNORECASE)
     return match.group(1) if match else None
 
@@ -582,7 +582,7 @@ def _tag(element) -> str:
 
 
 def _tag_name(name: str) -> str:
-    """``{namespace}sheet`` → ``sheet``."""
+    """Strip an XML namespace prefix, turning ``{namespace}sheet`` into ``sheet``."""
     return name.rsplit("}", 1)[-1]
 
 

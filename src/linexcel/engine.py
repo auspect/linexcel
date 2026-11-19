@@ -1,8 +1,8 @@
 """Boot the formualizer engine, and make it survive a broken reference.
 
 Extracted mechanically from analyzer.py: instantiate the engine from the
-workbook bytes, run the whole-workbook evaluation, and — when that fails
-because one formula names something the engine cannot resolve — quarantine
+workbook bytes, run the whole-workbook evaluation, and, when that fails
+because one formula names something the engine cannot resolve, quarantine
 the offending cells and retry, so the rest of the file keeps its computed
 values.
 """
@@ -47,7 +47,7 @@ SCAN_CHUNK_CELLS = 1_000_000
 #: structured table reference (``SalesTable[Revenue]``). Neither resolves to a
 #: cell the engine holds.
 _BRACKETED_RE = re.compile(r"\[[^\]]*\]")
-#: A 3-D sheet span — ``'First:Last'!A1`` or ``First:Last!A1``. The engine reads
+#: A 3-D sheet span, such as ``'First:Last'!A1`` or ``First:Last!A1``. The engine reads
 #: the span as one sheet name and reports it missing.
 _SPAN_RE = re.compile(r"'[^']*:[^']*'!|(?<![\w$)])[A-Za-z_][\w.]*:[A-Za-z_][\w.]*!")
 #: Error guards. A formula using one may well have a defined value despite a
@@ -76,7 +76,7 @@ _XML_ENTITIES = {"&quot;": '"', "&apos;": "'"}
 
 #: Deepest formula parse tree ``evaluate_all`` is trusted with. The evaluator
 #: walks the tree recursively, and past roughly 1,000 nested operations that
-#: walk overflows the stack and *aborts the process* — a hard exit no
+#: walk overflows the stack and *aborts the process*, a hard exit no
 #: try/except sees (upstream: https://github.com/PSU3D0/formualizer/issues/411).
 #: Formulas deeper than this are quarantined before evaluation. Newer parser
 #: releases can impose a lower AST-height limit; those parser errors are also
@@ -92,8 +92,8 @@ FORMUALIZER_PARSER_SAFE_LENGTH = 64
 #: Whether the engine evaluates independent branches of the dependency graph
 #: in parallel. This is formualizer's own default since 0.9; it is stated
 #: explicitly so the choice is documented and so a workbook that misbehaves
-#: under parallel evaluation has an off switch — ``boot_engine(parallel=False)``
-#: — instead of a patched engine. Prototype timings live in
+#: under parallel evaluation has an off switch, ``boot_engine(parallel=False)``,
+#: instead of a patched engine. Prototype timings live in
 #: ``scripts/perf_probe.py``.
 PARALLEL_EVALUATION = True
 
@@ -544,8 +544,8 @@ def boot_engine(
     carries the reachable set so the sweep can leave the rest of the
     workbook out of the lineage.
 
-    This is the long silent stretch of a large workbook — it used to be the
-    one phase nothing reported while it ran — so it is a reporter phase like
+    This is the long silent stretch of a large workbook, and it used to be the
+    one phase nothing reported while it ran, so it is a reporter phase like
     the others, with a step per stage rather than a timing printed after.
     """
     reporter = reporter or Reporter()
@@ -671,8 +671,8 @@ def boot_engine(
                 )
                 if _formulas_gone(engine, data, engine_sheets, quarantined):
                     # formualizer 0.9.3 keeps the formula map readable after a
-                    # failed evaluate_all, so the rebuild is usually wasted —
-                    # one full from_bytes. It is paid only when the probe says
+                    # failed evaluate_all, so the rebuild is usually a wasted
+                    # full from_bytes call. It is paid only when the probe says
                     # the engine really did come back empty.
                     rebuilt_data = (
                         _blank_formulas_in_package(data, too_deep) if too_deep else data
@@ -1265,9 +1265,9 @@ def _formulas_gone(
 
     A rebuild from the bytes was the unconditional answer to a failed
     ``evaluate_all``, on the grounds that the engine then reports no formula
-    at all. On 0.9.3 that is no longer what happens — ``get_formulas`` and
+    at all. On 0.9.3 that is no longer what happens, since ``get_formulas`` and
     per-cell ``evaluate_cell`` still answer after the failure (measured on a
-    missing-sheet reference) — so the third ``from_bytes`` is probed for
+    missing-sheet reference), so the third ``from_bytes`` is probed for
     rather than paid: one formula cell the quarantine did not blank is read
     back, and only an empty answer sends the run through the rebuild.
     """
@@ -1293,10 +1293,11 @@ def _find_unresolvable(
 
     The suspects are read from the sheet XML, never from the engine. Reading
     them with ``get_formulas`` would force the engine to build its dependency
-    graph one cell at a time — measured quadratic, about 18 s for 20,000 cells,
-    i.e. half an hour for the kind of workbook that lands here — and that graph
-    build is exactly what the failed ``evaluate_all`` proved impossible. The
-    XML scan streams the parts the file already carries and stays linear.
+    graph one cell at a time. That was measured as quadratic, about 18 s for
+    20,000 cells, i.e. half an hour for the kind of workbook that lands here,
+    and that graph build is exactly what the failed ``evaluate_all`` proved
+    impossible. The XML scan streams the parts the file already carries and
+    stays linear.
     """
     suspects: dict[tuple[str, int, int], str] = {}
     from linexcel.structured_refs import batch_table_resolver
@@ -1490,7 +1491,7 @@ def is_too_deep(formula: str, max_depth: int = MAX_AST_DEPTH) -> bool:
 
     Lexically shallow formulas avoid native parsing. Deeper formulas are parsed
     once; a parser-reported AST-height limit is distinct from an unrelated
-    syntax/unsupported-formula error. The latter remains the importer’s
+    syntax/unsupported-formula error. The latter remains the importer's
     responsibility as before.
     """
     lexical_depth = _lexical_depth_bound(formula)
@@ -1510,7 +1511,7 @@ def _find_too_deep(
     """The cells whose formula is too deep to evaluate safely, keyed by cell.
 
     Read from the sheet XML like the other quarantine suspects, never from the
-    engine — the scan must stay linear and must not ask the engine to build
+    engine. The scan must stay linear and must not ask the engine to build
     the very graph the evaluation is about to choke on. Also returned: the
     first offender, so the warning can name a cell rather than a count.
     """
@@ -1530,8 +1531,8 @@ def _find_too_deep(
 def _without_chartsheets(data: bytes) -> tuple[bytes, list[str]]:
     """The package with its chartsheet ``<sheet>`` entries cut, and their names.
 
-    formualizer's reader refuses a workbook holding a chartsheet outright —
-    ``Expecting a worksheet, got chartsheet`` — however many real worksheets
+    formualizer's reader refuses a workbook holding a chartsheet outright with
+    ``Expecting a worksheet, got chartsheet``, however many real worksheets
     sit beside it. A chartsheet holds a chart and no cells, so cutting its
     entry from ``workbook.xml`` costs the lineage nothing and lets the rest
     of the workbook through. The names come back so the caller can say which.
@@ -1586,7 +1587,7 @@ def _blank_formulas_in_package(
     """Copy the package with the quarantined cells' ``<f>`` elements cut out.
 
     Blanking through the engine (``set_value`` / ``set_values_batch``) costs it
-    a graph notice per cell — measured near 1.5 ms each even batched, so the
+    a graph notice per cell, measured near 1.5 ms each even batched, so the
     tens of thousands of external-reference cells a real workbook lands here
     with meant minutes spent mutating. Cutting the elements out of the XML is a
     linear pass, and a cell that keeps its cached ``<v>`` comes back as the
@@ -1630,7 +1631,7 @@ def _is_unresolvable(formula: str, engine_sheets: set[str]) -> bool:
     """Whether ``formula`` names something the engine cannot resolve.
 
     A guarded formula is never isolated, however broken its reference looks.
-    ``IFERROR(NOSHEET!A1, 456)`` *has* a correct value — 456 — and blanking it
+    ``IFERROR(NOSHEET!A1, 456)`` *has* a correct value, 456, and blanking it
     does not merely cost that cell its own value: every range that spans it
     silently loses a term, so a `SUM` over the column returns a different
     number. Quarantine is only safe where there was no value to lose.
@@ -1661,6 +1662,6 @@ def _chunk_rows(max_col: int) -> int:
 
     Rows alone are the wrong unit: the engine returns a dense grid of Python
     strings, so 20,000 rows of a 16,384-column sheet is 327 million of them in
-    a single call. Never zero — one row at a time is the floor, however wide.
+    a single call. Never zero. One row at a time is the floor, however wide.
     """
     return max(1, min(SCAN_CHUNK_ROWS, SCAN_CHUNK_CELLS // max(max_col, 1)))
