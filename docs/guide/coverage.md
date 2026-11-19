@@ -126,6 +126,17 @@ practice. Such a cell keeps the value stored in the file, says so in its card,
 and is named in the workbook warnings rather than being shown as a
 recalculation that never happened.
 
+Ranges written high to low, whether bounded (`=SUM(A7:$A$5)`, `=SUM(B5:A7)`) or
+whole-column and whole-row (`=SUM(B:A)`, `=SUM(7:5)`), are also not calculated
+by formualizer 0.10.1 and 0.14.0
+([PSU3D0/formualizer#599](https://github.com/PSU3D0/formualizer/issues/599)).
+In `linexcel analyze`, a bounded reversed range makes global evaluation fail
+with a warning and leaves the cell with the value stored in the file, whereas a
+whole-column or whole-row one shows `#REF!` as an engine result. `linexcel serve`
+reorders the range endpoints before evaluation and calculates both, and because
+Excel reorders range ends on entry or fill, these ranges appear only in
+workbooks written by other tools.
+
 ### Volatile functions
 
 `TODAY()`, `NOW()`, `RAND()`, `RANDBETWEEN()` and `RANDARRAY()` answer
