@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Link a formula to the cells of a range written with the higher column first
+  in `linexcel analyze`. `=SUM(B5:A7)` had no precedent in the graph, and its
+  decomposition reported a range of zero cells. It now links to `A5:B7`. A
+  group of formulas copied from such a range (`=SUM(B$2:A$3)` filled right)
+  lost the outer column on each side and now links to all of them. Excel
+  reorders the ends of a range itself when a formula is entered or filled, so
+  this entry and the next concern workbooks written by other tools.
+
 ## [1.19.3] — 2026-11-18
 
 ### Changed

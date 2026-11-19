@@ -266,8 +266,10 @@ def parse_ref_detailed(ref: str, default_sheet: str | None = None) -> RefDetail 
         rect = Rect(sheet, row, col, row, col)
         return RefDetail(rect, row_abs, col_abs, row_abs, col_abs)
     (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = ends
-    if (r1, c1) > (r2, c2):
-        (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = (r2, c2, r2a, c2a), (r1, c1, r1a, c1a)
+    if r1 > r2:
+        r1, r1a, r2, r2a = r2, r2a, r1, r1a
+    if c1 > c2:
+        c1, c1a, c2, c2a = c2, c2a, c1, c1a
     # Whole-axis refs (A:A, 1:1) are frozen: they don't stretch.
     if r1 == -1:
         r1, r2, r1a, r2a = 1, MAX_ROW, True, True
