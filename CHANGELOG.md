@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lost the outer column on each side and now links to all of them. Excel
   reorders the ends of a range itself when a formula is entered or filled, so
   this entry and the next concern workbooks written by other tools.
+- Link a group of copied formulas to every cell its formulas read when one end
+  of a range is anchored with `$` and the other end moves past it. Ten rows
+  holding `=SUM(A1:$A$5)` to `=SUM(A10:$A$5)` linked their group to `A1:A5`
+  only, and `A6:A10` were missing from the lineage. The same happened across
+  columns. The group now links to the smallest range that holds what its
+  formulas read.
 
 ## [1.19.3] — 2026-11-18
 

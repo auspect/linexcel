@@ -79,6 +79,26 @@ class TestParseRefDetailedNormalization:
 
 
 class TestStretchRefShapes:
+    def test_rows_one_end_anchored_crossed(self):
+        detail = parse_ref_detailed("A1:$A$5", "S")
+        assert detail is not None
+        # B1:B10 filled down: B1 reads A1:A5, B10 reads A5:A10 -> union A1:A10.
+        assert stretch_ref(detail, 1, 2, (1, 10), (2, 2)) == Rect("S", 1, 1, 10, 1)
+        # B1:B3 stays above anchor: exact union is A1:A5, no extra rows.
+        assert stretch_ref(detail, 1, 2, (1, 3), (2, 2)) == Rect("S", 1, 1, 5, 1)
+
+    def test_rows_anchored_start_crossed_upward(self):
+        detail = parse_ref_detailed("$A$5:A8", "S")
+        assert detail is not None
+        # Rep at row 5, group spans rows 1..10: row 1 reads A4:A5, row 10 reads A5:A13.
+        assert stretch_ref(detail, 5, 2, (1, 10), (2, 2)) == Rect("S", 4, 1, 13, 1)
+
+    def test_columns_one_end_anchored_crossed(self):
+        detail = parse_ref_detailed("C$1:$C$1", "S")
+        assert detail is not None
+        # A1 holds =SUM(C$1:$C$1), B1 holds =SUM(D$1:$C$1) -> union C1:D1.
+        assert stretch_ref(detail, 1, 1, (1, 1), (1, 2)) == Rect("S", 1, 3, 1, 4)
+
     def test_columns_both_ends_moving_high_to_low(self):
         detail = parse_ref_detailed("B$2:A$3", "S")
         assert detail is not None
@@ -87,6 +107,25 @@ class TestStretchRefShapes:
 
 
 class TestAnalyzeRangePrecedents:
+    def test_ten_row_anchored_end_crossed_wires_all_precedents(self, tmp_path: Path):
+        path = tmp_path / "anchored_end_crossed.xlsx"
+        book = Workbook()
+        sheet = book.active
+        assert sheet is not None
+        sheet.title = "S"
+        for row in range(1, 11):
+            sheet.cell(row=row, column=1, value=row)
+            sheet.cell(row=row, column=2, value=f"=SUM(A{row}:$A$5)")
+        book.save(path)
+
+        graph = analyze(path).graph
+        groups = [n for n in graph["nodes"] if n.get("kind") == "group"]
+        assert len(groups) == 1
+        group_id = groups[0]["id"]
+        assert group_id == "g:S!B1#10"
+        expected = {(row, 1) for row in range(1, 11)}
+        assert _wired_cells(graph, group_id) == expected
+
     def test_lone_formula_reversed_columns_wires_precedents(self, tmp_path: Path):
         path = tmp_path / "lone_reversed_cols.xlsx"
         book = Workbook()
@@ -104,6 +143,31 @@ class TestAnalyzeRangePrecedents:
         graph = analyze(path).graph
         expected = {(row, col) for row in range(5, 8) for col in (1, 2)}
         assert _wired_cells(graph, "c:S!D1") == expected
+
+    def test_column_anchored_and_high_to_low_groups_wire_all_precedents(
+        self, tmp_path: Path
+    ):
+        path = tmp_path / "column_shapes.xlsx"
+        book = Workbook()
+        sheet = book.active
+        assert sheet is not None
+        sheet.title = "S"
+        for row in range(1, 4):
+            for col in range(1, 5):
+                sheet.cell(row=row, column=col, value=row * 10 + col)
+        # Columns: one end anchored, one end moving
+        sheet.cell(row=5, column=1, value="=SUM(C$1:$C$1)")
+        sheet.cell(row=5, column=2, value="=SUM(D$1:$C$1)")
+        # Columns: both ends moving, written high to low
+        sheet.cell(row=6, column=1, value="=SUM(B$2:A$3)")
+        sheet.cell(row=6, column=2, value="=SUM(C$2:B$3)")
+        book.save(path)
+
+        graph = analyze(path).graph
+        assert _wired_cells(graph, "g:S!A5#2") == {(1, 3), (1, 4)}
+        assert _wired_cells(graph, "g:S!A6#2") == {
+            (row, col) for row in (2, 3) for col in (1, 2, 3)
+        }
 
     def test_other_callers_see_normalized_rect_for_reversed_columns(self):
         class _DummyResolver:

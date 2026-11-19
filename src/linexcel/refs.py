@@ -316,10 +316,14 @@ def stretch_ref(
     rect = detail.rect
     r1 = rect.r1 if detail.row1_abs else rect.r1 + (rows_span[0] - rep_row)
     r2 = rect.r2 if detail.row2_abs else rect.r2 + (rows_span[1] - rep_row)
+    r1_hi = rect.r1 if detail.row1_abs else rect.r1 + (rows_span[1] - rep_row)
+    r2_lo = rect.r2 if detail.row2_abs else rect.r2 + (rows_span[0] - rep_row)
     c1 = rect.c1 if detail.col1_abs else rect.c1 + (cols_span[0] - rep_col)
     c2 = rect.c2 if detail.col2_abs else rect.c2 + (cols_span[1] - rep_col)
-    r1, r2 = max(1, min(r1, r2)), min(MAX_ROW, max(r1, r2))
-    c1, c2 = max(1, min(c1, c2)), min(MAX_COL, max(c1, c2))
+    c1_hi = rect.c1 if detail.col1_abs else rect.c1 + (cols_span[1] - rep_col)
+    c2_lo = rect.c2 if detail.col2_abs else rect.c2 + (cols_span[0] - rep_col)
+    r1, r2 = max(1, min(r1, r2_lo)), min(MAX_ROW, max(r1_hi, r2))
+    c1, c2 = max(1, min(c1, c2_lo)), min(MAX_COL, max(c1_hi, c2))
     return Rect(rect.sheet, r1, c1, r2, c2)
 
 
