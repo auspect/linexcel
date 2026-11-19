@@ -39,7 +39,7 @@ it; its text and exact usage remain available, and subsequent queued nodes stop.
 Concurrent nodes each start with a remaining-budget snapshot, so both phases
 of an already active node may still finish. This is two billed requests per
 reviewed document, not one request with an unreported multiplier. The server's
-job wrapper additionally enforces its existing strict check after consumption
+job wrapper also enforces its existing strict check after consumption
 and retains failure evidence if a job overshoots its own budget.
 
 The workflow requires source identity first, then formula representation,
@@ -212,7 +212,7 @@ sentence's meaning. Formula quotation checks remain lexical and separately
 identify their supporting fields. Independent review must check both the prose
 and the ledger, rather than trusting the generator's classification.
 
-A claim may additionally supply `calculation={operator,operands,result}`, with
+A claim may also supply `calculation={operator,operands,result}`, with
 two numeric operands bound by exact pointer/value pairs to the sent dossier.
 The checker verifies `+`, `-`, `*`, terminating decimal `/` and numeric comparison
 results using a fixed Decimal context. Booleans, parsed strings, missing operands,
@@ -261,7 +261,7 @@ over to changed text.
    decomposition and original images. Reconcile source/canonical/shared text,
    value origin, literal text differences, name scope, lookup offsets, group
    geometry and topology. Verify external disk reads from their provenance, never
-   from the word “external” or a known value alone.
+   from the word "external" or a known value alone.
 3. Inspect actual pixels. Locate headers and align values with their columns;
    sample legible top/middle/bottom regions. Record visible, ambiguous and
    off-image details with approximate boxes. Dense images are not evidence of
