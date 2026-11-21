@@ -54,6 +54,7 @@ dev = [
     "rich>=13.0",
     "pillow>=10",
     "python-dotenv>=1.2.4",
+    "pyyaml>=6",
 ]
 
 [project.scripts]

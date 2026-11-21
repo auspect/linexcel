@@ -3,8 +3,8 @@ name: ci
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a stacked one is checked too.
   pull_request:
-    branches: [main, 'codex/**']
   # Lets publish.yml replay the whole CI before releasing to PyPI.
   workflow_call:
 
@@ -27,17 +27,17 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked
-      - run: uv run ruff check --output-format=github src/ tests/
-      - run: uv run ruff format --check src/ tests/
-      - run: uv run python scripts/capture_viewer.py --check
-      - run: uv run python scripts/capture_app.py --check
+      # Gates are defined in scripts/check.py, the command the commit hook runs.
+      - run: uv run python scripts/check.py ruff format viewer-captures app-captures
+        env:
+          RUFF_OUTPUT_FORMAT: github
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --prefix frontend
-      - run: npm run check --prefix frontend
+      - run: uv run python scripts/check.py frontend
 
   typecheck:
     runs-on: ubuntu-latest
@@ -48,7 +48,7 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked
-      - run: uv run ty check --ignore import-not-found src/
+      - run: uv run python scripts/check.py ty
 
   test:
     runs-on: ${{ matrix.os }}
