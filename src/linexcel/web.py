@@ -41,6 +41,7 @@ from linexcel.web_limits import (
     TaskDefaults,
     limit_message,
     storage_quota_message,
+    upload_limit_message,
 )
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -469,7 +470,7 @@ class TaskStore:
         if len({name.casefold() for name, _ in files}) != len(files):
             raise APIError(400, "Les noms des fichiers doivent être uniques")
         if sum(len(data) for _, data in files) > self.config.max_upload_mb * 1048576:
-            raise APIError(413, "Import trop volumineux")
+            raise APIError(413, upload_limit_message(self.config.max_upload_mb))
         with self.lock:
             self._has_capacity()
             self.require_storage(

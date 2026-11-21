@@ -141,6 +141,14 @@ def storage_quota_message(max_storage_mb: int, consequence: str) -> str:
     )
 
 
+def upload_limit_message(max_upload_mb: int) -> str:
+    return (
+        f"Import trop volumineux : la limite est de {max_upload_mb} Mio par import, "
+        "références comprises. Relancez le serveur avec une valeur --max-upload-mb "
+        "plus grande."
+    )
+
+
 def gib_text(mib: int) -> str:
     """Mio as Go of 1024 Mio, in French, one decimal when it has one: 4608 is 4,5."""
     return f"{round(mib / 1024, 1):g}".replace(".", ",")

@@ -16,7 +16,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from linexcel.web_limits import STORAGE_TRANSFER
+from linexcel.web_limits import STORAGE_TRANSFER, upload_limit_message
 
 CHUNK_BYTES = 8 * 1024 * 1024
 COPY_BYTES = 1024 * 1024
@@ -169,7 +169,7 @@ class UploadStore:
             raise APIError(400, "Les noms des fichiers doivent être uniques")
         total = sum(item["size"] for item in files)
         if total > self.store.config.max_upload_mb * 1048576:
-            raise APIError(413, "Import trop volumineux")
+            raise APIError(413, upload_limit_message(self.store.config.max_upload_mb))
         name = body.get("name") or files[0]["name"]
         if not isinstance(name, str) or len(name) > 200:
             raise APIError(400, "Nom de l’espace invalide")
