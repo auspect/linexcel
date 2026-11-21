@@ -179,7 +179,7 @@ def main():
                 state["project"]["name"]
             ).wait_for()
             page.evaluate(
-                "() => {document.querySelector('#seconds').value=1800;document.querySelector('#memory').value=2048}"
+                "() => {document.querySelector('#limit-targeted-seconds').value=1800;document.querySelector('#limit-memory-gb').value=2}"
             )
             page.wait_for_timeout(300)
             for tab in [

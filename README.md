@@ -107,8 +107,9 @@ Calculation coverage counts
 all selected inputs, while dependency cards keep a declared sample of at most 200
 nodes, including in the export. A separate 20,000 explicitly traversed-node limit
 (excluding literal range members) protects dependency traversal; exceeding it
-refuses the calculation explicitly. Very large calculations can require a higher
-worker memory budget than the default 512 MiB even though browsing stays small.
+refuses the calculation explicitly. Very large calculations can require more
+memory than the default budget of one operation, which is the server memory
+divided by the number of workers, even though browsing stays small.
 Captures are served as individual images with thumbnails, without embedding every
 image in the project response. Rendering remains an explicit, budgeted operation.
 
