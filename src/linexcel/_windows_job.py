@@ -178,8 +178,10 @@ class WorkerJob:
                             "Isolated descendants did not stop within 2 seconds"
                         )
                     time.sleep(0.005)
-                self._read_memory()
             finally:
+                # A slow cleanup must not lose a cap hit; ctypes calls do not
+                # raise, so the cleanup's own exception still propagates.
+                self._read_memory()
                 self.api.CloseHandle(self.handle)
                 self.handle = None
                 if self.port:
