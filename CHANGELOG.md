@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the outcome of an operation in `linexcel serve` when Windows still
+  holds one of its files for a moment after it stops. The operation ended as
+  `persistence_error` with a sharing violation, whatever had happened to it:
+  an import stopped by the storage quota lost its message that way. The
+  cleanup now waits up to two seconds for the file.
 - Translate the calculation status beside "Linexcel result" in the node
   card: a refused calculation read "Linexcel result · Non pris en charge" in
   the English interface.

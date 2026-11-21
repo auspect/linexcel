@@ -93,10 +93,15 @@ refused with its reason. It is never calculated on absent values.
 
 **Diagnostics** also estimates the duration that the whole import needs, and
 offers **Reimport with a budget of … s**. That button puts the duration in
-**Long operations** and starts the import again. In one test, the 6 MB
-workbook above was given 12 seconds. The import was published as partial
-after 8 seconds and proposed 180 seconds, marked as an uncertain estimate.
-The reimport with 180 seconds was complete.
+**Long operations** and starts the import again. The estimate comes from what
+this import read. When it read little, Diagnostics marks the estimate as
+uncertain, and it can be too short: the reimport is then partial again and
+proposes a longer duration.
+
+In two tests on a busy machine, the 6 MB workbook above was given 12 seconds.
+Both imports were published as partial with an uncertain estimate. One
+proposed 180 seconds, and its reimport was complete. The other proposed
+120 seconds, its reimport was partial again and proposed 240 seconds.
 
 For the rules of the estimate, see [The disk index](cli.md#the-disk-index).
 

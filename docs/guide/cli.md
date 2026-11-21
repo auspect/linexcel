@@ -174,10 +174,11 @@ values) 26 MB in 321 s; the generated fpna model (20 MB, 2.5 million values
 and 175,000 formulas) 357 MB in 188 s, of which 230 MB are its formulas.
 Schema 4 needed 10,969 MB, 6,717 MB and 2,022 MB. The Data tab still copies
 every cell into a database of its own: 9,830 MB for DGT and 6,027 MB for ONS,
-prepared in 585 s and 390 s. With the default storage quota of 2048 MiB that
-preparation stops on the quota and the tab says so. With a larger
-`--max-storage-mb` the preparation completes, but the Excel presentation still
-refuses sheets this large (its size limit).
+prepared in 585 s and 390 s. When the storage quota is smaller than that copy,
+the preparation stops on the quota and the tab says so. The launcher takes its
+default quota from the free disk space, and `--max-storage-mb` sets another
+one. When the preparation completes, the Excel presentation still refuses
+sheets this large (its size limit).
 
 A project imported by an earlier version keeps its old `index.sqlite` on disk,
 unused: the project shows "Index created by an earlier version of linexcel:
