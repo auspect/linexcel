@@ -405,7 +405,8 @@ class TaskStore:
         pending = sum(t["status"] not in TERMINAL for t in self.tasks.values())
         if pending >= self.config.max_pending_tasks:
             raise APIError(429, "File des opérations pleine ; réessayez plus tard")
-        self.require_storage(self._storage_bytes())
+        # A new task writes at least one byte: a directory at its quota is full.
+        self.require_storage(self._storage_bytes() + 1)
 
     def require_storage(
         self, needed_bytes: int, consequence: str = STORAGE_REFUSED
