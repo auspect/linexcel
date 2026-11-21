@@ -616,6 +616,14 @@ def test_limit_failures_read_in_english(browser):
         ):
             assert english in text, english
         assert french_words(text) == [], text
+        # The Captures tab joins the last failure to its date in one line: the
+        # sentence must be translated before it is joined.
+        page.locator("#tab-captures").click()
+        playwright.expect(page.locator("#view-captures .notice")).to_contain_text(
+            "Delete workbooks or restart the server"
+        )
+        shown = page.locator("#view-captures").inner_text()
+        assert french_words(shown) == [], shown
         assert errors == []
     finally:
         page.close()
