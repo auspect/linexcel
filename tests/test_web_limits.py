@@ -625,3 +625,40 @@ def test_an_import_over_the_size_limit_names_the_limit_and_the_flag(tmp_path, pa
         assert "--max-upload-mb" in message
     finally:
         app.close()
+
+
+def test_config_does_not_measure_storage_on_every_request(large_app, monkeypatch):
+    # The page asks api/config every two seconds to check the connection. A
+    # measure walks the whole data directory: seconds once it holds thousands
+    # of files.
+    measure = large_app.store._storage_bytes
+    scans = []
+
+    def counted():
+        scans.append(1)
+        return measure()
+
+    monkeypatch.setattr(large_app.store, "_storage_bytes", counted)
+    for _ in range(10):
+        assert request(large_app, "GET", "/api/config")[0] == 200
+    assert len(scans) <= 1
+
+
+def test_config_follows_an_operation_that_ends_and_a_deletion_at_once(large_app):
+    import base64
+
+    def used_mb():
+        body = request(large_app, "GET", "/api/config")[1]
+        return json.loads(body)["limits"]["storageUsedMb"]
+
+    assert used_mb() == 0  # The figure is now held for the next requests.
+    data = base64.b64decode(workbook()["data"]) + bytes(3 * MiB)
+    upload = {"name": "big.xlsx", "data": base64.b64encode(data).decode()}
+    code, body, _ = request(large_app, "POST", "/api/projects", {"workbook": upload})
+    assert code == 200
+    created = json.loads(body)
+    wait(large_app.store, created["task"]["id"])
+    assert used_mb() >= 3
+    project = created["project"]["id"]
+    assert request(large_app, "DELETE", f"/api/projects/{project}")[0] == 200
+    assert used_mb() == 0

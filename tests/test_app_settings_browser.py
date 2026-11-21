@@ -311,15 +311,16 @@ def test_storage_line_follows_an_import_that_ends_and_a_deletion(browser):
         page.close()
 
 
-def test_an_idle_workspace_does_not_make_the_server_measure_its_storage(browser):
-    # The server walks the whole data directory to answer api/config.
+def test_an_idle_workspace_only_checks_the_connection(browser):
+    # The heartbeat is the configuration request, which the server answers
+    # without measuring storage or opening a workbook index. The workspace
+    # list, which opens every index, is not asked again.
     page, server = _open(browser)
     try:
         playwright.expect(page.locator("#storage")).to_contain_text("1,9 Go sur 138 Go")
         server.requested.clear()
         page.wait_for_timeout(5000)  # Two polls and more.
-        assert "config" not in server.requested, server.requested
-        # The page still checks the server: a lost connection is shown.
+        assert set(server.requested) == {"config"}, server.requested
         assert len(server.requested) >= 2, server.requested
         playwright.expect(page.locator("#connection")).to_have_attribute(
             "data-state", "ok"
