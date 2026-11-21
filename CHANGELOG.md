@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - Add [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/):
-  what an import of 6, 20 and 50 MB costs in time, disk space and memory, the
+  what an import of 6, 20, 50 and 89 MB costs in time, disk space and memory, the
   default limits, the message of each limit and the option that raises it.
 
 ## [1.19.4] — 2026-11-19

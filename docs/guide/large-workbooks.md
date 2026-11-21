@@ -19,6 +19,7 @@ cost disk space.
 | Public transport model, `.xlsm` with VBA, 79,529 formulas | 6 MB | 125,365 | 1 min 10 s | 161 MiB | 93 MiB |
 | Generated ledger and forecast, `.xlsm` with VBA | 20 MB | 2,709,922 | 4 min 51 s | 1.9 GiB | 89 MiB |
 | The same model with more ledger rows, `.xlsm` with VBA | 50 MB | 6,773,384 | 11 min 9 s | 4.7 GiB | 117 MiB |
+| The same model, larger again, `.xlsm` with VBA | 89 MB | 11,970,735 | 21 min 6 s | 8.2 GiB | 154 MiB |
 
 Plan for an index of about 30 to 100 times the size of the file, and for
 about 12 to 15 seconds of import for each megabyte. Larger files were not
