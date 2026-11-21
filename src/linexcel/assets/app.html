@@ -786,8 +786,11 @@ function limitValue(key){const f=LIMIT_FIELDS[key],raw=$(f.id).value.trim();let 
 function budget(operation){return{seconds:limitValue(LONG_OPERATIONS.includes(operation)?'long':'targeted'),memoryMb:limitValue('memory')}}
 function limitDefaults(){return{longSeconds:3600,seconds:120,memoryMb:Math.min(1024,limits.memoryMb),...limits.defaults}}
 function showLimitError(key,text){const id=LIMIT_FIELDS[key].id;$(id+'-error').textContent=text;$(id+'-error').hidden=!text;$(id).setAttribute('aria-invalid',String(!!text))}
-function checkLimit(key,report){try{limitValue(key);showLimitError(key,'')}catch(error){if(report)showLimitError(key,error.message)}}
-function resetLimits(){const advised=limitDefaults();for(const [key,f] of Object.entries(LIMIT_FIELDS)){const input=$(f.id);input.min=fieldText(f.min()/f.scale);input.max=fieldText(f.max()/f.scale);input.value=fieldText(f.advised(advised)/f.scale);showLimitError(key,'')}renderLimits()}
+function checkLimit(key,report){try{limitValue(key);showLimitError(key,'');return true}catch(error){if(report)showLimitError(key,error.message);return false}}
+// The last valid value of each field, kept by a change, a reset or a close.
+// Closing the dialog other than with "Terminé" puts an invalid field back to it.
+const limitKept={};
+function resetLimits(){const advised=limitDefaults();for(const [key,f] of Object.entries(LIMIT_FIELDS)){const input=$(f.id);input.min=fieldText(f.min()/f.scale);input.max=fieldText(f.max()/f.scale);input.value=limitKept[key]=fieldText(f.advised(advised)/f.scale);showLimitError(key,'')}renderLimits()}
 function nodes(){return Array.isArray(graph?.nodes)?graph.nodes:[]}
 function nodeTotal(){return graph?.meta?.nodeCount??graph?.pagination?.total??nodes().length}
 function setProjectGraph(value){cancelAutoCalculation();neighborController?.abort();overviewAttempted=false;neighborhoodCache.clear();nodeAccessErrors.clear();graphRestore=null;graphCanvasKey='';if(graphFlow)graphFlow.destroy();graphFlow=null;graphDepthError=null;graphSheetRequest++;selectionRequest++;$('graph-sheet-status').textContent='';setGraphReaderVisible(true);cancelStructure();fullStructure=null;fullGraph=false;$('graph-build-status').textContent='';graph=value;nodePage=value?.lazy?{nodes:value.nodes||[],formulaPatterns:value.formulaPatterns||[],pagination:value.pagination||{offset:0,limit:200,total:value.nodes?.length||0}}:null;neighborhood=null;nodeRequest++;neighborRequest++;graphSearchRequest++}
@@ -912,7 +915,7 @@ function setText(element,text){if(element.textContent!==text)element.textContent
 function limitText(key){const f=LIMIT_FIELDS[key],raw=$(f.id).value.trim(),value=Number(raw);return(raw&&Number.isFinite(value)?limitNumber(value):'—')+' '+unitText(f.unit)}
 function renderLimits(){const en=uiLanguage==='en',summary=Object.keys(LIMIT_FIELDS).map(limitText).join(' · '),gb=mb=>limitNumber(Math.round(mb/1024*10)/10)+' '+unitText('Go');setText($('limits-summary'),summary);setText($('settings-limits-state'),summary);setText($('limit-memory-gb-help'),(en?'Server ceiling: ':'Plafond du serveur : ')+gb(limits.memoryMb)+' (option --memory-mb '+limits.memoryMb+'). '+(en?'Recommended: ':'Conseillé : ')+gb(limitDefaults().memoryMb)+'.');for(const key in LIMIT_FIELDS)if(!$(LIMIT_FIELDS[key].id+'-error').hidden)checkLimit(key,true);
  if($('runtime-limits')){const server=key=>{try{return limitValue(key)}catch{return '—'}};$('runtime-limits').textContent='Budget demandé : '+server('memory')+' MiB par opération ; '+server('targeted')+' s par recalcul ciblé ; '+server('long')+' s par import, graphe, capture ou rapport. Plafond mémoire serveur : '+limits.memoryMb+' MiB ; import : '+limits.uploadMb+' MiB ; stockage : '+limits.storageUsedMb+' / '+limits.storageMb+' MiB utilisés.'}}
-for(const key in LIMIT_FIELDS){const input=$(LIMIT_FIELDS[key].id);input.oninput=()=>{checkLimit(key,false);renderLimits()};input.onchange=()=>{checkLimit(key,true);renderLimits()}}
+for(const key in LIMIT_FIELDS){const input=$(LIMIT_FIELDS[key].id);input.oninput=()=>{checkLimit(key,false);renderLimits()};input.onchange=()=>{if(checkLimit(key,true))limitKept[key]=input.value;renderLimits()}}
 $('limits-reset').onclick=resetLimits;
 // Go of 1024 Mio, one decimal under 10 Go. A few Mio read "< 0,1 Go", not "0 Go".
 function storageText(mb){const gb=mb/1024;return(gb>0&&gb<0.05?'< '+(0.1).toLocaleString(uiLocale()):gb.toLocaleString(uiLocale(),{maximumFractionDigits:gb<10?1:0}))+' '+unitText('Go')}
@@ -932,8 +935,10 @@ function renderRestoreFile(){setText($('restore-file-name'),$('restore-file').fi
 $('settings-open').onclick=()=>openSettings(document.querySelector('[data-settings][aria-current="true"]')?.dataset.settings||'limits');
 $('limits-edit').onclick=()=>openSettings('limits');
 document.querySelectorAll('[data-settings]').forEach(button=>button.onclick=()=>showSettings(button.dataset.settings));
-$('settings-close').onclick=$('settings-done').onclick=()=>$('settings').close();
-$('settings').addEventListener('close',()=>{if(settingsOpener?.isConnected&&settingsOpener.checkVisibility())settingsOpener.focus();settingsOpener=null});
+$('settings-close').onclick=()=>$('settings').close();
+// "Terminé" applies the fields: an invalid one keeps the dialog open, with its error.
+$('settings-done').onclick=()=>{const invalid=Object.keys(LIMIT_FIELDS).filter(key=>!checkLimit(key,true));if(!invalid.length)return $('settings').close();showSettings('limits');$(LIMIT_FIELDS[invalid[0]].id).focus()};
+$('settings').addEventListener('close',()=>{for(const key in LIMIT_FIELDS){const input=$(LIMIT_FIELDS[key].id);if(checkLimit(key,false))limitKept[key]=input.value;else{input.value=limitKept[key];showLimitError(key,'')}}renderLimits();if(settingsOpener?.isConnected&&settingsOpener.checkVisibility())settingsOpener.focus();settingsOpener=null});
 $('ai-language').addEventListener('change',renderSettingsState);$('ai-tokens').addEventListener('input',renderSettingsState);$('restore-file').addEventListener('change',renderRestoreFile);renderRestoreFile();
 function dateLabel(value){if(value===undefined||value===null)return uiText('horodatage indisponible');const date=new Date(typeof value==='number'?value*1000:value);return isNaN(date)?uiText('horodatage indisponible'):date.toLocaleString(uiLocale())}
 function taskTime(t){const value=t.finishedAt??t.createdAt;if(typeof value==='number')return value*1000;return Date.parse(value)||0}
