@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -214,6 +214,30 @@ def _disk_usage(root: Path) -> int:
         except FileNotFoundError:
             pass  # Another task atomically published its result.
     return size
+
+
+def _delete_released(paths: Iterable[Path], seconds: float = 2.0) -> None:
+    """Delete the scratch of a task that something may hold a moment longer.
+
+    Windows reports a job as empty before the handles of its processes are
+    closed, and a scanner can open a file that was just written. Deleting
+    then fails with a sharing violation or a denied access that clears by
+    itself. Any other failure, and one that lasts, is raised.
+    """
+    deadline = time.monotonic() + seconds
+    for path in paths:
+        while True:
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink(missing_ok=True)
+                break
+            except PermissionError as exc:
+                held = getattr(exc, "winerror", None) in {5, 32}
+                if not held or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
 
 
 def outdated_index(path: Path) -> bool:
@@ -1390,32 +1414,34 @@ class TaskStore:
                     task["status"] = terminal_status
                     # Server-generated task paths, never uploaded filenames.
                     root.resolve().relative_to(self.root)
-                    for scratch in (
-                        "result.json",
-                        "request.json",
-                        "ai_input.json",
-                        "report-input.json",
-                        INDEX_FILENAME,
-                        INDEX_FILENAME + "-journal",
-                        INDEX_FILENAME + "-wal",
-                        INDEX_FILENAME + "-shm",
-                        "hierarchy.sqlite",
-                        "hierarchy.sqlite-journal",
-                        "hierarchy.sqlite-wal",
-                        "hierarchy.sqlite-shm",
-                        "source-data.sqlite",
-                        "source-data.sqlite-journal",
-                    ):
-                        (root / scratch).unlink(missing_ok=True)
-                    for scratch in [
-                        *root.glob(INDEX_FILENAME + ".*.building*"),
-                        *root.glob("data-*.building*"),
-                    ]:
-                        scratch.unlink(missing_ok=True)
-                    if (root / "captures").exists():
-                        shutil.rmtree(root / "captures")
-                    if (root / "capture-files").exists():
-                        shutil.rmtree(root / "capture-files")
+                    # A stopped worker's files can stay held for a moment.
+                    _delete_released(
+                        [
+                            *(
+                                root / name
+                                for name in (
+                                    "result.json",
+                                    "request.json",
+                                    "ai_input.json",
+                                    "report-input.json",
+                                    INDEX_FILENAME,
+                                    INDEX_FILENAME + "-journal",
+                                    INDEX_FILENAME + "-wal",
+                                    INDEX_FILENAME + "-shm",
+                                    "hierarchy.sqlite",
+                                    "hierarchy.sqlite-journal",
+                                    "hierarchy.sqlite-wal",
+                                    "hierarchy.sqlite-shm",
+                                    "source-data.sqlite",
+                                    "source-data.sqlite-journal",
+                                )
+                            ),
+                            *root.glob(INDEX_FILENAME + ".*.building*"),
+                            *root.glob("data-*.building*"),
+                            root / "captures",
+                            root / "capture-files",
+                        ]
+                    )
                     log = root / "stderr.txt"
                     if task["operation"] in AI_OPERATIONS:
                         log.unlink(missing_ok=True)
