@@ -218,6 +218,9 @@ class TaskStore:
         self.lock = threading.RLock()
         self.capacity = threading.Condition(self.lock)
         self.used_memory = 0
+        # Storage in use as the page shows it: (bytes, monotonic time until
+        # which it is reused). Limits never read it; they measure.
+        self._storage_shown: tuple[int, float] | None = None
         self.closed = False
         self.events: dict[str, threading.Event] = {}
         self.tasks: dict[str, dict] = {}
@@ -425,6 +428,26 @@ class TaskStore:
             except FileNotFoundError:
                 pass  # Another task atomically published its result.
         return size
+
+    def storage_shown_bytes(self) -> int:
+        """Storage in use, for display only.
+
+        The page asks the configuration every two seconds to check the
+        connection, and a measure walks the whole data directory. The figure is
+        therefore reused until an operation ends or a workspace is deleted,
+        and for at most a minute, or twenty times a measure when one is slow.
+        """
+        shown = self._storage_shown
+        if shown is not None and time.monotonic() < shown[1]:
+            return shown[0]
+        started = time.monotonic()
+        used = self._storage_bytes()
+        took = time.monotonic() - started
+        self._storage_shown = (used, time.monotonic() + max(60.0, 20 * took))
+        return used
+
+    def storage_changed(self) -> None:
+        self._storage_shown = None
 
     @staticmethod
     def _filename(name: Any) -> str:
@@ -1131,6 +1154,7 @@ class TaskStore:
             # path uses server-generated IDs, verified against this owner's root.
             path.resolve().relative_to(self.root / owner / "projects")
             shutil.rmtree(path)
+            self.storage_changed()
             self._revisions.pop(str(path), None)
             for task in tasks:
                 self.tasks.pop(task["id"], None)
@@ -1296,6 +1320,7 @@ class TaskStore:
                 finally:
                     if reserved:
                         self.used_memory -= memory
+                    self.storage_changed()
                     self.capacity.notify_all()
 
     def _worker(self, task: dict, root: Path, event: threading.Event) -> dict:
@@ -2041,7 +2066,7 @@ class WebApp:
                     "uploadMb": self.config.max_upload_mb,
                     "retentionDays": self.config.retention_days,
                     "storageMb": self.config.max_storage_mb,
-                    "storageUsedMb": round(self.store._storage_bytes() / MiB),
+                    "storageUsedMb": round(self.store.storage_shown_bytes() / MiB),
                     "maxSeconds": MAX_TASK_SECONDS,
                     "defaults": {
                         "longSeconds": defaults.long_seconds,
