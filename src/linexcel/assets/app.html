@@ -779,12 +779,15 @@ const LANGUAGE_NAMES={en:'English',fr:'Français',es:'Español',de:'Deutsch',it:
 function unitText(unit){return uiLanguage==='en'&&unit==='Go'?'GB':unit}
 function limitNumber(value){return (Math.round(value*1000)/1000).toLocaleString(uiLocale(),{maximumFractionDigits:3})}
 function limitError(key){const f=LIMIT_FIELDS[key],en=uiLanguage==='en',range=limitNumber(f.min()/f.scale)+(en?' to ':' à ')+limitNumber(f.max()/f.scale)+' '+unitText(f.unit);return en?'“'+uiText(f.label)+'”: choose a value from '+range+' in Settings › Operation limits.':'« '+f.label+' » : choisissez une valeur de '+range+' dans Réglages › Limites par opération.'}
-function limitValue(key){const f=LIMIT_FIELDS[key],raw=$(f.id).value.trim(),value=Math.round(Number(raw)*f.scale);if(!raw||!Number.isFinite(value)||value<f.min()||value>f.max())throw Error(limitError(key));return value}
+// A field shows three decimals, so 192 MiB reads 0.188 GB and back 193 MiB: a
+// value within one unit beyond a bound is that bound.
+function fieldText(value){return String(Math.round(value*1000)/1000)}
+function limitValue(key){const f=LIMIT_FIELDS[key],raw=$(f.id).value.trim();let value=Math.round(Number(raw)*f.scale);if(value===f.max()+1)value=f.max();else if(value===f.min()-1)value=f.min();if(!raw||!Number.isFinite(value)||value<f.min()||value>f.max())throw Error(limitError(key));return value}
 function budget(operation){return{seconds:limitValue(LONG_OPERATIONS.includes(operation)?'long':'targeted'),memoryMb:limitValue('memory')}}
 function limitDefaults(){return{longSeconds:3600,seconds:120,memoryMb:Math.min(1024,limits.memoryMb),...limits.defaults}}
 function showLimitError(key,text){const id=LIMIT_FIELDS[key].id;$(id+'-error').textContent=text;$(id+'-error').hidden=!text;$(id).setAttribute('aria-invalid',String(!!text))}
 function checkLimit(key,report){try{limitValue(key);showLimitError(key,'')}catch(error){if(report)showLimitError(key,error.message)}}
-function resetLimits(){const advised=limitDefaults();for(const [key,f] of Object.entries(LIMIT_FIELDS)){const input=$(f.id);input.min=String(f.min()/f.scale);input.max=String(f.max()/f.scale);input.value=String(Math.round(f.advised(advised)/f.scale*1000)/1000);showLimitError(key,'')}renderLimits()}
+function resetLimits(){const advised=limitDefaults();for(const [key,f] of Object.entries(LIMIT_FIELDS)){const input=$(f.id);input.min=fieldText(f.min()/f.scale);input.max=fieldText(f.max()/f.scale);input.value=fieldText(f.advised(advised)/f.scale);showLimitError(key,'')}renderLimits()}
 function nodes(){return Array.isArray(graph?.nodes)?graph.nodes:[]}
 function nodeTotal(){return graph?.meta?.nodeCount??graph?.pagination?.total??nodes().length}
 function setProjectGraph(value){cancelAutoCalculation();neighborController?.abort();overviewAttempted=false;neighborhoodCache.clear();nodeAccessErrors.clear();graphRestore=null;graphCanvasKey='';if(graphFlow)graphFlow.destroy();graphFlow=null;graphDepthError=null;graphSheetRequest++;selectionRequest++;$('graph-sheet-status').textContent='';setGraphReaderVisible(true);cancelStructure();fullStructure=null;fullGraph=false;$('graph-build-status').textContent='';graph=value;nodePage=value?.lazy?{nodes:value.nodes||[],formulaPatterns:value.formulaPatterns||[],pagination:value.pagination||{offset:0,limit:200,total:value.nodes?.length||0}}:null;neighborhood=null;nodeRequest++;neighborRequest++;graphSearchRequest++}
