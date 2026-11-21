@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Show the disk space that the workspaces of `linexcel serve` use, and the
+  space the server may use, under the workspace list: "Local storage · 2.3 GB
+  of 148 GB". The line follows imports and deletions without a reload.
+- Gather the settings of `linexcel serve` in one **Settings** dialog, opened
+  from the bottom of the sidebar: operation limits, AI documentation, backup
+  and recovery, and feature availability. The sidebar keeps the workspaces and
+  the import form. On a phone the dialog fills the screen.
+- Show the limits that apply above the **Import** button, for example
+  "Limits: 60 min · 120 s · 7.5 GB", with **Change** beside them. The limits
+  read in minutes, seconds and GB instead of seconds and MiB, and **Restore
+  recommended values** puts the server's values back.
+
+### Changed
+
+- Set the memory and disk limits of `linexcel serve` from the machine when
+  `--memory-mb` or `--max-storage-mb` is absent. Memory is half of the physical
+  memory in whole GiB, and at least 2,048 MiB. Disk space is what the data
+  directory already uses plus the free space of its disk, minus a reserve of
+  10% of the disk and at most 10 GiB. Both limits were 2,048 MiB on every
+  machine. A 20 MB workbook, whose index takes 1.9 GiB, failed after four
+  minutes when the data directory already held another workspace. On a
+  machine with 31 GiB of memory and 158 GiB of free disk space, the limits
+  are now 15,360 MiB of memory and 148 GiB of disk space. The server prints
+  them under its address. `linexcel doctor` uses the same disk limit, and
+  `create_app()` keeps the values its host passes.
+- Give imports, graph constructions, sheet captures and investigation reports
+  60 minutes by default in `linexcel serve`, instead of 10 minutes, and
+  2 minutes for captures. A 50 MB workbook took 11 minutes to import and was
+  stopped at 10. A targeted calculation keeps 120 seconds. The default memory
+  of one operation is the server memory divided by the number of workers,
+  instead of 1,024 MiB. A request that names no budget gets the same values;
+  it got 512 MiB.
+- Run the same checks in CI and in the commit hook, through
+  `scripts/check.py`, and run CI on every pull request whatever its base
+  branch. CI also runs the exhaustive range-lineage check of
+  `.agents/skills/check-group-precedents`. The capture hooks run on every
+  commit instead of matching a list of files that had left out the frontend
+  bundle.
+
+### Fixed
+
+- Name the limit that stopped an operation in `linexcel serve`. The
+  **Operations** tab showed the bare codes `storage_limit` and `timeout`. It
+  now shows the value of the limit and the setting or launch option that
+  raises it, in French and English. The memory message was French in the
+  English interface. An import over the size limit now names its limit and
+  `--max-upload-mb`.
+- Report sheet captures stopped by the memory limit on Windows as a memory
+  limit. LibreOffice stopped by the 1,024 MiB limit while rendering a 6 MB
+  workbook was shown as "LibreOffice failed with exit code 3221225725
+  (0xC00000FD) … Native stack overflow". The task now ends as `memory_limit`
+  whatever the exit code of the renderer, and records the peak memory of the
+  worker and its child processes as `memoryPeakMiB`.
+- Check the disk quota at most once per second while an operation runs. The
+  server read the size of every file of the data directory twenty times per
+  second. One pass took 0.9 s with 2,500 files.
+- Show the connection status in the chosen language as soon as the language
+  changes. It kept the previous language until the next refresh, two seconds
+  later.
+
+### Documentation
+
+- Add [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/):
+  what an import of 6, 20 and 50 MB costs in time, disk space and memory, the
+  default limits, the message of each limit and the option that raises it.
+
 ## [1.19.4] — 2026-11-19
 
 ### Fixed
