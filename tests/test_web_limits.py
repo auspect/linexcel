@@ -419,3 +419,33 @@ def test_windows_job_memory_cap_wins_over_the_exit_code(
         assert error["memoryPeakMiB"] > 0
     finally:
         app.close()
+
+
+@pytest.mark.parametrize("path", ["chunked upload", "single request"])
+def test_an_import_over_the_size_limit_names_the_limit_and_the_flag(tmp_path, path):
+    import base64
+
+    app = create_app(
+        tmp_path / "workspace",
+        max_upload_mb=1,
+        resolve_user=lambda env: env.get("user"),
+    )
+    try:
+        if path == "chunked upload":
+            body = {"workbook": {"name": "big.xlsx", "size": 2 * MiB}}
+            code, raw, _ = request(app, "POST", "/api/uploads", body)
+        else:
+            data = base64.b64decode(workbook()["data"]) + bytes(2 * MiB)
+            body = {
+                "workbook": {
+                    "name": "big.xlsx",
+                    "data": base64.b64encode(data).decode(),
+                }
+            }
+            code, raw, _ = request(app, "POST", "/api/projects", body)
+        assert code == 413
+        message = json.loads(raw)["error"]["message"]
+        assert "1 Mio" in message
+        assert "--max-upload-mb" in message
+    finally:
+        app.close()
