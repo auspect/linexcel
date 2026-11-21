@@ -14,6 +14,8 @@ import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from linexcel.web_limits import STORAGE_BACKUP
+
 FORMAT = "linexcel-workspace"
 VERSION = 1
 CHUNK = 1024 * 1024
@@ -61,8 +63,7 @@ def _error(message: str, status: int = 400):
 
 def _check_space(store, extra: int = 0) -> None:
     reserved = store.uploads.remaining_bytes()
-    if store._storage_bytes() + reserved + extra > store.config.max_storage_mb * CHUNK:
-        raise _error("Stockage insuffisant pour la sauvegarde ou restauration", 413)
+    store.require_storage(store._storage_bytes() + reserved + extra, STORAGE_BACKUP)
 
 
 def _valid_name(name: str) -> bool:

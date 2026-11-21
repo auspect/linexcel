@@ -1,47 +1,66 @@
+# Each gate runs through scripts/check.py, the command CI runs, so the hook and
+# CI cannot drift apart (tests/test_check_gates.py). Tools come from uv.lock,
+# not from mirror repositories that pin versions of their own.
+#
+# Gate hooks run on every commit with no file pattern: a gate knows which files
+# it reads (capture_app.SOURCES, for one), and a copy of that list here went
+# stale. Together they take about ten seconds; the capture checks only hash.
 [[repos]]
 repo = "local"
-hooks = [
-  # Ruff comes from the project's own environment, not from the mirror repo:
-  # the mirror pins a version of its own, which drifts away from the one in
-  # uv.lock every time Dependabot bumps it, and the hook then formats a file
-  # differently from the CI that checks it. Same reasoning as ty below.
-  { id = "ruff-check",
-    name = "ruff check",
-    entry = "uv run ruff check --fix",
-    language = "system",
-    types_or = ["python", "pyi"] },
-  { id = "ruff-format",
-    name = "ruff format",
-    entry = "uv run ruff format",
-    language = "system",
-    types_or = ["python", "pyi"] },
-  # Type check with ty (also enforced in CI).
-  { id = "ty-check",
-    name = "ty check",
-    entry = "uv run ty check --ignore unresolved-import src/",
-    language = "system",
-    pass_filenames = false,
-    types_or = ["python", "pyi",] },
-    { id = "pytest",
-    name = "pytest",
-    entry = "uv run pytest -x -q -m 'not slow and not ai'",
-    language = "system",
-    pass_filenames = false,
-    always_run = true,
-    },
-  # Fires when the viewer, fixture or capture harness changes, and only checks.
-  # Capturing needs Playwright and a generated report, which no ordinary commit should
-  # have to install. It fails with the two commands that fix it.
-  { id = "readme-shots",
-    name = "README screenshots match the viewer",
-    entry = "uv run python scripts/capture_viewer.py --check",
-    language = "system",
-    pass_filenames = false,
-    files = '^(src/linexcel/(assets/viewer\.html|(viewer|i18n)\.py)|scripts/capture_viewer\.py|validation_workbooks\.py|imgs/(viewer_.*|manifest\.json))$' },
-  { id = "app-shots",
-    name = "README screenshots match the application",
-    entry = "uv run python scripts/capture_app.py --check",
-    language = "system",
-    pass_filenames = false,
-    files = '^(src/linexcel/assets/app\.html|scripts/capture_app\.py|validation_workbooks\.py|imgs/app_.*)$' }
-]
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+entry = "uv run python scripts/check.py ruff"
+language = "system"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+entry = "uv run python scripts/check.py format"
+language = "system"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
+id = "ty-check"
+name = "ty check"
+entry = "uv run python scripts/check.py ty"
+language = "system"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
+id = "lineage"
+name = "range lineage, exhaustive quick check"
+entry = "uv run python scripts/check.py lineage"
+language = "system"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
+id = "readme-shots"
+name = "README screenshots match the viewer"
+entry = "uv run python scripts/check.py viewer-captures"
+language = "system"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
+id = "app-shots"
+name = "README screenshots match the application"
+entry = "uv run python scripts/check.py app-captures"
+language = "system"
+pass_filenames = false
+always_run = true
+
+# Faster than CI on purpose: CI also runs the slow tests, on every Python version.
+[[repos.hooks]]
+id = "pytest"
+name = "pytest"
+entry = "uv run pytest -x -q -m 'not slow and not ai'"
+language = "system"
+pass_filenames = false
+always_run = true

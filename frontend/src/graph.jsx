@@ -1104,7 +1104,6 @@ function LibrarySearch({ apiBase = "api/", language = "fr", onClose, translate =
           workbook: { name: file.name, size: file.size },
           name: file.name,
           searchScoped: true,
-          budget: { seconds: 600, memoryMb: 512 },
         }),
       });
       uploadId = started.upload.id;

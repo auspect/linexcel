@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from graph_test_helpers import (
+    close_settings,
     close_workspace_menu,
     open_graph_depth,
     open_graph_options,
+    open_settings,
     open_workspace_menu,
     tap_graph_node,
 )
@@ -136,7 +138,8 @@ def test_lazy_selection_mounted_api_and_tab_boundaries(browser, viewport):
         page.locator("[data-project='p1']").click()
         page.locator("[data-node]").first.wait_for()
         assert operations == []
-        assert page.locator("#memory").get_attribute("max") == "1024"
+        # The memory field reads in GiB: the 1024 MiB server ceiling is 1.
+        assert page.locator("#limit-memory-gb").get_attribute("max") == "1"
         page.locator("[data-node='Budget!A1']").click()
         page.locator("#node-detail").get_by_text(
             "Non pris en charge", exact=False
@@ -912,15 +915,15 @@ def test_gallery_opt_in_ai_safe_previews_patterns_and_sheet_focus(browser, viewp
         )
         assert page.evaluate("window.bad") is None
         ai_count = len([r for r in requests if r["operation"] == "document"])
-        open_workspace_menu(page)
-        page.get_by_text("Documentation IA à la demande", exact=True).click()
-        open_workspace_menu(page)
+        open_settings(page, "ai")
         page.locator("#ai-language").select_option("en")
+        close_settings(page)
         close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 0
         assert len([r for r in requests if r["operation"] == "document"]) == ai_count
-        open_workspace_menu(page)
+        open_settings(page, "ai")
         page.locator("#ai-language").select_option("fr")
+        close_settings(page)
         close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 1
         page.locator("#recalculate").click()
@@ -1412,10 +1415,9 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
             in page.locator("#node-ai").inner_text()
         )
         assert not [r for r in requests if r["operation"] == "document"]
-        open_workspace_menu(page)
-        page.get_by_text("On-demand AI documentation", exact=True).click()
-        open_workspace_menu(page)
+        open_settings(page, "ai")
         page.locator("#ai-language").select_option("en")
+        close_settings(page)
         close_workspace_menu(page)
         assert page.locator("#node-ai .ai-result").count() == 0
         page.get_by_role("tab", name="Graph", exact=True).click()
@@ -1442,8 +1444,9 @@ def test_english_ui_shared_graph_ai_usage_and_explicit_generation(browser, viewp
         page.get_by_role("tab", name="Graph", exact=True).click()
         assert page.locator("#graph-ai [data-ai-cancel]").count() == 0
         assert page.locator("#graph-ai [data-ai-start]").is_enabled()
-        open_workspace_menu(page)
+        open_settings(page, "ai")
         page.locator("#ai-language").select_option("fr")
+        close_settings(page)
         close_workspace_menu(page)
         assert page.locator("#graph-ai .ai-result").count() == 1
         assert page.locator("#node-ai .ai-result").count() == 1

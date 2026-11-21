@@ -1198,6 +1198,463 @@ pre {
   }
 }
 
+/* ---------------------------------------------------------------- sidebar: core loop, then settings */
+/* The column holds workspaces, storage and import; "Réglages" stays pinned at its foot. */
+.workspace > aside {
+  padding: 16px;
+  /* Contains the visually hidden file inputs of the import form: without it
+     they escape the scrolling column and make the whole page taller. */
+  position: relative;
+}
+@media (min-width: 1101px) {
+  body:not(.sidebar-collapsed) .workspace > aside {
+    display: flex;
+    flex-direction: column;
+  }
+}
+.workspace > aside.is-open {
+  display: flex;
+  flex-direction: column;
+}
+.workspace > aside > * {
+  flex-shrink: 0;
+}
+.sidebar-foot {
+  position: sticky;
+  bottom: 0;
+  margin: auto -16px -16px;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+  background: var(--side);
+}
+/* A scrolling sidebar keeps its 16 px padding out of the sticky area. */
+.workspace-active .workspace > aside > .sidebar-foot,
+.workspace > aside.is-open > .sidebar-foot {
+  bottom: -16px;
+}
+#settings-open {
+  width: 100%;
+  min-height: var(--tap);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  line-height: 1.3;
+}
+#settings-open::before {
+  content: "";
+  grid-row: 1 / span 2;
+  width: 18px;
+  height: 18px;
+  background: var(--ink-2);
+  -webkit-mask: var(--m-sliders) center / contain no-repeat;
+  mask: var(--m-sliders) center / contain no-repeat;
+}
+#settings-open small {
+  font-size: var(--fs-meta);
+  font-weight: 400;
+}
+@media (hover: hover) and (pointer: fine) {
+  #settings-open:hover {
+    background: var(--surface-3);
+    border-color: transparent;
+  }
+}
+.storage {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.storage[hidden] {
+  display: none;
+}
+.storage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+.storage-row strong {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.storage-meter {
+  height: 4px;
+  margin: 7px 0 6px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+.storage-meter > span {
+  display: block;
+  width: 0;
+  min-width: 4px;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.storage-meter[data-level="high"] > span {
+  background: var(--warn);
+}
+.storage #retention {
+  margin: 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+/* One line when it fits; otherwise "Modifier" moves under it, never mid-word. */
+.limits-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 4px;
+  margin-top: 12px;
+  padding: 2px 2px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--fs-meta);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.limits-line > span {
+  white-space: nowrap;
+}
+.limits-line > button {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+/* Quiet: an action in text, for secondary choices next to a field or a line. */
+button.quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+@media (hover: hover) and (pointer: fine) {
+  button.quiet:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--accent-tint);
+  }
+}
+
+/* ---------------------------------------------------------------- settings dialog */
+#settings {
+  width: min(780px, calc(100vw - 48px));
+  height: min(620px, calc(100dvh - 48px));
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+}
+#settings[open] {
+  display: flex;
+  flex-direction: column;
+}
+#settings::backdrop {
+  background: rgb(20 36 31 / 0.35);
+}
+.settings-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 10px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-head h2 {
+  margin: 0;
+  font-size: var(--fs-h);
+  font-weight: 650;
+}
+#settings-close {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 22px;
+  line-height: 1;
+}
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: var(--side);
+}
+.settings-nav button {
+  display: block;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.35;
+}
+.settings-nav button small {
+  display: block;
+  font-size: var(--fs-meta);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings-nav button:hover:not([aria-current="true"]) {
+    background: var(--surface-3);
+    border-color: transparent;
+  }
+}
+.settings-nav button[aria-current="true"] {
+  background: var(--accent-tint);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
+}
+.settings-nav button:active:not(:disabled) {
+  transform: none;
+}
+.settings-short {
+  display: none;
+}
+.settings-panes {
+  min-width: 0;
+  overflow: auto;
+  padding: 24px 28px;
+  /* A focused control scrolled into view keeps room for its 4 px ring. */
+  scroll-padding-block: 8px;
+}
+.settings-pane {
+  max-width: 460px;
+}
+.settings-pane > h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.settings-lead {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: var(--fs-label);
+  line-height: 1.45;
+}
+.settings-field {
+  margin: 0 0 18px;
+}
+.settings-field > label {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: var(--fs-label);
+  font-weight: 600;
+}
+.settings-field select,
+.settings-action,
+#settings .file-pick {
+  width: 100%;
+}
+.settings-pane .help {
+  margin: 4px 0 0;
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+.settings-pane > .help {
+  margin: 12px 0 0;
+}
+.unit-field {
+  position: relative;
+}
+.unit-field input {
+  width: 100%;
+  max-width: none;
+  padding-right: 64px;
+  -moz-appearance: textfield;
+}
+.unit-field input::-webkit-inner-spin-button,
+.unit-field input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.unit-field .unit {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: var(--fs-label);
+  pointer-events: none;
+}
+.unit-field input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.field-error {
+  margin: 4px 0 0;
+  color: var(--danger);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.settings-pane button.quiet {
+  margin-top: 14px;
+  padding: 0 4px;
+}
+.settings-status {
+  margin: 0 0 18px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: 1.4;
+}
+.settings-status[data-state="warn"] {
+  background: var(--warn-tint);
+  color: var(--warn);
+  font-weight: 600;
+}
+#restore-status {
+  margin: 8px 0 0;
+  font-size: var(--fs-label);
+}
+#settings-backup hr {
+  margin: 20px 0 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+#legacy-recovery[hidden],
+#restore-status:empty,
+#legacy-projects:empty,
+#health-status:empty {
+  display: none;
+}
+#legacy-projects p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+#health-status {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--fs-label);
+}
+#health-status p {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  line-height: 1.45;
+}
+#health-status p:first-child {
+  border-top: 0;
+}
+.settings-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px 10px 24px;
+  border-top: 1px solid var(--line);
+}
+.settings-foot p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-meta);
+}
+@media (max-width: 650px) {
+  /* A phone gets a full-screen sheet with the sections as a row of pills. */
+  #settings {
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .settings-head {
+    padding: 4px 4px 4px 16px;
+  }
+  .settings-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-nav {
+    flex-direction: row;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+  .settings-nav button {
+    flex: none;
+    min-width: var(--tap);
+    min-height: var(--tap);
+    padding: 0 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    text-align: center;
+  }
+  .settings-nav button[aria-current="true"] {
+    border-color: var(--accent);
+    box-shadow: none;
+  }
+  .settings-nav .settings-name,
+  .settings-nav button small {
+    display: none;
+  }
+  .settings-short {
+    display: inline;
+  }
+  .settings-panes {
+    padding: 16px;
+  }
+  .settings-pane {
+    max-width: none;
+  }
+  .settings-foot {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+  .settings-foot p {
+    display: none;
+  }
+  .settings-foot button {
+    flex: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   .link,

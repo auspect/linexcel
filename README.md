@@ -45,6 +45,19 @@ uvx linexcel serve --open --port 8765
 `--open` opens the browser; the terminal always prints the local URL. Use
 `--port 0` to select a free port when the default is occupied.
 
+#### Large workbooks
+
+A large workbook needs disk space and time at import, and little memory. On
+one Windows 11 machine with an SSD, a 20 MB workbook took 5 minutes and
+1.9 GiB of disk space. A 50 MB workbook took 11 minutes and 4.7 GiB.
+
+`serve` sets its memory and disk limits from the machine and prints them at
+startup. When a limit stops an operation, the **Operations** tab names the
+limit, its value and what to change. Read
+[Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/)
+for the measured costs, the default limits and the options that raise them:
+`--max-storage-mb`, `--memory-mb` and `--max-upload-mb`.
+
 This separate path imports a structural graph without evaluating formulas.
 It shows source formulas, defined names, saved inputs and Excel caches;
 whole-column ranges remain compact. Selecting a cell starts an isolated,
@@ -288,8 +301,10 @@ that identity. The standalone server binds only to loopback and uses a durable
 local profile. Its one-use session link connects a browser to that profile;
 `linexcel session-link --data-dir ~/.linexcel` creates another link while the
 server is running. Projects survive browser changes and server restarts.
-`--mount-path`, `--data-dir`, `--workers`,
-`--memory-mb` and `--retention-days` configure the launcher. The default data
+`--mount-path`, `--data-dir`, `--workers`, `--memory-mb`, `--max-storage-mb`,
+`--max-upload-mb` and `--retention-days` configure the launcher. Without
+`--memory-mb` or `--max-storage-mb`, the launcher derives that limit from the
+machine; an embedded application keeps the values its host passes. The default data
 directory is `~/.linexcel`; uploaded files and diagnostic formula text are private.
 
 Use **one application coordinator per data directory** (an exclusive lock

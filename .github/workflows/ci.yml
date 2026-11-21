@@ -3,8 +3,8 @@ name: ci
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a stacked one is checked too.
   pull_request:
-    branches: [main, 'codex/**']
   # Lets publish.yml replay the whole CI before releasing to PyPI.
   workflow_call:
 
@@ -27,17 +27,17 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked
-      - run: uv run ruff check --output-format=github src/ tests/
-      - run: uv run ruff format --check src/ tests/
-      - run: uv run python scripts/capture_viewer.py --check
-      - run: uv run python scripts/capture_app.py --check
+      # Gates are defined in scripts/check.py, the command the commit hook runs.
+      - run: uv run python scripts/check.py ruff format viewer-captures app-captures
+        env:
+          RUFF_OUTPUT_FORMAT: github
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --prefix frontend
-      - run: npm run check --prefix frontend
+      - run: uv run python scripts/check.py frontend
 
   typecheck:
     runs-on: ubuntu-latest
@@ -48,7 +48,21 @@ jobs:
           enable-cache: true
           prune-cache: true
       - run: uv sync --locked
-      - run: uv run ty check --ignore import-not-found src/
+      - run: uv run python scripts/check.py ty
+
+  # Exhaustive range-lineage check (.agents/skills/check-group-precedents),
+  # then the six broken variants of refs.py it must catch. About a minute.
+  lineage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          prune-cache: true
+      - run: uv sync --locked
+      - run: uv run python scripts/check.py lineage lineage-mutants
 
   test:
     runs-on: ${{ matrix.os }}
@@ -129,7 +143,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, typecheck, test, viewer-browser, build]
+    needs: [lint, typecheck, lineage, test, viewer-browser, build]
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs

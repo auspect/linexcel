@@ -532,27 +532,6 @@
 .workspace > aside > details {
   margin-top: 16px;
 }
-.workspace > aside .budget,
-.workspace > aside .ai-settings {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
-}
-.workspace > aside .budget > div,
-.workspace > aside .ai-settings > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px;
-  align-items: center;
-  gap: 8px;
-}
-.workspace > aside .budget label,
-.workspace > aside .ai-settings label {
-  margin: 0;
-  font-size: 12px;
-}
-.workspace > aside .budget input {
-  width: 96px;
-}
 #sheet-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));

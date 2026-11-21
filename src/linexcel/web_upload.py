@@ -16,6 +16,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from linexcel.web_limits import STORAGE_TRANSFER, upload_limit_message
+
 CHUNK_BYTES = 8 * 1024 * 1024
 COPY_BYTES = 1024 * 1024
 UPLOAD_LIFETIME = 24 * 3600
@@ -147,7 +149,7 @@ class UploadStore:
     def begin(self, owner: str, body: dict) -> dict:
         from linexcel.web import APIError, _write
 
-        budget = self.store.budget(body.get("budget", {}), default_seconds=600)
+        budget = self.store.budget(body.get("budget", {}), "import")
         search_scoped = body.get("searchScoped", False)
         if not isinstance(search_scoped, bool):
             raise APIError(400, "Invalid search scope")
@@ -167,7 +169,7 @@ class UploadStore:
             raise APIError(400, "Les noms des fichiers doivent être uniques")
         total = sum(item["size"] for item in files)
         if total > self.store.config.max_upload_mb * 1048576:
-            raise APIError(413, "Import trop volumineux")
+            raise APIError(413, upload_limit_message(self.store.config.max_upload_mb))
         name = body.get("name") or files[0]["name"]
         if not isinstance(name, str) or len(name) > 200:
             raise APIError(400, "Nom de l’espace invalide")
@@ -180,11 +182,9 @@ class UploadStore:
             if len(self.sessions) >= self.store.config.max_pending_tasks:
                 raise APIError(429, "Trop de transferts en attente")
             # Reserve all announced bytes, including concurrent incomplete uploads.
-            if (
+            self.store.require_storage(
                 self.store._storage_bytes() + self.remaining_bytes() + total + 65536
-                > self.store.config.max_storage_mb * 1048576
-            ):
-                raise APIError(413, "Stockage plein ; supprimez des classeurs")
+            )
             session = {
                 "id": uuid.uuid4().hex,
                 "owner": owner,
@@ -251,11 +251,10 @@ class UploadStore:
             with self.store.lock:
                 if self.store.closed:
                     raise APIError(503, "Serveur en cours d’arrêt")
-                if (
-                    self.store._storage_bytes() + self.remaining_bytes()
-                    > self.store.config.max_storage_mb * 1048576
-                ):
-                    raise APIError(413, "Stockage plein ; supprimez des classeurs")
+                self.store.require_storage(
+                    self.store._storage_bytes() + self.remaining_bytes(),
+                    STORAGE_TRANSFER,
+                )
             path = self._file_path(self._path(session), session, index)
             try:
                 with path.open("r+b" if path.exists() else "w+b") as target:

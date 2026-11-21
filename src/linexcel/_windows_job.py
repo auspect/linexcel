@@ -63,7 +63,21 @@ class _Accounting(ctypes.Structure):
     ]
 
 
+class _CompletionPort(ctypes.Structure):
+    _fields_ = [("key", ctypes.c_void_p), ("port", wintypes.HANDLE)]
+
+
+JOB_OBJECT_MSG_JOB_MEMORY_LIMIT = 10
+
+
 class WorkerJob:
+    """Caps the committed memory of a worker and all its descendants.
+
+    After ``close``, ``memory_limit_hit`` says whether any of them was refused
+    memory by the cap, and ``peak_bytes`` is the job's peak commit. Windows
+    counts a refused allocation in that peak, so it can exceed the cap.
+    """
+
     api: Any
 
     def __init__(self, process, memory_mb: int):
@@ -93,7 +107,25 @@ class WorkerJob:
             ctypes.c_void_p,
         ]
         api.QueryInformationJobObject.restype = wintypes.BOOL
+        api.CreateIoCompletionPort.argtypes = [
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            ctypes.c_size_t,
+            wintypes.DWORD,
+        ]
+        api.CreateIoCompletionPort.restype = wintypes.HANDLE
+        api.GetQueuedCompletionStatus.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.DWORD,
+        ]
+        api.GetQueuedCompletionStatus.restype = wintypes.BOOL
         self.api = api
+        self.port = None
+        self.memory_limit_hit = False
+        self.peak_bytes: int | None = None
         self.handle = api.CreateJobObjectW(None, None)
         if not self.handle:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -101,6 +133,16 @@ class WorkerJob:
         limits.basic.flags = 0x2000 | 0x200  # KILL_ON_JOB_CLOSE | JOB_MEMORY
         limits.job_memory = memory_mb * 1024 * 1024
         try:
+            # The job posts JOB_OBJECT_MSG_JOB_MEMORY_LIMIT to this port when
+            # any process in it is refused memory by the cap.
+            self.port = api.CreateIoCompletionPort(wintypes.HANDLE(-1), None, 0, 1)
+            if not self.port:
+                raise ctypes.WinError(ctypes.get_last_error())
+            association = _CompletionPort(None, self.port)
+            if not api.SetInformationJobObject(
+                self.handle, 7, ctypes.byref(association), ctypes.sizeof(association)
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
             if not api.SetInformationJobObject(
                 self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)
             ):
@@ -137,8 +179,33 @@ class WorkerJob:
                         )
                     time.sleep(0.005)
             finally:
+                # A slow cleanup must not lose a cap hit; ctypes calls do not
+                # raise, so the cleanup's own exception still propagates.
+                self._read_memory()
                 self.api.CloseHandle(self.handle)
                 self.handle = None
+                if self.port:
+                    self.api.CloseHandle(self.port)
+                    self.port = None
+
+    def _read_memory(self):
+        message = wintypes.DWORD()
+        key = ctypes.c_size_t()
+        overlapped = ctypes.c_void_p()
+        while self.api.GetQueuedCompletionStatus(
+            self.port,
+            ctypes.byref(message),
+            ctypes.byref(key),
+            ctypes.byref(overlapped),
+            0,
+        ):
+            if message.value == JOB_OBJECT_MSG_JOB_MEMORY_LIMIT:
+                self.memory_limit_hit = True
+        info = _Extended()
+        if self.api.QueryInformationJobObject(
+            self.handle, 9, ctypes.byref(info), ctypes.sizeof(info), None
+        ):
+            self.peak_bytes = info.peak_job
 
     def resume(self, process):
         if sys.platform != "win32":
