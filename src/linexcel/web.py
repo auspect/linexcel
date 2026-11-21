@@ -2243,12 +2243,13 @@ def serve(args) -> int:
             print(f"Linexcel : {access_url}", flush=True)
             defaults = TaskDefaults.for_server(limits.memory_mb, args.workers)
             print(
-                f"Limites : mémoire {limits.memory_mb} MiB pour {args.workers} "
-                f"opérations simultanées, {defaults.memory_mb} MiB par opération "
-                f"(--memory-mb) ; stockage {limits.storage_mb} MiB, dont "
-                f"{round(limits.storage_used_bytes / MiB)} MiB utilisés "
-                f"(--max-storage-mb) ; durée {defaults.long_seconds} s par import, "
-                f"graphe, capture ou rapport, {defaults.seconds} s par recalcul ciblé.",
+                f"Limits: memory {limits.memory_mb} MiB for {args.workers} "
+                f"concurrent operations, {defaults.memory_mb} MiB each "
+                f"(--memory-mb); storage {limits.storage_mb} MiB, "
+                f"{round(limits.storage_used_bytes / MiB)} MiB used "
+                f"(--max-storage-mb); {defaults.long_seconds} s per import, "
+                f"graph, capture or report, {defaults.seconds} s per targeted "
+                "recalculation.",
                 flush=True,
             )
             if getattr(args, "open_browser", False):
