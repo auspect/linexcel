@@ -120,7 +120,7 @@ json_str = result.to_json(indent=2)
 
 ## Screenshots (optional, requires LibreOffice and Poppler)
 
-Available on Linux, macOS and Windows — see
+Available on Linux, macOS and Windows. See
 [Workbook context & screenshots](context.md#screenshots) for the install
 command on your platform.
 

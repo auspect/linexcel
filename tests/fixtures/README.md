@@ -2,8 +2,8 @@
 
 `openpyxl` writes formulas, sheets and comments, so every other fixture in this
 repository is generated at test time by `validation_workbooks.py`. It cannot
-author a `vbaProject.bin` or a Power Query mashup — both are produced by Excel
-itself — so those two live here as files, and `.gitignore` exempts this
+author a `vbaProject.bin` or a Power Query mashup, because both are produced by Excel
+itself. Those two live here as files, and `.gitignore` exempts this
 directory from the blanket Excel-file ignore.
 
 They are committed deliberately: the code that reads them is the boundary
@@ -54,7 +54,7 @@ worth changing a Trust Center setting for.
 
 1. New workbook, three sheets named `Sales`, `Synthesis`, `Params`.
 2. `Params!A1` = `0.2`.
-3. Alt+F11 → Insert → Module (leave it named `Module1`), paste:
+3. Press Alt+F11, open Insert, then Module (leave it named `Module1`), and paste:
 
    ```vb
    Public Sub Refresh()

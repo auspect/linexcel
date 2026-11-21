@@ -4,7 +4,7 @@
 The unit tests answer "is the lineage right?". This answers a different
 question, the one that decides whether someone keeps using the tool: *does it
 come back at all*, and how long does it take to say so. A user whose file
-hangs the analysis does not file a bug — they close the terminal.
+hangs the analysis does not file a bug. They close the terminal.
 
 Each scenario builds a workbook, and sometimes a folder of the files it links
 to, then runs the analysis **in a subprocess under a wall-clock timeout**. A
@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from openpyxl import Workbook  # noqa: E402
 
 #: What a scenario hands back: the workbook to analyse, and the folder of
-#: linked files to resolve against — ``None`` when the point of the scenario
+#: linked files to resolve against, or ``None`` when the point of the scenario
 #: is that the folder is not given.
 Built = tuple[Path, Path | None]
 
@@ -142,7 +142,7 @@ def links_not_a_workbook(d: Path) -> Built:
 
 
 def links_legacy_xls(d: Path) -> Built:
-    """An OLE2 file wearing an .xlsx name — what a re-saved .xls looks like."""
+    """An OLE2 file wearing an .xlsx name, like a re-saved .xls."""
     refs = d / "refs"
     refs.mkdir()
     (refs / "Ref.xlsx").write_bytes(
@@ -221,7 +221,7 @@ def links_corner_ref(d: Path) -> Built:
 
 
 def links_big_ref(d: Path) -> Built:
-    """The linked workbook is large — every cell of it is read for one value."""
+    """The linked workbook is large. Every cell of it is read for one value."""
     refs = d / "refs"
     wb = Workbook()
     ws = wb.active
@@ -316,7 +316,7 @@ def main_huge_strings(d: Path) -> Built:
 
 
 def main_many_formulas(d: Path) -> Built:
-    """150,000 formulas over ten sheets — an ordinary big corporate file."""
+    """150,000 formulas over ten sheets, an ordinary big corporate file."""
     wb = Workbook()
     for s in range(10):
         ws = wb.create_sheet(f"Sheet{s}") if s else wb.active

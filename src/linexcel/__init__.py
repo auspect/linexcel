@@ -1,11 +1,10 @@
 """Excel workbook data lineage analysis.
 
-Pipeline: formula extraction (formualizer, Rust engine) →
-stretched pattern grouping (R1C1 canonicalization) →
-dependency graph (cells, ranges, defined names, VBA) →
-composite function decomposition with step-by-step evaluation →
-optional AI documentation, from the provider of your choice, grounded in
-deterministic lineage.
+Pipeline: formula extraction (formualizer, Rust engine), then stretched pattern
+grouping (R1C1 canonicalization), then dependency graph (cells, ranges, defined
+names, VBA), then composite function decomposition with step-by-step evaluation,
+and finally optional AI documentation, from the provider of your choice,
+grounded in deterministic lineage.
 
 Usable as a standalone library (marimo, Jupyter, scripts), without
 a FastAPI server or AI key:

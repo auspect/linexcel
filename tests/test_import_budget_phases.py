@@ -298,6 +298,7 @@ def test_an_import_that_still_times_out_says_what_to_try(app, monkeypatch):
     assert "l’index précédent reste consultable" in message
     assert f"le double ({2 * BUDGET} s)" in message
     assert "ce n’est pas une estimation" in message
+    assert "« Opérations longues » dans Réglages › Limites par opération" in message
     # The previous index is still published and read.
     code, nodes = call(app, "GET", f"/api/projects/{project}/nodes")
     assert code == 200, nodes

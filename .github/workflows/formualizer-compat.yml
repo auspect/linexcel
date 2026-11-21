@@ -1,8 +1,8 @@
 name: formualizer compatibility
 
 on:
+  # Any base branch, so a stacked pull request is checked too.
   pull_request:
-    branches: [main, 'codex/**']
     paths:
       - '.github/workflows/formualizer-compat.yml'
       - 'pyproject.toml'

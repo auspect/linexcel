@@ -96,7 +96,7 @@ so a narrow question cannot replace the library's shared catalog generation.
 The private catalog reads the same durable owner-local link pins as the library;
 the model cannot create or change them. User pin changes invalidate its derived
 generation and remain constrained by the question's frozen authorized revisions.
-Its disk ceiling is 16 MiB, build allowance 15 seconds, additionally bounded by
+Its disk ceiling is 16 MiB, its build allowance is 15 seconds, and it is also bounded by
 the configured catalog limits. These are cooperative limits, not hard real-time
 or process-memory isolation guarantees.
 
@@ -434,7 +434,7 @@ strongly connected component detection identifies local and cross-workbook cycle
 
 `coverage.exhaustive` says whether traversal exhausted its defined loaded-revision
 scope without a budget/missing-index stop. `coverage.boundaries` separately names
-what it reached. `coverage.complete` additionally requires all reached boundaries
+what it reached. `coverage.complete` also requires all reached boundaries
 to be legitimate input origins: an exhaustive graph with an unresolved external
 link, macro, query or cycle is still incomplete. This makes a bounded or unresolved
 diagram unsuitable for claiming total lineage. The scope cannot identify files
@@ -608,7 +608,7 @@ Invalid requests reject excessive query/paging/depth bounds. Construction and
 search caps are reported with counts. The catalog disk budget reserves space
 for both the old generation and its replacement; insufficient space prevents
 publication and reports a failed build. The owner workspace quota (by default
-2 GiB, configurable with `serve --max-storage-mb`) additionally includes original
+2 GiB, configurable with `serve --max-storage-mb`) also includes original
 workbooks, all indexes, tasks and captures. It is not a capacity promise for
 hundreds of large workbooks.
 

@@ -336,7 +336,8 @@ class AskService:
                     {
                         "seconds": self.store.config.ask_limits.seconds,
                         "memoryMb": min(256, self.store.config.total_memory_mb),
-                    }
+                    },
+                    "ask",
                 ),
                 "options": {},
                 "result": None,

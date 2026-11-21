@@ -445,8 +445,13 @@ def check_model_requests(requests: list, *, allowed: bool) -> None:
 
 
 def frame(page, selector: str, offset: int = 0) -> None:
+    # The element can sit in a panel that scrolls on its own (the cell detail
+    # does): scroll whatever holds it, then back off by the offset there.
     page.locator(selector).evaluate(
-        "(element, offset) => window.scrollTo(0, element.getBoundingClientRect().top + scrollY - offset)",
+        "(element, offset) => { element.scrollIntoView({block: 'start'});"
+        " let box = element.parentElement;"
+        " while (box && !box.scrollTop) box = box.parentElement;"
+        " (box || document.scrollingElement).scrollBy(0, -offset); }",
         offset,
     )
     page.wait_for_timeout(150)

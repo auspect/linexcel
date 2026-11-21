@@ -225,3 +225,47 @@ def test_saved_dynamic_spill_recalculates(mode):
 
     assert [engine.get_value("S", row, 1) for row in (1, 2, 3)] == [1, 2, 3]
     assert engine.get_value("S", 1, 3) == 6
+
+
+@pytest.mark.parametrize("formula", ["=SUM(A7:$A$5)", "=SUM(B5:A7)"])
+def test_bounded_reversed_range_raises_ref(mode, formula):
+    """formualizer 0.10.1 and 0.14.0 raise #REF! on bounded reversed ranges.
+
+    Upstream: https://github.com/PSU3D0/formualizer/issues/599.
+    When a release calculates these ranges, update the limit in
+    ``docs/guide/coverage.md`` and note that upstream issue 599 is resolved.
+    """
+    cells = {f"A{row}": row for row in range(1, 8)}
+    cells.update({f"B{row}": row * 10 for row in range(1, 8)})
+    cells["D1"] = formula
+    try:
+        engine = _evaluate_workbook(cells, mode)
+    except fz.ExcelEvaluationError as exc:
+        assert "#REF!" in str(exc)
+        return
+    pytest.fail(
+        f"formualizer {FORMUALIZER_VERSION} now evaluates bounded reversed "
+        f"range {formula!r} ({engine.get_value('S', 1, 4)!r}) without raising "
+        "#REF!; update the limit in docs/guide/coverage.md and note that "
+        "upstream issue 599 is resolved."
+    )
+
+
+@pytest.mark.parametrize("formula", ["=SUM(B:A)", "=SUM(7:5)"])
+def test_whole_axis_reversed_range_returns_ref(mode, formula):
+    """formualizer 0.10.1 and 0.14.0 return #REF! on whole-axis reversed ranges.
+
+    Upstream: https://github.com/PSU3D0/formualizer/issues/599.
+    When a release calculates these ranges, update the limit in
+    ``docs/guide/coverage.md`` and note that upstream issue 599 is resolved.
+    """
+    cells = {f"A{row}": row for row in range(1, 8)}
+    cells.update({f"B{row}": row * 10 for row in range(1, 8)})
+    cells["D1"] = formula
+    engine = _evaluate_workbook(cells, mode)
+    value = engine.get_value("S", 1, 4)
+    assert value == {"type": "Error", "kind": "Ref"}, (
+        f"formualizer {FORMUALIZER_VERSION} now evaluates whole-axis reversed "
+        f"range {formula!r} to {value!r} instead of #REF!; update the limit in "
+        "docs/guide/coverage.md and note that upstream issue 599 is resolved."
+    )

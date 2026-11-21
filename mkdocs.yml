@@ -53,6 +53,7 @@ nav:
   - Guide:
       - Quick start: guide/quickstart.md
       - Execution budgets: guide/execution.md
+      - Large workbooks in the web application: guide/large-workbooks.md
       - Engine safety: guide/engine-safety.md
       - Calculation investigation: guide/calculation-investigation.md
       - Browsing worksheet data: guide/datasette.md

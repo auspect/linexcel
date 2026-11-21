@@ -1,4 +1,4 @@
-"""Data navigation uses the protected Datasette surface without stale frames."""
+"""Data navigation uses the protected Datasette view without stale frames."""
 
 import json
 import os
@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 import pytest
 from graph_test_helpers import open_data_options, open_workspace_menu
+
+from linexcel.web_limits import import_timeout_remedy
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -987,12 +989,15 @@ def test_a_presentation_reason_is_visible_on_a_phone(browser, language):
 
 def test_the_import_budget_field_starts_at_the_servers_default(browser):
     """Batch 2 ter: ``linexcel serve --import-seconds`` sets the budget the
-    "Import and graph" field proposes; the user can still change it."""
+    "Long operations" field of the settings proposes, in minutes; the user
+    can still change it."""
     page, _, errors, _, _ = open_app(
-        browser, (1440, 900), limits={"importSeconds": 1500}
+        browser, (1440, 900), limits={"defaults": {"longSeconds": 1500}}
     )
     try:
-        assert page.locator("#import-seconds").input_value() == "1500"
+        assert page.locator("#limit-long-minutes").input_value() == "25"
+        # The line above Import says it too; the import form is closed here.
+        assert "25 min" in page.locator("#limits-summary").text_content()
         assert not errors
     finally:
         page.close()
@@ -1078,7 +1083,8 @@ def test_a_time_stop_proposes_a_reimport_with_an_estimated_budget(
         imports = [body for body in posted if body.get("operation") == "import"]
         assert imports and imports[0]["budget"]["seconds"] == 1080
         assert imports[0]["force"] is True
-        assert page.locator("#import-seconds").input_value() == "1080"
+        # The proposal stays in the settings, in minutes, for the next operations.
+        assert page.locator("#limit-long-minutes").input_value() == "18"
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
         assert not errors
     finally:
@@ -1247,28 +1253,16 @@ def test_a_partial_import_says_that_listed_uses_may_be_incomplete(
         page.close()
 
 
-def _timed_out_import(previous):
-    kept = (
-        "l’index précédent reste consultable."
-        if previous
-        else "ce classeur n’a pas encore d’index."
-    )
+def _timed_out_import(previous, seconds=60):
+    """A failed import as the server reports it, with its own sentence."""
     return {
         "id": "t1",
         "projectId": "p",
         "operation": "import",
         "status": "failed",
-        "budget": {"seconds": 60, "memoryMb": 1024},
+        "budget": {"seconds": seconds, "memoryMb": 1024},
         "createdAt": 1,
-        "error": {
-            "kind": "timeout",
-            "message": "Import arrêté : le budget de 60 s s’est écoulé à une étape "
-            f"inconnue. Aucun nouvel index n’a été publié ; {kept} Essayez un "
-            "budget plus grand, par exemple le double (120 s) : ce n’est pas une "
-            "estimation.",
-            "suggestedSeconds": 120,
-            "previousIndex": previous,
-        },
+        "error": {"kind": "timeout", **import_timeout_remedy(seconds, previous)},
     }
 
 
@@ -1339,6 +1333,13 @@ def test_an_import_that_timed_out_proposes_a_larger_budget(
         remedy = page.locator("#import-timeout")
         remedy.wait_for()
         assert text in remedy.inner_text()
+        # The sentence names the setting that holds the budget.
+        setting = (
+            "“Long operations” in Settings › Operation limits"
+            if language == "en"
+            else "« Opérations longues » dans Réglages › Limites par opération"
+        )
+        assert setting in remedy.inner_text()
         page.get_by_role("button", name=button).click()
         for _ in range(50):
             if any(body.get("operation") == "import" for body in posted):
@@ -1346,7 +1347,66 @@ def test_an_import_that_timed_out_proposes_a_larger_budget(
             page.wait_for_timeout(50)
         imports = [body for body in posted if body.get("operation") == "import"]
         assert imports and imports[0]["budget"]["seconds"] == 120
+        assert page.locator("#limit-long-minutes").input_value() == "2"
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+        assert not errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    ("language", "seconds", "text", "button"),
+    [
+        (
+            "fr",
+            3600,
+            "Import arrêté : le budget de 3600 s, le plus long permis, s’est écoulé "
+            "à une étape inconnue. Aucun nouvel index n’a été publié ; l’index "
+            "précédent reste consultable.",
+            None,
+        ),
+        (
+            "en",
+            3600,
+            "Import stopped: the 3600 s budget, the longest allowed, ran out at an "
+            "unknown step. No new index was published; the previous index remains "
+            "available.",
+            None,
+        ),
+        # Twice 2400 s would pass the longest duration: that one is offered.
+        (
+            "en",
+            2400,
+            "Try a larger budget, for example the longest allowed (3600 s): this "
+            "is not an estimate.",
+            "Reimport with a budget of 3600 s",
+        ),
+    ],
+)
+def test_an_import_stopped_near_the_longest_duration_is_offered_what_remains(
+    browser, language, seconds, text, button
+):
+    """An import gets 3600 s by default, the longest duration of an
+    operation. Stopped there, it has no larger budget to offer: Diagnostics
+    says what was published and shows no reimport button. Stopped above half
+    of it, the offer is the longest duration, not twice the budget."""
+    graph = {"nodes": [], "edges": [], "lazy": True, "meta": {"status": "complete"}}
+    page, _, errors, _, _ = open_app(
+        browser,
+        (1440, 900),
+        language=language,
+        project={"graph": graph, "tasks": [_timed_out_import(True, seconds=seconds)]},
+    )
+    try:
+        page.locator("#tab-diagnostics").click()
+        remedy = page.locator("#import-timeout")
+        remedy.wait_for()
+        if button is None:
+            assert remedy.inner_text().strip() == text
+            assert page.locator("#reimport-timeout").count() == 0
+        else:
+            assert text in remedy.inner_text()
+            assert page.get_by_role("button", name=button).count() == 1
         assert not errors
     finally:
         page.close()

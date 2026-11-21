@@ -2,8 +2,8 @@
 
 Optional and opt-in: linexcel extracts or computes deterministic evidence
 without a model, including saved workbook values and calculation qualifications.
-What AI adds is prose — a card per node
-and an overview per workbook, written from the deterministic dossier the
+What AI adds is prose. It writes a card per node
+and an overview per workbook from the deterministic dossier the
 analysis already produced.
 
 Each requested text document uses two model calls by default: draft, then a
@@ -18,7 +18,7 @@ then records that review was disabled. The default preserves both prompts,
 RAW responses, hashes and usage under `specialized_review.stages`; those records
 may contain source data and need the same privacy as the workbook.
 
-Pick a provider first — see [Choosing an AI provider](providers.md). Every
+Pick a provider first. See [Choosing an AI provider](providers.md). Every
 example below uses a local Ollama runtime; substitute your own endpoint.
 
 ```python
@@ -31,10 +31,10 @@ result.save_html("out.html", docs=docs)
 
 ## Why the output is checkable
 
-The model receives the node's dossier —
+The model receives the node's dossier:
 stored original XML formula text when available, the separate canonical
 expression, its decomposition and recorded evaluation, its precedents and their values,
-its dependents, the extent of a stretched group, any VBA link — and the system
+its dependents, the extent of a stretched group, and any VBA link. The system
 prompt forbids asserting anything absent from it. Missing information must be
 written as "not determined by lineage" rather than guessed.
 
@@ -169,18 +169,18 @@ The dossier behind the overview carries two things. The lineage says how the
 workbook *computes*: sheet statistics, the largest formula patterns, defined
 names, VBA procedures, unresolved references. The
 [workbook context](context.md) says what it *looks like*: the first rows of
-each sheet, cell comments, merged ranges, frozen panes, hidden columns — the
+each sheet, cell comments, merged ranges, frozen panes, and hidden columns. These are the
 same cues the [sheet screenshots](context.md#screenshots) show a human reader.
 
 That second half is what lets the model write about the file rather than about
-a graph. A title sitting two rows above a table, a column called `Price` that
-somebody hid, a comment reading *"exported product category"* — no formula
-records any of it, and an overview written without them describes a structure
+a graph. No formula records a title sitting two rows above a table, a column
+called `Price` that somebody hid, or a comment reading *"exported product
+category"*, and an overview written without them describes a structure
 nobody recognises.
 
 The images themselves stay put for this call: `openpyxl` reads the same facts
 deterministically, so the "cite only the dossier" rule still holds and no vision
-model is required. Sending them is a separate, explicit step — see below.
+model is required. Sending them is a separate, explicit step. See below.
 
 ```python
 # Lineage only — cell contents stay on your machine
@@ -188,9 +188,9 @@ overview = result.document_workbook(base_url=..., model=..., include_context=Fal
 ```
 
 The dossier is capped at `aidoc.MAX_WORKBOOK_DOSSIER_CHARS`. A workbook that
-exceeds it sheds detail in order — long previews shrink, then the tail of the
+exceeds it sheds detail in order: long previews shrink, then the tail of the
 pattern and VBA lists, and only as a last resort are previews and comments
-dropped — so a small workbook loses nothing.
+dropped. A small workbook loses nothing.
 
 ## Describing the screenshots
 
@@ -215,7 +215,7 @@ linexcel analyze book.xlsx --screenshots shots/ --vision-docs \
 ```
 
 Each description appears under the image it describes, in the Sheets tab,
-badged *read from the screenshot* rather than as ordinary AI documentation —
+badged *read from the screenshot* rather than as ordinary AI documentation, so
 the reader can tell a claim about pixels from a claim about the lineage.
 
 Three things worth knowing:
@@ -231,7 +231,7 @@ Three things worth knowing:
   characters. Compare its quotations with the saved crop bytes, preserving
   visible punctuation and distinguishing rendered values from saved caches.
 - **This is the widest thing linexcel sends.** A picture of a sheet shows every
-  row on it, including those no dossier would have quoted — see
+  row on it, including those no dossier would have quoted. See
   [Data handling](data-handling.md).
 
 Every page is covered by crops of at most 1024×1024 pixels, with 128 pixels of
@@ -276,7 +276,7 @@ usage = result.token_usage
 usage.input_tokens, usage.output_tokens, usage.total, usage.requests
 ```
 
-Counts come from the provider when it reports them — the OpenAI-compatible
+Counts come from the provider when it reports them. The OpenAI-compatible
 `usage` block is read directly, so the figure is the one you are billed on. When
 a provider reports nothing (a custom callable, or a local runtime that omits the
 block), the tokens are approximated instead and `usage.estimated` is `True`;
@@ -296,7 +296,7 @@ build a fresh `TokenUsage` and pass it as `usage=` to
 
     `TokenUsage` deliberately carries no price. Rates differ per provider,
     model and region, and a table baked into the package would silently go
-    stale. Multiply by your own current rate — or run locally, where the rate
+    stale. Multiply by your own current rate, or run locally, where the rate
     is zero.
 
 ## Capping the bill
@@ -309,8 +309,8 @@ docs = result.document(base_url=..., model=..., token_budget=200_000)
 print(result.token_usage)
 ```
 
-The budget is a ceiling on the **total** tokens of the run — input and output
-together, every request combined. It is deliberately not a per-node allowance:
+The budget is a ceiling on the **total** tokens of the run, input and output
+together, across every request. It is deliberately not a per-node allowance:
 one node's card is never the question. With the default specialized review,
 900 documented formula patterns require 1,800 requests: draft and review each
 consume tokens and are included in the tally. Use
@@ -345,7 +345,7 @@ result.document(base_url=..., model=..., token_budget=200_000)  # same ceiling
 ```
 
 A budget already spent by earlier calls raises `AiDocError` rather than sending
-a request that would breach it. `token_budget=0` — or any non-positive value —
+a request that would breach it. `token_budget=0`, or any non-positive value,
 raises `ValueError`; to send nothing at all, do not call `document()`.
 
 !!! tip "Estimating before you spend"

@@ -46,7 +46,7 @@ The changes in `tests/test_powerquery.py` cover:
 | `MyExcel.CurrentWorkbook()` matched the built-in suffix. | Workbook sources require the exact function name. |
 | `Web.Page("<html>…</html>")` produced an external URL input. | Inline HTML produces no external source; nested `Web.Contents` still supplies its URL. [Web.Page](https://learn.microsoft.com/en-us/powerquery-m/web-page). |
 | Only compressed mashup length had a ceiling. | Uncompressed M-part size and bounded reads also obey the 32 MiB ceiling. Unknown stream versions return no section. |
-| Missing worksheet loads were called “loaded nowhere (connection only).” | Warnings report no detected worksheet destination, leaving data-model loads and unresolved relationships possible. |
+| Missing worksheet loads were called "loaded nowhere (connection only)." | Warnings report no detected worksheet destination, leaving data-model loads and unresolved relationships possible. |
 
 Comment, newline and escape handling follows the
 [M lexical specification](https://learn.microsoft.com/en-us/powerquery-m/m-spec-lexical-structure).

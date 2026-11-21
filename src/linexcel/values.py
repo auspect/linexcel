@@ -1,7 +1,7 @@
 """What a cell value *is*, once something has read it.
 
 The engine, the file's own cache and a linked workbook each hand values back
-in their own shape — a Rust error object, a float that is really a date, a
+in their own shape: a Rust error object, a float that is really a date, a
 string that is really an error code. This module is the one place that decides
 what such a thing means: whether it counts as computed, whether two readings
 of it agree, and how it is written down for the report.
@@ -23,13 +23,14 @@ from typing import Any
 EXCEL_EPOCH_1900 = datetime.datetime(1899, 12, 30)
 EXCEL_EPOCH_1904 = datetime.datetime(1904, 1, 1)
 # Serials 1..59 (Jan/Feb 1900) sit before Excel's phantom 1900-02-29, so their
-# real epoch is 1899-12-31: serial 1 → 1900-01-01. Serial 60 is the phantom
-# day itself and matches no real date. From 61 on, the 1899-12-30 epoch
+# real epoch is 1899-12-31, where serial 1 is 1900-01-01. Serial 60 is the
+# phantom day itself and matches no real date. From 61 on, the 1899-12-30 epoch
 # already absorbs the phantom day.
 EPOCH_EARLY_1900 = datetime.datetime(1899, 12, 31)
-#: Engine error kinds → the text a spreadsheet shows for them. These are values
-#: a cell genuinely holds: openpyxl reads the stored one back as this same text,
-#: so the graph carries the text on both sides and they compare directly.
+#: Mapping from engine error kinds to the text a spreadsheet shows for them.
+#: These are values a cell genuinely holds: openpyxl reads the stored one back
+#: as this same text, so the graph carries the text on both sides and they
+#: compare directly.
 ERROR_KIND_TEXT = {
     "Div": "#DIV/0!",
     "Na": "#N/A",
@@ -50,7 +51,7 @@ class SpreadsheetError(str):
 
 #: Error kinds that are *not* a cell value: the engine reporting that it could
 #: not compute, rather than a result. ``NImpl`` is a function or operator it does
-#: not implement — the range intersection in ``=SUM(D2:D10 D5:D20)``, say — and
+#: not implement, such as the range intersection in ``=SUM(D2:D10 D5:D20)``, and
 #: ``Circ`` a reference cycle, which Excel resolves by convention rather than by
 #: computing. Neither may be shown as "the value linexcel recalculated", because
 #: linexcel recalculated nothing; the cell falls back to what the file stores.
@@ -62,7 +63,7 @@ UNCOMPUTED_ERROR_KINDS = frozenset({"NImpl", "Cancelled", "Circ", "Spill"})
 
 
 def serial_to_date_text(serial: Any, epoch_1904: bool = False) -> str | None:
-    """Excel serial number → ``YYYY-MM-DD``, or None if it is not a date."""
+    """Convert an Excel serial number to ``YYYY-MM-DD``, or None if it is not a date."""
     if isinstance(serial, bool) or not isinstance(serial, (int, float)):
         return None
     days = float(serial)
@@ -288,7 +289,7 @@ def _error_kind(value: Any) -> str | None:
 
     The engine reports errors as a plain ``{"type": "Error", "kind": ...}``
     dict, which stringifies to Python source rather than to anything a reader
-    of a spreadsheet recognises — hence every path out of the engine going
+    of a spreadsheet recognises, hence every path out of the engine going
     through here first.
     """
     if isinstance(value, SpreadsheetError):
@@ -326,7 +327,7 @@ def _values_differ(raw: Any, cached: Any, date_text: str | None) -> bool:
     if cached_date is not None:
         return date_text is not None and date_text != cached_date
     # An error is a value a cell genuinely holds, and openpyxl reads the stored
-    # one back as the same text Excel shows — so the two are directly
+    # one back as the same text Excel shows, so the two are directly
     # comparable, and a recalculated #DIV/0! over a stored #DIV/0! is agreement,
     # not a disagreement nobody can explain.
     error_text = _excel_error_text(raw)
@@ -368,14 +369,14 @@ def _jsonable(value):
 # ──────────────────────────────────────────────
 
 #: A number as some spreadsheet somewhere writes it: digits, with runs
-#: separated by a group mark — space, non-breaking space, narrow no-break
-#: space, apostrophe, dot or comma — and possibly a decimal mark.
+#: separated by a group mark, such as space, non-breaking space, narrow no-break
+#: space, apostrophe, dot or comma, and possibly a decimal mark.
 _NUMBER_RE = re.compile(r"(?<![\w.,])[.,]\d+|\d[\d   '.,]*\d|\d")
 #: Marks a spreadsheet may use to group digits. The dot and the comma are in
 #: here too: which of the two groups and which one separates the decimal part
 #: is exactly what changes from one regional setting to the next.
 _GROUP_MARKS = " \u00a0\u202f'.,"
-#: Digits grouped the way every convention groups them — three at a time.
+#: Digits grouped three at a time, the way every convention groups them.
 _GROUPED_RE = re.compile(r"^\d{1,3}(?:[ \u00a0\u202f'.,]\d{3})*$|^\d+$")
 
 
@@ -388,7 +389,7 @@ def _read_number(text: str) -> set[Decimal]:
     what lets the caller ask "could these two be the same number?" without
     pretending to know a locale the file never recorded.
 
-    Grouping is held to the convention it comes from — groups of exactly
+    Grouping is held to the convention it comes from, in groups of exactly
     three digits. Without that, ``1 2`` reads as twelve, and two genuinely
     different texts would be called one value written two ways.
     """
@@ -544,7 +545,7 @@ def _separators_only(left: str, right: str) -> bool:
     machine that saved it does. The cell is right both times, and calling it a
     disagreement blames the workbook for a regional setting.
 
-    The text around the numbers must match exactly — this is not a fuzzy
+    The text around the numbers must match exactly. This is not a fuzzy
     comparison. Only standalone numbers are read leniently, and only in the
     sense of "is there a reading under which these are the same value".
     Numbers attached to words may be identifiers and must remain unchanged.
@@ -603,7 +604,7 @@ def readings_agree(
 
     One rule, in one place. The report used to hold two: Python compared
     values for the warnings and returned "no difference" for every pair of
-    strings — missing a recalculated ``non`` over a stored ``oui`` — while the
+    strings, missing a recalculated ``non`` over a stored ``oui``, while the
     viewer compared the rendered text and called any difference a
     disagreement, which is what made a French workbook light up red over
     ``6,7 €``.

@@ -9,10 +9,10 @@ There are two ways in.
 
 | Way | What it covers |
 | --- | --- |
-| `base_url=` + `model=` | Anything speaking the OpenAI-compatible chat API — a local runtime, a hosted gateway, a vendor's own endpoint |
+| `base_url=` + `model=` | Anything speaking the OpenAI-compatible chat API, such as a local runtime, a hosted gateway, or a vendor's own endpoint |
 | `provider=` | A configured `OpenAICompatProvider`, your own callable, or any `LLMProvider` object |
 
-Install the client once — it is the client for *every* OpenAI-compatible
+Install the client once. It is the client for *every* OpenAI-compatible
 endpoint, not a choice of vendor:
 
 ```bash
@@ -39,7 +39,7 @@ Same two arguments every time; only the URL and the model name change.
 
 === "OpenRouter"
 
-    One endpoint, many models — useful for comparing several against the same
+    One endpoint, many models. This is useful for comparing several against the same
     workbook without changing any code but the model string.
 
     ```python
@@ -98,8 +98,8 @@ docs = result.document()   # configured entirely by the environment
 !!! note "A model must always be named"
 
     `base_url=` without a model raises rather than falling back to one.
-    Endpoints do not agree on a default — `qwen3.8` means nothing to a hosted
-    API and a hosted model id means nothing to Ollama — so linexcel does not
+    Endpoints do not agree on a default. `qwen3.8` means nothing to a hosted
+    API, and a hosted model id means nothing to Ollama, so linexcel does not
     invent one.
 
 ## Model in the hostname, proxies and HTTPX
@@ -270,7 +270,7 @@ is `True`.
 
 | Configuration | Destination |
 | --- | --- |
-| Nothing configured | Nowhere — `AiDocError` is raised and the message lists the options |
+| Nothing configured | Nowhere. `AiDocError` is raised and the message lists the options. |
 | `base_url=` pointing at a local runtime | Your own machine |
 | `base_url=` pointing at a hosted endpoint | That endpoint's operator, under their terms |
 | `provider=` | Wherever your callable sends it |

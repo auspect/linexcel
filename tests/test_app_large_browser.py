@@ -645,7 +645,7 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
         assert page.locator(".react-flow__minimap").is_visible()
         assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
         assert not any(op["operation"] == "evaluate" for op in operations)
-        assert operations[0]["budget"]["seconds"] == 600
+        assert operations[0]["budget"]["seconds"] == 3600
         assert not any("/structure" in r for r in requests)
         page.evaluate("""()=>{const f=document.querySelector('#graph-canvas')._flow;
           f.getNodes().filter(n=>n.data.title.startsWith('Result')).forEach(n=>f.select(n.id));}""")
@@ -825,6 +825,207 @@ def test_reload_resume_verifies_content_before_sending_remaining_chunks(
         for route in held:
             try:
                 route.abort()
+            except playwright.Error:
+                pass
+        page.close()
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_selection_survives_delayed_workbook_overview_after_import(
+    browser, viewport, tmp_path
+):
+    from openpyxl import Workbook
+
+    from linexcel.graph_store import build_graph, generation, read_view
+    from linexcel.lazy_store import build_index, graph_neighborhood, graph_page
+
+    book = Workbook()
+    book.active.title = "Sales"
+    book.active["J10"] = 100
+    summary = book.create_sheet("Summary")
+    summary["C10"] = "=Sales!J10*2"
+    source, index, artifact = [
+        tmp_path / name for name in ("book.xlsx", "index.sqlite", "hierarchy.sqlite")
+    ]
+    book.save(source)
+    build_index(source, index)
+    build_graph(index, artifact)
+    page = browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+    errors, graph_view_requests = [], []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    project = {"id": "p", "name": "Delayed overview", "revision": 1}
+    tasks = []
+    build_state = {"done": False, "polled_done": False, "hold_post": False}
+    held_posts = []
+
+    def handle(route):
+        if serve_asset(route):
+            return
+        url = urlsplit(route.request.url)
+        path, query = url.path.removeprefix("/mounted/api/"), parse_qs(url.query)
+        if path == "config":
+            body = {}
+        elif path == "projects":
+            body = {"projects": [project]}
+        elif path == "projects/p":
+            body = {"project": project, "tasks": tasks, "graph": graph_page(index)}
+        elif path == "projects/p/nodes":
+            body = graph_page(index, query=query.get("q", [None])[0])
+        elif path == "projects/p/graph-view":
+            graph_view_requests.append(query)
+            body = read_view(
+                artifact,
+                generation(index),
+                view=int(query.get("view", ["0"])[0]),
+                node_id=query.get("nodeId", [None])[0],
+            )
+        elif path == "projects/p/neighborhood":
+            body = graph_neighborhood(index, query["nodeId"][0])
+        elif path == "projects/p/tasks":
+            payload = route.request.post_data_json
+            if payload["operation"] == "build_graph":
+                task = {
+                    "id": f"build-{len(tasks) + 1}",
+                    "operation": "build_graph",
+                    "status": "succeeded" if build_state["done"] else "running",
+                }
+                tasks.append(task)
+                if build_state["hold_post"]:
+                    held_posts.append((route, {"task": task}))
+                    return
+                body = {"task": task}
+            elif payload["operation"] == "evaluate":
+                task = {
+                    "id": f"eval-{len(tasks) + 1}",
+                    "operation": "evaluate",
+                    "nodeId": payload["nodeId"],
+                    "status": "succeeded",
+                    "resultAvailable": True,
+                    "result": {
+                        "status": "completed",
+                        "nodeId": payload["nodeId"],
+                        "value": 200,
+                        "comparison": "unknown",
+                        "steps": [
+                            {
+                                "nodeId": payload["nodeId"],
+                                "formula": "=Sales!J10*2",
+                                "evaluationStatus": "calculated",
+                                "calculatedValue": 200,
+                                "cachedValue": None,
+                                "dependencies": ["Sales!J10"],
+                            },
+                            {
+                                "nodeId": "Sales!J10",
+                                "evaluationStatus": "input",
+                                "cachedValue": 100,
+                            },
+                        ],
+                    },
+                }
+                tasks.append(task)
+                body = {"task": task}
+            else:
+                raise AssertionError(payload)
+        elif path.startswith("tasks/"):
+            task_id = path.split("/")[1]
+            task = next(t for t in tasks if t["id"] == task_id)
+            if task["operation"] == "build_graph" and build_state["done"]:
+                task["status"] = "succeeded"
+                build_state["polled_done"] = True
+            body = {"task": task}
+        else:
+            raise AssertionError(path)
+        route.fulfill(json=body)
+
+    page.route("**/*", handle)
+    try:
+        page.goto("http://localhost/mounted/?lang=en")
+        open_workspace_menu(page)
+        page.locator("[data-project='p']").click()
+        page.locator("#tab-graph").click()
+        # Overview is running on the server; select Summary!C10 before it finishes.
+        page.locator("#graph-search").fill("Summary!C10")
+        page.locator("#graph-results [data-related='Summary!C10']").click()
+        page.locator("#graph-calculation-steps .step-card").first.wait_for()
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Selected cell · Summary!C10"
+        )
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Linexcel result · 200"
+        )
+        # Now let build_graph finish on the server and wait for the poll cycle.
+        build_state["done"] = True
+        deadline = time.monotonic() + 6
+        while not build_state["polled_done"] and time.monotonic() < deadline:
+            page.wait_for_timeout(100)
+        assert build_state["polled_done"]
+        page.wait_for_timeout(300)
+        assert page.locator("#graph-preview").is_visible()
+        assert page.locator("#graph-calculation-steps .step-card").first.is_visible()
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Selected cell · Summary!C10"
+        )
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Linexcel result · 200"
+        )
+        assert page.locator("#graph-neighborhood").is_hidden()
+        assert graph_view_requests == []
+        # Second race: POST build_graph is in flight when selecting another cell.
+        build_state["done"] = False
+        build_state["polled_done"] = False
+        build_state["hold_post"] = True
+        page.locator("#graph-fit").click()
+        deadline = time.monotonic() + 5
+        while not held_posts and time.monotonic() < deadline:
+            page.wait_for_timeout(50)
+        assert held_posts
+        page.locator("#graph-search").fill("Sales!J10")
+        page.locator("#graph-results [data-related='Sales!J10']").click()
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Selected cell · Sales!J10"
+        )
+        build_state["hold_post"] = False
+        held_route, held_body = held_posts.pop(0)
+        held_route.fulfill(json=held_body)
+        page.wait_for_timeout(300)
+        assert page.locator("#graph-preview").is_visible()
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Selected cell · Sales!J10"
+        )
+        assert page.locator("#graph-neighborhood").is_hidden()
+        assert graph_view_requests == []
+        # The superseded build_graph task is still listed and tracked in Operations.
+        page.locator("#tab-tasks").click()
+        build_cards = page.locator("#task-list .task").filter(
+            has_text="Graph construction"
+        )
+        playwright.expect(build_cards).to_have_count(2)
+        playwright.expect(build_cards.first).to_contain_text("Running")
+        build_state["done"] = True
+        deadline = time.monotonic() + 6
+        while not build_state["polled_done"] and time.monotonic() < deadline:
+            page.wait_for_timeout(100)
+        assert build_state["polled_done"]
+        playwright.expect(build_cards.first).to_contain_text("Completed")
+        page.locator("#tab-graph").click()
+        assert page.locator("#graph-preview").is_visible()
+        playwright.expect(page.locator("#graph-preview")).to_contain_text(
+            "Selected cell · Sales!J10"
+        )
+        assert page.locator("#graph-neighborhood").is_hidden()
+        assert graph_view_requests == []
+        # Explicitly requesting Overview afterwards still opens the workbook overview.
+        page.locator("#graph-fit").click()
+        playwright.expect(page.locator("#graph-notice")).to_contain_text(
+            "Workbook graph ·"
+        )
+        assert page.locator("#graph-neighborhood").is_visible()
+        assert not errors
+    finally:
+        for held_route, _ in held_posts:
+            try:
+                held_route.abort()
             except playwright.Error:
                 pass
         page.close()

@@ -15,6 +15,13 @@ from pathlib import Path
 
 from linexcel import __version__
 from linexcel.i18n import LANGUAGES
+from linexcel.web_limits import MAX_TASK_SECONDS
+
+STORAGE_HELP = (
+    "Disk quota in MiB for workspaces, pending uploads and task outputs "
+    "(default: what the data directory holds plus its disk's free space, "
+    "minus a reserve of a tenth of the disk, at most 10 GiB)."
+)
 
 
 def _serve_port(value: str) -> int:
@@ -101,7 +108,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "doctor", help="Check local features without generating AI."
     )
     doctor.add_argument("--data-dir", type=Path, default=Path.home() / ".linexcel")
-    doctor.add_argument("--max-storage-mb", type=int, default=2048)
+    doctor.add_argument(
+        "--max-storage-mb",
+        type=int,
+        default=None,
+        help=STORAGE_HELP,
+    )
     doctor.add_argument("--ai", action="store_true")
     doctor.add_argument("--ai-base-url", default="http://localhost:11434/v1")
     doctor.add_argument("--ai-model", default="qwen3.8")
@@ -135,8 +147,9 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--memory-mb",
         type=int,
-        default=2048,
-        help="Aggregate worker memory admission budget in MiB.",
+        default=None,
+        help="Memory budget in MiB shared by all running operations "
+        "(default: half of this machine's memory, at least 2048).",
     )
     serve.add_argument(
         "--retention-days",
@@ -154,16 +167,17 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--max-storage-mb",
         type=int,
-        default=2048,
-        help="Disk quota including pending uploads and task outputs in MiB.",
+        default=None,
+        help=STORAGE_HELP,
     )
     serve.add_argument(
         "--import-seconds",
         type=int,
-        default=600,
-        help="Default time budget of an import, a graph construction or a report, "
-        "in seconds, from 1 to 3600 (default: 600). Users can still choose "
-        "another budget for each operation.",
+        default=MAX_TASK_SECONDS,
+        help="Default time budget of an import, a graph construction, sheet "
+        f"captures or a report, in seconds, from 1 to {MAX_TASK_SECONDS} "
+        f"(default: {MAX_TASK_SECONDS}). Users can still choose another one in "
+        "the settings of the page.",
     )
     serve.add_argument(
         "--no-local-import",
@@ -677,11 +691,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             from linexcel.web import WebConfig
             from linexcel.web_health import directory_health
+            from linexcel.web_limits import launcher_limits
 
+            limits = launcher_limits(args.data_dir, None, args.max_storage_mb)
             report = directory_health(
                 WebConfig(
                     args.data_dir,
-                    max_storage_mb=args.max_storage_mb,
+                    max_storage_mb=limits.storage_mb,
                     ai_enabled=args.ai,
                     ai_base_url=args.ai_base_url,
                     ai_model=args.ai_model,

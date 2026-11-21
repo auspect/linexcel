@@ -103,7 +103,7 @@ body.library-search-active .workspace > aside {
   display: none !important;
 }
 body.library-search-active .workspace > aside.is-open {
-  display: block !important;
+  display: flex !important;
 }
 @media (min-width: 1101px) {
   body.library-search-active .workspace.menu-open {

@@ -339,7 +339,8 @@ def _timed_out(previous):
             "message": "Import arrêté : le budget de 20 s s’est écoulé à une étape "
             "inconnue. Aucun nouvel index n’a été publié ; l’index précédent reste "
             "consultable. Essayez un budget plus grand, par exemple le double "
-            "(40 s) : ce n’est pas une estimation.",
+            "(40 s) : ce n’est pas une estimation. Il se règle avec « Opérations "
+            "longues » dans Réglages › Limites par opération.",
             "suggestedSeconds": 40,
             "previousIndex": previous,
         },

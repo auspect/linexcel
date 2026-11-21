@@ -10,8 +10,8 @@ on:
       - ".github/workflows/docs.yml"
       - "pyproject.toml"
       - "uv.lock"
+  # Any base branch: on a pull request only the build runs, never the deploy.
   pull_request:
-    branches: [main, 'codex/**']
     paths:
       - "docs/**"
       - "mkdocs.yml"

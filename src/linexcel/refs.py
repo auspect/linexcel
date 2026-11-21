@@ -1,4 +1,4 @@
-"""Excel reference utilities: A1 ↔ (row, col), R1C1, ranges.
+"""Excel reference utilities: A1 and (row, col) conversion, R1C1, ranges.
 
 All conversions are independent of the computation engine so they remain
 unit-testable.
@@ -138,7 +138,7 @@ def quote_sheet(sheet: str) -> str:
 
 
 def split_sheet_prefix(ref: str) -> tuple[str | None, str]:
-    """Split the sheet prefix from a reference ('Sheet 1'!A1 → (Sheet 1, A1)).
+    """Split the sheet prefix from a reference, turning 'Sheet 1'!A1 into (Sheet 1, A1).
 
     >>> split_sheet_prefix("Sheet1!A1")
     ('Sheet1', 'A1')
@@ -266,8 +266,10 @@ def parse_ref_detailed(ref: str, default_sheet: str | None = None) -> RefDetail 
         rect = Rect(sheet, row, col, row, col)
         return RefDetail(rect, row_abs, col_abs, row_abs, col_abs)
     (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = ends
-    if (r1, c1) > (r2, c2):
-        (r1, c1, r1a, c1a), (r2, c2, r2a, c2a) = (r2, c2, r2a, c2a), (r1, c1, r1a, c1a)
+    if r1 > r2:
+        r1, r1a, r2, r2a = r2, r2a, r1, r1a
+    if c1 > c2:
+        c1, c1a, c2, c2a = c2, c2a, c1, c1a
     # Whole-axis refs (A:A, 1:1) are frozen: they don't stretch.
     if r1 == -1:
         r1, r2, r1a, r2a = 1, MAX_ROW, True, True
@@ -314,10 +316,14 @@ def stretch_ref(
     rect = detail.rect
     r1 = rect.r1 if detail.row1_abs else rect.r1 + (rows_span[0] - rep_row)
     r2 = rect.r2 if detail.row2_abs else rect.r2 + (rows_span[1] - rep_row)
+    r1_hi = rect.r1 if detail.row1_abs else rect.r1 + (rows_span[1] - rep_row)
+    r2_lo = rect.r2 if detail.row2_abs else rect.r2 + (rows_span[0] - rep_row)
     c1 = rect.c1 if detail.col1_abs else rect.c1 + (cols_span[0] - rep_col)
     c2 = rect.c2 if detail.col2_abs else rect.c2 + (cols_span[1] - rep_col)
-    r1, r2 = max(1, min(r1, r2)), min(MAX_ROW, max(r1, r2))
-    c1, c2 = max(1, min(c1, c2)), min(MAX_COL, max(c1, c2))
+    c1_hi = rect.c1 if detail.col1_abs else rect.c1 + (cols_span[1] - rep_col)
+    c2_lo = rect.c2 if detail.col2_abs else rect.c2 + (cols_span[0] - rep_col)
+    r1, r2 = max(1, min(r1, r2_lo)), min(MAX_ROW, max(r1_hi, r2))
+    c1, c2 = max(1, min(c1, c2_lo)), min(MAX_COL, max(c1_hi, c2))
     return Rect(rect.sheet, r1, c1, r2, c2)
 
 

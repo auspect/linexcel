@@ -4,7 +4,7 @@
 Two workbooks, analysed then documented, rendered to PNG and written out as
 standalone HTML reports to open by hand:
 
-``sales``   a realistic 4-sheet B2B commercial and margin review — executive
+``sales``   a realistic 4-sheet B2B commercial and margin review: executive
             KPIs, regional plan vs. actuals, 40 enterprise orders, product
             catalog, hidden columns, charts, comments and defined names.
 ``stress``  a much larger English workbook built to break things: every Excel
@@ -153,8 +153,10 @@ CASES = {
         checks=(
             "'Errors' nodes — every Excel error value should render as #DIV/0!,",
             "  #N/A and so on, never as a raw engine object.",
-            "'Cross Refs' — external links, 3-D and structured references become",
-            "  grey 'external reference' nodes rather than silent wrong edges.",
+            "'Cross Refs' — external links and 3-D references become grey",
+            "  'external reference' nodes rather than silent wrong edges. The two",
+            "  table references lead to cells of 'Sales Data': B5 to the Revenue",
+            "  column (F2:F251), B6 to Units on its own row (D6).",
             "  The circular pair (B15/B16) must not hang or vanish.",
             "'Hostile Text' — no dialog may appear, and the payloads must read",
             "  back verbatim: </script>, __TITLE__, $&, the U+2028 line.",
@@ -168,8 +170,8 @@ CASES = {
 def _case_for_file(path: Path) -> Case:
     """A case wrapping a workbook of the user's own.
 
-    The generated fixtures cannot carry macros — ``openpyxl`` preserves a
-    ``vbaProject.bin`` but cannot author one — so this is the route for
+    The generated fixtures cannot carry macros because ``openpyxl`` preserves a
+    ``vbaProject.bin`` but cannot author one, so this is the route for
     exercising VBA extraction, the call graph and the sheet read/write edges
     against a real file.
     """
@@ -252,7 +254,7 @@ def recalculate(data: bytes, suffix: str = ".xlsx") -> bytes | None:
     """Round-trip through LibreOffice so the workbook carries stored results.
 
     ``openpyxl`` writes formulas but never their results, so a generated fixture
-    has no cached values at all — and the report's "value stored in the file"
+    has no cached values at all, and the report's "value stored in the file"
     against "value linexcel recalculated" comparison, the whole point of reading
     values back, has nothing to compare. Every real Excel file carries the last
     computed result; this makes the fixture behave like one.
@@ -483,7 +485,7 @@ def report_structure(result: linexcel.LineageResult) -> None:
 
 
 def report_context(result: linexcel.LineageResult) -> None:
-    """Show the context the AI overview is grounded in — not just the graph."""
+    """Show the workbook context that grounds the AI overview, beyond the graph."""
     print("\n2. 📋 Workbook context (openpyxl only, Excel is never launched)")
     for sheet in result.workbook_context["sheets"]:
         details = []
@@ -1200,7 +1202,7 @@ def screenshot_evidence(screenshots: dict | list | None) -> list[dict]:
 
 #: Ceilings the max_tokens check documents one node under. ``None`` is the
 #: reference length. 500 is the everyday case, which a small local model rarely
-#: reaches — it shows the argument breaks nothing, and nothing more. 48 is the
+#: reaches. It shows the argument breaks nothing, and nothing more. 48 is the
 #: one that has to bite, and is the only one that can prove enforcement.
 MAX_TOKENS_PROBES = (None, 500, 48)
 #: Providers count a response's tokens their own way, and a runtime may overrun
@@ -1215,7 +1217,7 @@ def check_max_tokens(
     """Document one node under several ceilings and report what came back.
 
     ``max_tokens`` is passed straight through to the endpoint, so whether it is
-    honoured is a property of the runtime, not of linexcel — an OpenAI-compatible
+    honoured is a property of the runtime, not of linexcel. An OpenAI-compatible
     server is free to ignore it. That is precisely why this is worth running
     against the endpoint you actually use, and why it reports rather than
     asserts: the useful outcome is knowing, not passing.
@@ -1535,7 +1537,7 @@ def run_addin(receipt: dict, root: Path) -> dict:
 
 def main() -> int:
     # A redirected stdout on Windows defaults to cp1252, which cannot encode the
-    # emoji below — nor the workbook's own accented sheet names.
+    # emoji below or the workbook's own accented sheet names.
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure is not None:
         reconfigure(encoding="utf-8", errors="replace")

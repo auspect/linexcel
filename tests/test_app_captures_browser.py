@@ -6,7 +6,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
-from graph_test_helpers import close_workspace_menu, open_workspace_menu
+from graph_test_helpers import (
+    close_settings,
+    close_workspace_menu,
+    french_words,
+    open_settings,
+    open_workspace_menu,
+)
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -418,11 +424,28 @@ def test_new_completed_capture_is_loaded_after_cached_gallery_reentry(browser):
         page.close()
 
 
+def _limits(server_memory, default_memory):
+    return {
+        "limits": {
+            "memoryMb": server_memory,
+            "uploadMb": 256,
+            "storageMb": 150000,
+            "storageUsedMb": 161,
+            "maxSeconds": 3600,
+            "defaults": {
+                "longSeconds": 3600,
+                "seconds": 120,
+                "memoryMb": default_memory,
+            },
+        }
+    }
+
+
 @pytest.mark.parametrize(
     ("server_memory", "initial_memory", "user_memory"),
-    [(256, 256, 256), (768, 768, 512), (4096, 1024, 512)],
+    [(256, 256, 256), (768, 768, 512), (16384, 8192, 512)],
 )
-def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_default(
+def test_capture_uses_user_memory_without_raising_it_after_server_default(
     browser, server_memory, initial_memory, user_memory
 ):
     page = browser.new_page()
@@ -437,13 +460,14 @@ def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_defau
             [{"id": "p", "name": "Memory budget"}],
             {"p": []},
             unexpected_result,
-            config={"limits": {"memoryMb": server_memory}},
+            config=_limits(server_memory, initial_memory),
         )
-        assert page.locator("#memory").input_value() == str(initial_memory)
-        assert page.locator("#memory").get_attribute("max") == str(server_memory)
-        open_workspace_menu(page)
-        page.get_by_text("Limites par opération", exact=True).click()
-        page.locator("#memory").fill(str(user_memory))
+        memory = page.locator("#limit-memory-gb")  # GiB in the field, MiB sent.
+        assert memory.input_value() == f"{initial_memory / 1024:g}"
+        assert memory.get_attribute("max") == f"{server_memory / 1024:g}"
+        open_settings(page, "limits")
+        memory.fill(f"{user_memory / 1024:g}")
+        close_settings(page)
         close_workspace_menu(page)
 
         def capture(route):
@@ -468,7 +492,180 @@ def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_defau
         assert len(submitted) == 1
         assert submitted[0]["operation"] == "capture"
         assert submitted[0]["budget"]["memoryMb"] == user_memory
-        assert page.locator("#memory").input_value() == str(user_memory)
+        assert memory.input_value() == f"{user_memory / 1024:g}"
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_limit_inputs_show_server_defaults_and_capture_runs_long(browser):
+    page = browser.new_page()
+    submitted = []
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page,
+            [{"id": "p", "name": "Large workbook"}],
+            {"p": []},
+            unexpected_result,
+            config=_limits(16384, 8192),
+        )
+        # Minutes, seconds and GiB: 3600 s, 120 s, 8192 of 16384 MiB.
+        assert page.locator("#limit-long-minutes").input_value() == "60"
+        assert page.locator("#limit-long-minutes").get_attribute("max") == "60"
+        assert page.locator("#limit-targeted-seconds").input_value() == "120"
+        assert page.locator("#limit-targeted-seconds").get_attribute("max") == "3600"
+        assert page.locator("#limit-memory-gb").input_value() == "8"
+        assert page.locator("#limit-memory-gb").get_attribute("max") == "16"
+
+        def capture(route):
+            submitted.append(route.request.post_data_json)
+            route.fulfill(
+                json={
+                    "task": {
+                        "id": "capture-long",
+                        "operation": "capture",
+                        "status": "succeeded",
+                        "result": {"screenshots": []},
+                    }
+                }
+            )
+
+        page.route("**/mounted/api/projects/p/tasks", capture)
+        page.locator("#tab-captures").click()
+        page.locator("#capture").click()
+        playwright.expect(page.locator("#capture-results")).to_contain_text(
+            "aucune image"
+        )
+        assert submitted[0]["budget"] == {"seconds": 3600, "memoryMb": 8192}
+        page.locator("#tab-diagnostics").click()
+        playwright.expect(page.locator("#runtime-limits")).to_contain_text(
+            "161 / 150000 MiB"
+        )
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_limit_failures_read_in_english(browser):
+    from linexcel.web import WebConfig
+    from linexcel.web_limits import (
+        STORAGE_REFUSED,
+        STORAGE_TRANSFER,
+        limit_message,
+        storage_quota_message,
+    )
+
+    config = WebConfig(Path("unused"), total_memory_mb=16384, max_storage_mb=4096)
+    failures = [
+        limit_message("timeout", config, operation="capture", seconds=3600),
+        limit_message("timeout", config, operation="import", seconds=900),
+        limit_message("timeout", config, operation="evaluate", seconds=120),
+        limit_message("timeout", config, operation="document", seconds=600),
+        limit_message("memory_limit", config, memory_mb=4608),
+        limit_message("memory_limit", config, memory_mb=16384),
+        limit_message("storage_limit", config),
+        storage_quota_message(4096, STORAGE_REFUSED),
+        storage_quota_message(4096, STORAGE_TRANSFER),
+        storage_quota_message(
+            4096, "la sauvegarde ou la restauration n’a pas pu démarrer."
+        ),
+        storage_quota_message(
+            4096, "la préparation de la vue des données n’a pas pu démarrer."
+        ),
+    ]
+    tasks = [
+        {
+            "id": f"failed-{index}",
+            "operation": "capture",
+            "status": "failed",
+            "error": {"kind": "limit", "message": message},
+        }
+        for index, message in enumerate(failures)
+    ]
+    page = browser.new_page()
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page,
+            [{"id": "p", "name": "Limits"}],
+            {"p": tasks},
+            unexpected_result,
+            config=_limits(16384, 8192),
+        )
+        page.locator("#ui-language").select_option("en")
+        page.locator("#tab-tasks").click()
+        notices = page.locator("#task-list .notice.error")
+        playwright.expect(notices).to_have_count(len(failures))
+        text = "\n".join(notices.all_inner_texts())
+        for english in (
+            "Time limit of 3600 s reached, the longest allowed.",
+            "Raise “Long operations” in Settings › Operation limits (up to 60 min)",
+            "Raise “Targeted recalculation” in Settings › Operation limits "
+            "(up to 3600 s)",
+            "Raise “Maximum duration” in Settings › AI documentation (up to 3600 s)",
+            "Memory budget of 4.5 GB (4608 MiB) reached. Raise “Memory per operation”",
+            "up to the server ceiling of 16 GB",
+            "Memory budget of 16 GB (16384 MiB) reached, equal to the server ceiling.",
+            "a --memory-mb value larger than 16384",
+            "(4096 MiB, workbooks, indexes and views included): the operation was "
+            "stopped and its result was not kept.",
+            "the operation could not start.",
+            "the transfer was interrupted.",
+            "the backup or restore could not start.",
+            "the data view preparation could not start.",
+            "a larger --max-storage-mb value",
+        ):
+            assert english in text, english
+        assert french_words(text) == [], text
+        # The Captures tab joins the last failure to its date in one line: the
+        # sentence must be translated before it is joined.
+        page.locator("#tab-captures").click()
+        playwright.expect(page.locator("#view-captures .notice")).to_contain_text(
+            "Delete workbooks or restart the server"
+        )
+        shown = page.locator("#view-captures").inner_text()
+        assert french_words(shown) == [], shown
+        assert errors == []
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("status", ["failed", "succeeded"])
+def test_the_last_capture_reads_as_an_error_only_when_it_failed(browser, status):
+    """Operations shows a failed capture in red; the Captures tab must agree."""
+    task = {"id": "last", "operation": "capture", "status": status, "finishedAt": 1}
+    if status == "failed":
+        task["error"] = {
+            "kind": "memory_limit",
+            "message": "Budget mémoire de 1 Go (1024 Mio) atteint, égal au plafond "
+            "du serveur.",
+        }
+    else:
+        task["result"] = {"screenshots": []}
+    page = browser.new_page()
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page, [{"id": "p", "name": "Captures"}], {"p": [task]}, unexpected_result
+        )
+        page.locator("#tab-captures").click()
+        notice = page.locator("#capture-results > .notice").first
+        playwright.expect(notice).to_contain_text(
+            "Budget mémoire" if status == "failed" else "Terminée"
+        )
+        assert ("error" in notice.get_attribute("class").split()) == (
+            status == "failed"
+        )
         assert errors == []
     finally:
         page.close()

@@ -31,6 +31,7 @@ from openpyxl.utils.cell import get_column_letter
 
 from linexcel.graph_store import generation
 from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex
+from linexcel.web_limits import STORAGE_DATA_VIEW, storage_quota_message
 
 DATA_VERSION = 5
 MAX_GRID_COLUMNS = 512
@@ -510,7 +511,7 @@ class DataBrowser:
                 "taskId": latest["id"],
                 "error": error.get("message") or latest["status"],
             }
-        from linexcel.web import APIError, storage_quota_message
+        from linexcel.web import APIError
 
         try:
             task = self.store.submit(
@@ -530,8 +531,7 @@ class DataBrowser:
                 **state,
                 "state": "failed",
                 "error": storage_quota_message(
-                    self.store.config.max_storage_mb,
-                    "la préparation de la vue des données n’a pas pu démarrer.",
+                    self.store.config.max_storage_mb, STORAGE_DATA_VIEW
                 ),
             }
         return {**state, "state": "building", "taskId": task["id"]}
@@ -714,7 +714,7 @@ class DataBrowser:
         from linexcel.web import APIError
 
         # Keep introspection, plugin endpoints, actor management and other
-        # database names outside this read-only, per-project surface.
+        # database names outside this read-only, per-project view.
         if method not in {"GET", "HEAD"}:
             raise APIError(405, "La vue des données est en lecture seule")
         decoded = unquote(path)

@@ -21,8 +21,8 @@ context lives under `sheets`.
 
 This context has two consumers. The HTML report renders it in the **Sheets**
 tab, and [`document_workbook()`](ai.md#workbook-overview) sends it to the model
-so the AI overview describes the file a reader opens — its titles, labels,
-comments and hidden columns — rather than only the graph its formulas make.
+so the AI overview describes the file a reader opens, including its titles, labels,
+comments and hidden columns, rather than only the graph its formulas make.
 Pass `include_context=False` to keep cell contents off the wire.
 
 ## Screenshots
@@ -35,7 +35,7 @@ result.save_html("out.html", screenshots=screenshots)
 ```
 
 Each sheet is rendered whole, onto a single image, and the result is keyed by
-sheet name — which is what lets the **Sheets** tab show every sheet's image
+sheet name, which lets the **Sheets** tab show every sheet's image
 beside its comments, frozen panes and first cells:
 
 ```python
@@ -48,7 +48,7 @@ Pass `per_sheet=False` for the flat `list[Path]` of print pages instead, laid
 out by the workbook's own page setup; the report then shows them in a separate
 **Visual preview** tab, since no page can be tied to a sheet. That flat list is
 also what you get back when the renderer does not produce exactly one page per
-sheet — an older LibreOffice ignores the single-page option — because a
+sheet, such as when an older LibreOffice ignores the single-page option. A
 screenshot filed under the wrong sheet is worse than one filed under none.
 
 Requires LibreOffice and Poppler's `pdftoppm`. Both are located on `PATH` or in
@@ -89,7 +89,7 @@ while LibreOffice is open on the desktop, and never touches your own settings.
 ## Letting a model look at them
 
 What survives that text extraction is what `openpyxl` can name. Colour
-conventions — blue inputs against black formulas — conditional formatting,
+conventions such as blue inputs against black formulas, conditional formatting,
 charts and the shape of a layout do not, and one call sends the picture itself
 to a multimodal model:
 
@@ -99,7 +99,7 @@ result.save_html("out.html", screenshots=shots, screenshot_docs=seen)
 ```
 
 The description appears under the image it describes, badged *read from the
-screenshot* so it is never mistaken for a claim about the lineage — and so it
+screenshot* so it is never mistaken for a claim about the lineage, and so it
 can be read against the picture it sits under, which is the only check there
 is. It is opt-in for a reason: a picture of a sheet shows every row on it. See
 [Describing the screenshots](ai.md#describing-the-screenshots) and

@@ -2,7 +2,7 @@
 
 A formula reading ``'[1]Annual'!B4`` names another workbook. The file itself
 says which one: ``xl/externalLinks/externalLink1.xml`` and its relationship
-carry the path Excel last saw it at, and — when Excel saved the link — a cache
+carry the path Excel last saw it at, and, when Excel saved the link, a cache
 of the values that were read. Neither is visible to the calculation engine, so
 without this module such a cell is a grey "external reference" node and every
 formula above it loses its value.
@@ -14,7 +14,7 @@ Three levels of answer, in the order they are tried:
 2. **Cached.** Most files carry the values Excel last read across the link.
    They are what the user saw on screen, and they cost nothing to read.
 3. **Resolved.** Given a folder of the referenced files, the workbook is opened
-   and read for real — which is also where VBA lives when the code sits in an
+   and read for real, which is also where VBA lives when the code sits in an
    add-in (``.xlam``, ``.xla``) rather than in the workbook itself.
 
 Level 3 is opt-in: ``analyze(..., refs_dir=...)``. Nothing is read from disk
@@ -149,8 +149,8 @@ def parse_external_refs(formula: str) -> list[ExternalRef]:
 def read_external_links(data: bytes | Path) -> dict[str, ExternalBook]:
     """The workbooks a file declares a link to, keyed by ``[N]`` index.
 
-    The index is the position in ``<externalReferences>`` in ``xl/workbook.xml``
-    — not the number in the part name, which only coincides most of the time.
+    The index is the position in ``<externalReferences>`` in ``xl/workbook.xml``,
+    not the number in the part name, which only coincides most of the time.
     """
     books: dict[str, ExternalBook] = {}
     try:
@@ -236,11 +236,11 @@ def read_workbook_values(
 
     from linexcel.loader import _error_cached_values
 
-    # calamine builds a sheet as a dense rows × columns array before handing
+    # calamine builds a sheet as a dense rows by columns array before handing
     # anything back, so a workbook declaring A1:XFD1048576 asks the allocator
-    # for 512 GiB and *aborts the process* — a Rust allocation failure, not an
-    # exception, so the caller's try/except would never see it. A file that
-    # claims more than any sheet can hold is refused by name instead.
+    # for 512 GiB and *aborts the process*. That is a Rust allocation failure,
+    # not an exception, so the caller's try/except would never see it. A file
+    # that claims more than any sheet can hold is refused by name instead.
     dense_limit = limit_or_default("max_dense_cells", max_dense_cells, MAX_DENSE_CELLS)
     declared = declared_cells(path.read_bytes())
     if declared > dense_limit:
@@ -364,7 +364,7 @@ def _read_cached_cells(
     """The values Excel last read across the link, if it saved them.
 
     ``sheetId`` indexes the ``<sheetNames>`` list declared alongside, and each
-    cell carries its type the same way a worksheet does — ``str`` for text,
+    cell carries its type the same way a worksheet does: ``str`` for text,
     ``b`` for a boolean, ``e`` for an error, nothing for a number.
     """
     for sheet_data in root.iter():

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +28,14 @@ from linexcel.limits import limit_or_default
 from linexcel.loader import _stepped
 from linexcel.powerquery import Query, QuerySource
 from linexcel.refs import Rect, a1, parse_ref, parse_ref_detailed, stretch_ref
-from linexcel.resolver import _collect_ref_strings, _external_name, _ValueResolver
+from linexcel.resolver import (
+    _collect_ref_strings,
+    _external_name,
+    _range_end_refs,
+    _ValueResolver,
+)
 from linexcel.structure import MAX_NODES_PER_SHEET
+from linexcel.structured_refs import member_rectangles
 from linexcel.sweep import FormulaGroup, _target_ranges
 from linexcel.tables import _enrich_with_table
 from linexcel.values import _jsonable
@@ -67,8 +74,8 @@ def _spread_cells(cells: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
 
     The head of a stretch is made of near-identical neighbours: sampling
     ``B2, C2, B3`` out of 400,000 cells says nothing about the far end, which
-    is exactly where a pattern that broke — a hard-coded cell dropped into the
-    middle of a column — shows up. First and last are always included.
+    is exactly where a pattern that broke, such as a hard-coded cell dropped
+    into the middle of a column, shows up. First and last are always included.
     """
     ordered = sorted(cells)
     if n < 2:
@@ -138,10 +145,13 @@ class GraphBuilder:
         reporter: Any,
         *,
         max_nodes_per_sheet: int | None = None,
+        table_resolver: Callable[..., Any] | None = None,
     ) -> None:
         self.max_nodes_per_sheet = limit_or_default(
             "max_nodes_per_sheet", max_nodes_per_sheet, MAX_NODES_PER_SHEET
         )
+        #: Resolves a declared table reference to the rectangle it reads.
+        self.table_resolver = table_resolver
         self.resolver = resolver
         self.sheet_dims = sheet_dims
         self.table_index = table_index
@@ -162,7 +172,7 @@ class GraphBuilder:
         self.cell_owner: dict[str, dict[tuple[int, int], str]] = defaultdict(dict)
         self.ast_cache: dict[str, Any] = {}
         self.kept_groups: list[tuple[str, FormulaGroup]] = []
-        #: Largest self-referencing group seen, in cells — a running-total
+        #: Largest self-referencing group seen, in cells. A running-total
         #: column is one group whose members chain through each other, so its
         #: size is the order of magnitude of a chain no inter-node path sees.
         self.intra_chain = 0
@@ -210,7 +220,7 @@ class GraphBuilder:
 
         An external reference is one of those, but it is not opaque to the
         *reader*: the file says which workbook it points at, and the node
-        carries that — with the value, when the workbook could be read.
+        carries that, with the value when the workbook could be read.
         """
         external = parse_external_refs(ref)
         if not external:
@@ -288,20 +298,26 @@ class GraphBuilder:
 
     def resolve_rect_edges(
         self, rect: Rect, node_id: str, kind: str = "dep", *, write: bool = False
-    ) -> None:
-        """Wire a referenced range to ``node_id``.
+    ) -> bool:
+        """Wire a referenced range to ``node_id``; say whether it met a node.
 
-        A formula, a name or a query *reads* a range: edges run precedent →
-        ``node_id``. A VBA write *feeds* the range instead — direction
+        A formula, a name or a query *reads* a range: edges run from precedent to
+        ``node_id``. A VBA write *feeds* the range instead, so direction
         reverses, an out-of-bounds range still gets an edge to the address as
         given (a macro can write past the sheet's current extent, unlike a
         read which then has nothing to point at), and a huge range is not
         split against the group boxes it happens to overlap: one aggregate
         edge to the range's input node says "this got written" without
         pretending to know which formulas actually depend on which part.
+
+        A read meets no node when the range lies past the sheet's cells, or
+        when a targeted analysis traced none of its cells.
         """
+        met = False
 
         def edge(other: str, approx: bool = False) -> None:
+            nonlocal met
+            met = True
             if write:
                 self.add_edge(node_id, other, kind, approx=approx)
             else:
@@ -309,7 +325,7 @@ class GraphBuilder:
 
         sheet = rect.sheet
         if sheet not in self.sheet_dims:
-            # A sheet this file does not have: another workbook, most often —
+            # A sheet this file does not have, another workbook most often:
             # ``'[1]Annual'!B4`` parses as a sheet name, brackets and all.
             opaque = (
                 self.ensure_input_node(rect, opaque_label=rect.to_a1())
@@ -317,11 +333,11 @@ class GraphBuilder:
                 else self.ensure_opaque_node(rect.to_a1())
             )
             edge(opaque)
-            return
+            return met
         clipped = rect.clipped(*self.sheet_dims[sheet])
         if clipped is None:
             if not write:
-                return
+                return met
             clipped = rect
         owners = self.cell_owner.get(sheet, {})
         if self.resolver.reachable is not None:
@@ -341,7 +357,7 @@ class GraphBuilder:
                     edge(owner)
             for r1, c1, r2, c2 in _target_ranges(plain):
                 edge(self.ensure_input_node(Rect(sheet, r1, c1, r2, c2)))
-            return
+            return met
         if clipped.ncells <= SMALL_RANGE_CELLS:
             seen: set[str] = set()
             has_plain = False
@@ -366,6 +382,7 @@ class GraphBuilder:
                 if clipped.intersects(Rect(sheet, r1, c1, r2, c2)):
                     edge(other_id, approx=True)
             edge(self.ensure_input_node(clipped), approx=True)
+        return met
 
     def build_names(self) -> None:
         """A node per defined name, wired to whatever it points at."""
@@ -477,12 +494,35 @@ class GraphBuilder:
                     )
                 ast_dict = typed_ast_dict(ast)
                 refs = _collect_ref_strings(ast_dict)
+                range_ends = _range_end_refs(ast_dict)
             except Exception:
-                ast, ast_dict, refs = None, None, []
+                ast, ast_dict, refs, range_ends = None, None, [], set()
             rmin, cmin, rmax, cmax = grp.bbox
             agg_rects: list[Rect] = []
+            table_reads: list[tuple[str, list[Rect]]] = []
             for ref in refs:
                 detail = parse_ref_detailed(ref, default_sheet=sheet)
+                if (
+                    detail is None
+                    and self.table_resolver is not None
+                    # ``Table[Jan]:Table[Mar]`` reads February too, which
+                    # neither end says: what a range is written with stays
+                    # named, ``INDEX(Table[Jan], 1)`` as an end included.
+                    and ref not in range_ends
+                ):
+                    # A table reference reads the declared table's cells. Its
+                    # rectangles are already those of every cell of the group:
+                    # they are not stretched like a relative A1 reference.
+                    reads = member_rectangles(
+                        self.table_resolver, ref, sheet, grp.cells
+                    )
+                    if reads is not None:
+                        rectangles, complete = reads
+                        table_reads.append((ref, rectangles))
+                        if not complete:
+                            # What the resolver refused stays named as written.
+                            self.add_edge(self.ensure_opaque_node(ref), node_id, "dep")
+                        continue
                 if detail is None:
                     up = ref.upper()
                     if up in self.name_nodes:
@@ -497,19 +537,43 @@ class GraphBuilder:
                 )
                 agg_rects.append(rect)
 
-            if is_group and agg_rects:
+            table_rects = [rect for _ref, rects in table_reads for rect in rects]
+            if is_group and (agg_rects or table_rects):
                 # A group whose stretched references overlap its own cells is
                 # chained through itself: ``=R[-1]C+1`` down a column is one
                 # group on the graph but a chain as deep as it is long.
                 bbox_rect = Rect(sheet, rmin, cmin, rmax, cmax)
-                if any(
+                chained = any(
                     rect.sheet == sheet and rect.intersects(bbox_rect)
                     for rect in agg_rects
-                ):
+                )
+                if not chained:
+                    # A table rectangle is what the cells read, not a box
+                    # stretched over them: the box of two tables side by side
+                    # covers columns neither formula reads. Ask the cells.
+                    near = [
+                        rect
+                        for rect in table_rects
+                        if rect.sheet == sheet and rect.intersects(bbox_rect)
+                    ]
+                    chained = any(
+                        rect.r1 <= row <= rect.r2 and rect.c1 <= column <= rect.c2
+                        for rect in near
+                        for row, column in grp.cells
+                    )
+                if chained:
                     self.intra_chain = max(self.intra_chain, len(grp.cells))
 
-            for rect in _merge_rects(agg_rects):
-                self.resolve_rect_edges(rect, node_id)
+            met = {
+                rect: self.resolve_rect_edges(rect, node_id)
+                for rect in _merge_rects(agg_rects + table_rects)
+            }
+            for ref, rectangles in table_reads:
+                if not any(met[rect] for rect in rectangles):
+                    # None of the cells it reads is on the graph: a table
+                    # without cells, or cells a targeted analysis did not
+                    # trace. The reference stays named rather than vanish.
+                    self.add_edge(self.ensure_opaque_node(ref), node_id, "dep")
 
             value_fields = self.resolver.describe(sheet, rep_r, rep_c, formula)
             samples = None
@@ -524,7 +588,7 @@ class GraphBuilder:
                 # A group stands for every cell it folds: its verdict is the
                 # worst of the representative cell and the sampled ones. Taken
                 # from the representative alone, it can say "matches" over a
-                # sample that drifted — a green banner on a red row. Cells with
+                # sample that drifted, giving a green banner on a red row. Cells with
                 # no recorded verdict (nothing cached to compare against) simply
                 # do not vote: an uncomparable cell must not downgrade a group,
                 # and a group with no verdict anywhere stays without one.

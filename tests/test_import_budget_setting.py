@@ -1,9 +1,10 @@
 """The default time budget of an import is a setting of the server (batch 2 ter).
 
-The public DGT election table needs about 580 s to import, close to the
-default 600 s. ``linexcel serve --import-seconds`` lets a
-server that receives such workbooks raise the default of imports, graph
-constructions and reports, which every user can still change per operation.
+``linexcel serve --import-seconds`` sets the default of long operations
+(imports, graph constructions, captures and reports), which every user can
+still change in the settings. Without it the default is 3600 s, the longest
+duration of an operation: the public DGT election table needs about 580 s
+to import, and a 50 MB model 11 minutes.
 """
 
 import base64
@@ -50,10 +51,12 @@ def workbook():
 def test_imports_without_a_budget_use_the_servers_default(tmp_path, setting):
     options = {} if setting is None else {"import_seconds": setting}
     app = create_app(tmp_path, resolve_user=lambda env: env.get("user"), **options)
-    expected = 600 if setting is None else setting
+    expected = 3600 if setting is None else setting
     try:
         code, config = call(app, "GET", "/api/config")
-        assert code == 200 and config["limits"]["importSeconds"] == expected
+        assert code == 200
+        # The page fills its "Long operations" field from this value.
+        assert config["limits"]["defaults"]["longSeconds"] == expected
         code, created = call(
             app,
             "POST",
@@ -84,7 +87,7 @@ def test_imports_without_a_budget_use_the_servers_default(tmp_path, setting):
 
 
 def test_the_serve_command_sets_the_default_import_budget():
-    assert _build_parser().parse_args(["serve"]).import_seconds == 600
+    assert _build_parser().parse_args(["serve"]).import_seconds == 3600
     args = _build_parser().parse_args(["serve", "--import-seconds", "1500"])
     assert args.import_seconds == 1500
 

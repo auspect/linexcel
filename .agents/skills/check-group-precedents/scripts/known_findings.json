@@ -1,0 +1,4 @@
+{
+  "note": "Violations of the group-precedents property that exist in the product code and were reported, not fixed. The check exits 3 while exactly these classes fail, 1 when another class appears or one of these stops failing. Remove a class here only when the product no longer fails it. Never add a class to make a run pass: a new class is a new finding to report.",
+  "classes": {}
+}

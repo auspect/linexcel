@@ -1,5 +1,20 @@
 """Physical access to secondary graph controls keeps the primary UI closed."""
 
+import re
+
+# French that an English page must not show: function words, accented letters
+# and the French units. A French sentence left behind has at least one.
+FRENCH = re.compile(
+    r"\b(?:le|la|les|des|du|une|un|et|est|sur|pour|dans|avec|aux|au|ou|par|qui"
+    r"|que|sa|son|ses|ce|cette|pas|ne|vous|nous|sont|Mio)\b"
+    r"|[àâçéèêëîïôûùœ]|\d\s?Go\b",
+    re.IGNORECASE,
+)
+
+
+def french_words(text):
+    return sorted({match.group(0) for match in FRENCH.finditer(text)})
+
 
 def open_workspace_menu(page):
     menu = page.locator("#workspace-menu")
@@ -11,6 +26,19 @@ def close_workspace_menu(page):
     close = page.locator("#workspace-close")
     if close.is_visible():
         close.click()
+
+
+def open_settings(page, section="limits"):
+    """Open the settings dialog from the sidebar, on one of its sections."""
+    open_workspace_menu(page)
+    page.locator("#settings-open").click()
+    page.locator(f"#settings [data-settings='{section}']").click()
+    page.locator(f"#settings-{section}").wait_for()
+
+
+def close_settings(page):
+    page.locator("#settings-done").click()
+    page.locator("#settings").wait_for(state="hidden")
 
 
 def open_graph_depth(page):

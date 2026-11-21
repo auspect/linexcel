@@ -11,7 +11,7 @@ and carries a local segment saying how far past the tag it is::
 The local segment is not decoration: PyPI rejects local versions, so a build
 that is not exactly a tag cannot reach the index even by accident.
 
-Building from an sdist needs no git — hatchling records the number computed
+Building from an sdist needs no git. Hatchling records the number computed
 here in ``PKG-INFO`` and reuses it. Only a source tree with no repository at
 all, such as a "Download ZIP", falls back to ``0.0.0+unknown``.
 """

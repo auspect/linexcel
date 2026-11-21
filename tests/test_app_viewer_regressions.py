@@ -226,16 +226,22 @@ def app(browser, request):
 def test_expanded_sidebar_fields_stay_inside_sidebar(app):
     page, _, errors, _, _ = app
     open_workspace_menu(page)
-    for label in ["Limites par opération", "Documentation IA à la demande"]:
-        page.get_by_text(label, exact=True).click()
-    assert page.evaluate("""() => {
+    # Settings moved to a dialog; the open import form is the sidebar's fields.
+    if not page.locator("#import-panel").evaluate("e => e.open"):
+        page.locator("#import-panel > summary").click()
+    outside = page.evaluate("""() => {
         const sidebar=document.querySelector('aside').getBoundingClientRect();
-        const fields='.budget input,.ai-settings input,.ai-settings select';
-        return [...document.querySelectorAll(fields)].every(e=>{
+        const fields=[...document.querySelectorAll(
+            'aside input:not([type=file]),aside select,aside textarea')]
+            .filter(e=>e.checkVisibility());
+        return [fields.length, fields.filter(e=>{
             const b=e.getBoundingClientRect();
-            return b.left>=sidebar.left+12&&b.right<=sidebar.right-12;
-        });
+            return b.left<sidebar.left+12||b.right>sidebar.right-12;
+        }).map(e=>[e.id, e.getBoundingClientRect().left-sidebar.left,
+            sidebar.right-e.getBoundingClientRect().right])];
     }""")
+    # Workspace search and workspace name; the server source is off here.
+    assert outside[0] >= 2 and outside[1] == [], outside
     assert not errors
 
 

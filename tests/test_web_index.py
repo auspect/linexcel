@@ -279,7 +279,7 @@ def test_hierarchy_task_persists_and_import_invalidates_it(indexed):
     assert call(app, "GET", base + "/graph-view")[0] == 409
     code, built = call(app, "POST", base + "/tasks", {"operation": "build_graph"})
     assert code == 200
-    assert built["task"]["budget"]["seconds"] == 600
+    assert built["task"]["budget"]["seconds"] == 3600
     finish(app.store, built["task"]["id"])
     count = len(app.store.tasks)
     code, view = call(app, "GET", base + "/graph-view")
@@ -300,7 +300,7 @@ def test_hierarchy_task_persists_and_import_invalidates_it(indexed):
     code, imported = call(
         app, "POST", base + "/tasks", {"operation": "import", "force": True}
     )
-    assert code == 200 and imported["task"]["budget"]["seconds"] == 600
+    assert code == 200 and imported["task"]["budget"]["seconds"] == 3600
     finish(app.store, imported["task"]["id"])
     assert call(app, "GET", base + "/graph-view")[0] == 409
     code, rebuilt = call(app, "POST", base + "/tasks", {"operation": "build_graph"})

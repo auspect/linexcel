@@ -2,7 +2,7 @@
 
 Analysis is entirely local. `analyze()`, `save_html()`, `save_json()` and
 `save_screenshots()` never open a network connection, and the HTML report is
-self-contained — it works from a `file://` URL with no internet at all.
+self-contained. It works from a `file://` URL with no internet at all.
 
 Only the optional AI documentation sends anything, and only to the provider you
 configured yourself. Nothing is configured by default: a call without
@@ -15,11 +15,11 @@ configured yourself. Nothing is configured by default: a call without
 | `document()` | Per node: formula, computed value, precedent/dependent labels, formula decomposition, stretched-group extent, and extracted VBA code |
 | `document_workbook()` | Sheet statistics, the largest formula patterns, defined names, VBA procedures, unresolved references, analysis warnings |
 | `document_workbook()` with `include_context=True` *(default)* | **Also** the first rows and columns of every sheet, cell comments and their authors, merged ranges, frozen panes, hidden columns |
-| `describe_screenshots()` | The sheet screenshots themselves — one PNG per call, inline in the request |
+| `describe_screenshots()` | The sheet screenshots themselves. One PNG is sent per call, inline in the request. |
 
 That last row means cell *contents* leave the machine, not only formulas and
 structure. It is on by default because an overview written without them is not
-worth reading — the titles, labels and comments a reader actually sees are what
+worth reading. The titles, labels and comments a reader actually sees are what
 make it a description of the file rather than of a dependency graph.
 
 Two ways to narrow it:
@@ -38,9 +38,9 @@ overview = result.document_workbook(
 Screenshots are the widest thing linexcel can send, so nothing sends them
 unless you ask. `document()` and `document_workbook()` never do: they are given
 facts in text, read from the file by `openpyxl`. Only
-[`describe_screenshots()`](ai.md#describing-the-screenshots) — and its
-`--vision-docs` flag, which additionally requires `--screenshots` — puts a
-picture of a sheet in a request, and a picture shows everything on that sheet,
+[`describe_screenshots()`](ai.md#describing-the-screenshots) and its
+`--vision-docs` flag put a picture of a sheet in a request; that flag
+also requires `--screenshots`. A picture shows everything on that sheet,
 including rows no dossier would have quoted. The image travels inline in the
 request body, so nothing is uploaded or left behind under a file id.
 
@@ -48,9 +48,9 @@ request body, so nothing is uploaded or left behind under a file id.
 
 | Configuration | Destination |
 | --- | --- |
-| Nothing configured | Nowhere — `AiDocError` is raised and the message lists the options |
+| Nothing configured | Nowhere. `AiDocError` is raised and the message lists the options. |
 | `base_url=` on a local runtime (Ollama, vLLM, LM Studio) | Your own machine |
-| `base_url=` on a hosted endpoint or gateway | That operator, under their terms — read them |
+| `base_url=` on a hosted endpoint or gateway | That operator, under their terms. Read them. |
 | `provider=` | Wherever your own callable sends it |
 
 An explicit proxy or an HTTPX environment proxy may carry these requests too.

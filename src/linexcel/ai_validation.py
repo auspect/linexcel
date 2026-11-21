@@ -325,7 +325,7 @@ def review_protocol() -> dict[str, Any]:
 
 
 def strip_claims(text: str) -> str:
-    """Remove private review scaffolding from visible prose; retain it in reports."""
+    """Remove private review claim blocks from visible prose; retain them in reports."""
     prose = _CLAIMS.sub("", text)
     incomplete = _CLAIM_START.search(prose)
     return (prose[: incomplete.start()] if incomplete else prose).strip()

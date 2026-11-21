@@ -17,14 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   import's time budget. Diagnostics says how long the sheets were read and
   how much of them was read, and proposes a reimport with an estimated
   budget, with a margin, at most 3600 s. On the public DGT election table,
-  the default 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
+  a budget of 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
   imported it completely in 580 s (measured with the earlier rule, which
   kept 60 % of the budget for reading; see "Publish an import whose formula
   analysis outlasts its time budget" below for the current rule).
-- Set the default time budget of imports, graph constructions and reports
-  with `linexcel serve --import-seconds N` (1 to 3600; default 600 s,
-  unchanged). The "Import and graph" field starts at that value, and each
-  operation can still choose its own.
+- Set the default time budget of imports, graph constructions, sheet captures
+  and reports with `linexcel serve --import-seconds N` (1 to 3600; default
+  3600 s, as since 1.20.0). The **Long operations** field of the settings
+  starts at that value, and each user can still choose their own. A budget
+  that Diagnostics proposes goes in that field when you accept it.
 
 ### Fixed
 
@@ -74,12 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The Diagnostics tab names the missing part; the cells stay unknown, never
   empty, and the Excel presentation shows them as unknown (∅) instead of
   blank cells.
-- Say what happened when the server's storage quota stops or refuses an
-  operation: the quota size and how to free space, instead of the bare
-  `storage_limit` or "Stockage plein ; supprimez des classeurs". After such a
-  failed import, the Nodes, Graph, Diagnostics and Data tabs say that no index
-  was published instead of suggesting a refresh, and Diagnostics no longer
-  says "Import complete".
+- Say that no index was published after an import that the storage quota
+  stopped. The Nodes, Graph, Diagnostics and Data tabs suggested a refresh,
+  and Diagnostics said "Import complete". The message of the quota itself
+  came with 1.20.0.
 - Say why the Excel presentation of a sheet cannot be shown when its part is
   missing from the file or the import read it only partly, instead of
   "Feuille introuvable" and without advising a retry that cannot help; on a
@@ -168,10 +167,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   times and counts (`importTimings`).
 - Say what an import that still ran out of time published. A step that
   cannot be stopped (links, VBA, publication) can still exceed the budget;
-  the error was the bare word "timeout". It now says that no new index was
-  published, whether the previous one remains available, and proposes twice
-  the budget, saying that this is not an estimate; Diagnostics offers the
-  reimport.
+  since 1.20.0 the error named the time limit and its setting. It now also
+  says that no new index was published and whether the previous one remains
+  available. It proposes twice the budget, or the longest duration when
+  twice would pass it, saying that this is not an estimate; Diagnostics
+  offers the reimport. At the longest duration it proposes none.
 - Say that a partial import's lists of uses may be incomplete. A formula not
   imported or not analyzed is missing from the uses of the cells it reads;
   the partial import banner now says so, and the node list and the Data tab
@@ -205,6 +205,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the package: one node per formula-free table, with its headers, column
   types, number formats and fingerprint, stored 60 to 260 times smaller than
   today's per-cell index, and formulas pointing to the sub-range they read.
+
+## [1.20.0] — 2026-11-21
+
+### Added
+
+- Show the disk space that the workspaces of `linexcel serve` use, and the
+  space the server may use, under the workspace list: "Local storage · 2.3 GB
+  of 148 GB". The line follows imports and deletions without a reload.
+- Gather the settings of `linexcel serve` in one **Settings** dialog, opened
+  from the bottom of the sidebar: operation limits, AI documentation, backup
+  and recovery, and feature availability. The sidebar keeps the workspaces and
+  the import form. On a phone the dialog fills the screen.
+- Show the limits that apply above the **Import** button, for example
+  "Limits: 60 min · 120 s · 7.5 GB", with **Change** beside them. The limits
+  read in minutes, seconds and GB instead of seconds and MiB, and **Restore
+  recommended values** puts the server's values back.
+
+### Changed
+
+- Set the memory and disk limits of `linexcel serve` from the machine when
+  `--memory-mb` or `--max-storage-mb` is absent. Memory is half of the physical
+  memory in whole GiB, and at least 2,048 MiB. Disk space is what the data
+  directory already uses plus the free space of its disk, minus a reserve of
+  10% of the disk and at most 10 GiB. Both limits were 2,048 MiB on every
+  machine. A 20 MB workbook, whose index takes 1.9 GiB, failed after four
+  minutes when the data directory already held another workspace. On a
+  machine with 31 GiB of memory and 158 GiB of free disk space, the limits
+  are now 15,360 MiB of memory and 148 GiB of disk space. The server prints
+  them under its address. `linexcel doctor` uses the same disk limit, and
+  `create_app()` keeps the values its host passes.
+- Give imports, graph constructions, sheet captures and investigation reports
+  60 minutes by default in `linexcel serve`, instead of 10 minutes, and
+  2 minutes for captures. A 50 MB workbook took 11 minutes to import and was
+  stopped at 10. A targeted calculation keeps 120 seconds. The default memory
+  of one operation is the server memory divided by the number of workers,
+  instead of 1,024 MiB. A request that names no budget gets the same values;
+  it got 512 MiB.
+- Run the same checks in CI and in the commit hook, through
+  `scripts/check.py`, and run CI on every pull request whatever its base
+  branch. CI also runs the exhaustive range-lineage check of
+  `.agents/skills/check-group-precedents`. The capture hooks run on every
+  commit instead of matching a list of files that had left out the frontend
+  bundle.
+
+### Fixed
+
+- Name the limit that stopped an operation in `linexcel serve`. The
+  **Operations** tab showed the bare codes `storage_limit` and `timeout`. It
+  now shows the value of the limit and the setting or launch option that
+  raises it, in French and English. The memory message was French in the
+  English interface. An import over the size limit now names its limit and
+  `--max-upload-mb`. A backup, a restore or a data view refused for lack of
+  space names the quota and `--max-storage-mb`. A failed capture is shown as
+  an error in the **Captures** tab.
+- Report sheet captures stopped by the memory limit on Windows as a memory
+  limit. LibreOffice stopped by the 1,024 MiB limit while rendering a 6 MB
+  workbook was shown as "LibreOffice failed with exit code 3221225725
+  (0xC00000FD) … Native stack overflow". The task now ends as `memory_limit`
+  whatever the exit code of the renderer, and records the peak memory of the
+  worker and its child processes as `memoryPeakMiB`.
+- Check the disk quota at most once per second while an operation runs, and
+  less often when one pass is slow. The server read the size of every file of
+  the data directory twenty times per second. One pass took 0.9 s with 2,500
+  files.
+- Show the connection status in the chosen language as soon as the language
+  changes. It kept the previous language until the next refresh, two seconds
+  later.
+
+### Documentation
+
+- Add [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/):
+  what an import of 6, 20, 50 and 89 MB costs in time, disk space and memory, the
+  default limits, the message of each limit and the option that raises it.
+
+## [1.19.4] — 2026-11-19
+
+### Fixed
+
+- Link a formula to the cells of a range written with the higher column first
+  in `linexcel analyze`. `=SUM(B5:A7)` had no precedent in the graph, and its
+  decomposition reported a range of zero cells. It now links to `A5:B7`. A
+  group of formulas copied from such a range (`=SUM(B$2:A$3)` filled right)
+  lost the outer column on each side and now links to all of them. Excel
+  reorders the ends of a range itself when a formula is entered or filled, so
+  this entry and the next concern workbooks written by other tools.
+- Link a group of copied formulas to every cell its formulas read when one end
+  of a range is anchored with `$` and the other end moves past it. Ten rows
+  holding `=SUM(A1:$A$5)` to `=SUM(A10:$A$5)` linked their group to `A1:A5`
+  only, and `A6:A10` were missing from the lineage. The same happened across
+  columns. The group now links to the smallest range that holds what its
+  formulas read.
+- Keep a cell selected in the local application (`linexcel serve`) when the
+  user selects it while the workbook overview is still loading, as happens
+  right after an import. The overview used to replace the selection when it
+  arrived, so the reader closed and no calculation was shown. Selecting a cell
+  or choosing a sheet now cancels the pending overview, and its task stays
+  listed in Operations. Opening the Graph tab with a cell already selected no
+  longer loads the overview on its own. The Overview button still does.
+- Show English text where the English interface of the local application
+  still showed French: the status of a node that has no calculation yet
+  (`À la sélection`), the source of a value in a dependency card (`Inconnue`,
+  `Entrée du classeur`, `Cellule vide`, `Recalcul ciblé`), the words of the
+  hidden-location notice (`feuille`, `ligne`, `colonne`), the active limits
+  line of the Diagnostics tab, and thirteen other labels, placeholders and
+  notices.
+
+## [1.19.3] — 2026-11-18
+
+### Changed
+
+- Building from source requires hatchling 1.33.0 or later, and the `docs`
+  extra requires mkdocstrings 1.0.8 or later.
+
+### Fixed
+
+- Follow declared table references in the dependency graph of
+  `linexcel analyze`. `=SUM(SalesTable[Revenue])` had a single unresolved node
+  named after the reference as its only precedent, although its value was
+  calculated; it now links to the cells of the column. A formula copied down a
+  table column is one group in the graph: it links to the rows its cells read
+  in each column it names, as one range when those rows form more than eight
+  separate runs. A targeted analysis (`--target`) goes up through such a
+  reference to the cells the table holds, when it traced them. A reference
+  stays an unresolved node, as before, when the table resolver refuses it,
+  when it takes part in a range operator (`Table[Jan]:Table[Mar]`,
+  `INDEX(Table[Jan],1):INDEX(Table[Mar],3)`), and when none of the cells it
+  reads is on the graph: a table without cells, or cells a targeted analysis
+  did not trace.
 
 ## [1.19.2] — 2026-11-13
 

@@ -47,27 +47,27 @@ See the [command line reference](guide/cli.md).
 
 ## Guide
 
-- [Quick start](guide/quickstart.md) — analyse a workbook, explore it, export it
-- [Command line](guide/cli.md) — the same, from a shell, with no install
-- [Lineage coverage](guide/coverage.md) — what is in the graph, and what is not
-- [HTML export](guide/html.md) — the standalone offline report
-- [Workbook context & screenshots](guide/context.md) — what a reader sees, not
-  only what the file computes
-- [Source data browser](guide/datasette.md) — read-only worksheet tables and provenance
-- [Static VBA and add-ins](guide/macros.md) — modules and procedures without execution
-- [Choosing an AI provider](guide/providers.md) — local runtime, hosted
-  gateway, or your own callable; none is chosen for you
-- [AI documentation](guide/ai.md) — evidence-based cards, quotation checks, token accounting and budgets
-- [Languages](guide/languages.md) — nine, for both the prompt and the interface
-- [Data handling](guide/data-handling.md) — what leaves the machine, and when
+- [Quick start](guide/quickstart.md). Analyse a workbook, explore it, and export it.
+- [Command line](guide/cli.md). Run the same analysis from a shell, with no install.
+- [Lineage coverage](guide/coverage.md). What is in the graph, and what is not.
+- [HTML export](guide/html.md). The standalone offline report.
+- [Workbook context & screenshots](guide/context.md). What a reader sees, not
+  only what the file computes.
+- [Source data browser](guide/datasette.md). Read-only worksheet tables and provenance.
+- [Static VBA and add-ins](guide/macros.md). Modules and procedures without execution.
+- [Choosing an AI provider](guide/providers.md). Local runtime, hosted
+  gateway, or your own callable; none is chosen for you.
+- [AI documentation](guide/ai.md). Evidence-based cards, quotation checks, token accounting and budgets.
+- [Languages](guide/languages.md). Nine locales, for both the prompt and the interface.
+- [Data handling](guide/data-handling.md). What leaves the machine, and when.
 
 ## Maintenance and evidence
 
-- [Continuous improvement plan](continuous_improvement_plan.md) — priorities,
-  issue evidence gates, specialized AI review and Markdown cleanup decisions
-- [Open-source package research](package_research.md) — optional trials,
-  including Excelize display formatting
-- [Local acceptance](manual_validation.md) — complete generation and independent
-  factual and visual review on the current working tree
-- [Specialized factual AI review](ai_factual_review.md) — typed claim evidence,
-  independent source/image review and reproducible before/after comparison
+- [Continuous improvement plan](continuous_improvement_plan.md). Priorities,
+  issue evidence gates, specialized AI review and Markdown cleanup decisions.
+- [Open-source package research](package_research.md). Optional trials,
+  including Excelize display formatting.
+- [Local acceptance](manual_validation.md). Complete generation and independent
+  factual and visual review on the current working tree.
+- [Specialized factual AI review](ai_factual_review.md). Typed claim evidence,
+  independent source/image review and reproducible before/after comparison.

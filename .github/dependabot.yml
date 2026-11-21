@@ -21,7 +21,7 @@ updates:
     groups:
       # One pull request for the whole lockfile: dev and prod together, and
       # majors with them. None of these updates can move a floor in
-      # pyproject.toml — uv only rewrites uv.lock — so they are one
+      # pyproject.toml, because uv only rewrites uv.lock. They are one
       # environment refresh to review and to run the CI over, not four.
       python:
         patterns: ["*"]

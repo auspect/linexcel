@@ -25,7 +25,7 @@ Writing `<workbook>_lineage.html` next to the workbook is the default.
 |---|---|
 | `-o`, `--output PATH` | Where the HTML goes. `-` writes to stdout. |
 | `--json PATH` | Also write the graph as JSON. `-` writes to stdout. |
-| `--no-html` | Skip the viewer — use with `--json`. |
+| `--no-html` | Skip the viewer. Use with `--json`. |
 | `--language {en,fr,es,de,it,pt,nl,ja,zh}` | Interface and AI prompt language (default `en`). See [Languages](languages.md). |
 
 Progress, statistics and warnings go to **stderr**, so `-` is safe to pipe:
@@ -82,7 +82,7 @@ not a CLI option for excluding worksheets from analysis.
 ## Watching it run
 
 `--verbose` draws progress per sheet through the two phases that take the
-time — reading the values the file stores, and sweeping it for formulas —
+time, reading the values the file stores and sweeping it for formulas,
 then prints what each phase cost. It writes to stderr, so it never mixes into
 `-o -` or `--json -`, and it draws bars only when stderr is a terminal: a CI
 log gets one plain line per phase instead of thousands of redraws.
@@ -97,12 +97,12 @@ unreadable workbook, a contradictory pair of options), and `130` on Ctrl-C.
 
 | Option | |
 |---|---|
-| `--refs-dir DIR` | Folder holding the workbooks this one links to, and the add-ins whose VBA it calls. Without it a cell reading another file is named, never resolved — see [Other workbooks](coverage.md#other-workbooks). |
+| `--refs-dir DIR` | Folder holding the workbooks this one links to, and the add-ins whose VBA it calls. Without it a cell reading another file is named, never resolved. See [Other workbooks](coverage.md#other-workbooks). |
 | `--screenshots DIR` | Render each sheet to a PNG and show it in the report. Needs LibreOffice and Poppler; see [Screenshots](context.md#screenshots). |
 | `-v`, `--verbose` | Progress while it runs, and per-phase timing, on stderr. |
 | `--time-budget SECONDS` | Ceiling on the step-by-step decomposition (default 300). Past it, cells keep their values and lose only their breakdown, and the report says so. |
 | `--target SHEET!A1` | Trace the static upstream lineage of this cell without requesting global recalculation. Repeatable; comma-separated cells are accepted, with Excel quotes around sheet names containing commas (`'Costs, FY26'!A1`). Only relevant names, VBA and Power Query context remain. Dynamic references (INDIRECT/OFFSET) or a truncated trace can cause the engine to evaluate dependencies omitted from the graph; the report states this limitation. |
-| `--dry-run` | Say what the file declares — sheets, declared size, linked workbooks, the ceilings that will apply — and stop without analysing it. |
+| `--dry-run` | Say what the file declares: sheets, declared size, linked workbooks and the ceilings that will apply. Stop without analysing it. |
 
 ## Lazy application
 
@@ -131,6 +131,21 @@ linexcel doctor --data-dir ~/.linexcel --ai --ai-model qwen3.8
 The session link expires after ten minutes. `doctor` checks installed tools,
 storage and configured model discovery without generating documentation.
 Model discovery does not establish that image analysis works.
+
+`serve` reads the machine to set its resource limits and prints them at
+startup. These options replace a limit:
+
+| Option | Default | |
+|---|---|---|
+| `--memory-mb N` | Half of the physical memory in whole GiB, at least 2,048 | Memory in MiB that all running operations may request together. One operation cannot request more. |
+| `--max-storage-mb N` | Space used, plus free space minus a reserve | Disk space in MiB for all workspaces, their indexes and results. The reserve is 10% of the disk and at most 10 GiB. |
+| `--max-upload-mb N` | 256 | Size in MiB of one import, references included. |
+| `--import-seconds N` | 3,600 | Default duration in seconds of an import, a graph construction, sheet captures or a report, from 1 to 3,600. The **Long operations** field of the settings starts at that value. |
+| `--workers N` | 2 | Operations that run at the same time. |
+
+`doctor` accepts `--max-storage-mb` with the same default. For the cost of a
+large import and the message that each limit produces, see
+[Open a large workbook in the web application](large-workbooks.md).
 
 The workspace actions provide an archive download and restoration. An archive
 contains the workbook, supplied references, retained results and captures;
@@ -235,10 +250,12 @@ most 3600 s. Above that maximum it says so and the published sheets remain
 available. It adds "Uncertain estimate" when less than 20 % of the workbook
 was read or a rate that was not measured weighs more than a quarter of the
 prediction. Each index records its phase times and counts under
-`importTimings`. The default budget of an import, a graph construction
-or a report is 600 s; `linexcel serve --import-seconds N` sets another
-default (1 to 3600), and the "Import and graph" field still lets each
-operation choose its own.
+`importTimings`. The default budget of an import, a graph construction,
+sheet captures or a report is 3600 s, the longest duration of an
+operation; `linexcel serve --import-seconds N` sets another default (1 to
+3600), and the **Long operations** field of the settings still lets each
+user choose their own. A proposed budget goes in that field when you accept
+it.
 
 A block of at least 10,000 saved values without formulas becomes a data
 region: one node of kind `data` with its bounds, header names, a type per
@@ -320,7 +337,7 @@ runtime before setting it.
 
 ## AI documentation
 
-Opt-in, and it needs the `ai` extra — which `uvx` can add on the fly:
+Opt-in, and it needs the `ai` extra, which `uvx` can add on the fly:
 
 ```bash
 uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
@@ -328,7 +345,7 @@ uvx --from "linexcel[ai]" linexcel analyze workbook.xlsx --ai-docs \
 ```
 
 No provider is chosen for you. Name the endpoint on the command line, or set
-`LINEXCEL_AI_BASE_URL`, `LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY` — see
+`LINEXCEL_AI_BASE_URL`, `LINEXCEL_AI_MODEL` and `LINEXCEL_AI_API_KEY`. See
 [Choosing an AI provider](providers.md#environment-variables).
 
 | Option | |

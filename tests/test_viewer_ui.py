@@ -15,7 +15,7 @@ EN = UI_STRINGS["en"]
 
 
 def demo_graph() -> dict:
-    """Two sheets, one formula, one input — enough to exercise the chrome."""
+    """Two sheets, one formula, and one input, enough to exercise the chrome."""
     return {
         "nodes": [
             {
@@ -49,7 +49,7 @@ class TestInlineStylesLiftedToCss:
     """Layout used to be dozens of ``element.style.x = ...`` assignments.
 
     They are now CSS classes; the only assignments left are the ones that
-    genuinely depend on data — a palette colour and the step indent.
+    genuinely depend on data: a palette colour and the step indent.
     """
 
     def test_only_data_driven_style_assignments_survive(self):
@@ -428,7 +428,7 @@ class TestSheetsTab:
 
     The first cells of every sheet were already embedded in the document and
     never drawn, and the rendered image was only ever shown when the caller
-    happened to hand in a per-sheet mapping — which nothing produced.
+    happened to hand in a per-sheet mapping, which nothing produced.
     """
 
     def test_the_first_cells_of_the_sheet_are_drawn(self):
@@ -489,7 +489,7 @@ class TestScreenshotsTabStates:
 
 
 class TestNodeCards:
-    """Nodes are cards now: the label — and a secondary annotation line — sits
+    """Nodes are cards now: the label, with a secondary annotation line, sits
     inside the node instead of floating under a dot, and the node is sized
     from its pre-truncated lines so a long label cannot overflow."""
 

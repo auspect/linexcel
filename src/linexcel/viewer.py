@@ -29,8 +29,8 @@ _ASSETS = Path(__file__).parent / "assets"
 SUPPORTED_LANGUAGES = LANGUAGES
 
 # Template placeholders, substituted in a single pass so that a value can never
-# be rescanned: chained str.replace calls let the graph JSON — i.e. arbitrary
-# workbook content — be rewritten by a later placeholder.
+# be rescanned: chained str.replace calls let the graph JSON, i.e. arbitrary
+# workbook content, be rewritten by a later placeholder.
 _PLACEHOLDER_RE = re.compile(
     "__GRAPH_JSON__|__I18N_JSON__|__TITLE__|__LANG__|__SHEET_OPTIONS__"
 )
@@ -131,10 +131,11 @@ def render_html(
     return (
         f"<!doctype html><html lang='{language}'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        # Light is the shipped default whatever the OS prefers — spreadsheet
-        # work is done in light. The theme toggle rewrites this content
-        # attribute so the UA keeps painting its own surfaces (scrollbars,
-        # overscroll) to match whichever theme is actually on screen.
+        # Light is the shipped default whatever the OS prefers, because
+        # spreadsheet work is done in light. The theme toggle rewrites this
+        # content attribute so the UA keeps painting its own surfaces
+        # (scrollbars, overscroll) to match whichever theme is actually on
+        # screen.
         "<meta name='color-scheme' content='light'>"
         f"<title>{_escape_text(title)}</title>{scripts}</head>"
         f"<body>{body}</body></html>"
@@ -144,10 +145,10 @@ def render_html(
 def _sheet_options(graph: dict[str, Any], language: str) -> str:
     """``<option>`` markup for the sheet filter.
 
-    The sheet list is derived from the nodes themselves — the graph carries no
-    sheet index — keeping first-seen order so the dropdown follows the workbook
-    rather than an alphabet. Nodes without a sheet (opaque references, names,
-    VBA) contribute no entry: they are reachable through the cross-sheet
+    The sheet list is derived from the nodes themselves, since the graph carries
+    no sheet index, keeping first-seen order so the dropdown follows the
+    workbook rather than an alphabet. Nodes without a sheet (opaque references,
+    names, VBA) contribute no entry: they are reachable through the cross-sheet
     neighbourhood, not as a filter target of their own.
     """
     seen: list[str] = []
@@ -178,7 +179,7 @@ def _escape_text(text: str) -> str:
 #
 # It lives in assets/viewer.html rather than in a string here: 1,700 lines of
 # HTML, CSS and JavaScript inside Python are invisible to every tool that
-# could check them — no highlighting, no linting, no formatter — and every
-# edit means reading markup through Python's quoting rules. The file is read
-# verbatim, exactly as the raw string was.
+# could check them, with no highlighting, no linting, and no formatter, and
+# every edit means reading markup through Python's quoting rules. The file is
+# read verbatim, exactly as the raw string was.
 _TEMPLATE = (_ASSETS / "viewer.html").read_text(encoding="utf-8")
