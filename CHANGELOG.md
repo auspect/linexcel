@@ -191,8 +191,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tab says that the preparation could not start. Cancelling the preparation
   in Operations is shown as a cancel, not as a failure.
 
+- Accept a duration from one second in the **Long operations** field of the
+  settings. It started at one minute in 1.20.0. An import with a short
+  duration publishes what it read, and a duration that Diagnostics proposes
+  can be under a minute. Zero is refused.
+
 ### Documentation
 
+- Update [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/)
+  for the per-sheet grids: the indexes of the 6, 20, 50 and 89 MB workbooks
+  take 134 MiB to 1.1 GiB, where 1.20.0 took 161 MiB to 8.2 GiB. The page
+  also covers `--import-seconds`, what an import that runs out of time
+  publishes, and the reimport that a workspace of an earlier version asks
+  for. Two README sentences still gave the limits of 1.19: 600 seconds for
+  an import and 512 MiB of memory for an operation.
 - Measure import, calculation and the Data tab of `linexcel serve` on large
   public workbooks, and what happens with damaged ones, in
   `docs/reading_resilience_data_node.md`. A 103 MB data table takes 22 minutes
