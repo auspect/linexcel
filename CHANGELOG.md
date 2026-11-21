@@ -200,6 +200,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings. It started at one minute in 1.20.0. An import with a short
   duration publishes what it read, and a duration that Diagnostics proposes
   can be under a minute. Zero is refused.
+- Update Dagre to 3.1.3 and the build-only Vite dependency to 8.3.8, and
+  rebuild the offline graph bundle of `linexcel serve`. Cards of the same
+  layer can come in another order in the graph: the four sources of
+  `Summary!C10` in the README image are now listed from the defined name to
+  the input, where they were listed from the input to the defined name.
+  `THIRD_PARTY_NOTICES.md` gives the bundled versions.
 
 ### Documentation
 
