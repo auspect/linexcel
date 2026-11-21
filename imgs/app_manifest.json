@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-21T23:01:28.912294+00:00",
+  "capturedAt": "2026-11-21T23:33:32.090742+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -16,7 +16,7 @@
   },
   "sources": {
     "src/linexcel/assets/app.html": "7352a688c9bda57206e7c7fa59ac7e4d1597801459fbd841f64d3469ae3a8e7e",
-    "src/linexcel/assets/app-graph.js": "4f191d7c27afdd713acc6fa88d852aa1ecb834819bb00d826594e73df1253e79",
+    "src/linexcel/assets/app-graph.js": "173deef48d55fca9429bb773bd81fd92e5c1af44502a606e647aebb94270a3db",
     "src/linexcel/assets/app-graph.css": "5a20eef46a351741211dbaf34d6759fc82a551bfccedf13f5e6ca9b7545223be",
     "validation_workbooks.py": "ded18b6896d065a7fbf90694be23211cffab9c9120700f99aa6842526a41a951",
     "scripts/capture_app.py": "e4e55bbca65eefc3598d1cefefe5b859fc8c46c44b63e79ca11a161c7975a22d"
@@ -31,7 +31,7 @@
   "images": {
     "app_graph.png": {
       "caption": "Interactive dependency graph with deterministic calculation and saved-value comparison",
-      "sha256": "a9315020d807351166daefb725293acd1683b7c4d8b79fc79aff62a55903771d",
+      "sha256": "3ed2e6a32ab456868bd15ab74746e232cc38658f2075f557a33ac549fec81058",
       "pixels": [
         2880,
         1800
@@ -39,7 +39,7 @@
     },
     "app_graph_documented.png": {
       "caption": "Wide graph reader with deterministic dependency values; AI documentation skipped",
-      "sha256": "b4fc2ccc5f641ffaaaeaabfe7998b97bad9b38e99ab7ce34a62d1de6bcfdcd34",
+      "sha256": "c76e526cb47269a75d5ddee2ccd794db403e6db985b38722214c9f28cc8e3626",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "bec57f841963aab8580be96e35bc73ef4d02a7d0e5cb59f490e80ee1db7ea3b5",
+      "sha256": "c0558566992fe72a264a02a365751d0ca0dac2a4012b7e9e1ca8bff031b581f7",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "5cf9311042d3407fbe02b31ccfb2ce08",
+    "taskId": "9d81e1721bd5424db1ff8aa7e291013e",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
