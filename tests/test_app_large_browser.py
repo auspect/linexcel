@@ -645,7 +645,7 @@ def test_server_hierarchy_and_automatic_calculation_keep_navigation_coherent(
         assert page.locator(".react-flow__minimap").is_visible()
         assert len(operations) == 1 and operations[0]["operation"] == "build_graph"
         assert not any(op["operation"] == "evaluate" for op in operations)
-        assert operations[0]["budget"]["seconds"] == 600
+        assert operations[0]["budget"]["seconds"] == 3600
         assert not any("/structure" in r for r in requests)
         page.evaluate("""()=>{const f=document.querySelector('#graph-canvas')._flow;
           f.getNodes().filter(n=>n.data.title.startsWith('Result')).forEach(n=>f.select(n.id));}""")

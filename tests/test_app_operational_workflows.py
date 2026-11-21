@@ -99,7 +99,7 @@ def test_report_explicit_selection_budget_and_download(app):
                 "captureIds": [],
                 "language": "en",
             },
-            "budget": {"seconds": 600, "memoryMb": 1024},
+            "budget": {"seconds": 3600, "memoryMb": 1024},
         }
     ]
     assert (
