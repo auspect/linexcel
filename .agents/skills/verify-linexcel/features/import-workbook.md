@@ -55,6 +55,7 @@ Preconditions:
   The workspace reopens without any click.
 - **Server path.** Import the second fixture from disk. Run
   `ctl browser --run <run> --open app --name import-server-path` with steps
+  `expect-text #project-title :: Verify sales` (the reopened workspace),
   `click #import-panel > summary`, `select #import-source :: local`,
   `fill #local-path :: {stress}`, `fill #project-name :: Verify stress`,
   `click #import-button`, `expect-text #project-title :: Verify stress`,
@@ -74,6 +75,9 @@ Preconditions:
   `text` dump taken immediately records the transient state.
 - `Choose an Excel workbook` exists only on the welcome screen, while no
   workspace is open. Once one is open, use `#import-panel > summary`.
+- The import form collapses when the last workspace finishes loading, so a
+  click on `Import a workbook` in the first second is undone. Wait for the
+  reopened workspace with `expect-text #project-title :: …` before opening it.
 - On `mobile` the sidebar is closed. Add `click #workspace-menu` before any
   step that touches the import form.
 - Each import adds a workspace to the sidebar, newest first. A recipe that
