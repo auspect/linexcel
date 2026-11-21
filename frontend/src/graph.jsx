@@ -180,6 +180,33 @@ function layered(nodes, edges, portrait, aspect, availableWidth, availableHeight
     ),
   );
   dagre.layout(graph);
+  // Cards of one layer that have the same links can be drawn in any order
+  // without adding a crossing, and Dagre's choice for them changed between
+  // its versions. Keep the order in which their links were given: the server
+  // lists the sources of a cell in a stable order.
+  const links = new Map(nodes.map((node) => [node.id, new Set()]));
+  const given = new Map();
+  edges.forEach((edge, index) => {
+    links.get(edge.source)?.add(`>${edge.target}`);
+    links.get(edge.target)?.add(`<${edge.source}`);
+    for (const id of [edge.source, edge.target]) if (!given.has(id)) given.set(id, index);
+  });
+  const [along, across] = direction === "LR" ? ["x", "y"] : ["y", "x"];
+  const interchangeable = new Map();
+  for (const node of nodes) {
+    const key = `${graph.node(node.id)[along]}|${[...links.get(node.id)].sort().join(" ")}`;
+    if (!interchangeable.has(key)) interchangeable.set(key, []);
+    interchangeable.get(key).push(node.id);
+  }
+  for (const ids of interchangeable.values()) {
+    if (ids.length < 2) continue;
+    const places = ids.map((id) => graph.node(id)[across]).sort((a, b) => a - b);
+    ids
+      .sort((a, b) => (given.get(a) ?? Infinity) - (given.get(b) ?? Infinity) || a.localeCompare(b))
+      .forEach((id, index) => {
+        graph.node(id)[across] = places[index];
+      });
+  }
   return graph;
   };
   const fit = g => Math.min(availableWidth/(g.graph().width-60), availableHeight/(g.graph().height-60));
