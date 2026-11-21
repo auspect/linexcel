@@ -62,9 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (0xC00000FD) … Native stack overflow". The task now ends as `memory_limit`
   whatever the exit code of the renderer, and records the peak memory of the
   worker and its child processes as `memoryPeakMiB`.
-- Check the disk quota at most once per second while an operation runs. The
-  server read the size of every file of the data directory twenty times per
-  second. One pass took 0.9 s with 2,500 files.
+- Check the disk quota at most once per second while an operation runs, and
+  less often when one pass is slow. The server read the size of every file of
+  the data directory twenty times per second. One pass took 0.9 s with 2,500
+  files.
 - Show the connection status in the chosen language as soon as the language
   changes. It kept the previous language until the next refresh, two seconds
   later.
