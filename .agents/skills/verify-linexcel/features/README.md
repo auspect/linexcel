@@ -76,10 +76,14 @@ state, commands and observable proof.
   import from the browser or from a server path, the indexed project.
 - [Follow a calculation](./follow-calculation.md): selecting a cell in the
   application, the targeted calculation, its dependencies and its task.
+- [Settings and limits](./settings-and-limits.md): the storage line, the
+  limits line of the import form, the settings dialog, advised values, a
+  refused value and a limit failure read in Operations.
 - [Read macros](./read-macros.md): `linexcel macros`, static VBA source as
   JSON, never executed.
 
 Not mapped yet: sheet captures (LibreOffice), the data browser, AI
-documentation and questions, library search, backup and restore, the
+documentation and questions, library search, backup and restore (its section
+of the settings is reached by the settings recipe, not driven), the
 investigation export, external references with `--refs-dir`. A change to one
 of those needs its own feature file before it can be called verified here.

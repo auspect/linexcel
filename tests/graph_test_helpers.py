@@ -28,6 +28,19 @@ def close_workspace_menu(page):
         close.click()
 
 
+def open_settings(page, section="limits"):
+    """Open the settings dialog from the sidebar, on one of its sections."""
+    open_workspace_menu(page)
+    page.locator("#settings-open").click()
+    page.locator(f"#settings [data-settings='{section}']").click()
+    page.locator(f"#settings-{section}").wait_for()
+
+
+def close_settings(page):
+    page.locator("#settings-done").click()
+    page.locator("#settings").wait_for(state="hidden")
+
+
 def open_graph_depth(page):
     if page.locator("#graph-depth").is_hidden():
         open_graph_options(page)

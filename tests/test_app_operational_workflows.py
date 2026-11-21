@@ -4,6 +4,7 @@ import test_app_viewer_regressions as serve_tests
 from graph_test_helpers import (
     open_graph_options,
     open_neighborhood,
+    open_settings,
     open_workspace_menu,
 )
 
@@ -207,8 +208,7 @@ def test_session_fragment_consumed_and_health_never_generates(app):
             },
         ),
     )
-    open_workspace_menu(page)
-    page.locator("#server-health > summary").click()
+    open_settings(page, "health")
     page.locator("#health-check").click()
     page.locator("#health-status").get_by_text("Stockage", exact=True).wait_for()
     assert "PATH" in page.locator("#health-status").inner_text()

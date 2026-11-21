@@ -6,7 +6,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
-from graph_test_helpers import close_workspace_menu, french_words, open_workspace_menu
+from graph_test_helpers import (
+    close_settings,
+    close_workspace_menu,
+    french_words,
+    open_settings,
+    open_workspace_menu,
+)
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -456,11 +462,12 @@ def test_capture_uses_user_memory_without_raising_it_after_server_default(
             unexpected_result,
             config=_limits(server_memory, initial_memory),
         )
-        assert page.locator("#memory").input_value() == str(initial_memory)
-        assert page.locator("#memory").get_attribute("max") == str(server_memory)
-        open_workspace_menu(page)
-        page.get_by_text("Limites par opération", exact=True).click()
-        page.locator("#memory").fill(str(user_memory))
+        memory = page.locator("#limit-memory-gb")  # GiB in the field, MiB sent.
+        assert memory.input_value() == f"{initial_memory / 1024:g}"
+        assert memory.get_attribute("max") == f"{server_memory / 1024:g}"
+        open_settings(page, "limits")
+        memory.fill(f"{user_memory / 1024:g}")
+        close_settings(page)
         close_workspace_menu(page)
 
         def capture(route):
@@ -485,7 +492,7 @@ def test_capture_uses_user_memory_without_raising_it_after_server_default(
         assert len(submitted) == 1
         assert submitted[0]["operation"] == "capture"
         assert submitted[0]["budget"]["memoryMb"] == user_memory
-        assert page.locator("#memory").input_value() == str(user_memory)
+        assert memory.input_value() == f"{user_memory / 1024:g}"
         assert errors == []
     finally:
         page.close()
@@ -506,12 +513,13 @@ def test_limit_inputs_show_server_defaults_and_capture_runs_long(browser):
             unexpected_result,
             config=_limits(16384, 8192),
         )
-        assert page.locator("#import-seconds").input_value() == "3600"
-        assert page.locator("#seconds").input_value() == "120"
-        assert page.locator("#memory").input_value() == "8192"
-        assert page.locator("#memory").get_attribute("max") == "16384"
-        for limit in ("#import-seconds", "#seconds"):
-            assert page.locator(limit).get_attribute("max") == "3600"
+        # Minutes, seconds and GiB: 3600 s, 120 s, 8192 of 16384 MiB.
+        assert page.locator("#limit-long-minutes").input_value() == "60"
+        assert page.locator("#limit-long-minutes").get_attribute("max") == "60"
+        assert page.locator("#limit-targeted-seconds").input_value() == "120"
+        assert page.locator("#limit-targeted-seconds").get_attribute("max") == "3600"
+        assert page.locator("#limit-memory-gb").input_value() == "8"
+        assert page.locator("#limit-memory-gb").get_attribute("max") == "16"
 
         def capture(route):
             submitted.append(route.request.post_data_json)
