@@ -57,19 +57,21 @@ def physical_memory_mb() -> int | None:
 
 
 def launcher_memory_mb(physical_mb: int | None) -> int:
-    """Half of the machine for workers, never less than the former 2 GiB."""
-    return max(2048, (physical_mb or 0) // 2)
+    """Half of the machine for workers in whole GiB, never less than 2 GiB."""
+    return max(2048, (physical_mb or 0) // 2 // 1024 * 1024)
 
 
 def launcher_storage_mb(used_bytes: int, free_bytes: int, total_bytes: int) -> int:
     """What the data directory holds, plus its disk's free space minus a reserve.
 
     The reserve is a tenth of the disk, at most 10 GiB. A nearly full disk still
-    gives the former 2 GiB of room when it has that much free.
+    gives the former 2 GiB of room when it has that much free. From 1 GiB on, the
+    quota is whole GiB.
     """
     reserve = min(total_bytes // 10, 10 * GiB)
     room = max(free_bytes - reserve, min(free_bytes, 2 * GiB))
-    return max(1, (used_bytes + room) // MiB)
+    quota = (used_bytes + room) // MiB
+    return quota // 1024 * 1024 if quota >= 1024 else max(1, quota)
 
 
 def directory_bytes(root: Path) -> int:
@@ -117,19 +119,44 @@ class TaskDefaults:
 
     @classmethod
     def for_server(cls, total_memory_mb: int, max_workers: int) -> TaskDefaults:
-        share = max(1024, total_memory_mb // max_workers)
+        """An equal share of the server, in steps of 512 MiB, at least 1 GiB."""
+        share = max(1024, total_memory_mb // max_workers // 512 * 512)
         return cls(memory_mb=min(total_memory_mb, share))
 
     def seconds_for(self, operation: str) -> int:
         return self.long_seconds if operation in LONG_OPERATIONS else self.seconds
 
 
-def _duration_setting(operation: str | None) -> str:
+# Consequences of the storage quota, worded as the page shows them.
+STORAGE_STOPPED = "l’opération a été arrêtée et son résultat n’a pas été conservé."
+STORAGE_REFUSED = "l’opération n’a pas pu démarrer."
+STORAGE_TRANSFER = "le transfert a été interrompu."
+
+
+def storage_quota_message(max_storage_mb: int, consequence: str) -> str:
+    return (
+        f"Quota de stockage du serveur atteint ({max_storage_mb} Mio, classeurs, "
+        f"index et vues compris) : {consequence} Supprimez des classeurs ou "
+        "relancez le serveur avec une valeur --max-storage-mb plus grande."
+    )
+
+
+def gib_text(mib: int) -> str:
+    """Mio as Go of 1024 Mio, in French, one decimal when it has one: 4608 is 4,5."""
+    return f"{round(mib / 1024, 1):g}".replace(".", ",")
+
+
+def _duration_setting(operation: str | None) -> tuple[str, str, str]:
+    """The field that sets an operation's duration, its section and its maximum."""
     if operation in {"document", "describe_capture"}:
-        return "Durée maximale (s)"
+        return "Durée maximale", "Documentation IA", f"{MAX_TASK_SECONDS} s"
     if operation in LONG_OPERATIONS:
-        return "Import, graphe, captures et rapport (secondes)"
-    return "Recalcul ciblé (secondes)"
+        return (
+            "Opérations longues",
+            "Limites par opération",
+            f"{MAX_TASK_SECONDS // 60} min",
+        )
+    return "Recalcul ciblé", "Limites par opération", f"{MAX_TASK_SECONDS} s"
 
 
 def limit_message(
@@ -137,29 +164,36 @@ def limit_message(
     config: WebConfig,
     *,
     operation: str | None = None,
-    seconds: float | None = None,
-    memory_mb: int | None = None,
-    used_bytes: int = 0,
+    seconds: float = 0,
+    memory_mb: int = 0,
 ) -> str:
-    """French source text naming the limit, its value and the remedy."""
+    """French source text naming the limit, its value and the setting that changes it.
+
+    Settings are named by their labels on the page: Réglages › section › field.
+    """
     kept = "Le classeur et les autres résultats restent accessibles."
     if kind == "timeout":
+        reached = f"Durée maximale de {seconds:g} s atteinte"
+        if seconds >= MAX_TASK_SECONDS:
+            return f"{reached}, la plus longue permise. {kept}"
+        field, section, most = _duration_setting(operation)
         return (
-            f"Durée maximale de {seconds:g} s atteinte. Augmentez "
-            f"« {_duration_setting(operation)} » (au plus {MAX_TASK_SECONDS} s), "
-            f"puis relancez. {kept}"
+            f"{reached}. Augmentez « {field} » dans Réglages › {section} "
+            f"(au plus {most}), puis relancez. {kept}"
         )
     if kind == "memory_limit":
+        ceiling = config.total_memory_mb
+        reached = (
+            f"Budget mémoire de {gib_text(memory_mb)} Go ({memory_mb} Mio) atteint"
+        )
+        restart = f"le serveur avec une valeur --memory-mb plus grande que {ceiling}."
+        if memory_mb >= ceiling:
+            return f"{reached}, égal au plafond du serveur. Relancez {restart} {kept}"
         return (
-            f"Budget mémoire de {memory_mb} Mio atteint. Augmentez « Mémoire (MiB) » "
-            f"jusqu’au plafond serveur de {config.total_memory_mb} Mio, ou relancez "
-            f"le serveur avec --memory-mb pour relever ce plafond. {kept}"
+            f"{reached}. Augmentez « Mémoire par opération » dans Réglages › "
+            "Limites par opération, jusqu’au plafond du serveur de "
+            f"{gib_text(ceiling)} Go, ou relancez {restart} {kept}"
         )
     if kind == "storage_limit":
-        return (
-            f"Quota de stockage de {config.max_storage_mb} Mio dépassé "
-            f"({-(-used_bytes // MiB)} Mio requis). Supprimez des espaces de travail "
-            "ou relancez le serveur avec --max-storage-mb. "
-            "Les classeurs et les autres résultats restent accessibles."
-        )
+        return storage_quota_message(config.max_storage_mb, STORAGE_STOPPED)
     raise ValueError(f"Unknown limit kind: {kind}")

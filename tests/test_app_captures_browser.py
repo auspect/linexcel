@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
-from graph_test_helpers import close_workspace_menu, open_workspace_menu
+from graph_test_helpers import close_workspace_menu, french_words, open_workspace_menu
 
 playwright = pytest.importorskip("playwright.sync_api")
 APP = Path(__file__).parents[1] / "src/linexcel/assets/app.html"
@@ -544,14 +544,24 @@ def test_limit_inputs_show_server_defaults_and_capture_runs_long(browser):
 
 def test_limit_failures_read_in_english(browser):
     from linexcel.web import WebConfig
-    from linexcel.web_limits import limit_message
+    from linexcel.web_limits import (
+        STORAGE_REFUSED,
+        STORAGE_TRANSFER,
+        limit_message,
+        storage_quota_message,
+    )
 
     config = WebConfig(Path("unused"), total_memory_mb=16384, max_storage_mb=4096)
     failures = [
         limit_message("timeout", config, operation="capture", seconds=3600),
+        limit_message("timeout", config, operation="import", seconds=900),
         limit_message("timeout", config, operation="evaluate", seconds=120),
-        limit_message("memory_limit", config, memory_mb=8192),
-        limit_message("storage_limit", config, used_bytes=5000 * 1048576),
+        limit_message("timeout", config, operation="document", seconds=600),
+        limit_message("memory_limit", config, memory_mb=4608),
+        limit_message("memory_limit", config, memory_mb=16384),
+        limit_message("storage_limit", config),
+        storage_quota_message(4096, STORAGE_REFUSED),
+        storage_quota_message(4096, STORAGE_TRANSFER),
     ]
     tasks = [
         {
@@ -579,21 +589,25 @@ def test_limit_failures_read_in_english(browser):
         page.locator("#tab-tasks").click()
         notices = page.locator("#task-list .notice.error")
         playwright.expect(notices).to_have_count(len(failures))
-        text = page.locator("#task-list").inner_text()
+        text = "\n".join(notices.all_inner_texts())
         for english in (
-            "3600 s",
-            "Import, graph, captures and report (seconds)",
-            "Targeted recalculation (seconds)",
-            "8192 MiB",
-            "16384 MiB",
-            "--memory-mb",
-            "4096 MiB",
-            "5000 MiB",
-            "--max-storage-mb",
+            "Time limit of 3600 s reached, the longest allowed.",
+            "Raise “Long operations” in Settings › Operation limits (up to 60 min)",
+            "Raise “Targeted recalculation” in Settings › Operation limits "
+            "(up to 3600 s)",
+            "Raise “Maximum duration” in Settings › AI documentation (up to 3600 s)",
+            "Memory budget of 4.5 GB (4608 MiB) reached. Raise “Memory per operation”",
+            "up to the server ceiling of 16 GB",
+            "Memory budget of 16 GB (16384 MiB) reached, equal to the server ceiling.",
+            "a --memory-mb value larger than 16384",
+            "(4096 MiB, workbooks, indexes and views included): the operation was "
+            "stopped and its result was not kept.",
+            "the operation could not start.",
+            "the transfer was interrupted.",
+            "a larger --max-storage-mb value",
         ):
             assert english in text, english
-        for french in ("atteint", "Augmentez", "restent accessibles", "Mio"):
-            assert french not in text, french
+        assert french_words(text) == [], text
         assert errors == []
     finally:
         page.close()

@@ -36,9 +36,11 @@ from linexcel.catalog import CatalogLimits
 from linexcel.web_limits import (
     LIMIT_KINDS,
     MAX_TASK_SECONDS,
+    STORAGE_REFUSED,
     MiB,
     TaskDefaults,
     limit_message,
+    storage_quota_message,
 )
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -404,11 +406,12 @@ class TaskStore:
             raise APIError(429, "File des opérations pleine ; réessayez plus tard")
         self.require_storage(self._storage_bytes())
 
-    def require_storage(self, needed_bytes: int) -> None:
+    def require_storage(
+        self, needed_bytes: int, consequence: str = STORAGE_REFUSED
+    ) -> None:
         if needed_bytes > self.config.max_storage_mb * MiB:
             raise APIError(
-                413,
-                limit_message("storage_limit", self.config, used_bytes=needed_bytes),
+                413, storage_quota_message(self.config.max_storage_mb, consequence)
             )
 
     def _storage_bytes(self) -> int:
@@ -1420,7 +1423,6 @@ class TaskStore:
                 operation=task["operation"],
                 seconds=task["budget"]["seconds"],
                 memory_mb=request["memoryMb"],
-                used_bytes=used,
             )
             return {**error, "message": message}
 

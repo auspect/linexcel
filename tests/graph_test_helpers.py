@@ -1,5 +1,20 @@
 """Physical access to secondary graph controls keeps the primary UI closed."""
 
+import re
+
+# French that an English page must not show: function words, accented letters
+# and the French units. A French sentence left behind has at least one.
+FRENCH = re.compile(
+    r"\b(?:le|la|les|des|du|une|un|et|est|sur|pour|dans|avec|aux|au|ou|par|qui"
+    r"|que|sa|son|ses|ce|cette|pas|ne|vous|nous|sont|Mio)\b"
+    r"|[àâçéèêëîïôûùœ]|\d\s?Go\b",
+    re.IGNORECASE,
+)
+
+
+def french_words(text):
+    return sorted({match.group(0) for match in FRENCH.finditer(text)})
+
 
 def open_workspace_menu(page):
     menu = page.locator("#workspace-menu")

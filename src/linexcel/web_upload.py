@@ -16,6 +16,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from linexcel.web_limits import STORAGE_TRANSFER
+
 CHUNK_BYTES = 8 * 1024 * 1024
 COPY_BYTES = 1024 * 1024
 UPLOAD_LIFETIME = 24 * 3600
@@ -250,7 +252,8 @@ class UploadStore:
                 if self.store.closed:
                     raise APIError(503, "Serveur en cours d’arrêt")
                 self.store.require_storage(
-                    self.store._storage_bytes() + self.remaining_bytes()
+                    self.store._storage_bytes() + self.remaining_bytes(),
+                    STORAGE_TRANSFER,
                 )
             path = self._file_path(self._path(session), session, index)
             try:

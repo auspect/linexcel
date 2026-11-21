@@ -19,9 +19,18 @@ MiB = 1024**2
 
 @pytest.mark.parametrize(
     ("physical", "expected"),
-    [(None, 2048), (4096, 2048), (32768, 16384)],
+    [
+        (None, 2048),
+        (4096, 2048),
+        (32768, 16384),
+        # A "32 GB" machine reports a little less: half of it rounds down to 15 GiB.
+        (32510, 15360),
+        (12000, 5120),
+    ],
 )
-def test_launcher_memory_is_half_the_machine_and_never_below_2_gib(physical, expected):
+def test_launcher_memory_is_half_the_machine_in_whole_gib_never_below_2_gib(
+    physical, expected
+):
     from linexcel.web_limits import launcher_memory_mb
 
     assert launcher_memory_mb(physical) == expected
@@ -32,17 +41,133 @@ def test_launcher_memory_is_half_the_machine_and_never_below_2_gib(physical, exp
     [
         # Small disk: keep a tenth of it free.
         (0, 10 * GiB, 20 * GiB, 8 * 1024),
-        # Nearly full disk: the old 2 GiB of room, as long as the disk has it.
-        (512 * MiB, 5 * GiB, 100 * GiB, 512 + 2048),
-        (512 * MiB, 1 * GiB, 100 * GiB, 512 + 1024),
+        # Nearly full disk: the old 2 GiB of room, as long as the disk has it,
+        # with the data directory's 512 MiB rounded away.
+        (512 * MiB, 5 * GiB, 100 * GiB, 2048),
+        (512 * MiB, 1 * GiB, 100 * GiB, 1024),
         # Large disk: the reserve stops at 10 GiB.
         (1 * GiB, 500 * GiB, 1000 * GiB, 1024 + 490 * 1024),
+        # 300 MiB held plus 128 GiB 700 MiB of room: 128 GiB.
+        (300 * MiB, 138 * GiB + 700 * MiB, 1000 * GiB, 128 * 1024),
+        # Under 1 GiB of room, every MiB counts.
+        (0, 600 * MiB, 100 * GiB, 600),
     ],
 )
-def test_launcher_storage_is_free_space_minus_a_reserve(used, free, total, expected_mb):
+def test_launcher_storage_is_free_space_minus_a_reserve_in_whole_gib(
+    used, free, total, expected_mb
+):
     from linexcel.web_limits import launcher_storage_mb
 
     assert launcher_storage_mb(used, free, total) == expected_mb
+
+
+@pytest.mark.parametrize(
+    ("total", "workers", "expected"),
+    [
+        (15360, 2, 7680),
+        # 9300 / 2 = 4650: down to the 512 MiB step.
+        (9300, 2, 4608),
+        (2048, 4, 1024),
+        # Never more than the server has.
+        (800, 1, 800),
+    ],
+)
+def test_operation_default_memory_is_an_equal_share_in_512_mib_steps(
+    total, workers, expected
+):
+    from linexcel.web_limits import TaskDefaults
+
+    assert TaskDefaults.for_server(total, workers).memory_mb == expected
+
+
+def _config(**limits):
+    from pathlib import Path
+
+    from linexcel.web import WebConfig
+
+    return WebConfig(data_dir=Path("unused"), **limits)
+
+
+KEPT = "Le classeur et les autres résultats restent accessibles."
+
+
+@pytest.mark.parametrize(
+    ("operation", "seconds", "expected"),
+    [
+        (
+            "import",
+            90,
+            "Durée maximale de 90 s atteinte. Augmentez « Opérations longues » dans "
+            "Réglages › Limites par opération (au plus 60 min), puis relancez. " + KEPT,
+        ),
+        (
+            "capture",
+            3600,
+            "Durée maximale de 3600 s atteinte, la plus longue permise. " + KEPT,
+        ),
+        (
+            "evaluate",
+            45,
+            "Durée maximale de 45 s atteinte. Augmentez « Recalcul ciblé » dans "
+            "Réglages › Limites par opération (au plus 3600 s), puis relancez. " + KEPT,
+        ),
+        (
+            "document",
+            600,
+            "Durée maximale de 600 s atteinte. Augmentez « Durée maximale » dans "
+            "Réglages › Documentation IA (au plus 3600 s), puis relancez. " + KEPT,
+        ),
+    ],
+)
+def test_time_limit_names_the_value_and_the_field_of_the_settings(
+    operation, seconds, expected
+):
+    from linexcel.web_limits import limit_message
+
+    message = limit_message("timeout", _config(), operation=operation, seconds=seconds)
+    assert message == expected
+
+
+@pytest.mark.parametrize(
+    ("memory_mb", "ceiling", "expected"),
+    [
+        (
+            4608,
+            15360,
+            "Budget mémoire de 4,5 Go (4608 Mio) atteint. Augmentez « Mémoire par "
+            "opération » dans Réglages › Limites par opération, jusqu’au plafond du "
+            "serveur de 15 Go, ou relancez le serveur avec une valeur --memory-mb "
+            "plus grande que 15360. " + KEPT,
+        ),
+        (
+            2048,
+            2048,
+            "Budget mémoire de 2 Go (2048 Mio) atteint, égal au plafond du serveur. "
+            "Relancez le serveur avec une valeur --memory-mb plus grande que 2048. "
+            + KEPT,
+        ),
+    ],
+)
+def test_memory_limit_names_the_budget_the_ceiling_and_the_remedy(
+    memory_mb, ceiling, expected
+):
+    from linexcel.web_limits import limit_message
+
+    message = limit_message(
+        "memory_limit",
+        _config(total_memory_mb=ceiling),
+        operation="import",
+        memory_mb=memory_mb,
+    )
+    assert message == expected
+
+
+def _storage_message(consequence):
+    return (
+        "Quota de stockage du serveur atteint (3 Mio, classeurs, index et vues "
+        f"compris) : {consequence} Supprimez des classeurs ou relancez le serveur "
+        "avec une valeur --max-storage-mb plus grande."
+    )
 
 
 def test_this_machine_reports_its_physical_memory():
@@ -140,7 +265,7 @@ def test_time_limit_names_the_duration_and_the_setting(tmp_path, monkeypatch):
         )["error"]
         assert error["kind"] == "timeout"
         assert re.search(r"\b1 s\b", error["message"])
-        assert "Import, graphe, captures et rapport (secondes)" in error["message"]
+        assert "« Opérations longues »" in error["message"]
         assert all(child.poll() is not None for child in children)
     finally:
         app.close()
@@ -163,8 +288,9 @@ def test_storage_quota_names_the_quota_and_the_flag(tmp_path, monkeypatch, child
             "error"
         ]
         assert error["kind"] == "storage_limit"
-        assert re.search(r"\b3 Mio\b", error["message"])
-        assert "--max-storage-mb" in error["message"]
+        assert error["message"] == _storage_message(
+            "l’opération a été arrêtée et son résultat n’a pas été conservé."
+        )
     finally:
         app.close()
 
@@ -179,9 +305,29 @@ def test_storage_refusal_names_the_quota_and_the_flag(tmp_path):
         (app.store.root / "filler.bin").write_bytes(bytes(4 * MiB))
         code, body, _ = request(app, "POST", "/api/projects", {"workbook": workbook()})
         assert code == 413
-        message = json.loads(body)["error"]["message"]
-        assert re.search(r"\b3 Mio\b", message)
-        assert "--max-storage-mb" in message
+        assert json.loads(body)["error"]["message"] == _storage_message(
+            "l’opération n’a pas pu démarrer."
+        )
+    finally:
+        app.close()
+
+
+def test_storage_refusal_of_an_upload_chunk_says_the_transfer_stopped(tmp_path):
+    from test_web_upload import begin, put
+
+    app = create_app(
+        tmp_path / "workspace",
+        max_storage_mb=3,
+        resolve_user=lambda env: env.get("user"),
+    )
+    try:
+        upload, raw = begin(app)
+        (app.store.root / "filler.bin").write_bytes(bytes(4 * MiB))
+        code, body, _ = put(app, upload, raw)
+        assert code == 413
+        assert json.loads(body)["error"]["message"] == _storage_message(
+            "le transfert a été interrompu."
+        )
     finally:
         app.close()
 
@@ -199,10 +345,10 @@ def test_child_memory_error_names_the_budget_ceiling_and_flag(tmp_path, monkeypa
             _import(memory_mb=512), _task_root(app), threading.Event()
         )["error"]
         assert error["kind"] == "memory_limit"
-        assert re.search(r"\b512 Mio\b", error["message"])
-        assert re.search(r"\b2048 Mio\b", error["message"])
-        assert "Mémoire (MiB)" in error["message"]
-        assert "--memory-mb" in error["message"]
+        assert "0,5 Go (512 Mio)" in error["message"]
+        assert "plafond du serveur de 2 Go" in error["message"]
+        assert "« Mémoire par opération »" in error["message"]
+        assert "--memory-mb plus grande que 2048" in error["message"]
     finally:
         app.close()
 
