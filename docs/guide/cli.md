@@ -138,7 +138,7 @@ startup. These options replace a limit:
 | Option | Default | |
 |---|---|---|
 | `--memory-mb N` | Half of the physical memory in whole GiB, at least 2,048 | Memory in MiB that all running operations may request together. One operation cannot request more. |
-| `--max-storage-mb N` | Space used, plus free space minus a reserve, in whole GiB | Disk space in MiB for all workspaces, their indexes and results. The reserve is 10% of the disk and at most 10 GiB. |
+| `--max-storage-mb N` | Space used, plus free space minus a reserve | Disk space in MiB for all workspaces, their indexes and results. The reserve is 10% of the disk and at most 10 GiB. |
 | `--max-upload-mb N` | 256 | Size in MiB of one import, references included. |
 | `--workers N` | 2 | Operations that run at the same time. |
 

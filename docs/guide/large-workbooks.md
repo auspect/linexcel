@@ -20,8 +20,9 @@ cost disk space.
 | Generated ledger and forecast, `.xlsm` with VBA | 20 MB | 2,709,922 | 4 min 51 s | 1.9 GiB | 89 MiB |
 | The same model with more ledger rows, `.xlsm` with VBA | 50 MB | 6,773,384 | 11 min 9 s | 4.7 GiB | 117 MiB |
 
-Plan for an index of 30 to 100 times the size of the file, and for 12 to
-15 seconds of import for each megabyte. Larger files were not measured.
+Plan for an index of about 30 to 100 times the size of the file, and for
+about 12 to 15 seconds of import for each megabyte. Larger files were not
+measured.
 
 The 122 sheet captures of the 6 MB workbook took 2 min 43 s. LibreOffice
 renders them, and it needed more than 1,024 MiB of memory.
@@ -30,12 +31,16 @@ renders them, and it needed more than 1,024 MiB of memory.
 
 When you start `linexcel serve` without limit options, the server reads the
 machine and sets its own limits. It prints them under the address of the
-application.
+application:
+
+```text
+Limits: memory 15360 MiB for 2 concurrent operations, 7680 MiB each (--memory-mb); storage 153333 MiB, 0 MiB used (--max-storage-mb); 3600 s per import, graph, capture or report, 120 s per targeted recalculation.
+```
 
 | Limit | Default | Option |
 | --- | --- | --- |
 | Memory for all running operations | Half of the physical memory in whole GiB, and at least 2,048 MiB | `--memory-mb` |
-| Disk space for all workspaces | The space already used, plus the free space of that disk minus a reserve, in whole GiB. The reserve is 10% of the disk, and at most 10 GiB | `--max-storage-mb` |
+| Disk space for all workspaces | The space already used, plus the free space of that disk minus a reserve. The reserve is 10% of the disk, and at most 10 GiB | `--max-storage-mb` |
 | Size of one import, references included | 256 MiB | `--max-upload-mb` |
 | Operations that run at the same time | 2 | `--workers` |
 
@@ -48,7 +53,7 @@ sidebar, then **Operation limits**.
 | --- | --- | --- |
 | **Long operations** | Import, graph construction, sheet captures and investigation report | 60 minutes, which is also the maximum |
 | **Targeted recalculation** | The calculation of one selected cell | 120 seconds |
-| **Memory per operation** | Every operation | The server memory divided by the number of workers, in steps of 0.5 GB |
+| **Memory per operation** | Every operation | The server memory divided by the number of workers, in steps of 0.5 GB, and at least 1 GB |
 
 The fields return to these values when you reload the page. **Restore
 recommended values** does the same without a reload.
@@ -66,7 +71,7 @@ available.
 | Message starts with | Cause | What to do |
 | --- | --- | --- |
 | `Server storage quota reached` | The workbooks, indexes and results of all workspaces fill the disk space that the server may use | Delete workspaces that you no longer need, or restart the server with a larger `--max-storage-mb`. Then start the operation again |
-| `Time limit of … s reached` | The operation ran longer than its duration | Raise the field that the message names in **Settings**, then start the operation again |
+| `Time limit of … s reached` | The operation ran longer than its duration | Raise the field that the message names in **Settings**, then start the operation again. At 3,600 seconds the message says that this is the longest duration allowed, and no setting raises it |
 | `Memory budget of … GB (… MiB) reached` | The operation needed more memory than its budget. Sheet captures of a large workbook are the usual case | Raise **Memory per operation**. To go above the server ceiling, restart the server with a larger `--memory-mb` |
 | `Import too large` | The workbook and its references exceed the size of one import | Restart the server with a larger `--max-upload-mb` |
 
@@ -99,7 +104,12 @@ start, pass `--retention-days` with a number of days.
 ## What stays slow
 
 The import reads every cell and every formula once. It does not use several
-processors. A 50 MB workbook takes about 11 minutes on the machine above. You
+processors. An import that needs more than 60 minutes cannot complete, because
+60 minutes is the longest duration of an operation. If the rates above hold
+for larger files, that is a workbook of about 240 MB on that machine, and a
+smaller one on a slower machine. No file of that size was measured.
+
+A 50 MB workbook takes about 11 minutes on the machine above. You
 can open another workspace and calculate its cells during that time. You can
 also close the page. The import continues on the server, and the **Operations**
 tab shows its state when you return.

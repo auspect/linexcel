@@ -55,7 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now shows the value of the limit and the setting or launch option that
   raises it, in French and English. The memory message was French in the
   English interface. An import over the size limit now names its limit and
-  `--max-upload-mb`.
+  `--max-upload-mb`. A backup, a restore or a data view refused for lack of
+  space names the quota and `--max-storage-mb`. A failed capture is shown as
+  an error in the **Captures** tab.
 - Report sheet captures stopped by the memory limit on Windows as a memory
   limit. LibreOffice stopped by the 1,024 MiB limit while rendering a 6 MB
   workbook was shown as "LibreOffice failed with exit code 3221225725
