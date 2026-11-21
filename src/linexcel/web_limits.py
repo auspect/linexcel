@@ -131,6 +131,8 @@ class TaskDefaults:
 STORAGE_STOPPED = "l’opération a été arrêtée et son résultat n’a pas été conservé."
 STORAGE_REFUSED = "l’opération n’a pas pu démarrer."
 STORAGE_TRANSFER = "le transfert a été interrompu."
+STORAGE_BACKUP = "la sauvegarde ou la restauration n’a pas pu démarrer."
+STORAGE_DATA_VIEW = "la préparation de la vue des données n’a pas pu démarrer."
 
 
 def storage_quota_message(max_storage_mb: int, consequence: str) -> str:

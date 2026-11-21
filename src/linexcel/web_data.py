@@ -31,6 +31,7 @@ from openpyxl.utils.cell import get_column_letter
 
 from linexcel.graph_store import generation
 from linexcel.lazy_store import WorkbookIndex, _unpack
+from linexcel.web_limits import STORAGE_DATA_VIEW, storage_quota_message
 
 DATA_VERSION = 4
 MAX_GRID_COLUMNS = 512
@@ -495,7 +496,10 @@ class DataBrowser:
                 )
             except DataLimitError:
                 raise APIError(
-                    413, "Stockage insuffisant pour la vue des données"
+                    413,
+                    storage_quota_message(
+                        self.store.config.max_storage_mb, STORAGE_DATA_VIEW
+                    ),
                 ) from None
             if (
                 generation(index) != index_generation
