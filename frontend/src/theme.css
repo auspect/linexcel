@@ -1202,6 +1202,9 @@ pre {
 /* The column holds workspaces, storage and import; "Réglages" stays pinned at its foot. */
 .workspace > aside {
   padding: 16px;
+  /* Contains the visually hidden file inputs of the import form: without it
+     they escape the scrolling column and make the whole page taller. */
+  position: relative;
 }
 @media (min-width: 1101px) {
   body:not(.sidebar-collapsed) .workspace > aside {
