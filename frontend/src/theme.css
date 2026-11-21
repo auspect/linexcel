@@ -1451,6 +1451,8 @@ button.quiet {
   min-width: 0;
   overflow: auto;
   padding: 24px 28px;
+  /* A focused control scrolled into view keeps room for its 4 px ring. */
+  scroll-padding-block: 8px;
 }
 .settings-pane {
   max-width: 460px;
