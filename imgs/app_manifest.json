@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-21T15:00:51.497450+00:00",
+  "capturedAt": "2026-11-21T15:22:42.693532+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -15,7 +15,7 @@
     "scale": 2
   },
   "sources": {
-    "src/linexcel/assets/app.html": "84e3b50fb0fe3592767302e16e33571908679f0d0665e541eb20f63e6c893bad",
+    "src/linexcel/assets/app.html": "00c7b70265fb5f3e2cd1f6f9f238a27e44c10ae8040b8d367933e9769b12a5fb",
     "src/linexcel/assets/app-graph.js": "5108453cdd68b3ff3a75c4132b05345e5789206b9797eeefd0dca6e8b5dc1a5d",
     "src/linexcel/assets/app-graph.css": "e59a266f1514d7eec107f32b4108e4ce4498f9db59ef18a7d05cde8900d19854",
     "validation_workbooks.py": "ded18b6896d065a7fbf90694be23211cffab9c9120700f99aa6842526a41a951",
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "f29a33bf03a5de07388aa36a0e8dd48600a8e131ba3651ea48d0f16f8af1cd50",
+      "sha256": "27ba93cb58cf6b319f78ab7ee9dca0715e15eae9c9048ed6e1790eefc5ad794a",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "a66803ec547b44f59c3eabfdcb60e8dc",
+    "taskId": "1928f83cc752461891c2059b1b922c88",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
