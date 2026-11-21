@@ -418,11 +418,28 @@ def test_new_completed_capture_is_loaded_after_cached_gallery_reentry(browser):
         page.close()
 
 
+def _limits(server_memory, default_memory):
+    return {
+        "limits": {
+            "memoryMb": server_memory,
+            "uploadMb": 256,
+            "storageMb": 150000,
+            "storageUsedMb": 161,
+            "maxSeconds": 3600,
+            "defaults": {
+                "longSeconds": 3600,
+                "seconds": 120,
+                "memoryMb": default_memory,
+            },
+        }
+    }
+
+
 @pytest.mark.parametrize(
     ("server_memory", "initial_memory", "user_memory"),
-    [(256, 256, 256), (768, 768, 512), (4096, 1024, 512)],
+    [(256, 256, 256), (768, 768, 512), (16384, 8192, 512)],
 )
-def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_default(
+def test_capture_uses_user_memory_without_raising_it_after_server_default(
     browser, server_memory, initial_memory, user_memory
 ):
     page = browser.new_page()
@@ -437,7 +454,7 @@ def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_defau
             [{"id": "p", "name": "Memory budget"}],
             {"p": []},
             unexpected_result,
-            config={"limits": {"memoryMb": server_memory}},
+            config=_limits(server_memory, initial_memory),
         )
         assert page.locator("#memory").input_value() == str(initial_memory)
         assert page.locator("#memory").get_attribute("max") == str(server_memory)
@@ -469,6 +486,114 @@ def test_capture_uses_user_memory_without_raising_it_after_bounded_initial_defau
         assert submitted[0]["operation"] == "capture"
         assert submitted[0]["budget"]["memoryMb"] == user_memory
         assert page.locator("#memory").input_value() == str(user_memory)
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_limit_inputs_show_server_defaults_and_capture_runs_long(browser):
+    page = browser.new_page()
+    submitted = []
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page,
+            [{"id": "p", "name": "Large workbook"}],
+            {"p": []},
+            unexpected_result,
+            config=_limits(16384, 8192),
+        )
+        assert page.locator("#import-seconds").input_value() == "3600"
+        assert page.locator("#seconds").input_value() == "120"
+        assert page.locator("#memory").input_value() == "8192"
+        assert page.locator("#memory").get_attribute("max") == "16384"
+        for limit in ("#import-seconds", "#seconds"):
+            assert page.locator(limit).get_attribute("max") == "3600"
+
+        def capture(route):
+            submitted.append(route.request.post_data_json)
+            route.fulfill(
+                json={
+                    "task": {
+                        "id": "capture-long",
+                        "operation": "capture",
+                        "status": "succeeded",
+                        "result": {"screenshots": []},
+                    }
+                }
+            )
+
+        page.route("**/mounted/api/projects/p/tasks", capture)
+        page.locator("#tab-captures").click()
+        page.locator("#capture").click()
+        playwright.expect(page.locator("#capture-results")).to_contain_text(
+            "aucune image"
+        )
+        assert submitted[0]["budget"] == {"seconds": 3600, "memoryMb": 8192}
+        page.locator("#tab-diagnostics").click()
+        playwright.expect(page.locator("#runtime-limits")).to_contain_text(
+            "161 / 150000 MiB"
+        )
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_limit_failures_read_in_english(browser):
+    from linexcel.web import WebConfig
+    from linexcel.web_limits import limit_message
+
+    config = WebConfig(Path("unused"), total_memory_mb=16384, max_storage_mb=4096)
+    failures = [
+        limit_message("timeout", config, operation="capture", seconds=3600),
+        limit_message("timeout", config, operation="evaluate", seconds=120),
+        limit_message("memory_limit", config, memory_mb=8192),
+        limit_message("storage_limit", config, used_bytes=5000 * 1048576),
+    ]
+    tasks = [
+        {
+            "id": f"failed-{index}",
+            "operation": "capture",
+            "status": "failed",
+            "error": {"kind": "limit", "message": message},
+        }
+        for index, message in enumerate(failures)
+    ]
+    page = browser.new_page()
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page,
+            [{"id": "p", "name": "Limits"}],
+            {"p": tasks},
+            unexpected_result,
+            config=_limits(16384, 8192),
+        )
+        page.locator("#ui-language").select_option("en")
+        page.locator("#tab-tasks").click()
+        notices = page.locator("#task-list .notice.error")
+        playwright.expect(notices).to_have_count(len(failures))
+        text = page.locator("#task-list").inner_text()
+        for english in (
+            "3600 s",
+            "Import, graph, captures and report (seconds)",
+            "Targeted recalculation (seconds)",
+            "8192 MiB",
+            "16384 MiB",
+            "--memory-mb",
+            "4096 MiB",
+            "5000 MiB",
+            "--max-storage-mb",
+        ):
+            assert english in text, english
+        for french in ("atteint", "Augmentez", "restent accessibles", "Mio"):
+            assert french not in text, french
         assert errors == []
     finally:
         page.close()

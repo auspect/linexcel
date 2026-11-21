@@ -98,12 +98,68 @@ def test_serve_opens_actual_automatic_port_with_mount_prefix(capsys, monkeypatch
     )
     assert main(["serve", "--port", "0", "--mount-path", "/review", "--open"]) == 0
     assert finished.wait(timeout=2)
-    output = capsys.readouterr().out.strip()
-    assert output == f"Linexcel : {opened[0]}"
+    output = capsys.readouterr().out.splitlines()
+    assert output[0] == f"Linexcel : {opened[0]}"
     assert opened[0].startswith("http://127.0.0.1:")
     assert opened[0].endswith("/review/")
     assert ":0/" not in opened[0]
     app.close.assert_called_once()
+
+
+def _machine(monkeypatch, *, memory_mb, free_gib, total_gib):
+    from collections import namedtuple
+
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr("linexcel.web_limits.physical_memory_mb", lambda: memory_mb)
+    monkeypatch.setattr(
+        "linexcel.web_limits.shutil.disk_usage",
+        lambda path: usage(total_gib * 2**30, 0, free_gib * 2**30),
+    )
+
+
+@pytest.mark.parametrize(
+    ("flags", "memory_mb", "storage_mb"),
+    [
+        # 32 GiB of RAM: half of it. 200 GiB free on 1 TB: minus a 10 GiB reserve.
+        ([], 16384, 190 * 1024),
+        (["--memory-mb", "3000", "--max-storage-mb", "5000"], 3000, 5000),
+    ],
+)
+def test_serve_derives_limits_from_the_machine_and_prints_them(
+    tmp_path, capsys, monkeypatch, flags, memory_mb, storage_mb
+):
+    import linexcel.web
+
+    _machine(monkeypatch, memory_mb=32768, free_gib=200, total_gib=1000)
+    created = {}
+
+    def create_app(*args, **kwargs):
+        created.update(kwargs)
+        return Mock()
+
+    monkeypatch.setattr(linexcel.web, "create_app", create_app)
+    monkeypatch.setattr(
+        "wsgiref.simple_server.WSGIServer.serve_forever", lambda _: None
+    )
+    data_dir = str(tmp_path / "data")
+    assert main(["serve", "--port", "0", "--data-dir", data_dir, *flags]) == 0
+    assert created["total_memory_mb"] == memory_mb
+    assert created["max_storage_mb"] == storage_mb
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("Linexcel : http://127.0.0.1:")
+    limits = "\n".join(lines[1:])
+    assert f"{memory_mb} MiB" in limits
+    assert f"{storage_mb} MiB" in limits
+    assert "3600 s" in limits
+
+
+def test_doctor_reports_the_quota_serve_would_use(tmp_path, capsys, monkeypatch):
+    import json
+
+    _machine(monkeypatch, memory_mb=32768, free_gib=200, total_gib=1000)
+    assert main(["doctor", "--data-dir", str(tmp_path / "data")]) == 0
+    storage = json.loads(capsys.readouterr().out)["checks"]["storage"]
+    assert storage["quotaBytes"] == 190 * 2**30
 
 
 def test_serve_leaves_browser_closed_by_default():

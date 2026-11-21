@@ -533,7 +533,7 @@ def test_serve_has_professional_upload_defaults_and_configurable_quota():
 
     args = _build_parser().parse_args(["serve"])
     assert args.max_upload_mb == 256
-    assert args.max_storage_mb == 2048
+    assert args.max_storage_mb is None  # Derived from the data directory's disk.
     assert args.no_local_import is False
     args = _build_parser().parse_args(
         ["serve", "--max-upload-mb", "512", "--no-local-import"]
