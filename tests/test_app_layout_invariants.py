@@ -3,8 +3,9 @@
 At 1440x900, 824x768 and 390x844, for the sidebar, the open import form, each
 settings section and each main tab, every visible button, link, field, select,
 summary and tab can be hit at its centre: the element found there is the
-control or one of its descendants. The document never scrolls sideways. On a
-phone every such control is at least 44 px wide and 44 px tall.
+control or one of its descendants. The document never scrolls sideways, and
+outside a phone it is never taller than the viewport. On a phone every such
+control is at least 44 px wide and 44 px tall.
 """
 
 import base64
@@ -18,6 +19,7 @@ import pytest
 from conftest import build_lineage_workbook
 from graph_test_helpers import open_workspace_menu
 from test_web import request, wait
+from test_web import workbook as small_workbook
 
 from linexcel.web import create_app
 
@@ -66,6 +68,10 @@ PROBE = """([scope, phone]) => {
   const overflow = document.documentElement.scrollWidth - innerWidth;
   if (overflow > 0)
     problems.push(['document', 'overflows sideways by ' + overflow + ' px']);
+  // On a desktop each panel scrolls on its own: the page itself never does.
+  const taller = document.documentElement.scrollHeight - innerHeight;
+  if (!phone && taller > 0)
+    problems.push(['document', 'taller than the viewport by ' + taller + ' px']);
   return {problems, checked};
 }"""
 
@@ -102,6 +108,20 @@ def live_app(tmp_path_factory):
         "name": "lineage.xlsx",
         "data": base64.b64encode(build_lineage_workbook()).decode(),
     }
+    # An operator's sidebar holds several workspaces, one with a long name:
+    # with the import form open it is taller than a desktop screen.
+    for name in (
+        "Revue trimestrielle consolidée du groupe, avec un nom assez long pour "
+        "occuper plusieurs lignes de la barre latérale",
+        "Budget",
+        "Prévisions",
+        "Trésorerie",
+    ):
+        code, body, _ = request(
+            app, "POST", "/api/projects", {"workbook": small_workbook(), "name": name}
+        )
+        assert code == 200, body
+        assert wait(app.store, json.loads(body)["task"]["id"])["status"] == "succeeded"
     code, body, _ = request(app, "POST", "/api/projects", {"workbook": workbook})
     assert code == 200, body
     imported = json.loads(body)

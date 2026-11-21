@@ -6,6 +6,7 @@ import json
 import os
 import re
 import threading
+import time
 
 import pytest
 from test_execution import workload
@@ -42,23 +43,47 @@ def test_launcher_memory_is_half_the_machine_in_whole_gib_never_below_2_gib(
         # Small disk: keep a tenth of it free.
         (0, 10 * GiB, 20 * GiB, 8 * 1024),
         # Nearly full disk: the old 2 GiB of room, as long as the disk has it,
-        # with the data directory's 512 MiB rounded away.
-        (512 * MiB, 5 * GiB, 100 * GiB, 2048),
-        (512 * MiB, 1 * GiB, 100 * GiB, 1024),
+        # above the data directory's 512 MiB.
+        (512 * MiB, 5 * GiB, 100 * GiB, 512 + 2048),
+        (512 * MiB, 1 * GiB, 100 * GiB, 512 + 1024),
         # Large disk: the reserve stops at 10 GiB.
         (1 * GiB, 500 * GiB, 1000 * GiB, 1024 + 490 * 1024),
-        # 300 MiB held plus 128 GiB 700 MiB of room: 128 GiB.
-        (300 * MiB, 138 * GiB + 700 * MiB, 1000 * GiB, 128 * 1024),
-        # Under 1 GiB of room, every MiB counts.
+        # 300 MiB held plus 128 GiB 700 MiB of room.
+        (300 * MiB, 138 * GiB + 700 * MiB, 1000 * GiB, 300 + 128 * 1024 + 700),
         (0, 600 * MiB, 100 * GiB, 600),
+        # The reviewer's cases: rounded down to whole GiB, the first two fell
+        # under what the directory held and the third kept 124 of 1028 MiB.
+        (int(1.5 * GiB), int(0.4 * GiB), 500 * GiB, 1946),
+        (int(5.9 * GiB), 50 * MiB, 500 * GiB, 6092),
+        (3972 * MiB, 1028 * MiB, 500 * GiB, 5000),
     ],
 )
-def test_launcher_storage_is_free_space_minus_a_reserve_in_whole_gib(
+def test_launcher_storage_is_what_is_used_plus_free_space_minus_a_reserve(
     used, free, total, expected_mb
 ):
     from linexcel.web_limits import launcher_storage_mb
 
     assert launcher_storage_mb(used, free, total) == expected_mb
+
+
+def test_launcher_storage_keeps_what_is_used_and_the_promised_room():
+    from linexcel.web_limits import launcher_storage_mb
+
+    sizes = [0, 1, MiB - 1, 300 * MiB, int(1.5 * GiB), 3972 * MiB, 200 * GiB]
+    free_sizes = [0, 1, 50 * MiB, int(0.4 * GiB), 1028 * MiB, 2 * GiB, 138 * GiB]
+    for used in sizes:
+        for free in free_sizes:
+            for total in (used + free, 20 * GiB, 100 * GiB, 1000 * GiB, 4096 * GiB):
+                if total < used + free:
+                    continue
+                # Free space minus a tenth of the disk, at most 10 GiB, but
+                # never less than 2 GiB of room when the disk has it free.
+                reserve = min(total // 10, 10 * GiB)
+                room = max(free - reserve, min(free, 2 * GiB))
+                quota = launcher_storage_mb(used, free, total) * MiB
+                case = (used, free, total, quota)
+                assert quota >= used + room, case
+                assert quota < max(used + room, 1) + MiB, case
 
 
 @pytest.mark.parametrize(
@@ -332,6 +357,87 @@ def test_storage_refusal_of_an_upload_chunk_says_the_transfer_stopped(tmp_path):
         app.close()
 
 
+def _imported(app):
+    """A real imported workspace, once its task has finished writing files."""
+    code, body, _ = request(app, "POST", "/api/projects", {"workbook": workbook()})
+    assert code == 200, body
+    imported = json.loads(body)
+    assert wait(app.store, imported["task"]["id"])["status"] == "succeeded"
+    sizes = [-1, app.store._storage_bytes()]
+    while sizes[-2] != sizes[-1]:
+        time.sleep(0.2)
+        sizes.append(app.store._storage_bytes())
+    return imported["project"]["id"]
+
+
+def _fill_to(app, total_bytes):
+    """Pad the data directory to an exact size."""
+    filler = app.store.root / "filler.bin"
+    filler.write_bytes(bytes(total_bytes - app.store._storage_bytes()))
+    assert app.store._storage_bytes() == total_bytes
+
+
+def test_a_data_directory_at_its_quota_refuses_a_new_task(tmp_path):
+    app = create_app(
+        tmp_path / "workspace",
+        max_storage_mb=3,
+        resolve_user=lambda env: env.get("user"),
+    )
+    try:
+        project = _imported(app)
+        _fill_to(app, 3 * MiB)
+        code, body, _ = request(
+            app,
+            "POST",
+            f"/api/projects/{project}/tasks",
+            {"operation": "evaluate", "nodeId": "Sheet!B1"},
+        )
+        assert code == 413, body
+        assert json.loads(body)["error"]["message"] == _storage_message(
+            "l’opération n’a pas pu démarrer."
+        )
+    finally:
+        app.close()
+
+
+def test_a_backup_over_the_quota_names_the_quota_and_the_flag(tmp_path):
+    app = create_app(
+        tmp_path / "workspace",
+        max_storage_mb=3,
+        resolve_user=lambda env: env.get("user"),
+    )
+    try:
+        project = _imported(app)
+        # Room for the request, not for the archive written in the directory.
+        _fill_to(app, 3 * MiB - 100)
+        code, body, _ = request(app, "GET", f"/api/projects/{project}/backup")
+        assert code == 413
+        assert json.loads(body)["error"]["message"] == _storage_message(
+            "la sauvegarde ou la restauration n’a pas pu démarrer."
+        )
+    finally:
+        app.close()
+
+
+def test_a_data_view_over_the_quota_names_the_quota_and_the_flag(tmp_path):
+    app = create_app(
+        tmp_path / "workspace",
+        max_storage_mb=3,
+        resolve_user=lambda env: env.get("user"),
+    )
+    try:
+        project = _imported(app)
+        # Less room than the data view's database needs.
+        _fill_to(app, 3 * MiB - 1000)
+        code, body, _ = request(app, "GET", f"/api/projects/{project}/data")
+        assert code == 413
+        assert json.loads(body)["error"]["message"] == _storage_message(
+            "la préparation de la vue des données n’a pas pu démarrer."
+        )
+    finally:
+        app.close()
+
+
 def test_child_memory_error_names_the_budget_ceiling_and_flag(tmp_path, monkeypatch):
     # Linux reports RLIMIT_AS exhaustion as a Python MemoryError with no text.
     app = create_app(tmp_path / "workspace", total_memory_mb=2048)
@@ -369,11 +475,14 @@ def test_supervision_does_not_scan_storage_on_every_pass(tmp_path, monkeypatch):
             "time.sleep(1.5)\n"
             "(root/'result.json').write_text(json.dumps({'result':{'done':True}}))",
         )
+        started = time.monotonic()
         result = app.store._worker(_import(), _task_root(app), threading.Event())
+        elapsed = time.monotonic() - started
         assert result == {"result": {"done": True}}
-        # One scan when supervision starts, one after a second, one exact check
-        # before publishing; a scan per 50 ms pass would be about thirty.
-        assert len(scans) <= 4, len(scans)
+        # One scan when supervision starts, at most one a second after it, and
+        # one exact check before publishing. A slow runner takes longer and
+        # earns more scans; a scan per 50 ms pass would be about thirty.
+        assert len(scans) <= int(elapsed) + 2, (len(scans), elapsed)
     finally:
         app.close()
 
@@ -419,6 +528,73 @@ def test_windows_job_memory_cap_wins_over_the_exit_code(
         assert error["memoryPeakMiB"] > 0
     finally:
         app.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object memory cap")
+@pytest.mark.parametrize("reported", [False, True])
+def test_a_memory_cap_hit_then_another_failure_ends_as_memory_limit(
+    tmp_path, monkeypatch, reported
+):
+    # The child is refused memory, survives it, then fails for its own reason.
+    # The budget was reached: the task names it, and keeps the child's message.
+    app = create_app(tmp_path / "workspace", total_memory_mb=2048)
+    try:
+        fail = (
+            "(root/'result.json').write_text(json.dumps({'error':{"
+            "'kind':'ValueError','message':'Feuille illisible'}}))"
+            if reported
+            else "sys.stderr.write('Feuille illisible')\nsys.exit(2)"
+        )
+        workload(
+            monkeypatch,
+            f"try:\n    bytearray(512*1048576)\nexcept MemoryError:\n    pass\n{fail}",
+        )
+        error = app.store._worker(
+            _import(memory_mb=128), _task_root(app), threading.Event()
+        )["error"]
+        assert error["kind"] == "memory_limit"
+        assert re.search(r"\b128 Mio\b", error["message"])
+        assert "Feuille illisible" in error["diagnostic"]
+    finally:
+        app.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object memory cap")
+def test_windows_job_reads_its_memory_when_cleanup_is_slow():
+    import subprocess
+    import sys
+
+    from linexcel._windows_job import WorkerJob
+
+    process = subprocess.Popen(
+        [sys.executable, "-c", "bytearray(512*1048576)"],
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW | 0x4,  # Suspended.
+    )
+    job = WorkerJob(process, 128)
+    job.resume(process)
+    assert process.wait(timeout=30) != 0
+
+    class SlowCleanup:
+        """Windows still counts a process in the job after it was terminated."""
+
+        def __init__(self, api):
+            self.api = api
+
+        def __getattr__(self, name):
+            return getattr(self.api, name)
+
+        def QueryInformationJobObject(self, handle, kind, info, *rest):  # noqa: N802
+            answered = self.api.QueryInformationJobObject(handle, kind, info, *rest)
+            if kind == 1:  # Basic accounting.
+                info._obj.active_processes = 1
+            return answered
+
+    job.api = SlowCleanup(job.api)
+    with pytest.raises(TimeoutError):
+        job.close()
+    assert job.memory_limit_hit
+    assert job.peak_bytes is not None and job.peak_bytes > 0
 
 
 @pytest.mark.parametrize("path", ["chunked upload", "single request"])

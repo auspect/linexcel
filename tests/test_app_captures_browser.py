@@ -570,6 +570,12 @@ def test_limit_failures_read_in_english(browser):
         limit_message("storage_limit", config),
         storage_quota_message(4096, STORAGE_REFUSED),
         storage_quota_message(4096, STORAGE_TRANSFER),
+        storage_quota_message(
+            4096, "la sauvegarde ou la restauration n’a pas pu démarrer."
+        ),
+        storage_quota_message(
+            4096, "la préparation de la vue des données n’a pas pu démarrer."
+        ),
     ]
     tasks = [
         {
@@ -612,6 +618,8 @@ def test_limit_failures_read_in_english(browser):
             "stopped and its result was not kept.",
             "the operation could not start.",
             "the transfer was interrupted.",
+            "the backup or restore could not start.",
+            "the data view preparation could not start.",
             "a larger --max-storage-mb value",
         ):
             assert english in text, english
@@ -624,6 +632,40 @@ def test_limit_failures_read_in_english(browser):
         )
         shown = page.locator("#view-captures").inner_text()
         assert french_words(shown) == [], shown
+        assert errors == []
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("status", ["failed", "succeeded"])
+def test_the_last_capture_reads_as_an_error_only_when_it_failed(browser, status):
+    """Operations shows a failed capture in red; the Captures tab must agree."""
+    task = {"id": "last", "operation": "capture", "status": status, "finishedAt": 1}
+    if status == "failed":
+        task["error"] = {
+            "kind": "memory_limit",
+            "message": "Budget mémoire de 1 Go (1024 Mio) atteint, égal au plafond "
+            "du serveur.",
+        }
+    else:
+        task["result"] = {"screenshots": []}
+    page = browser.new_page()
+
+    def unexpected_result(route, task_id):
+        raise AssertionError(task_id)
+
+    try:
+        _, errors = _route_app(
+            page, [{"id": "p", "name": "Captures"}], {"p": [task]}, unexpected_result
+        )
+        page.locator("#tab-captures").click()
+        notice = page.locator("#capture-results > .notice").first
+        playwright.expect(notice).to_contain_text(
+            "Budget mémoire" if status == "failed" else "Terminée"
+        )
+        assert ("error" in notice.get_attribute("class").split()) == (
+            status == "failed"
+        )
         assert errors == []
     finally:
         page.close()

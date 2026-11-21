@@ -48,6 +48,7 @@ class Server:
         self.page, self.config = page, config
         self.projects = [{"id": "p", "name": "Budget review", "revision": 1}]
         self.tasks, self.submitted, self.errors = {}, [], []
+        self.requested = []  # API paths, in order.
         self.task_status = "succeeded"
         page.on("pageerror", lambda error: self.errors.append(str(error)))
         page.route("**/*", self.handle)
@@ -87,6 +88,7 @@ class Server:
             return
         path = path.removeprefix("api/")
         method = request.method
+        self.requested.append(path)
         if path == "config":
             return self.json(route, self.config)
         if path == "projects":
@@ -250,7 +252,7 @@ def test_limit_fields_show_server_defaults_in_their_units_and_budgets_convert_th
         page.close()
 
 
-def test_advised_values_come_back_and_an_out_of_range_value_is_refused(browser):
+def test_advised_values_come_back_after_an_out_of_range_value(browser):
     page, server = _open(browser)
     try:
         dialog = _open_settings(page)
@@ -263,14 +265,7 @@ def test_advised_values_come_back_and_an_out_of_range_value_is_refused(browser):
             "dans Réglages › Limites par opération."
         )
         assert page.locator("#limit-memory-gb").get_attribute("aria-invalid") == "true"
-        _close_settings(page)
-        _start_capture(page)
-        playwright.expect(page.locator("#message")).to_contain_text(
-            "« Mémoire par opération » : choisissez une valeur de 0,5 à 9 Go"
-        )
-        assert server.submitted == []  # Refused in the page, never sent.
 
-        _open_settings(page)
         page.get_by_role("button", name="Rétablir les valeurs conseillées").click()
         assert page.locator("#limit-long-minutes").input_value() == "25"
         assert page.locator("#limit-targeted-seconds").input_value() == "45"
@@ -316,12 +311,98 @@ def test_storage_line_follows_an_import_that_ends_and_a_deletion(browser):
         page.close()
 
 
+def test_an_idle_workspace_does_not_make_the_server_measure_its_storage(browser):
+    # The server walks the whole data directory to answer api/config.
+    page, server = _open(browser)
+    try:
+        playwright.expect(page.locator("#storage")).to_contain_text("1,9 Go sur 138 Go")
+        server.requested.clear()
+        page.wait_for_timeout(5000)  # Two polls and more.
+        assert "config" not in server.requested, server.requested
+        # The page still checks the server: a lost connection is shown.
+        assert len(server.requested) >= 2, server.requested
+        playwright.expect(page.locator("#connection")).to_have_attribute(
+            "data-state", "ok"
+        )
+        assert server.errors == []
+    finally:
+        page.close()
+
+
+def test_a_memory_ceiling_that_is_not_whole_hundredths_of_a_gb_is_accepted(browser):
+    # 192 MiB reads 0.188 GB in the field, which converts back to 193 MiB.
+    config = _config(memoryMb=192)
+    config["limits"]["defaults"]["memoryMb"] = 192
+    page, server = _open(browser, config=config)
+    try:
+        _start_capture(page)
+        _wait_for(page, lambda: len(server.submitted) == 1)
+        assert server.submitted[0]["budget"]["memoryMb"] == 192
+        assert page.locator("#message").inner_text() == ""
+        assert page.locator("#limit-memory-gb-error").is_hidden()
+        assert server.errors == []
+    finally:
+        page.close()
+
+
+def test_done_refuses_an_invalid_limit_and_closing_puts_the_last_valid_value_back(
+    browser,
+):
+    page, server = _open(browser)
+    try:
+        dialog = _open_settings(page)
+        seconds, memory = (
+            page.locator("#limit-targeted-seconds"),
+            page.locator("#limit-memory-gb"),
+        )
+        seconds.fill("90")
+        seconds.press("Tab")  # A valid value, now the field's last valid one.
+        seconds.fill("100000")
+        memory.fill("99")
+        page.locator("#settings-done").click()
+        # Still open: the errors show and focus is on the first invalid field.
+        playwright.expect(dialog).to_be_visible()
+        playwright.expect(page.locator("#limit-targeted-seconds-error")).to_have_text(
+            "« Recalcul ciblé » : choisissez une valeur de 1 à 3 600 s "
+            "dans Réglages › Limites par opération."
+        )
+        playwright.expect(page.locator("#limit-memory-gb-error")).to_be_visible()
+        playwright.expect(seconds).to_be_focused()
+
+        # Escape closes and puts each invalid field back to its last valid value.
+        page.keyboard.press("Escape")
+        playwright.expect(dialog).to_be_hidden()
+        _open_limits_line(page)
+        line = page.locator(".limits-line")
+        playwright.expect(line).to_contain_text("Limites : 25 min · 90 s · 4,5 Go")
+
+        # So does the close button.
+        page.locator("#limits-edit").click()
+        playwright.expect(page.locator("#limit-targeted-seconds-error")).to_be_hidden()
+        page.locator("#limit-long-minutes").fill("0")
+        page.locator("#settings-close").click()
+        playwright.expect(dialog).to_be_hidden()
+        playwright.expect(line).to_contain_text("Limites : 25 min · 90 s · 4,5 Go")
+        assert page.locator("#limit-long-minutes").input_value() == "25"
+
+        _start_capture(page)
+        _wait_for(page, lambda: len(server.submitted) == 1)
+        assert server.submitted[0]["budget"] == {"seconds": 1500, "memoryMb": 4608}
+        assert server.errors == []
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("viewport", [DESKTOP, PHONE])
 def test_settings_open_from_both_entries_close_with_escape_and_return_focus(
     browser, viewport
 ):
     page, _ = _open(browser, viewport=viewport)
     try:
+        # Plain buttons: with aria-haspopup, Windows UI Automation offered only
+        # Expand on them in Edge, and a programmatic click was refused.
+        for opener in ("#settings-open", "#limits-edit"):
+            assert page.locator(opener).get_attribute("aria-haspopup") is None
         dialog = _open_settings(page)
         playwright.expect(page.locator("#settings-limits")).to_be_visible()
         if viewport == PHONE:
@@ -363,27 +444,61 @@ def test_every_settings_control_shows_a_focus_ring(browser):
     page, _ = _open(browser)
     try:
         _open_settings(page)
+        # Two field errors make the limits section taller than the dialog body.
+        page.locator("#limit-targeted-seconds").fill("100000")
+        page.locator("#limit-memory-gb").fill("0.3")
+        page.locator("#limit-memory-gb").press("Tab")
         # Read the focused style itself, not a frame of its transition.
         page.add_style_tag(content="*{transition:none!important}")
-        unringed = page.evaluate("""async () => {
-          const missing = [];
+        problems = page.evaluate("""async () => {
+          const problems = [];
           const dialog = document.querySelector('#settings');
+          // How far the ring reaches beyond the box: outline or shadow spread.
+          const reach = style => {
+            let far = style.outlineStyle === 'none' ? 0
+              : parseFloat(style.outlineWidth)
+                + Math.max(0, parseFloat(style.outlineOffset));
+            for (const shadow of style.boxShadow.split(/,(?![^(]*\\))/)) {
+              if (shadow.includes('inset')) continue;
+              const numbers = (shadow.match(/-?[\\d.]+(?=px)/g) || []).map(Number);
+              const [x = 0, y = 0, , spread = 0] = numbers;
+              far = Math.max(far, Math.max(Math.abs(x), Math.abs(y)) + spread);
+            }
+            return far;
+          };
+          const clipper = e => {
+            for (let a = e.parentElement; a; a = a.parentElement)
+              if (getComputedStyle(a).overflowY !== 'visible') return a;
+          };
           for (const section of dialog.querySelectorAll('[data-settings]')) {
             section.click();
             const controls = [...dialog.querySelectorAll('button,input,select')]
               .filter(e => e.checkVisibility() && !e.disabled && e.tabIndex >= 0);
             for (const control of controls) {
+              const name = control.id || control.textContent.trim();
               control.blur();
               const resting = getComputedStyle(control).boxShadow;
               control.focus({focusVisible: true});
               const style = getComputedStyle(control);
-              if (style.outlineStyle === 'none' && style.boxShadow === resting)
-                missing.push(control.id || control.textContent.trim());
+              if (style.outlineStyle === 'none' && style.boxShadow === resting) {
+                problems.push([name, 'no ring']);
+                continue;
+              }
+              // The ring must not be cut by the scrolling body that holds it.
+              const far = reach(style), box = control.getBoundingClientRect();
+              const area = clipper(control), edge = area.getBoundingClientRect();
+              const top = edge.top + area.clientTop;
+              const left = edge.left + area.clientLeft;
+              if (box.top - far < top - 0.5
+                  || box.bottom + far > top + area.clientHeight + 0.5
+                  || box.left - far < left - 0.5
+                  || box.right + far > left + area.clientWidth + 0.5)
+                problems.push([name, 'ring cut by ' + (area.id || area.className)]);
             }
           }
-          return missing;
+          return problems;
         }""")
-        assert unringed == []
+        assert problems == []
     finally:
         page.close()
 
