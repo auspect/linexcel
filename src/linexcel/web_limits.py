@@ -65,13 +65,13 @@ def launcher_storage_mb(used_bytes: int, free_bytes: int, total_bytes: int) -> i
     """What the data directory holds, plus its disk's free space minus a reserve.
 
     The reserve is a tenth of the disk, at most 10 GiB. A nearly full disk still
-    gives the former 2 GiB of room when it has that much free. From 1 GiB on, the
-    quota is whole GiB.
+    gives the former 2 GiB of room when it has that much free. The quota is
+    rounded up to the MiB, never down: it must not fall under what the
+    directory already holds.
     """
     reserve = min(total_bytes // 10, 10 * GiB)
     room = max(free_bytes - reserve, min(free_bytes, 2 * GiB))
-    quota = (used_bytes + room) // MiB
-    return quota // 1024 * 1024 if quota >= 1024 else max(1, quota)
+    return max(1, -(-(used_bytes + room) // MiB))
 
 
 def directory_bytes(root: Path) -> int:
