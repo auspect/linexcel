@@ -118,15 +118,22 @@ def _machine(monkeypatch, *, memory_mb, free_gib, total_gib):
 
 
 @pytest.mark.parametrize(
-    ("flags", "memory_mb", "storage_mb", "each_mb"),
+    ("flags", "memory_mb", "storage_mb", "each_mb", "long_seconds"),
     [
         # 32 GiB of RAM: half of it. 200 GiB free on 1 TB: minus a 10 GiB reserve.
-        ([], 16384, 190 * 1024, 8192),
-        (["--memory-mb", "3000", "--max-storage-mb", "5000"], 3000, 5000, 1024),
+        ([], 16384, 190 * 1024, 8192, 3600),
+        (
+            ["--memory-mb", "3000", "--max-storage-mb", "5000"]
+            + ["--import-seconds", "1500"],
+            3000,
+            5000,
+            1024,
+            1500,
+        ),
     ],
 )
 def test_serve_derives_limits_from_the_machine_and_prints_them(
-    tmp_path, capsys, monkeypatch, flags, memory_mb, storage_mb, each_mb
+    tmp_path, capsys, monkeypatch, flags, memory_mb, storage_mb, each_mb, long_seconds
 ):
     import linexcel.web
 
@@ -145,14 +152,15 @@ def test_serve_derives_limits_from_the_machine_and_prints_them(
     assert main(["serve", "--port", "0", "--data-dir", data_dir, *flags]) == 0
     assert created["total_memory_mb"] == memory_mb
     assert created["max_storage_mb"] == storage_mb
+    assert created["import_seconds"] == long_seconds
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("Linexcel : http://127.0.0.1:")
     # In English, like the rest of the command line.
     assert lines[1:] == [
         f"Limits: memory {memory_mb} MiB for 2 concurrent operations, "
         f"{each_mb} MiB each (--memory-mb); storage {storage_mb} MiB, 0 MiB used "
-        "(--max-storage-mb); 3600 s per import, graph, capture or report, "
-        "120 s per targeted recalculation."
+        f"(--max-storage-mb); {long_seconds} s per import, graph, capture or "
+        "report (--import-seconds), 120 s per targeted recalculation."
     ]
 
 

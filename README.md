@@ -47,9 +47,11 @@ uvx linexcel serve --open --port 8765
 
 #### Large workbooks
 
-A large workbook needs disk space and time at import, and little memory. On
-one Windows 11 machine with an SSD, a 20 MB workbook took 5 minutes and
-1.9 GiB of disk space. A 50 MB workbook took 11 minutes and 4.7 GiB.
+A large workbook needs time and disk space at import, and little memory. On
+one Windows 11 machine with an SSD, a 20 MB workbook takes a few minutes and
+0.3 GiB of disk space, and an 89 MB workbook about 20 minutes and 1.1 GiB. An
+import that runs out of time publishes what it read, and Diagnostics proposes
+a longer duration.
 
 `serve` sets its memory and disk limits from the machine and prints them at
 startup. When a limit stops an operation, the **Operations** tab names the
@@ -107,8 +109,9 @@ Calculation coverage counts
 all selected inputs, while dependency cards keep a declared sample of at most 200
 nodes, including in the export. A separate 20,000 explicitly traversed-node limit
 (excluding literal range members) protects dependency traversal; exceeding it
-refuses the calculation explicitly. Very large calculations can require a higher
-worker memory budget than the default 512 MiB even though browsing stays small.
+refuses the calculation explicitly. Very large calculations can require more
+memory than the default budget of one operation, which is the server memory
+divided by the number of workers, even though browsing stays small.
 Captures are served as individual images with thumbnails, without embedding every
 image in the project response. Rendering remains an explicit, budgeted operation.
 
@@ -124,9 +127,18 @@ groups, including links outside the current group. Ranges remain grouped;
 unresolved or dynamic references retain the index's limitations. The saved graph
 is reused across sessions and invalidated after a successful structural reimport.
 
-Import and graph construction have a separate default time budget of 600 seconds;
-targeted recalculation keeps its 120-second default. Both are adjustable under
-**Limits per operation**. Exact node references use the index directly; other
+Imports, graph constructions, sheet captures and reports have a default time
+budget of 60 minutes; a targeted recalculation keeps its 120-second default.
+Both are adjustable in **Settings**, under **Operation limits**, and
+`--import-seconds` sets the server's default for the long operations. An
+import publishes what it could do within its time budget: the
+sheets it read, their formulas analyzed or marked "not analyzed" (a
+calculation reaching one is refused), and data regions only when time is
+left. Diagnostics then proposes a reimport with a budget that counts reading,
+formula analysis and regions, and says when that estimate is uncertain. A
+step that cannot be stopped can still exceed the budget; nothing new is then
+published and Diagnostics proposes twice the budget, which is not an
+estimate. Exact node references use the index directly; other
 searches still match substrings and can take longer on very large workbooks.
 
 Selecting a formula automatically starts a targeted calculation after a short
@@ -302,9 +314,10 @@ local profile. Its one-use session link connects a browser to that profile;
 `linexcel session-link --data-dir ~/.linexcel` creates another link while the
 server is running. Projects survive browser changes and server restarts.
 `--mount-path`, `--data-dir`, `--workers`, `--memory-mb`, `--max-storage-mb`,
-`--max-upload-mb` and `--retention-days` configure the launcher. Without
-`--memory-mb` or `--max-storage-mb`, the launcher derives that limit from the
-machine; an embedded application keeps the values its host passes. The default data
+`--max-upload-mb`, `--retention-days` and `--import-seconds` configure the
+launcher. Without `--memory-mb` or `--max-storage-mb`, the launcher derives
+that limit from the machine; an embedded application keeps the values its host
+passes. The default data
 directory is `~/.linexcel`; uploaded files and diagnostic formula text are private.
 
 Use **one application coordinator per data directory** (an exclusive lock

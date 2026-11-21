@@ -22,7 +22,7 @@ from linexcel.catalog import Catalog, Source, revision
 from linexcel.excel_presentation import sheet_presentation
 from linexcel.header_bands import literal
 from linexcel.insights import extract_workbook_context
-from linexcel.lazy_store import WorkbookIndex, _pack, build_index
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, _pack, build_index
 from linexcel.web import _write, create_app
 from linexcel.web_data import build_source_database
 from linexcel.web_report import prepare_report
@@ -135,7 +135,7 @@ def array_bytes(*, blank=False, cached_heading=False, large=False):
 @pytest.fixture(params=[False, True], ids=["saved-members", "blank-member"])
 def arrays(tmp_path, request):
     content, expected = array_bytes(blank=request.param)
-    source, index = tmp_path / "arrays.xlsx", tmp_path / "index.sqlite"
+    source, index = tmp_path / "arrays.xlsx", tmp_path / INDEX_FILENAME
     source.write_bytes(content)
     build_index(source, index)
     return source, index, expected
@@ -149,7 +149,7 @@ def array_project(tmp_path, arrays):
     path = app.store.root / owner / "projects" / pid
     (path / "references").mkdir(parents=True)
     shutil.copyfile(source, path / "workbook.xlsx")
-    shutil.copyfile(index, path / "index.sqlite")
+    shutil.copyfile(index, path / INDEX_FILENAME)
     _write(
         path / "project.json",
         {
@@ -240,15 +240,27 @@ def test_array_data_routes_exports_and_cached_snapshot_upgrade(
     # Simulate the previous cached source-data generation, then switch to the
     # current reader version. Existing projects must rebuild without reimport.
     version = data.DATA_VERSION
+
+    def prepared():
+        # The copy is built by a background task (batch 2 bis, F18).
+        import time
+
+        for _ in range(600):
+            code, raw, _ = request(app, "GET", prefix + "/data")
+            assert code == 200
+            if json.loads(raw).get("state") != "building":
+                return json.loads(raw)
+            time.sleep(0.05)
+        raise AssertionError("the data view was not prepared")
+
     with monkeypatch.context() as patch:
         patch.setattr(data, "DATA_VERSION", version - 1)
-        assert request(app, "GET", prefix + "/data")[0] == 200
+        assert prepared()["available"]
     stamp = json.loads((path / "source-data.json").read_text())
-    with closing(sqlite3.connect(path / "source-data.sqlite")) as db, db:
+    with closing(sqlite3.connect(path / stamp["file"])) as db, db:
         db.execute("DELETE FROM cells WHERE cell='H3'")
         db.execute("UPDATE sheet_001 SET H=NULL WHERE row=3")
-    code, raw, _ = request(app, "GET", prefix + "/data")
-    assert code == 200
+    assert prepared()["available"]
     assert (
         json.loads((path / "source-data.json").read_text())["signature"]
         != stamp["signature"]
@@ -295,12 +307,14 @@ def test_array_data_routes_exports_and_cached_snapshot_upgrade(
         if value is not None:
             assert nodes[address]["value"] == value
             assert nodes[address]["sourceValueProvenance"]["role"] == "formula_cache"
-    assert not app.store.tasks  # No import, evaluation or AI tasks were started.
+    # No import, evaluation or AI task was started; only the Data tab's
+    # background copy (batch 2 bis, F18).
+    assert {task["operation"] for task in app.store.tasks.values()} == {"build_data"}
 
 
 def test_catalog_numeric_lookup_and_ask_keep_array_values(array_project, tmp_path):
     app, owner, pid, path, expected = array_project
-    item = Source(pid, "arrays.xlsx", path / "index.sqlite")
+    item = Source(pid, "arrays.xlsx", path / INDEX_FILENAME)
     catalog = Catalog(tmp_path / "catalog")
     hit = next(
         h for h in catalog.search([item], "5")["results"] if h["address"] == "K4"
@@ -339,7 +353,7 @@ def test_workbook_context_array_anchors_are_formulas(arrays):
 
 def test_array_cached_text_is_searchable_but_never_a_literal_heading(tmp_path):
     content, _ = array_bytes(cached_heading=True)
-    source, index_path = tmp_path / "array.xlsx", tmp_path / "index.sqlite"
+    source, index_path = tmp_path / "array.xlsx", tmp_path / INDEX_FILENAME
     source.write_bytes(content)
     build_index(source, index_path)
     item = Source("a" * 32, "array.xlsx", index_path)
@@ -377,7 +391,7 @@ def test_frozen_report_range_counts_include_every_array_result(tmp_path):
     path = app.store.root / owner / "projects" / pid
     (path / "references").mkdir(parents=True)
     (path / "workbook.xlsx").write_bytes(content)
-    build_index(path / "workbook.xlsx", path / "index.sqlite")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME)
     _write(
         path / "project.json",
         {

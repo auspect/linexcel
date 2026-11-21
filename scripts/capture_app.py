@@ -7,6 +7,23 @@ English node document is reused when available; otherwise the screenshots show
 deterministic calculation. --no-ai also excludes existing documents. --prepare
 saves a reusable browser context and project evidence without writing images.
 
+The workbook must carry saved formula results, or the images show
+"Saved cache: Not available" instead of the saved-value comparison. A workbook
+written straight by build_sales_workbook has none (openpyxl stores no
+results); use the copy validate_manual.py writes after its LibreOffice round
+trip, e.g. ``validate_manual.py --workbook sales --no-ai --output-dir
+validation_screenshots/run``, which leaves
+validation_screenshots/run/fy26_commercial_review.xlsx.
+
+Preview server, with the defaults the README describes, in an empty data
+directory (Git Bash rewrites "/review" unless MSYS_NO_PATHCONV=1 is set):
+    linexcel serve --port 8877 --mount-path /review \
+      --data-dir validation_screenshots/app/data
+Its local profile only answers a browser that opened a session link: open the
+link printed by ``linexcel session-link --data-dir validation_screenshots/app/data``
+in a Playwright context, save it with ``context.storage_state(path=...)`` under
+validation_screenshots/, and pass that file as --storage-state.
+
 Examples (use a dedicated preview server, never a user's active workspace):
     uv run --extra screenshots python scripts/capture_app.py \
       --base-url http://127.0.0.1:8877/review/ \

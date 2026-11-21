@@ -1,5 +1,6 @@
 """The worksheet presentation route shares Datasette's owner/source boundary."""
 
+import hashlib
 import json
 import sqlite3
 
@@ -7,6 +8,7 @@ import pytest
 from test_web_data import data_app as data_app
 from test_web_data import request
 
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import _write
 
 
@@ -60,6 +62,10 @@ def test_presentation_does_not_build_or_require_datasette_snapshot(
 ):
     app, project, path = data_app
     route = f"/tools/api/projects/{project}/data/presentation"
+    # The fixture prepares the Data tab copy; remove it to start without one.
+    app.data_browser.invalidate(hashlib.sha256(b"alice").hexdigest(), project)
+    for prepared in path.glob("source-data*"):
+        prepared.unlink()
 
     def forbid_snapshot(*args, **kwargs):
         raise AssertionError("A bounded presentation must not build the full snapshot")
@@ -67,7 +73,7 @@ def test_presentation_does_not_build_or_require_datasette_snapshot(
     monkeypatch.setattr(app.data_browser, "_snapshot", forbid_snapshot)
     status, _, _ = request(app, route, query="sheet=Data+%26+Source")
     assert status == 200
-    assert not (path / "source-data.sqlite").exists()
+    assert not list(path.glob("source-data*.sqlite"))
     assert not (path / "source-data.json").exists()
 
 
@@ -75,7 +81,7 @@ def test_presentation_rejects_stale_index_hash_even_with_current_project_revisio
     data_app,
 ):
     app, project, path = data_app
-    with sqlite3.connect(path / "index.sqlite") as database:
+    with sqlite3.connect(path / INDEX_FILENAME) as database:
         raw = database.execute(
             "SELECT value FROM metadata WHERE key='meta'"
         ).fetchone()[0]
@@ -97,5 +103,5 @@ def test_presentation_macro_and_missing_index_remain_local_errors(data_app):
     assert request(app, route, query="sheet=Data+%26+Source")[0] == 409
     metadata["filename"] = "sources.xlsx"
     _write(path / "project.json", metadata)
-    (path / "index.sqlite").unlink()
+    (path / INDEX_FILENAME).unlink()
     assert request(app, route, query="sheet=Data+%26+Source")[0] == 409

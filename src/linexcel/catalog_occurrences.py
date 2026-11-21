@@ -10,7 +10,7 @@ import time
 from typing import Any, cast
 
 from linexcel.header_bands import Band, HeaderBands, catalog_labels
-from linexcel.lazy_store import WorkbookIndex, _unpack
+from linexcel.lazy_store import WorkbookIndex
 
 
 def source_rows(index, sheet, after, limits, deadline, caps):
@@ -20,13 +20,8 @@ def source_rows(index, sheet, after, limits, deadline, caps):
         index.db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 100)
         try:
             if cursor is None:
-                cursor = index.db.execute(
-                    "SELECT seq,id,row,col,data FROM nodes NOT INDEXED "
-                    "WHERE sheet IS ? AND seq>? "
-                    "AND kind IN ('input','cell','array_result') ORDER BY seq LIMIT ?",
-                    (sheet, after, limits.scan_entries + 1),
-                )
-            row = cursor.fetchone()
+                cursor = index.sheet_cells_after(sheet, after, limits.scan_entries + 1)
+            row = next(cursor, None)
         except sqlite3.OperationalError as error:
             if "interrupt" not in str(error):
                 raise
@@ -116,7 +111,7 @@ def occurrences(catalog, sources, *, generation, group, after=0, limit=50):
             coverage = cast(dict[str, Any], result["coverage"])
             last = after
             exhausted = True
-            for seq, nid, row, col, blob in source_rows(
+            for seq, nid, row, col, decode in source_rows(
                 index,
                 sheet,
                 after,
@@ -133,7 +128,7 @@ def occurrences(catalog, sources, *, generation, group, after=0, limit=50):
                     exhausted = False
                     break
                 coverage["cellsScanned"] += 1
-                node = _unpack(blob)
+                node = decode()
                 value = node.get("value")
                 text = value if isinstance(value, str) and value.strip() else None
                 if text is None and row and col:
@@ -144,17 +139,7 @@ def occurrences(catalog, sources, *, generation, group, after=0, limit=50):
                         )
                         bands.rows = {row: {}}
                         if columns:
-                            bands.rows[row] = {
-                                c: _unpack(data)
-                                for c, data in index.db.execute(
-                                    "SELECT col,data FROM nodes "
-                                    "WHERE sheet IS ? AND row=? "
-                                    "AND col IN ("
-                                    + ",".join("?" for _ in columns)
-                                    + ")",
-                                    (sheet, row, *columns),
-                                )
-                            }
+                            bands.rows[row] = index.row_nodes(sheet, row, columns)
                     labels = catalog_labels(
                         index, sheet, row, col, bands.labels(row, col)
                     )

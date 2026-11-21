@@ -83,6 +83,11 @@ canonical formula, and source provenance. In particular:
 | `canonical_formula` | Formula used by the structural analyzer; it can be translated from a shared master or normalized. |
 | `formula_provenance`, `value_provenance` | Source workbook SHA-256, worksheet XML part, cell address and extraction status. |
 
+Since index schema 5, the provenance of a literal value stored in a sheet grid
+is its sheet plus the value: `value_provenance` has no `rawXmlValue` and the
+`raw_xml_value` column is empty for such cells. Formula caches and literal
+cells kept as single records still carry the XML spelling.
+
 Coverage follows the complete disk index rather than the viewer's first page
 or its sample of nodes. Formatting-only blanks and synthetic blank dependency
 placeholders are excluded. A formula without a saved cache remains a source

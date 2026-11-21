@@ -7,6 +7,222 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Describe each block of at least 10,000 saved values without formulas as a
+  data region node, with its header names, a type per column, a fingerprint
+  and a preview. A range that reads a region names it with the exact
+  sub-range read, and the neighbourhood shows the link.
+- Offer to reimport a workbook whose sheets were not all read within the
+  import's time budget. Diagnostics says how long the sheets were read and
+  how much of them was read, and proposes a reimport with an estimated
+  budget, with a margin, at most 3600 s. On the public DGT election table,
+  a budget of 600 s read 64 % of its only sheet in 356 s; the proposed 1200 s
+  imported it completely in 580 s (measured with the earlier rule, which
+  kept 60 % of the budget for reading; see "Publish an import whose formula
+  analysis outlasts its time budget" below for the current rule).
+- Set the default time budget of imports, graph constructions, sheet captures
+  and reports with `linexcel serve --import-seconds N` (1 to 3600; default
+  3600 s, as since 1.20.0). The **Long operations** field of the settings
+  starts at that value, and each user can still choose their own. A budget
+  that Diagnostics proposes goes in that field when you accept it.
+
+### Fixed
+
+- Keep the outcome of an operation in `linexcel serve` when Windows still
+  holds one of its files for a moment after it stops. The operation ended as
+  `persistence_error` with a sharing violation, whatever had happened to it:
+  an import stopped by the storage quota lost its message that way. The
+  cleanup now waits up to two seconds for the file.
+- Translate the calculation status beside "Linexcel result" in the node
+  card: a refused calculation read "Linexcel result · Non pris en charge" in
+  the English interface.
+- Show a cell read only through a range as used. In the graph of
+  `linexcel serve`, `C5` read by `=SUM(C2:C11)` had no neighbour; it now links
+  to the range `C2:C11`, labelled as range membership, and through it to the
+  formula. A range lists its member cells. The neighbourhood stays bounded and
+  says when cells were left out.
+- Keep every other reference of a formula when one cannot be resolved.
+  `=B!A1+A:B!A1+C!A2` kept only `B!A1` under "Formula tokenization failed"; it
+  now keeps `B!A1` and `C!A2`, and the diagnostic names `A:B!A1` with the real
+  reason. Calculation of such a formula is still refused.
+- Calculate `LET` and `LAMBDA` formulas in `linexcel serve`, including the
+  `_xlfn.LET(_xlpm.x,…)` spelling Excel saves. Their variable names no longer
+  appear as unresolved references. A name that is neither bound nor defined
+  is still refused.
+- Import a workbook whose styles part is damaged, or whose defined name has an
+  invalid `localSheetId`, instead of failing the whole import. The workbook is
+  marked partial with a diagnostic naming the part or the name. With unreadable
+  styles, the saved value of every styled cell is unknown rather than guessed;
+  a formula reading the skipped name is refused. A negative `localSheetId` no
+  longer scopes a name to the last sheet.
+- Refuse, with a named reason, to calculate an ordinary formula that reads a
+  multi-cell reference where Excel applies implicit intersection, such as
+  `=A1:A5*10` or `=SUM(A1:A3*2)` in a cell without array-formula metadata. The
+  engine evaluates these as arrays, and the result was shown as a difference
+  from the saved value. A result equal to the saved value is still shown. The
+  Excel semantics themselves are not implemented yet.
+- Calculate formulas over large tables faster in `linexcel serve`. The values
+  of a range now reach the calculation engine in blocks of rows instead of
+  one cell at a time. On a 20 MB workbook, a `SUMIFS` over four ledger
+  columns of 250,000 rows took 164 s and now takes 57 s, with the same value.
+- Remove a fixed delay from every calculation of a large workbook. Reading
+  the inputs of a calculation went through the whole workbook index: on a
+  workbook of 2.7 million cells, a small calculation took 3.7 s and now takes
+  0.04 s. Selecting a cell calculates it, so this delay was paid on every
+  click.
+- Show a cell's neighbourhood in the graph faster on Windows: 0.6–1 s before,
+  0.02–0.16 s now on the public TAG and ATB models. Each read of the workbook
+  index used to lock and unlock the file.
+- Mark the import partial when the workbook declares a shared-string or
+  styles part that the file does not contain. It used to be reported as
+  complete, although every text cell, or every styled value, was unreadable.
+  The Diagnostics tab names the missing part; the cells stay unknown, never
+  empty, and the Excel presentation shows them as unknown (∅) instead of
+  blank cells.
+- Say that no index was published after an import that the storage quota
+  stopped. The Nodes, Graph, Diagnostics and Data tabs suggested a refresh,
+  and Diagnostics said "Import complete". The message of the quota itself
+  came with 1.20.0.
+- Say why the Excel presentation of a sheet cannot be shown when its part is
+  missing from the file or the import read it only partly, instead of
+  "Feuille introuvable" and without advising a retry that cannot help; on a
+  phone the reason is no longer hidden in the collapsed data options. Import
+  diagnostics in the Diagnostics tab get advice about the file instead of the
+  advice about formulas.
+- Name the phase of a running operation in words in Operations, for example
+  "Graph construction" instead of `build_graph`.
+- Show the Excel presentation of workbooks whose styles part is very large.
+  Every sheet of the public DfT TAG data book was refused because its 7 MB
+  of named styles exceeded a 4 MiB cap; the styles are now read as a stream,
+  still bounded by the number of styles kept.
+
+### Changed
+
+- Store literal values in per-sheet grids: index schema 5. **Projects
+  imported by an earlier version must be reimported**; they say so and keep
+  their workbook, and their old index is deleted only when you launch the
+  reimport. Calculations read their inputs from the grid. Every cell
+  reads back as before, except that the XML spelling of a stored literal
+  (`rawXmlValue`) is no longer kept: its provenance is its sheet plus the
+  value. In the Data tab, `raw_xml_value` is empty for those cells.
+  On the public corpus, the index of the DGT election table (103 MB, 18
+  million values) takes 92 MB instead of 10,969 MB and imports in 569 s
+  instead of 1,310 s; the ONS population tables take 26 MB instead of
+  6,717 MB (321 s instead of 733 s); the generated fpna model 357 MB instead
+  of 2,022 MB (188 s instead of 265 s), where `Forecast!D2` is calculated in
+  6.6 s instead of 57 s and `Summary!B2` in 1.5 s instead of 16 s. Models
+  made mostly of formulas gain less: ATB 369 MB instead of 454 MB, TAG
+  139 MB instead of 169 MB. Searching the node list compares each stored
+  value in Python instead of SQLite, so it stays slower than with schema 4:
+  on fpna a search for "EUR" takes about 3.8 s instead of 1.8 to 2.2 s, and
+  a search with no match about 3.8 s instead of 3.5 to 3.7 s (see the next
+  entry).
+- Search the node list with less work per literal cell. A query without a
+  digit is tested against a cell's address once per sheet and column, ASCII
+  text is folded with `str.lower`, and a text value is compared directly.
+  The results are unchanged: same totals, pages and values on 21 searches of
+  the fpna model, and the case folding still matches SQLite's `LIKE`. On fpna
+  (2.7 million cells), best of 9 searches each, alternated with the previous
+  code: "EUR" 3.79 s instead of 5.55 s, "acc" 3.78 s instead of 5.56 s,
+  "2024-03" 3.61 s instead of 4.24 s, "12.5" 3.58 s instead of 4.22 s, no
+  match 3.75 s instead of 4.37 s.
+- Publish the sheets an import reads within its time budget and the storage
+  quota. An import stopped there published nothing; the sheet in progress and
+  the following ones are now marked "Sheet not imported" with the reason, and
+  a formula reading them is refused rather than calculated on absent cells.
+- Publish an import whose formula analysis outlasts its time budget. The
+  budget was checked only while sheets were read; on ATB, a model of
+  233,000 formulas (reading 29 s, dependencies 93 s), budgets of 25, 60 and
+  120 s timed out and published nothing. Reading now stops as soon as the
+  time left does not cover the analysis at its fastest (0.30 ms a formula,
+  no margin) of the formulas of the sheets read whole, instead of at a fixed 60 %
+  of the budget, so a sheet of values alone may use most of the budget. The
+  sheet being read does not count its own formulas: a sheet that can be
+  read is published with its values, its formulas analyzed as far as time
+  allows, instead of being rolled back. The analysis checks the
+  deadline before each formula: the formulas it did not reach keep "Formula
+  not analyzed", their sheets are published as partial for the time budget
+  with the count left, every value is kept, and a calculation reaching such a
+  formula is refused. Data regions are described only when their predicted
+  time fits ("Data regions skipped: budget"). The end of the budget is
+  kept for links, VBA, counts and publication: 5 s, or 20 µs a formula read
+  when more (20 s for a million formulas: that end grows by about 7.5 µs a
+  formula, and a generated million-formula import cut by the analysis
+  safety net timed out with 5 s) (measured on the corpus: 0.07
+  to 0.40 s after the last phase, 1.2 to 2.2 s with the worker's start and
+  exit). Measured through serve on 17 November: ATB at 25 s published 6
+  complete sheets, 2 partial (14,036 formulas not analyzed) and proposed
+  180 s, which imported it completely in 127 s; at 60 s and 120 s it
+  published partial indexes using the budget to within 3.5 s and 2.9 s; at
+  180 s it was complete in 129 s (151 s before this step). The DGT election
+  table imported completely in 520 s at 600 s, its regions skipped; the
+  generated fpna model completely in 209 s. No task timed out. A first
+  reserve, 1.25 x 0.65 ms a formula, had left 29 to 40 % of ATB's budget
+  unused and its proposed 180 s short of a complete import.
+- Propose a reimport budget that counts the whole import. It extrapolated
+  the reading alone; it now adds the analysis of every formula and the
+  regions, at the rates measured on the import when enough work was done to
+  measure them, else at cautious rates, and Diagnostics says "Uncertain
+  estimate" when less than 20 % was read or an unmeasured rate weighs more
+  than a quarter. The proposal is never less than what the reimport's own
+  reading check needs to read every sheet: on the energy model, the 180 s
+  proposed after 25 s, counting the analysis at the rate measured but not
+  the reading reserve, still stopped reading. Each index records its phase
+  times and counts (`importTimings`).
+- Say what an import that still ran out of time published. A step that
+  cannot be stopped (links, VBA, publication) can still exceed the budget;
+  since 1.20.0 the error named the time limit and its setting. It now also
+  says that no new index was published and whether the previous one remains
+  available. It proposes twice the budget, or the longest duration when
+  twice would pass it, saying that this is not an estimate; Diagnostics
+  offers the reimport. At the longest duration it proposes none.
+- Say that a partial import's lists of uses may be incomplete. A formula not
+  imported or not analyzed is missing from the uses of the cells it reads;
+  the partial import banner now says so, and the node list and the Data tab
+  say that the import is partial, as the graph already did. The node card
+  says it under the list of uses, and the graph's notice below the
+  dependents it draws (hidden at phone width by the graph package).
+  Diagnostics names the budget that stopped the reading, the analysis or
+  the regions, and after a timeout says that the sheets it lists are those
+  of the previous index.
+- Prepare the Data tab's browsing copy in the background. The first opening
+  of the tab copied the whole workbook inside the request and blocked every
+  other request meanwhile: 75 s on the public ATB model; the copy of a 50 MB
+  table takes 12 minutes. The tab now says that the view is being prepared, the
+  operation appears in Operations, and the view opens by itself when it is
+  ready. If the preparation fails, for example on the storage quota, the tab
+  says why and Refresh data starts it again; when storage is already full, the
+  tab says that the preparation could not start. Cancelling the preparation
+  in Operations is shown as a cancel, not as a failure.
+
+- Accept a duration from one second in the **Long operations** field of the
+  settings. It started at one minute in 1.20.0. An import with a short
+  duration publishes what it read, and a duration that Diagnostics proposes
+  can be under a minute. Zero is refused.
+
+### Documentation
+
+- Update [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/)
+  for the per-sheet grids: the indexes of the 6, 20, 50 and 89 MB workbooks
+  take 134 MiB to 1.1 GiB, where 1.20.0 took 161 MiB to 8.2 GiB. The page
+  also covers `--import-seconds`, what an import that runs out of time
+  publishes, and the reimport that a workspace of an earlier version asks
+  for. Two README sentences still gave the limits of 1.19: 600 seconds for
+  an import and 512 MiB of memory for an operation.
+- Measure import, calculation and the Data tab of `linexcel serve` on large
+  public workbooks, and what happens with damaged ones, in
+  `docs/reading_resilience_data_node.md`. A 103 MB data table takes 22 minutes
+  to import and an 11 GB index; the first opening of the Data tab blocks every
+  other request while it copies the workbook. The note inventories every
+  reading cap, separates protections against hostile files from convenience
+  limits, and proposes replacements. No limit or behaviour changes in this
+  release.
+- Add an isolated data node prototype under `prototypes/data_node/`, outside
+  the package: one node per formula-free table, with its headers, column
+  types, number formats and fingerprint, stored 60 to 260 times smaller than
+  today's per-cell index, and formulas pointing to the sub-range they read.
+
 ## [1.20.0] — 2026-11-21
 
 ### Added

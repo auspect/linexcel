@@ -154,6 +154,40 @@ def test_time_limit_names_the_value_and_the_field_of_the_settings(
 
 
 @pytest.mark.parametrize(
+    ("seconds", "suggested", "example"),
+    [
+        (600, 1200, "par exemple le double (1200 s)"),
+        # Twice the budget would pass the longest duration: that one is offered.
+        (2400, 3600, "par exemple le plus long permis (3600 s)"),
+    ],
+)
+def test_an_import_stopped_at_its_budget_is_offered_a_larger_one(
+    seconds, suggested, example
+):
+    from linexcel.web_limits import import_timeout_remedy
+
+    remedy = import_timeout_remedy(seconds, previous_index=False)
+    assert remedy["suggestedSeconds"] == suggested
+    assert remedy["previousIndex"] is False
+    message = remedy["message"]
+    assert f"le budget de {seconds} s" in message and example in message
+    assert "ce classeur n’a pas encore d’index" in message
+    assert "« Opérations longues » dans Réglages › Limites par opération" in message
+
+
+def test_an_import_stopped_at_the_longest_duration_is_offered_none():
+    from linexcel.web_limits import import_timeout_remedy
+
+    remedy = import_timeout_remedy(3600, previous_index=True)
+    assert "suggestedSeconds" not in remedy
+    assert remedy["message"] == (
+        "Import arrêté : le budget de 3600 s, le plus long permis, s’est écoulé à "
+        "une étape inconnue. Aucun nouvel index n’a été publié ; l’index précédent "
+        "reste consultable."
+    )
+
+
+@pytest.mark.parametrize(
     ("memory_mb", "ceiling", "expected"),
     [
         (
@@ -427,11 +461,14 @@ def test_a_data_view_over_the_quota_names_the_quota_and_the_flag(tmp_path):
     )
     try:
         project = _imported(app)
-        # Less room than the data view's database needs.
-        _fill_to(app, 3 * MiB - 1000)
+        # A background task prepares the data view: at the quota it cannot start,
+        # and the Data tab reports it in the answer instead of an HTTP error.
+        _fill_to(app, 3 * MiB)
         code, body, _ = request(app, "GET", f"/api/projects/{project}/data")
-        assert code == 413
-        assert json.loads(body)["error"]["message"] == _storage_message(
+        assert code == 200, body
+        answer = json.loads(body)
+        assert answer["state"] == "failed"
+        assert answer["error"] == _storage_message(
             "la préparation de la vue des données n’a pas pu démarrer."
         )
     finally:

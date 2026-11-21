@@ -394,6 +394,32 @@ def test_done_refuses_an_invalid_limit_and_closing_puts_the_last_valid_value_bac
         page.close()
 
 
+def test_a_long_operation_can_be_given_less_than_a_minute_but_not_zero(browser):
+    """The server accepts a long operation from one second, and an import
+    with a short budget publishes what it read. The field is in minutes:
+    half a minute is 30 s. Zero is refused, with the range."""
+    page, server = _open(browser)
+    try:
+        dialog = _open_settings(page)
+        field = page.locator("#limit-long-minutes")
+        field.fill("0")
+        field.press("Tab")
+        playwright.expect(dialog.locator("#limit-long-minutes-error")).to_have_text(
+            "« Opérations longues » : choisissez une valeur de 1 s à 60 min "
+            "dans Réglages › Limites par opération."
+        )
+        field.fill("0.5")
+        field.press("Tab")
+        playwright.expect(dialog.locator("#limit-long-minutes-error")).to_be_hidden()
+        _close_settings(page)
+        _start_capture(page)
+        _wait_for(page, lambda: len(server.submitted) == 1)
+        assert server.submitted[0]["budget"]["seconds"] == 30
+        assert server.errors == []
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("viewport", [DESKTOP, PHONE])
 def test_settings_open_from_both_entries_close_with_escape_and_return_focus(
     browser, viewport

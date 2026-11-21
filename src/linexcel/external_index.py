@@ -45,7 +45,9 @@ class ExternalSources:
         ):
             raise ValueError("External workbook was not supplied: " + filename)
         index = WorkbookIndex(
-            self.temporary / f"{len(self.books)}.sqlite", writable=True
+            self.temporary / f"{len(self.books)}.sqlite",
+            writable=True,
+            use_grid=False,
         )
         self.books[filename] = (index, {}, {}, {}, "")
         _schema(index.db)

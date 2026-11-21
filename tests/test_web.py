@@ -688,3 +688,46 @@ def test_nested_windows_data_directory(tmp_path):
         assert store.snapshot("a" * 64, imported["project"]["id"])["graph"]
     finally:
         store.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="an open file can be deleted elsewhere")
+def test_a_task_keeps_its_outcome_when_its_scratch_is_released_a_moment_late(app):
+    """Windows can still hold a file of a stopped worker for a moment after
+    the worker is gone, and a scanner can open a file that was just written.
+    The cleanup of the task then met a sharing violation, and the task ended
+    as a persistence error whatever had happened to it: on a CI runner, an
+    import stopped by the storage quota lost its reason that way."""
+    from linexcel.lazy_store import INDEX_FILENAME
+
+    code, body, _ = request(app, "POST", "/api/projects", {"workbook": workbook()})
+    assert code == 200, body
+    created = json.loads(body)
+    task_id = created["task"]["id"]
+    with app.store.lock:
+        owner = app.store.tasks[task_id]["owner"]
+    root = app.store.project_path(owner, created["project"]["id"]) / "tasks" / task_id
+    request_file = root / "request.json"
+    held = root / f"{INDEX_FILENAME}.held.building"
+
+    def hold():
+        # Scratch of the kind an interrupted import leaves, open elsewhere from
+        # before the worker starts until a moment after the cleanup has begun.
+        # The cleanup removes request.json first.
+        deadline = time.monotonic() + 20
+        while not request_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.002)
+        with held.open("wb") as stream:
+            stream.write(b"x")
+            stream.flush()
+            while request_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.002)
+            time.sleep(0.3)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        task = wait(app.store, task_id)
+    finally:
+        holder.join()
+    assert task["status"] == "succeeded", task.get("error")
+    assert not held.exists()

@@ -8,6 +8,7 @@ import time
 import pytest
 from openpyxl import Workbook
 
+from linexcel.lazy_store import INDEX_FILENAME
 from linexcel.web import create_app
 
 
@@ -133,7 +134,7 @@ def test_pages_search_detail_neighborhood_and_unloaded_evaluation(indexed):
     assert finish(app.store, submitted["task"]["id"])["result"]["value"] == 900
     owner = task_owner(app.store, submitted["task"]["id"])
     root = app.store.project_path(owner, project)
-    assert (root / "index.sqlite").is_file() and not (root / "graph.json").exists()
+    assert (root / INDEX_FILENAME).is_file() and not (root / "graph.json").exists()
     assert app.store.tasks[submitted["task"]["id"]]["result"] is None
     _, reconnected = call(app, "GET", base)
     assert all(t["result"] is None for t in reconnected["tasks"])
@@ -205,7 +206,7 @@ def test_evidence_counts_describe_full_index_not_sample(indexed):
 
     app, project = indexed
     owner = next(iter(app.store.tasks.values()))["owner"]
-    graph = evidence_graph(app.store.project_path(owner, project) / "index.sqlite")
+    graph = evidence_graph(app.store.project_path(owner, project) / INDEX_FILENAME)
     dossier = evidence(graph, None, [])
     assert dossier["nodeCounts"] == {"cell": 1, "input": 450}
     retained = len(dossier["formula_patterns"]) + len(dossier["value_samples"])
@@ -237,8 +238,12 @@ def test_task_history_is_small_and_full_steps_remain_downloadable(indexed):
 def test_index_disk_quota_is_independent_of_compressed_upload_limit(tmp_path):
     book = Workbook(write_only=True)
     sheet = book.create_sheet()
-    for row in range(10000):
-        sheet.append([row, row + 1, row + 2])
+    # Formulas stay one record per cell in the index; literal values would
+    # fit in a few hundred kilobytes of grid (index schema 5). 6,000 formulas
+    # give an index of about 8.5 MiB, twice the size asserted below; 30,000
+    # gave 42 MiB and an import that outlasted `finish` on a CI Windows runner.
+    for row in range(2000):
+        sheet.append([f"={row}+1", f"={row}+2", f"={row}+3"])
     stream = io.BytesIO()
     book.save(stream)
     assert len(stream.getvalue()) < 1048576
@@ -263,7 +268,7 @@ def test_index_disk_quota_is_independent_of_compressed_upload_limit(tmp_path):
         assert code == 200
         task = finish(app.store, imported["task"]["id"])
         root = app.store.project_path(task["owner"], task["projectId"])
-        assert (root / "index.sqlite").stat().st_size > 4 * 1048576
+        assert (root / INDEX_FILENAME).stat().st_size > 4 * 1048576
     finally:
         app.close()
 

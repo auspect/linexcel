@@ -6,7 +6,17 @@ import ctypes
 import errno
 import os
 import sys
+import time
 from pathlib import Path
+
+
+def wall_clock() -> float:
+    """The wall-clock time a coordinator gives a worker as its task's start.
+
+    Both processes read the same clock: the worker ends its own work before
+    the coordinator's limit, counted from that start, expires.
+    """
+    return time.time()
 
 
 def worker_command(module: str, root: Path, memory_mb: int) -> list[str]:

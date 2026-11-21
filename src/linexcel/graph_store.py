@@ -15,7 +15,7 @@ from pathlib import Path
 
 from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter
 
-from linexcel.lazy_store import WorkbookIndex, _array_edge_filter, _edge_count
+from linexcel.lazy_store import WorkbookIndex, _edge_count
 
 VERSION = 6
 FANOUT = 32
@@ -133,11 +133,9 @@ def build_graph(index: Path, output: Path) -> dict:
         # workbook graph into the coordinator or browser. Keep the derived
         # table on disk even for hundreds of thousands of unique patterns.
         db.execute("ATTACH DATABASE ? AS original", (_attach_path(index),))
-        db.executescript("""
+        db.executescript(f"""
             CREATE TABLE pattern_counts AS
-            SELECT coalesce(sheet,'') sheet,coalesce(pattern_id,'') pattern_id,
-                   count(*) size
-            FROM original.nodes GROUP BY coalesce(sheet,''),coalesce(pattern_id,'');
+            {source.attached_pattern_sizes_sql("original")};
             CREATE UNIQUE INDEX pattern_counts_key
             ON pattern_counts(sheet,pattern_id);
         """)
@@ -212,10 +210,7 @@ def build_graph(index: Path, output: Path) -> dict:
             patterns.append(item)
             leaves.clear()
 
-        for seq, nid, kind, sheet, pattern in source.db.execute(
-            "SELECT seq,id,kind,coalesce(sheet,''),coalesce(pattern_id,'') "
-            "FROM nodes ORDER BY sheet,coalesce(pattern_id,''),seq"
-        ):
+        for seq, nid, kind, sheet, pattern in source.nodes_by_sheet_and_pattern():
             if sheet != current_sheet:
                 flush_sheet()
                 current_sheet = sheet
@@ -250,10 +245,9 @@ def build_graph(index: Path, output: Path) -> dict:
             CREATE TABLE raw_edges(source INTEGER,target INTEGER);
         """)
         db.execute(f"""
-            INSERT INTO raw_edges SELECT a.id,b.id FROM original.edges e
+            INSERT INTO raw_edges SELECT a.id,b.id
+            FROM ({source.attached_edges_sql("original")}) e
             JOIN nodes a ON a.node_id=e.source JOIN nodes b ON b.node_id=e.target
-            JOIN original.nodes t ON t.id=e.target
-            WHERE {_array_edge_filter(source, schema="original")}
         """)
         edge_count = db.execute("SELECT count(*) FROM raw_edges").fetchone()[0]
         if edge_count != _edge_count(source):
@@ -294,7 +288,8 @@ def read_view(
     path: Path, stamp: str, *, view=0, node_id=None, sheet=None, index_path=None
 ) -> dict:
     """Indexed, bounded reads only; never aggregate the workbook in HTTP."""
-    with WorkbookIndex(path) as store:
+    # The hierarchy database, opened read-only like an index.
+    with WorkbookIndex(path, check_schema=False) as store:
         db = store.db
         meta = json.loads(db.execute("SELECT data FROM metadata").fetchone()[0])
         if meta["generation"] != stamp or meta["version"] != VERSION:

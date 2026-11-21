@@ -51,6 +51,25 @@ def wait(app, task_id):
     raise TimeoutError(task_id)
 
 
+def wait_for_data(app, project, seconds=120):
+    """Wait until the Data tab's copy is ready, as the interface does.
+
+    The first request starts its preparation in a background task and the
+    data routes answer 409 meanwhile; the project's data state says when the
+    copy is available, or why it is not.
+    """
+    deadline = time.monotonic() + seconds
+    state = None
+    while time.monotonic() < deadline:
+        state = json.loads(request(app, "GET", f"/api/projects/{project}/data"))
+        if state.get("available"):
+            return state
+        if state.get("state") != "building":
+            raise AssertionError(f"Data view preparation did not succeed: {state}")
+        time.sleep(0.1)
+    raise TimeoutError(f"Data view still not ready after {seconds} s: {state}")
+
+
 def main():
     source = Path(__file__).resolve().parents[1] / "src"
     assert not Path(linexcel.__file__).resolve().is_relative_to(source), (
@@ -91,6 +110,7 @@ def main():
             )
             wait(app, imported["task"]["id"])
             project = imported["project"]["id"]
+            wait_for_data(app, project)
             source_rows = json.loads(
                 request(
                     app,

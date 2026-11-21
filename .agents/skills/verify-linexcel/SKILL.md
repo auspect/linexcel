@@ -78,6 +78,28 @@ failure, not a skip.
 The command line and the report need no server, but `launch` is still how a
 run gets its fixtures and evidence directory.
 
+### A published version instead of the working tree
+
+`ctl` starts the server with the interpreter that runs it. To drive a version
+from PyPI, run `control_linexcel.py` with the Python of a virtual environment
+that holds that version and Playwright:
+
+```
+uv venv <dir>
+uv pip install --python <dir> linexcel==<version> playwright
+<dir>/Scripts/python.exe .agents/skills/verify-linexcel/scripts/control_linexcel.py launch --run <run>
+```
+
+The path is `<dir>/bin/python` outside Windows. The `ready:` line prints the
+version that answers: check it.
+
+The environment must outlive the server. `uv run --isolated --with
+linexcel==<version>` deletes its environment when `launch` returns. The
+server keeps answering, and every operation then fails in a tenth of a
+second with exit code 106; the task's `stderr.txt` says
+`failed to locate pyvenv.cfg`. A recipe that only waits for the tasks to end
+does not see it: assert the node count or the task's state.
+
 ## Doctor
 
 ```

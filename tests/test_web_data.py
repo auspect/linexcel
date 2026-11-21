@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 import pytest
 from openpyxl import Workbook
 
-from linexcel.lazy_store import build_index
+from linexcel.lazy_store import INDEX_FILENAME, build_index
 from linexcel.web import _write, create_app
 from linexcel.web_data import MAX_INSTANCES, DataLimitError, build_source_database
 
@@ -44,6 +44,22 @@ def request(app, path, *, user="alice", query="", method="GET"):
     )
     status, headers = status_headers[0]
     return int(status.split()[0]), headers, body
+
+
+def prepare_data(app, project, user="alice", seconds=60):
+    """Open the Data tab and wait for its background copy (batch 2 bis, F18)."""
+    import time
+
+    route = f"{app.config.mount_path}/api/projects/{project}/data"
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        status, _, body = request(app, route, user=user)
+        assert status == 200, body
+        metadata = json.loads(body)
+        if metadata.get("state") != "building":
+            return metadata
+        time.sleep(0.05)
+    pytest.fail("the data view was not prepared")
 
 
 @pytest.fixture
@@ -85,7 +101,8 @@ def data_app(tmp_path):
         path / "project.json",
         {"id": project, "filename": "sources.xlsx", "revision": revision},
     )
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
+    prepare_data(app, project)
     try:
         yield app, project, path
     finally:
@@ -229,7 +246,7 @@ def test_failed_storage_limit_does_not_publish_partial_database(data_app):
     _, _, path = data_app
     output = path / "limited.sqlite"
     with pytest.raises(DataLimitError):
-        build_source_database(path / "index.sqlite", output, max_bytes=1)
+        build_source_database(path / INDEX_FILENAME, output, max_bytes=1)
     assert not output.exists()
     assert not list(Path(path).glob("data-*.building"))
 
@@ -247,10 +264,8 @@ def test_rebuilt_source_invalidates_datasette_and_pages_remain_complete(data_app
     metadata = json.loads((path / "project.json").read_text())
     metadata["revision"] = app.store._revision(path)
     _write(path / "project.json", metadata)
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
-    status, _, body = request(app, prefix + "/data")
-    assert status == 200
-    assert json.loads(body)["sheets"][0]["rowCount"] == 151
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
+    assert prepare_data(app, project)["sheets"][0]["rowCount"] == 151
     rows = []
     query = "_shape=objects&_size=50"
     while True:
@@ -283,11 +298,9 @@ def test_blank_dependency_placeholders_are_not_source_cells(data_app):
     metadata = json.loads((path / "project.json").read_text())
     metadata["revision"] = app.store._revision(path)
     _write(path / "project.json", metadata)
-    build_index(path / "workbook.xlsx", path / "index.sqlite", filename="sources.xlsx")
+    build_index(path / "workbook.xlsx", path / INDEX_FILENAME, filename="sources.xlsx")
     prefix = f"/tools/api/projects/{project}"
-    status, _, body = request(app, prefix + "/data")
-    assert status == 200
-    sheet = json.loads(body)["sheets"][0]
+    sheet = prepare_data(app, project)["sheets"][0]
     assert sheet["rowCount"] == 1 and sheet["cellCount"] == 1
     assert sheet["columns"] == ["A"]
     status, _, body = request(
@@ -355,7 +368,7 @@ def test_real_datasette_eviction_bounds_writers_and_releases_connections(data_ap
         if number:
             path = source_path.with_name(current)
             (path / "references").mkdir(parents=True)
-            for filename in ("workbook.xlsx", "index.sqlite"):
+            for filename in ("workbook.xlsx", INDEX_FILENAME):
                 shutil.copyfile(source_path / filename, path / filename)
             _write(
                 path / "project.json",
@@ -365,6 +378,7 @@ def test_real_datasette_eviction_bounds_writers_and_releases_connections(data_ap
                     "revision": app.store._revision(path),
                 },
             )
+            prepare_data(app, current)
         status, _, body = request(
             app, f"/tools/api/projects/{current}/datasette/source/sheet_001.json"
         )

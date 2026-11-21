@@ -22,9 +22,18 @@ MiB = 1048576
 GiB = 1024 * MiB
 MAX_TASK_SECONDS = 3600
 # Whole-workbook work. AI documentation keeps the long class it shared with
-# imports; the page sends its own AI duration anyway.
+# imports; the page sends its own AI duration anyway. The server starts
+# build_data itself, with its own budget.
 LONG_OPERATIONS = frozenset(
-    {"import", "build_graph", "export_html", "capture", "document", "describe_capture"}
+    {
+        "import",
+        "build_graph",
+        "build_data",
+        "export_html",
+        "capture",
+        "document",
+        "describe_capture",
+    }
 )
 LIMIT_KINDS = frozenset({"timeout", "memory_limit", "storage_limit"})
 
@@ -118,10 +127,15 @@ class TaskDefaults:
     seconds: int = 120
 
     @classmethod
-    def for_server(cls, total_memory_mb: int, max_workers: int) -> TaskDefaults:
+    def for_server(
+        cls,
+        total_memory_mb: int,
+        max_workers: int,
+        long_seconds: int = MAX_TASK_SECONDS,
+    ) -> TaskDefaults:
         """An equal share of the server, in steps of 512 MiB, at least 1 GiB."""
         share = max(1024, total_memory_mb // max_workers // 512 * 512)
-        return cls(memory_mb=min(total_memory_mb, share))
+        return cls(memory_mb=min(total_memory_mb, share), long_seconds=long_seconds)
 
     def seconds_for(self, operation: str) -> int:
         return self.long_seconds if operation in LONG_OPERATIONS else self.seconds
@@ -149,6 +163,39 @@ def upload_limit_message(max_upload_mb: int) -> str:
         "références comprises. Relancez le serveur avec une valeur --max-upload-mb "
         "plus grande."
     )
+
+
+def import_timeout_remedy(seconds: float, previous_index: bool) -> dict:
+    """Error fields of an import stopped at its budget: what remains, what to try.
+
+    The import stops each phase it can within its budget; one that still
+    runs past it (links, VBA, publication) is stopped by the coordinator,
+    which does not know at which step. The larger budget is twice the one
+    used, not an estimate; there is none at the longest duration.
+    """
+    kept = (
+        "l’index précédent reste consultable."
+        if previous_index
+        else "ce classeur n’a pas encore d’index."
+    )
+    suggested = min(2 * seconds, MAX_TASK_SECONDS)
+    if suggested <= seconds:
+        return {
+            "message": f"Import arrêté : le budget de {seconds:g} s, le plus long "
+            "permis, s’est écoulé à une étape inconnue. Aucun nouvel index n’a "
+            f"été publié ; {kept}",
+            "previousIndex": previous_index,
+        }
+    example = "le double" if suggested == 2 * seconds else "le plus long permis"
+    return {
+        "message": f"Import arrêté : le budget de {seconds:g} s s’est écoulé à "
+        f"une étape inconnue. Aucun nouvel index n’a été publié ; {kept} Essayez "
+        f"un budget plus grand, par exemple {example} ({suggested:g} s) : ce "
+        "n’est pas une estimation. Il se règle avec « Opérations longues » dans "
+        "Réglages › Limites par opération.",
+        "previousIndex": previous_index,
+        "suggestedSeconds": suggested,
+    }
 
 
 def gib_text(mib: int) -> str:

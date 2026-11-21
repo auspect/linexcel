@@ -15,7 +15,7 @@ from test_external import EXCEL_TARGETS, _link, alternate_urls_workbook, linked_
 
 from linexcel.catalog import Catalog, CatalogLimits, Source, cell_handle, revision
 from linexcel.catalog_links import list_links, set_pin
-from linexcel.lazy_store import WorkbookIndex, build_index
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, build_index
 
 
 def fixture_source(
@@ -48,7 +48,7 @@ def fixture_source(
         content = output.getvalue()
     path = directory / "workbook.xlsx"
     path.write_bytes(content)
-    index = directory / "index.sqlite"
+    index = directory / INDEX_FILENAME
     build_index(path, index, filename=filename)
     return Source(f"{number:032x}", filename, index)
 
@@ -495,7 +495,7 @@ def install_projects(tmp_path, sources, owner):
         directory = tmp_path / owner / "projects" / source.project_id
         directory.mkdir(parents=True)
         (directory / "references").mkdir()
-        shutil.copyfile(source.path, directory / "index.sqlite")
+        shutil.copyfile(source.path, directory / INDEX_FILENAME)
         shutil.copyfile(
             source.path.parent / "workbook.xlsx", directory / "workbook.xlsx"
         )

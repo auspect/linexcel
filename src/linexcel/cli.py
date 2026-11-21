@@ -15,6 +15,7 @@ from pathlib import Path
 
 from linexcel import __version__
 from linexcel.i18n import LANGUAGES
+from linexcel.web_limits import MAX_TASK_SECONDS
 
 STORAGE_HELP = (
     "Disk quota in MiB for workspaces, pending uploads and task outputs "
@@ -168,6 +169,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=STORAGE_HELP,
+    )
+    serve.add_argument(
+        "--import-seconds",
+        type=int,
+        default=MAX_TASK_SECONDS,
+        help="Default time budget of an import, a graph construction, sheet "
+        f"captures or a report, in seconds, from 1 to {MAX_TASK_SECONDS} "
+        f"(default: {MAX_TASK_SECONDS}). Users can still choose another one in "
+        "the settings of the page.",
     )
     serve.add_argument(
         "--no-local-import",

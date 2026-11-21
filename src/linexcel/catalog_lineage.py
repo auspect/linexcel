@@ -6,6 +6,7 @@ import json
 import sqlite3
 import time
 from collections import deque
+from itertools import islice
 
 from linexcel.catalog import IndexPool, _json, cell_handle, parse_handle, revision
 from linexcel.limits import validate_limits
@@ -245,11 +246,8 @@ class Traversal:
         diagnostic = []
         # Diagnostic is bounded by the node budget, never used for identity.
         for cached in fact["cached"][: self.limit]:
-            row = index.db.execute(
-                "SELECT id FROM nodes WHERE sheet=? AND row=? AND col=?",
-                (sheet, cached["row"], cached["column"]),
-            ).fetchone()
-            current = index[row[0]].get("value") if row else None
+            node_id = index.node_id_at(sheet, cached["row"], cached["column"])
+            current = index[node_id].get("value") if node_id else None
             old = cached["value"]
             agreement = (
                 None
@@ -391,20 +389,10 @@ class Traversal:
                     neighbors.append((raw["arrayAnchor"], "formula"))
             if kind == "range" and raw.get("bounds"):
                 neighbors += [
-                    (row[0], "range")
-                    for row in index.db.execute(
-                        "SELECT id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
-                        "AND col BETWEEN ? AND ? "
-                        "AND kind IN ('cell','input','array_result') "
-                        "ORDER BY row,col LIMIT ?",
-                        (
-                            raw["sheet"],
-                            raw["bounds"][0],
-                            raw["bounds"][2],
-                            raw["bounds"][1],
-                            raw["bounds"][3],
-                            self.limit + 1,
-                        ),
+                    (member, "range")
+                    for member in islice(
+                        index.range_members(raw["sheet"], raw["bounds"]),
+                        self.limit + 1,
                     )
                 ]
                 known = {n for n, _ in neighbors}
@@ -444,12 +432,9 @@ class Traversal:
                                         key, "unsupported_reference", reference=member
                                     )
                 else:
-                    stored = index.db.execute(
-                        "SELECT count(*) FROM nodes WHERE sheet=? "
-                        "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                        "AND kind IN ('cell','input','array_result')",
-                        (extent.sheet, extent.r1, extent.r2, extent.c1, extent.c2),
-                    ).fetchone()[0]
+                    stored = index.count_cells(
+                        extent.sheet, (extent.r1, extent.c1, extent.r2, extent.c2)
+                    )
                     if stored < extent.ncells:
                         # Never enumerate an enormous implicit output rectangle
                         # or certify its unvisited downstream members as complete.

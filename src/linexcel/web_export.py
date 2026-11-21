@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Generator, Iterator
 
-from linexcel.lazy_store import WorkbookIndex, _pattern
+from linexcel.lazy_store import INDEX_FILENAME, WorkbookIndex, _pattern
 
 CHUNK_BYTES = 65536
 _ENCODER = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
@@ -70,10 +70,11 @@ class ProjectExport:
                 self._leased = True
                 self.project = _read(self.path / "project.json")
                 self.tasks = [store.public(t, include_result=False) for t in tasks]
-                index_path = self.path / "index.sqlite"
+                index_path = self.path / INDEX_FILENAME
                 if index_path.is_file():
+                    # A read-only index holds one read transaction for its
+                    # lifetime, so the whole export reads one snapshot.
                     self.index = WorkbookIndex(index_path)
-                    self.index.db.execute("BEGIN")
                     self.meta = self.index.meta
                     self.count = len(self.index)
                 self._iterator = _buffer(self._generate())
@@ -125,11 +126,11 @@ class ProjectExport:
         store = self.index
         yield b'{"lazy":true,"nodes":['
         first = True
-        for row in store.db.execute("SELECT data,pattern_id FROM nodes ORDER BY seq"):
+        for node in store.values(context=True):
             if not first:
                 yield b","
             first = False
-            yield from _json(store._decode(row, context=True))
+            yield from _json(node)
         yield b'],"edges":['
         first = True
         for source, target in store.db.execute(

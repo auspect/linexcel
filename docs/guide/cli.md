@@ -140,6 +140,7 @@ startup. These options replace a limit:
 | `--memory-mb N` | Half of the physical memory in whole GiB, at least 2,048 | Memory in MiB that all running operations may request together. One operation cannot request more. |
 | `--max-storage-mb N` | Space used, plus free space minus a reserve | Disk space in MiB for all workspaces, their indexes and results. The reserve is 10% of the disk and at most 10 GiB. |
 | `--max-upload-mb N` | 256 | Size in MiB of one import, references included. |
+| `--import-seconds N` | 3,600 | Default duration in seconds of an import, a graph construction, sheet captures or a report, from 1 to 3,600. The **Long operations** field of the settings starts at that value. |
 | `--workers N` | 2 | Operations that run at the same time. |
 
 `doctor` accepts `--max-storage-mb` with the same default. For the cost of a
@@ -153,6 +154,117 @@ and rebuilds its index. Prior results remain historical evidence and are not
 reused as current calculations. Keep archives private when their sources are
 private. Older browser-owned projects can be recovered explicitly from the
 local workspace; recovery preserves the original project.
+
+### The disk index
+
+Each project keeps its structural index in `index-v5.sqlite` (index schema 5).
+Formulas, names, ranges and any unusual cell keep one record each. A literal
+value that can be rebuilt exactly is stored as one value in a row of its
+sheet's grid instead of a compressed record with three SQLite indexes on top.
+Reading a cell gives back the same node as before, field by field, with
+one exception: the provenance of a stored value is now its sheet (workbook
+SHA-256, worksheet part, sheet state) plus the value, and the XML spelling of
+the number or the shared-string index (`rawXmlValue`) is no longer kept for
+grid cells. Formula caches and cells kept as records still have it.
+
+Measured on the public corpus (Windows, quiet machine): the index of the DGT
+election table (103 MB of workbook, 18.1 million values, no formula) takes
+92 MB and imports in 569 s; the ONS population tables (50 MB, 11.2 million
+values) 26 MB in 321 s; the generated fpna model (20 MB, 2.5 million values
+and 175,000 formulas) 357 MB in 188 s, of which 230 MB are its formulas.
+Schema 4 needed 10,969 MB, 6,717 MB and 2,022 MB. The Data tab still copies
+every cell into a database of its own: 9,830 MB for DGT and 6,027 MB for ONS,
+prepared in 585 s and 390 s. When the storage quota is smaller than that copy,
+the preparation stops on the quota and the tab says so. The launcher takes its
+default quota from the free disk space, and `--max-storage-mb` sets another
+one. When the preparation completes, the Excel presentation still refuses
+sheets this large (its size limit).
+
+A project imported by an earlier version keeps its old `index.sqlite` on disk,
+unused: the project shows "Index created by an earlier version of linexcel:
+reimport the workbook (the file is kept)" with a reimport button, every view
+that reads the index says the same, and library search leaves the project out.
+Nothing is deleted when the server starts. Launching the reimport deletes the
+old index and the graph and data views built from it, then builds the new
+index from the kept workbook. Archives never contained indexes, so an archive
+made by either version restores and reimports.
+
+An import publishes what it does within its budgets. Its own work ends 5 s
+before the end of the time budget, counted from the server's start of the
+task; those seconds are kept for links, VBA, counts and publication
+(measured on the corpus at 0.07 to 0.40 s after the last phase, 1.2 to 2.2 s
+with the worker's start and exit, the election table included). That end
+grows with the formulas read (about 7 µs a formula: 1.2 s for 150,000
+formulas, 3.3 s for 450,000; 1,000,000 formulas overran 5 s and the task
+timed out; 7.6 s once the margin let it finish), so the margin is 20 µs a
+formula read when that is more than 5 s: 20 s for a million formulas. Reading sheets may use half of the storage left
+when the import starts. Reading stops before a sheet, or after every 10,000
+cells, as soon as the time left no longer covers the predicted analysis of
+the formulas of the sheets already read whole at its fastest: 0.30 ms a
+formula, the fastest rate measured, with no margin. Reading thus stops only
+when that analysis could not fit even at best; a slower analysis is covered
+by the safety net below. With the earlier reserve, 1.25 x 0.65 ms, the
+public energy model (233,410 formulas, analyzed at 0.41 to 0.52 ms) stopped
+reading with 29 to 40 % of its budget unused and whole sheets not imported.
+The formulas of the sheet being read are not counted:
+it is read as long as the sheets before it stay covered, and its formulas
+are then analyzed as far as time allows, the rest marked "not analyzed"
+(below), rather than rolling back a sheet that could be read. A sheet of
+values alone may therefore use most of the budget. The sheet the
+import stops in is rolled back; it and the following sheets are marked "Sheet
+not imported" in Diagnostics, with the reason. A formula reading such a sheet
+is refused: its cells are unknown, never blank. A memory stop still ends the
+import without an index.
+
+The formula analysis that follows checks the deadline before each formula.
+The formulas it does not reach keep the diagnostic "Formula not analyzed":
+their saved values, when the file holds them, are still shown, their sources
+are unknown, and a calculation
+reaching one is refused; formulas analyzed that read only values are
+calculated. Their sheets are published as partial for the time budget, with
+the number of formulas not analyzed. Every formula and defined name carries
+that diagnostic from the moment it is read until it is analyzed, so nothing
+is written at the deadline and every view of the node sees it. Data regions
+are described only for the sheets whose predicted description (1.25 x
+5.5 µs a saved value) ends before the deadline; the others are listed as
+"Data regions skipped: budget", with every value and formula complete. This
+rate, like the final 5 s, stays cautious: a region description cannot be
+stopped once started, and running past the end of the task would publish
+nothing. On the public election table it predicted 125 s for 64 s measured
+and skipped the regions with 73 s left. In a
+partial import, the uses listed for a cell can miss a formula not imported or
+not analyzed; the banner, the node list and the Data tab say that the import
+is partial.
+
+When time cut the import, Diagnostics says what stopped (reading, analysis,
+regions) and proposes a reimport with a budget that counts the whole import:
+the reading time and the formulas and values found, extrapolated from the
+share of worksheet XML read; the analysis of every formula and the regions,
+at the rates measured on this import when it analyzed at least 2,000
+formulas or described at least 10,000 values, else at the cautious rates
+above; links and VBA as measured. The total plus 25 % and the final 5 s,
+and never less than what the reimport's own reading check needs to read
+every sheet (the time before reading, the whole reading and the reserve of
+every formula, plus the final 5 s), is
+rounded up to the minute, at least a minute more than the budget used, at
+most 3600 s. Above that maximum it says so and the published sheets remain
+available. It adds "Uncertain estimate" when less than 20 % of the workbook
+was read or a rate that was not measured weighs more than a quarter of the
+prediction. Each index records its phase times and counts under
+`importTimings`. The default budget of an import, a graph construction,
+sheet captures or a report is 3600 s, the longest duration of an
+operation; `linexcel serve --import-seconds N` sets another default (1 to
+3600), and the **Long operations** field of the settings still lets each
+user choose their own. A proposed budget goes in that field when you accept
+it.
+
+A block of at least 10,000 saved values without formulas becomes a data
+region: one node of kind `data` with its bounds, header names, a type per
+column, a fingerprint and a bounded preview. A range node that reads a region
+lists it under `dataRegions` with the exact sub-range read, and the
+neighbourhood shows the link. Calculation still reads every cell of a range.
+The detection rule and its mixed cases are in
+`docs/reading_resilience_data_node.md`.
 
 The application imports a structural index, then loads node pages and bounded
 neighborhoods as you explore. Selecting a formula cell immediately starts a

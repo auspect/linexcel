@@ -11,7 +11,12 @@ from datetime import UTC, datetime
 from itertools import islice
 from pathlib import Path
 
-from linexcel.lazy_store import WorkbookIndex, file_sha256, graph_neighborhood
+from linexcel.lazy_store import (
+    INDEX_FILENAME,
+    WorkbookIndex,
+    file_sha256,
+    graph_neighborhood,
+)
 
 MAX_TARGETS = 20
 MAX_CAPTURES = 20
@@ -96,8 +101,10 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
         for t in tasks
     ):
         raise APIError(409, "Attendez la fin de l’import avant le rapport")
-    if not (project / "index.sqlite").is_file():
-        raise APIError(409, "Actualisez la structure avant le rapport")
+    if not (project / INDEX_FILENAME).is_file():
+        raise store.missing_index_error(
+            owner, project_id, "Actualisez la structure avant le rapport"
+        )
     completed = sorted(
         (
             t
@@ -150,12 +157,12 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
 
     records = []
     evidence_bytes = 0
-    with WorkbookIndex(project / "index.sqlite") as index:
+    with WorkbookIndex(project / INDEX_FILENAME) as index:
         meta = index.meta
         for node_id in options["nodeIds"]:
             if node_id not in index:
                 raise APIError(404, "Cellule sélectionnée introuvable")
-            neighborhood = graph_neighborhood(project / "index.sqlite", node_id)
+            neighborhood = graph_neighborhood(project / INDEX_FILENAME, node_id)
             nodes = {n["id"]: n for n in neighborhood["nodes"]}
             counts = {}
             for name, column in (("sources", "target"), ("uses", "source")):
@@ -168,12 +175,7 @@ def prepare_report(store, owner: str, project_id: str, options: dict) -> dict:
                 if node.get("kind") != "range" or not node.get("bounds"):
                     continue
                 r1, c1, r2, c2 = node["bounds"]
-                count = index.db.execute(
-                    "SELECT count(*) FROM nodes WHERE sheet=? "
-                    "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input','array_result')",
-                    (node["sheet"], r1, r2, c1, c2),
-                ).fetchone()[0]
+                count = index.count_cells(node["sheet"], node["bounds"])
                 members = [
                     _node(index[member])
                     for member in islice(

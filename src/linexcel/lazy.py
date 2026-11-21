@@ -39,6 +39,13 @@ from linexcel.values import (
 
 _INPUT_ERROR_KINDS = {value: kind for kind, value in ERROR_KIND_TEXT.items()}
 
+#: Rows per ``set_values_batch`` call when range inputs are loaded. In
+#: formualizer 0.14.0 the cost of one call grows faster than its row count
+#: (3.4 µs a cell for 10,000 rows, 53 µs for 250,000); chunks of 1,000 to
+#: 10,000 rows load 500,000 ledger cells in under 2 s instead of 25 s in one
+#: call or 42 s cell by cell (docs/critical_review.md, F19).
+INPUT_CHUNK_ROWS = 10_000
+
 _VOLATILE = {"RAND", "RANDBETWEEN", "RANDARRAY", "NOW", "TODAY"}
 _PATTERN_CELL = r"\$?[A-Za-z]{1,3}\$?[1-9][0-9]*"
 _PATTERN_REFERENCE = re.compile(
@@ -56,6 +63,56 @@ _DYNAMIC = {
     "WEBSERVICE",
     "STOCKHISTORY",
 }
+
+
+def _input_engine_value(node: dict) -> Any:
+    """The engine value of a literal input: its saved value, serials for dates."""
+    value = node.get("cached_comparison_value", node.get("value"))
+    if node.get("sourceDataType") == "e":
+        value = {"type": "Error", "kind": _INPUT_ERROR_KINDS[value]}
+    return value
+
+
+def _load_inputs(engine, inputs, sheet_alias: dict, chunk_rows: int = INPUT_CHUNK_ROWS):
+    """Write selected literal inputs into the engine, in vertical runs.
+
+    ``inputs`` are ordered by sheet, row and column; each has at least its
+    position, saved value and storage type (``selected_input_cells``).
+    Consecutive rows of one
+    column form a run, written with one ``set_values_batch`` call per chunk of
+    at most ``chunk_rows`` rows. A blank input is never written, so it ends a
+    run, and so does any position that is not a selected input: a batch never
+    covers a formula cell or a cell outside the closure.
+    """
+    runs: dict[int, tuple[int, list]] = {}
+    current = None
+
+    def flush(column: int) -> None:
+        start, values = runs.pop(column)
+        if len(values) == 1:
+            engine.set_value(current, start, column, values[0])
+        else:
+            engine.set_values_batch(current, start, column, [[v] for v in values])
+
+    for node in inputs:
+        value = _input_engine_value(node)
+        if value is None:
+            continue
+        sheet = sheet_alias.get(node["sheet"], node["sheet"])
+        if sheet != current:
+            for column in list(runs):
+                flush(column)
+            current = sheet
+        row, column = node["row"], node["column"]
+        run = runs.get(column)
+        if run is not None and run[0] + len(run[1]) == row and len(run[1]) < chunk_rows:
+            run[1].append(value)
+            continue
+        if run is not None:
+            flush(column)
+        runs[column] = (row, [value])
+    for column in list(runs):
+        flush(column)
 
 
 def _json(value: Any) -> Any:
@@ -84,6 +141,73 @@ def _engine_value(value: Any) -> Any:
 
 def _id(sheet: str, coordinate: str) -> str:
     return f"{quote_sheet(sheet)}!{coordinate}"
+
+
+def _may_read_ranges(node: dict) -> bool:
+    """Cheap filter: only multi-cell, named or table dependencies can matter."""
+    for dep in node.get("dependencies", []):
+        if dep.startswith(("name:", "sheet-span:", "unresolved:")):
+            return True
+        if ":" in dep.rsplit("!", 1)[-1] or "#" in dep:
+            return True
+    return "[" in str(node.get("formula") or "")
+
+
+def _refuse_implicit_intersection(result, concerned, observed, make_step):
+    """Refuse instead of presenting a value Excel would not compute (F05).
+
+    Ordinary formulas that read a multi-cell reference where Excel applies
+    implicit intersection are evaluated by the engine with array semantics.
+    Their engine value is kept only when it equals the saved cache; any other
+    outcome (different, no cache, engine limitation) refuses the whole
+    result, so neither the target nor a step shows an unverified value or a
+    "different" verdict. Correcting the semantics awaits Excel confirmation.
+    """
+    uncertain = {
+        nid: reference
+        for nid, reference in concerned.items()
+        if observed.get(nid) != "equal"
+    }
+    if not uncertain:
+        return False
+    for nid, reference in list(uncertain.items())[:20]:
+        result["diagnostics"].append(
+            f"{nid}: Ordinary formula reads {reference} where Excel applies "
+            "implicit intersection; the engine evaluates it as an array. "
+            "Calculation refused until this is confirmed against Excel."
+        )
+        result.setdefault("capabilityDiagnostics", []).append(
+            {
+                "nodeId": nid,
+                "feature": "arrays_and_spills",
+                "code": "implicit_intersection_unsupported",
+                "reference": reference,
+                "message": result["diagnostics"][-1],
+            }
+        )
+    if len(uncertain) > 20:
+        result["omittedDiagnostics"] = (
+            result.get("omittedDiagnostics", 0) + len(uncertain) - 20
+        )
+    # No engine value or verdict survives the refusal, in any step.
+    steps = [make_step(step["nodeId"]) for step in result["steps"]]
+    for step in steps:
+        if step["nodeId"] in uncertain:
+            step["diagnostics"].append(
+                f"Implicit intersection on {uncertain[step['nodeId']]}: not calculated."
+            )
+    result["steps"] = steps
+    coverage = result["coverage"]
+    coverage.update(
+        status="not_evaluated",
+        calculatedFormulaCells=0,
+        calculatedArrayResultCells=0,
+        unavailableFormulaCells=0,
+        unsupportedFormulaCells=0,
+        notEvaluatedFormulaCells=coverage["formulaCells"],
+        implicitIntersectionCells=len(uncertain),
+    )
+    return True
 
 
 def _pattern_signature(
@@ -471,8 +595,9 @@ def _evaluate_index(
     result["dependency_count"] = total_nodes
     # Source inputs stay in the disk set even for million-cell ranges. Check
     # every selected input before starting an engine; an unreadable value must
-    # never silently become a blank or let a partial calculation proceed.
-    for node in nodes.selected_inputs():
+    # never silently become a blank or let a partial calculation proceed. Only
+    # inputs stored as nodes can carry a diagnostic: a grid cell has none.
+    for node in nodes.selected_stored_inputs():
         if node["id"] in closure:
             continue
         for message in node.get("diagnostics", []):
@@ -528,13 +653,7 @@ def _evaluate_index(
             )
             dependencies = members[:200]
             if len(members) > 200:
-                r1, c1, r2, c2 = node["bounds"]
-                count = nodes.db.execute(
-                    "SELECT count(*) FROM nodes WHERE sheet=? "
-                    "AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-                    "AND kind IN ('cell','input','array_result')",
-                    (node["sheet"], r1, r2, c1, c2),
-                ).fetchone()[0]
+                count = nodes.count_cells(node["sheet"], node["bounds"])
                 omitted = count - len(dependencies)
         step = {
             "node_id": nid,
@@ -631,6 +750,7 @@ def _evaluate_index(
 
     from linexcel.engine import _register_legacy_normal_functions, is_too_deep
     from linexcel.excel_compat import register_excel_functions, rewrite_formula
+    from linexcel.implicit_intersection import implicit_intersection_reference
 
     for nid in closure:
         formula = nodes[nid].get("formula")
@@ -730,6 +850,7 @@ def _evaluate_index(
             occupied.add(name)
             engine.add_sheet(name)
             external_sheets[node["sheet"]] = name
+    concerned: dict[str, str] = {}
     for nid in sorted(closure):
         node = nodes[nid]
         if node["kind"] != "cell":
@@ -766,6 +887,12 @@ def _evaluate_index(
             )
 
             evaluation_formula = "=" + "".join(t.value for t in tokens)
+            if not node.get("arrayBounds") and _may_read_ranges(node):
+                # Classified on the expression the engine receives, with
+                # names and table references already resolved.
+                reference = implicit_intersection_reference(evaluation_formula)
+                if reference is not None:
+                    concerned[nid] = reference
             if any(
                 token.type == "FUNC"
                 and token.subtype == "OPEN"
@@ -856,13 +983,7 @@ def _evaluate_index(
                 column,
                 rewrite_formula(evaluation_formula, sheet),
             )
-    for node in nodes.selected_inputs():
-        sheet = external_sheets.get(node["sheet"], node["sheet"])
-        value = node.get("cached_comparison_value", node.get("value"))
-        if node.get("sourceDataType") == "e":
-            value = {"type": "Error", "kind": _INPUT_ERROR_KINDS[value]}
-        if value is not None:
-            engine.set_value(sheet, node["row"], node["column"], value)
+    _load_inputs(engine, nodes.selected_input_cells(), external_sheets)
     array_anchors = [
         nodes[nid] for nid in reversed(topological) if nodes[nid].get("arrayBounds")
     ]
@@ -942,6 +1063,7 @@ def _evaluate_index(
     # evaluation request. In particular, never call evaluate_cell per step:
     # that would recalculate volatile functions and break snapshot coherence.
     presented = {step["nodeId"]: step for step in steps}
+    observed: dict[str, str] = {}
     for nid in [*formula_ids, *array_result_ids]:
         step = presented.get(nid)
         if step is None:
@@ -999,10 +1121,13 @@ def _evaluate_index(
             calculatedProvenance="targeted_recalculation",
         )
         step.update(_cache_comparison(node, raw, calculated, epoch))
+        observed[step["nodeId"]] = step.get("comparison", "unknown")
         if is_formula:
             result["coverage"]["calculatedFormulaCells"] += 1
         else:
             result["coverage"]["calculatedArrayResultCells"] += 1
+    if _refuse_implicit_intersection(result, concerned, observed, make_step):
+        return result
     result["coverage"]["status"] = (
         "complete"
         if result["coverage"]["calculatedFormulaCells"]

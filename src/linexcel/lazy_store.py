@@ -9,6 +9,7 @@ members and worksheet row objects never accumulate in Python memory.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 import os
@@ -20,6 +21,7 @@ import zipfile
 import zlib
 from collections.abc import Mapping
 from dataclasses import replace
+from functools import partial
 from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import quote, unquote
@@ -36,12 +38,44 @@ from openpyxl.utils.datetime import (
     to_excel,
 )
 
+from linexcel.cell_grid import (
+    GRID_COLUMNS,
+    GRID_SCHEMA,
+    GridReader,
+    GridWriter,
+    cell_id,
+    sqlite_real,
+)
 from linexcel.formula_source import cell_source_fields
 from linexcel.refs import a1, parse_ref, quote_sheet, split_sheet_prefix
 from linexcel.structured_refs import formula_tokens
 
-SCHEMA_VERSION = 4
+#: Schema 5 keeps literal input cells in per-sheet grids (``cell_grid``).
+SCHEMA_VERSION = 5
+#: The file name carries the schema: an older linexcel, which does not check
+#: the schema, finds no index and asks for an import instead of reading a
+#: grid index as if its literal cells were blank.
+INDEX_FILENAME = "index-v5.sqlite"
+#: Index files of earlier schemas, left in place until the project is
+#: reimported.
+LEGACY_INDEX_FILENAMES = ("index.sqlite",)
 MAX_PAGE_SIZE = 200
+#: The node kinds that stand for one worksheet cell.
+_CELL_KINDS = "kind IN ('cell','input','array_result')"
+_CELL_KIND_SET = frozenset({"cell", "input", "array_result"})
+_VALUE_TYPES = {
+    "n": "number",
+    "s": "text",
+    "str": "text",
+    "inlineStr": "text",
+    "b": "boolean",
+    "e": "error",
+    "d": "date",
+}
+#: Positions after a sheet's cells: a cell's opaque position in one sheet is
+#: ``row * _COLUMN_SPAN + col``; nodes added after the import come later.
+_COLUMN_SPAN = 16385
+_LATE = 1 << 50
 MAX_NEIGHBORHOOD_DEPTH = 20
 _NODE_KEYS = (
     "id",
@@ -133,6 +167,418 @@ def _unpack(data):
     return node
 
 
+class IndexSchemaError(ValueError):
+    """The index was written by another linexcel version: reimport the workbook."""
+
+    def __init__(self, found):
+        self.found = found
+        super().__init__(
+            f"Index schema {found or 'unknown'} is not {SCHEMA_VERSION}: "
+            "reimport the workbook."
+        )
+
+
+class ImportBudget:
+    """When the import stops reading sheets, within a task's budgets (F21).
+
+    The reader checks it before each sheet and every 10,000 cells. A sheet it
+    stops in is rolled back; that sheet and the following ones are published
+    as not imported, with the reason. ``max_bytes`` bounds the index file
+    while sheets are read.
+
+    ``deadline`` is ``FINAL_SECONDS`` before the end of the task. The
+    import's own work ends earlier still when it read many formulas: the
+    final margin, kept for links, VBA, counts and publication, is
+    ``final_seconds()``, at least ``FINAL_SECONDS`` and growing with the
+    formulas read. The time left must cover the analysis at
+    its fastest (``reserve``, no margin) of the formulas of the sheets read
+    whole: a sheet
+    is not started when it does not, and a sheet being read stops when it no
+    longer does. The formulas of the sheet being read are not counted: it
+    is read while the sheets before it stay protected, and the analysis then
+    covers its formulas as far as time allows, marking the rest not
+    analyzed rather than rolling back a sheet that could be read.
+    """
+
+    #: Share of the storage left at a task's start that reading may use.
+    READ_STORAGE_SHARE = 0.5
+    #: The server's bound on a task's time budget.
+    MAX_SECONDS = 3600
+    #: Margin over predicted or measured phase times in the proposed budget
+    #: and in the decision to describe regions, which nothing interrupts.
+    ESTIMATE_MARGIN = 1.25
+    #: Reading reserve: a lower bound of the analysis time of one formula,
+    #: the fastest rate measured, with no margin. Reading stops only when
+    #: the formulas already read could not be analyzed even at that rate.
+    #: A reserve too cautious protects nothing, since the analysis has a
+    #: safety net, and leaves the budget unused: at 0.81 ms (1.25 x 0.65)
+    #: the energy model stopped reading with 29 to 40 % of its budget left.
+    #: Measured: 0.30 ms on a generated workbook of 150,000 formulas (45.3 s);
+    #: 0.41 to 0.52 ms on the public energy model, 0.46 ms on the generated
+    #: financial model (17 November); 0.27 ms on 1,000 formulas only.
+    READ_RESERVE_FORMULA_SECONDS = 0.30e-3
+    #: Cautious analysis time of one formula, for a proposed budget that
+    #: could not measure the import's own rate: 1.5 times about 0.43 ms.
+    FORMULA_SECONDS = 0.65e-3
+    #: Cautious description time of one saved value, for the decision to
+    #: describe regions and for proposals: 1.5 times about 3.6 µs, measured
+    #: on the public election table (64 s).
+    VALUE_SECONDS = 5.5e-6
+    #: Kept at the end of a task for links, VBA, counts and publication,
+    #: which nothing interrupts: at least this, more for many formulas (see
+    #: ``FINAL_SECONDS_PER_FORMULA``). Measured on the corpus: 0.07 to 0.40 s
+    #: after the last phase, 1.2 to 2.2 s with the worker's start and exit.
+    FINAL_SECONDS = 5.0
+    #: The end of an import grows with its formulas (marking those not
+    #: analyzed, links, the region decision, counts, the graph page): from
+    #: the deadline to the task's end, 1.2 s for 150,000 formulas, 3.3 s for
+    #: 450,000, and past the 5 s for 1,000,000, which timed out (generated
+    #: workbooks, 17 November): about 7.5 µs a formula, 7.6 s for a million
+    #: once the margin let it finish. The final margin keeps more than
+    #: twice that, 20 µs a formula read, when it exceeds ``FINAL_SECONDS``.
+    FINAL_SECONDS_PER_FORMULA = 20e-6
+    #: Fewest formulas analyzed, and saved values described in regions, for
+    #: a proposal to use the rate measured on the import itself.
+    MIN_MEASURED_FORMULAS = 2_000
+    MIN_MEASURED_VALUES = 10_000
+
+    def __init__(
+        self,
+        *,
+        deadline=None,
+        max_bytes=None,
+        clock=None,
+        seconds=None,
+        formula_seconds=None,
+        reserve_seconds=None,
+    ):
+        import time
+
+        self.deadline = deadline
+        self.max_bytes = max_bytes
+        self.clock = clock or time.time
+        #: The task's time budget, from which ``deadline`` was set.
+        self.seconds = seconds
+        self.formula_seconds = (
+            self.FORMULA_SECONDS if formula_seconds is None else formula_seconds
+        )
+        self.reserve_seconds = (
+            self.READ_RESERVE_FORMULA_SECONDS
+            if reserve_seconds is None
+            else reserve_seconds
+        )
+        self.started = self.stopped = self.analysis_stopped = None
+        #: The task's start, from which ``deadline`` counts, when known.
+        self.task_started = None
+        self.final_seconds_per_formula = self.FINAL_SECONDS_PER_FORMULA
+        #: Formulas read so far, set by the reader: the final margin grows
+        #: with them.
+        self.formulas_seen = 0
+
+    def final_margin(self, formulas: float) -> float:
+        """Seconds kept at the end of a task that read ``formulas``."""
+        return max(self.FINAL_SECONDS, self.final_seconds_per_formula * formulas)
+
+    def final_seconds(self) -> float:
+        """The final margin for the formulas read so far."""
+        return self.final_margin(self.formulas_seen)
+
+    def _end(self) -> float | None:
+        """``deadline``, earlier by the final margin beyond ``FINAL_SECONDS``."""
+        if self.deadline is None:
+            return None
+        return self.deadline - (self.final_seconds() - self.FINAL_SECONDS)
+
+    @classmethod
+    def for_task(cls, started_at, seconds, storage_bytes=None):
+        budget = cls(
+            deadline=started_at + seconds - cls.FINAL_SECONDS,
+            max_bytes=None
+            if storage_bytes is None
+            else int(cls.READ_STORAGE_SHARE * storage_bytes),
+            seconds=seconds,
+        )
+        budget.task_started = started_at
+        return budget
+
+    def reserve(self, formulas: int) -> float:
+        """Seconds kept after reading for the analysis of ``formulas``: the
+        analysis at its fastest, so that only an analysis that cannot fit
+        at all stops the reading; the safety net covers a slower one."""
+        return self.reserve_seconds * formulas
+
+    def start_reading(self) -> None:
+        self.started = self.clock()
+
+    def proposal(self, timings: dict) -> dict | None:
+        """The time budget that imports the whole workbook.
+
+        ``timings`` holds this import's phase times and counts
+        (``importTimings``). When reading stopped, its time and the formulas
+        and values it found are extrapolated from the share of worksheet XML
+        read. Analysis and regions use the rates measured on this import
+        when they were measured on enough work (``MIN_MEASURED_FORMULAS``
+        formulas analyzed; regions described), else the cautious rates
+        above. The budget is the predicted time with the margin, plus the
+        final time, and never less than what the reimport's own reading
+        check needs to read every sheet (``readingBound``: the time before
+        reading, the whole reading and the reserve of every formula, plus
+        the final time), rounded up to the minute, at least a minute more than
+        the task's; above the server's bound it says so. ``uncertain`` says
+        that less than 20 % of the workbook was read, or that a rate not
+        measured weighs more than a quarter of the prediction.
+        """
+        total, read = timings["bytesTotal"], timings["bytesRead"]
+        if total <= 0 or read <= 0:
+            return None
+        stopped = timings["readStopped"]
+        if stopped and self.started is not None and self.stopped is not None:
+            reading = self.stopped - self.started
+        else:
+            reading = timings["reading"]
+        scale = total / read if stopped else 1.0
+        formulas = timings["formulasRead"] * scale
+        values = timings["valuesRead"] * scale
+        analyzed = timings["formulasAnalyzed"]
+        formula_measured = analyzed >= self.MIN_MEASURED_FORMULAS
+        formula_rate = (
+            timings["dependencies"] / analyzed
+            if formula_measured
+            else self.formula_seconds
+        )
+        described = timings["regionValues"]
+        value_measured = described >= self.MIN_MEASURED_VALUES
+        value_rate = (
+            timings["regions"] / described if value_measured else self.VALUE_SECONDS
+        )
+        phases = {
+            "reading": reading * scale,
+            "analysis": formula_rate * formulas,
+            "regions": value_rate * values,
+            "rest": timings["rest"],
+        }
+        predicted = sum(phases.values())
+        final = self.final_margin(formulas)
+        needed = self.ESTIMATE_MARGIN * predicted + final
+        # The reimport must pass its own reading check for the whole
+        # workbook: less the final time, the budget covers the time before
+        # reading, the whole reading and the reserve of every formula.
+        startup = (
+            max(0.0, self.started - self.task_started)
+            if self.started is not None and self.task_started is not None
+            else 0.0
+        )
+        reading_bound = startup + phases["reading"] + self.reserve(formulas) + final
+        seconds = math.ceil(max(needed, reading_bound) / 60) * 60
+        if self.seconds:
+            seconds = max(seconds, math.ceil(self.seconds) + 60)
+        # The smallest share of the work this import measured its rates on.
+        processed = read / total if stopped else 1.0
+        if formulas and not formula_measured:
+            processed = min(processed, analyzed / formulas)
+        uncertain = (
+            read / total < 0.2
+            or (not formula_measured and phases["analysis"] > 0.25 * predicted)
+            or (not value_measured and phases["regions"] > 0.25 * predicted)
+        )
+        return {
+            "readSeconds": round(reading, 1),
+            "bytesRead": read,
+            "bytesTotal": total,
+            "budgetSeconds": self.seconds,
+            "seconds": min(seconds, self.MAX_SECONDS),
+            "beyondMaximum": seconds > self.MAX_SECONDS,
+            "phases": {name: round(value, 1) for name, value in phases.items()},
+            # What the reimport's reading check needs for the whole workbook.
+            "readingBound": round(reading_bound, 1),
+            "formulasAnalyzed": analyzed,
+            "formulasPredicted": round(formulas),
+            "formulaSeconds": formula_rate,
+            "formulaRateMeasured": formula_measured,
+            "valueSeconds": value_rate,
+            "valueRateMeasured": value_measured,
+            "processedShare": round(processed, 4),
+            "uncertain": uncertain,
+        }
+
+    def exhausted(self, index_path, formulas: int = 0) -> str | None:
+        """``"time_budget"``, ``"storage_budget"`` or ``None``.
+
+        ``formulas`` are those of the sheets read whole so far: reading stops
+        when the time left no longer covers their analysis.
+        """
+        end = self._end()
+        if end is not None:
+            now = self.clock()
+            if now + self.reserve(formulas) >= end:
+                if self.stopped is None:
+                    self.stopped = now
+                return "time_budget"
+        if self.max_bytes is not None:
+            size = 0
+            for suffix in ("", "-journal"):
+                try:
+                    size += os.stat(str(index_path) + suffix).st_size
+                except OSError:
+                    pass
+            if size >= self.max_bytes:
+                return "storage_budget"
+        return None
+
+    def analysis_exhausted(self) -> bool:
+        """Whether the dependency analysis must stop: the deadline is past."""
+        end = self._end()
+        if end is None:
+            return False
+        now = self.clock()
+        if now < end:
+            return False
+        if self.analysis_stopped is None:
+            self.analysis_stopped = now
+        return True
+
+    def regions_fit(self, values: int) -> bool:
+        """Whether describing the regions of ``values`` saved values ends,
+        as predicted with the margin, before the deadline.
+
+        Unlike the reading reserve, this stays cautious (``VALUE_SECONDS``
+        and ``ESTIMATE_MARGIN``): a sheet's description cannot be stopped
+        once started, and running past the end of the task publishes
+        nothing. On the election table it predicted 124.6 s for the 64 s
+        measured, and skipped the regions with 73 s left."""
+        end = self._end()
+        if end is None:
+            return True
+        predicted = self.ESTIMATE_MARGIN * self.VALUE_SECONDS * values
+        return self.clock() + predicted < end
+
+
+class _ImportStopError(Exception):
+    def __init__(self, reason, position=0):
+        super().__init__(reason)
+        self.reason = reason
+        #: Bytes of the sheet's XML read when the import stopped.
+        self.position = position
+
+
+_NOT_IMPORTED = {
+    "time_budget": (
+        "Sheet not imported: the import's time budget ran out before it was "
+        "read. Its cells are unknown, never blank; reimport with a larger time "
+        "budget."
+    ),
+    "storage_budget": (
+        "Sheet not imported: the server's storage quota would be exceeded. Its "
+        "cells are unknown, never blank; free storage or raise the quota, then "
+        "reimport."
+    ),
+}
+
+
+#: Written by the reader in every formula and defined-name node, removed by
+#: the dependency analysis from each node it analyses. A node the analysis
+#: did not reach keeps it: every reader of the node sees it, and a
+#: calculation reaching the node is refused.
+NOT_ANALYZED = (
+    "Formula not analyzed within the import's time budget: its sources are "
+    "unknown, so a calculation reading it is refused. Its saved value, when "
+    "the file holds one, is still shown. Reimport with a larger time budget."
+)
+
+
+def _without_not_analyzed(diagnostics):
+    return [d for d in diagnostics if d != NOT_ANALYZED]
+
+
+def _not_analyzed(store, metadata, after):
+    """Mark the sheets whose formulas the analysis did not reach.
+
+    ``after`` is the last ``seq`` analyzed: every formula or name node past
+    it still carries ``NOT_ANALYZED``. Their sheets become ``partial`` for
+    the time budget; values and analyzed formulas are all kept.
+    """
+    counts = dict(
+        store.db.execute(
+            "SELECT sheet,count(*) FROM nodes WHERE kind IN ('cell','name') "
+            "AND seq>? GROUP BY sheet",
+            (after,),
+        ).fetchall()
+    )
+    details = {sheet["name"]: sheet for sheet in metadata["sheetDetails"]}
+    diagnostics = metadata["diagnostics"]
+    for name, count in sorted(counts.items(), key=lambda item: str(item[0])):
+        sheet = details.get(name)
+        if sheet is not None:
+            message = (
+                f"{count} formula(s) not analyzed: the import's time budget ran "
+                "out during the dependency analysis. Their saved values, when "
+                "the file holds them, are still shown; their sources are "
+                "unknown and a calculation reading one "
+                "is refused. The cells they read do not list them among their "
+                "uses."
+            )
+            if sheet["status"] == "complete":
+                sheet["status"] = "partial"
+            sheet.setdefault("reason", "time_budget")
+            sheet["unanalyzedFormulas"] = count
+            sheet["diagnostics"].append(message)
+        else:
+            scope = "defined names" if name is None else name
+            message = (
+                f"{count} formula(s) of {scope} not analyzed: the import's time "
+                "budget ran out during the dependency analysis."
+            )
+        diagnostics.append(
+            {
+                "sheet": name,
+                "code": "formulas_not_analyzed",
+                "reason": "time_budget",
+                "count": count,
+                "message": message,
+            }
+        )
+
+
+def _not_imported(sheet, reason, diagnostics):
+    message = _NOT_IMPORTED[reason]
+    sheet.update(status="not_imported", reason=reason, formulas=0, inputs=0)
+    sheet["diagnostics"].append(message)
+    diagnostics.append(
+        {
+            "sheet": sheet["name"],
+            "code": "not_imported",
+            "reason": reason,
+            "message": message,
+        }
+    )
+
+
+def _ascii_lower(text: str) -> str:
+    # SQLite's LIKE folds ASCII letters only. On ASCII text, str.lower does
+    # the same, faster than translate.
+    return text.lower() if text.isascii() else text.translate(_ASCII_LOWER)
+
+
+_ASCII_LOWER = {c: c + 32 for c in range(65, 91)}
+
+
+#: The characters of a cell address past its sheet prefix, lower-cased.
+_ADDRESS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _like_search(query: str):
+    """``x LIKE '%query%'`` as SQLite evaluates it, for one Python string."""
+    needle = _ascii_lower(query)
+    return lambda text: text is not None and needle in _ascii_lower(text)
+
+
+def _numeric_search_value(text: str) -> bool:
+    # search_value GLOB '*[0-9]*' AND NOT GLOB '*[^0-9.eE+-]*'
+    return any(c.isdigit() and c.isascii() for c in text) and all(
+        c in "0123456789.eE+-" for c in text
+    )
+
+
 def _unknown_array_owner(node, *, persisted=False):
     # Keep the saved scalar/provenance, while refusing any chosen array owner.
     # Persist as an array result so source-cell readers still retain the value.
@@ -209,7 +655,7 @@ def _stream_elements(archive, member: str, tag: str):
 class WorkbookIndex(Mapping):
     """A read-through node mapping; iteration streams rows, never a workbook."""
 
-    def __init__(self, path: Path, *, writable=False):
+    def __init__(self, path: Path, *, writable=False, check_schema=True, use_grid=True):
         self.path = Path(path)
         uri_path = str(Path(path).resolve())
         if os.name == "nt":
@@ -230,7 +676,31 @@ class WorkbookIndex(Mapping):
         )
         self.db.execute("PRAGMA cache_size=-8192")
         self.db.execute("PRAGMA temp_store=FILE")
+        if not writable:
+            # One read transaction for the reader's lifetime: every statement
+            # reads the same snapshot, and the file lock is taken once. In
+            # autocommit each SELECT takes and releases it, about 270 µs a
+            # lookup on Windows against 8 µs here (critical review F24).
+            self.db.execute("BEGIN")
+        if not writable and check_schema:
+            try:
+                found = self.db.execute(
+                    "SELECT value FROM metadata WHERE key='schemaVersion'"
+                ).fetchone()
+            except sqlite3.DatabaseError:
+                found = None
+            if found is None or found[0] != str(SCHEMA_VERSION):
+                self.db.close()
+                raise IndexSchemaError(found[0] if found else None)
         self._meta: dict[str, Any] | None = None
+        self._writer: GridWriter | None = None
+        self._grid: GridReader | None = None
+        self._layout: tuple[int, list[str]] | None = None
+        self._selected_rects: dict[str, list[tuple[int, int, int, int]]] = {}
+        #: False keeps every cell a node, as the temporary index of a supplied
+        #: external workbook does: its cells are copied as nodes, with their
+        #: XML spelling.
+        self.use_grid = use_grid
 
     def __enter__(self):
         return self
@@ -254,8 +724,8 @@ class WorkbookIndex(Mapping):
                     "AND kind IN ('input','cell','array_result') LIMIT 1",
                     (s, r, c),
                 ).fetchone()
-                if hit:
-                    node = _unpack(hit[0])
+                node = _unpack(hit[0]) if hit else self.grid.get(s, r, c)
+                if node:
                     if node["kind"] == "array_result":
                         return NON_TEXT_CELL
                     if not node.get("formula") and node.get("sourceDataType") in {
@@ -311,25 +781,232 @@ class WorkbookIndex(Mapping):
             self._meta = json.loads(row[0]) if row else {}
         return self._meta
 
+    # Grid cells (index schema 5). A literal input cell is either a node or a
+    # grid cell, never both; every read below merges the two.
+
+    @property
+    def grid(self) -> GridReader:
+        if self._grid is None:
+            self._grid = GridReader(
+                self.db, self._metadata_value("gridEpoch1904") == "1"
+            )
+        return self._grid
+
+    def _metadata_value(self, key):
+        row = self.db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def _grid_cell(self, key):
+        """``(sheet, row, col, raw)`` when ``key`` is a grid cell's id."""
+        located = self.grid.locate(key)
+        if located is None:
+            return None
+        raw = self.grid.raw(*located)
+        return None if raw is None else (*located, raw)
+
+    def _layout_info(self):
+        """``(last seq stored by the import's reader, sheets in reading order)``."""
+        if self._layout is None:
+            end = self._metadata_value("gridImportEnd")
+            order = json.loads(self._metadata_value("gridSheetOrder") or "[]")
+            if end is None:
+                end = self.db.execute("SELECT max(seq) FROM nodes").fetchone()[0]
+            end = int(end or 0)
+            known = set(order)
+            for (sheet,) in self.db.execute(
+                f"SELECT DISTINCT sheet FROM nodes WHERE {_CELL_KINDS} AND seq<=? "
+                "AND sheet IS NOT NULL",
+                (end,),
+            ):
+                if sheet not in known:
+                    order.append(sheet)
+                    known.add(sheet)
+            for sheet in self.grid.sheets:
+                if sheet not in known:
+                    order.append(sheet)
+                    known.add(sheet)
+            self._layout = end, order
+        return self._layout
+
+    def _import_order(
+        self, *, data=False, sheet=None, where="", args=(), grid=True, accept=None
+    ):
+        """Every node and grid cell in import order.
+
+        Yields ``("node", row)``, ``row`` being ``(seq, id, kind, sheet, row,
+        col[, data, pattern_id])``, or ``("grid", sheet, row, col, raw)``. The
+        order is the import's: what the reader stored before the sheets
+        (defined names), each sheet's cells row by row, then the nodes added
+        afterwards (ranges, referenced blanks, external and VBA nodes). For
+        worksheet XML that lists its cells in row order, as Excel writes it,
+        this is the order the nodes were stored in. ``where``/``args`` filter
+        node rows in SQL; ``grid`` says whether grid cells can match at all,
+        and ``accept(sheet, row, col, raw)`` filters them.
+        """
+        columns = "seq,id,kind,sheet,row,col" + (",data,pattern_id" if data else "")
+        end, order = self._layout_info()
+        by_sheet, sheet_args = ("AND sheet IS ? ", (sheet,)) if sheet else ("", ())
+        extra = f"AND ({where}) " if where else ""
+        for row in self.db.execute(
+            f"SELECT {columns} FROM nodes WHERE seq<=? AND NOT {_CELL_KINDS} "
+            f"{by_sheet}{extra}ORDER BY seq",
+            (end, *sheet_args, *args),
+        ):
+            yield "node", row
+        for name in order:
+            if sheet and name != sheet:
+                continue
+            nodes = (
+                (row[4] or 0, row[5] or 0, 0, row)
+                for row in self.db.execute(
+                    f"SELECT {columns} FROM nodes WHERE sheet=? AND seq<=? "
+                    f"AND {_CELL_KINDS} {extra}ORDER BY row,col,seq",
+                    (name, end, *args),
+                )
+            )
+            if not grid or name not in self.grid.sheets:
+                for *_, row in nodes:
+                    yield "node", row
+                continue
+            cells = (
+                (r, c, 1, (name, r, c, raw))
+                for r, c, *raw in self.grid.scan(name)
+                if accept is None or accept(name, r, c, raw)
+            )
+            for *_, source, item in heapq.merge(nodes, cells, key=_merge_key):
+                if source:
+                    yield "grid", *item
+                else:
+                    yield "node", item
+        for row in self.db.execute(
+            f"SELECT {columns} FROM nodes WHERE seq>? {by_sheet}{extra}ORDER BY seq",
+            (end, *sheet_args, *args),
+        ):
+            yield "node", row
+
+    def _search(self, *, sheet, where, args, accept, wanted):
+        """A search's first ``wanted`` items and its grid matches, in one pass.
+
+        The items are those ``_import_order`` gives, in its order, as
+        ``("node", row)`` without data or ``("grid", (sheet, row, col, raw))``.
+        Once ``wanted`` are kept, the rest of each grid is only counted: no
+        more node rows are read or merged.
+        """
+        columns = "seq,id,kind,sheet,row,col"
+        end, order = self._layout_info()
+        by_sheet, sheet_args = ("AND sheet IS ? ", (sheet,)) if sheet else ("", ())
+        extra = f"AND ({where}) " if where else ""
+        found: list[tuple] = []
+        matched = 0
+        keeping = True
+
+        def matching(name):
+            # Counts each grid cell that matches as the scan reaches it, and
+            # yields it only while the page still needs items.
+            nonlocal matched
+            for r, c, *raw in self.grid.scan(name):
+                if accept(name, r, c, raw):
+                    matched += 1
+                    if keeping:
+                        yield r, c, 1, (name, r, c, raw)
+
+        for row in self.db.execute(
+            f"SELECT {columns} FROM nodes WHERE seq<=? AND NOT {_CELL_KINDS} "
+            f"{by_sheet}{extra}ORDER BY seq",
+            (end, *sheet_args, *args),
+        ):
+            if len(found) >= wanted:
+                break
+            found.append(("node", row))
+        for name in order:
+            if sheet and name != sheet:
+                continue
+            cells = matching(name)
+            if len(found) < wanted:
+                nodes = (
+                    (row[4] or 0, row[5] or 0, 0, row)
+                    for row in self.db.execute(
+                        f"SELECT {columns} FROM nodes WHERE sheet=? AND seq<=? "
+                        f"AND {_CELL_KINDS} {extra}ORDER BY row,col,seq",
+                        (name, end, *args),
+                    )
+                )
+                # heapq.merge ends with ``yield from`` the last iterator left:
+                # leaving the merge would close ``cells`` with it. An iterator
+                # without ``close`` keeps the scan open for counting.
+                kept = iter(cells.__next__, None)
+                for *_, source, item in heapq.merge(nodes, kept, key=_merge_key):
+                    found.append(("grid" if source else "node", item))
+                    if len(found) >= wanted:
+                        break
+            keeping = len(found) < wanted
+            for _ in cells:  # the rest of the sheet: counted, not kept
+                pass
+        if len(found) < wanted:
+            for row in self.db.execute(
+                f"SELECT {columns} FROM nodes WHERE seq>? {by_sheet}{extra}"
+                "ORDER BY seq",
+                (end, *sheet_args, *args),
+            ):
+                if len(found) >= wanted:
+                    break
+                found.append(("node", row))
+        return found, matched
+
+    def _sheet_merge(self, sheet, bounds, node_sql, node_args, *, accept=None):
+        """One sheet's node rows and grid cells, by row and column.
+
+        ``node_sql`` selects ``row, col`` first and orders by them. Yields
+        ``(row, col, node_row, None)`` or ``(row, col, None, raw)``.
+        """
+        nodes = (
+            (r[0] or 0, r[1] or 0, 0, r, None)
+            for r in self.db.execute(node_sql, node_args)
+        )
+        if sheet not in self.grid.sheets:
+            for row, col, _, record, _ in nodes:
+                yield row, col, record, None
+            return
+        cells = (
+            (r, c, 1, None, raw)
+            for r, c, *raw in self.grid.scan(sheet, bounds)
+            if accept is None or accept(r, c)
+        )
+        for row, col, _, record, raw in heapq.merge(nodes, cells, key=_merge_key):
+            yield row, col, record, raw
+
+    def _grid_node(self, sheet, row, col, raw):
+        return self.grid.node(sheet, row, col, *raw)
+
     def __len__(self):
-        return self.db.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        return (
+            self.db.execute("SELECT count(*) FROM nodes").fetchone()[0]
+            + self.grid.total
+        )
 
     def __iter__(self):
-        return (row[0] for row in self.db.execute("SELECT id FROM nodes ORDER BY seq"))
+        for source, *item in self._import_order():
+            yield item[0][1] if source == "node" else cell_id(*item[:3])
 
     def __contains__(self, key):
         return (
             self.db.execute("SELECT 1 FROM nodes WHERE id=?", (key,)).fetchone()
             is not None
+            or self._grid_cell(key) is not None
         )
 
     def __getitem__(self, key):
         row = self.db.execute(
             "SELECT data,pattern_id FROM nodes WHERE id=?", (key,)
         ).fetchone()
-        if row is None:
+        if row is not None:
+            return self._decode(row)
+        found = self._grid_cell(key)
+        if found is None:
             raise KeyError(key)
-        return self._decode(row)
+        return self._finish(self._grid_node(*found), None)
 
     def array_anchors(self, sheet, bounds, *, limit):
         """Bounded array-group provenance, without enumerating output cells."""
@@ -391,16 +1068,19 @@ class WorkbookIndex(Mapping):
         return node
 
     def _decode(self, row, *, context=False):
-        node = self.resolve_array_ownership(_unpack(row[0]))
+        return self._finish(_unpack(row[0]), row[1], context=context)
+
+    def _finish(self, node, pattern_id, *, context=False):
+        node = self.resolve_array_ownership(node)
         node["label"] = (
             node.get("name") or node.get("cell") or node.get("reference") or node["id"]
         )
         node["cachedValue"] = node.get("cached_value")
         node["valueSource"] = node.get("provenance", "unknown")
-        if row[1]:
-            node["patternId"] = row[1]
+        if pattern_id:
+            node["patternId"] = pattern_id
             count = self.db.execute(
-                "SELECT member_count FROM patterns WHERE id=?", (row[1],)
+                "SELECT member_count FROM patterns WHERE id=?", (pattern_id,)
             ).fetchone()
             if count:
                 node["patternMemberCount"] = count[0]
@@ -431,15 +1111,91 @@ class WorkbookIndex(Mapping):
                 pass  # The import diagnostics already describe the failure.
         return node
 
-    def values(self):
-        for row in self.db.execute("SELECT data,pattern_id FROM nodes ORDER BY seq"):
-            yield self._decode(row)
+    def values(self, *, context=False):
+        """Every node in import order; ``context`` adds labels and tokens."""
+        for source, *item in self._import_order(data=True):
+            if source == "node":
+                yield self._decode(item[0][6:], context=context)
+            else:
+                yield self._finish(self._grid_node(*item), None, context=context)
 
     def items(self):
         for node in self.values():
             yield node["id"], node
 
+    # Import -------------------------------------------------------------
+
+    def begin_grid(self, *, epoch1904):
+        """Keep the literal cells the reader stores next in per-sheet grids."""
+        if not self.use_grid:
+            return
+        self._writer = GridWriter(self.db, epoch1904=epoch1904, demote=self._store)
+        self.db.execute(
+            "INSERT OR REPLACE INTO metadata VALUES ('gridEpoch1904',?)",
+            ("1" if epoch1904 else "0",),
+        )
+
+    def note_array(self, sheet, r1, c1, r2, c2):
+        """A declared array or data table, whose cells are never grid cells."""
+        if self._writer is not None:
+            self._writer.note_array(sheet, r1, c1, r2, c2)
+
+    def discard_grid_sheet(self, sheet):
+        """Forget the grid cells of a sheet the import did not finish."""
+        if self._writer is not None:
+            self._writer.discard(sheet)
+
+    def finish_grid(self):
+        """Write the grids and record where the reader's nodes end."""
+        writer, self._writer = self._writer, None
+        if writer is None:
+            return
+        writer.close()
+        end = self.db.execute("SELECT coalesce(max(seq),0) FROM nodes").fetchone()[0]
+        self.db.executemany(
+            "INSERT OR REPLACE INTO metadata VALUES (?,?)",
+            [("gridImportEnd", str(end)), ("gridSheetOrder", json.dumps(writer.order))],
+        )
+        self._grid = None
+        self._layout = None
+
     def put(self, node, *, only_if_absent=False):
+        writer = self._writer
+        if writer is not None:
+            if not only_if_absent and writer.offer(node):
+                return
+        elif (
+            node.get("kind") in {"input", "array_result"}
+            and node.get("sheet") in self.grid.sheets
+            and type(node.get("row")) is int
+            and type(node.get("column")) is int
+        ):
+            sheet, row, col = node["sheet"], node["row"], node["column"]
+            raw = self.grid.raw(sheet, row, col)
+            if raw is not None:
+                if only_if_absent:
+                    return
+                self._demote_grid_cell(sheet, row, col, raw)
+        self._store(node, only_if_absent=only_if_absent)
+
+    def _demote_grid_cell(self, sheet, row, col, raw):
+        """Turn a grid cell into a node, before a later writer replaces it."""
+        node = self._grid_node(sheet, row, col, raw)
+        info = self.grid.sheets[sheet]
+        if col > GRID_COLUMNS:
+            self.db.execute(
+                "DELETE FROM grid_wide WHERE sheet_no=? AND row=? AND col=?",
+                (info.no, row, col),
+            )
+        else:
+            self.db.execute(
+                f'UPDATE "{info.table}" SET c{col}=NULL WHERE row=?', (row,)
+            )
+        self.db.execute("UPDATE grid_sheets SET cells=cells-1 WHERE no=?", (info.no,))
+        info.cells -= 1
+        self._store(node)
+
+    def _store(self, node, *, only_if_absent=False):
         sql = "INSERT OR IGNORE" if only_if_absent else "INSERT"
         suffix = (
             ""
@@ -471,6 +1227,17 @@ class WorkbookIndex(Mapping):
 
     def range_members(self, sheet, bounds, *, kind=None):
         r1, c1, r2, c2 = bounds
+        if kind in {None, "input"}:
+            clause = "kind='input'" if kind else _CELL_KINDS
+            for row, col, record, _ in self._sheet_merge(
+                sheet,
+                (r1, c1, r2, c2),
+                "SELECT row,col,id FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+                f"AND col BETWEEN ? AND ? AND {clause} ORDER BY row,col",
+                (sheet, r1, r2, c1, c2),
+            ):
+                yield record[2] if record else cell_id(sheet, row, col)
+            return
         clause = (
             "kind IN ('cell','array_result')"
             if kind == "calculated"
@@ -488,42 +1255,659 @@ class WorkbookIndex(Mapping):
         ):
             yield row[0]
 
+    # Reads for other modules. Callers outside this module never query the
+    # ``nodes`` table themselves, so how cells are stored can change here alone.
+
+    def cell_ids(self):
+        """Every cell (formula, literal, array member) id, in import order."""
+        for source, *item in self._import_order(where=_CELL_KINDS):
+            yield item[0][1] if source == "node" else cell_id(*item[:3])
+
+    def sheet_cell_ids(self, sheet):
+        """The cell ids of one sheet, row by row."""
+        for row, col, record, _ in self._sheet_merge(
+            sheet,
+            None,
+            f"SELECT row,col,id FROM nodes WHERE sheet=? AND {_CELL_KINDS} "
+            "ORDER BY row,col",
+            (sheet,),
+        ):
+            yield record[2] if record else cell_id(sheet, row, col)
+
+    def node_id_at(self, sheet, row, col):
+        """The id of a node stored at one position, or ``None``."""
+        hit = self.db.execute(
+            "SELECT id FROM nodes WHERE sheet=? AND row=? AND col=?",
+            (sheet, row, col),
+        ).fetchone()
+        if hit:
+            return hit[0]
+        if self.grid.raw(sheet, row, col) is not None:
+            return cell_id(sheet, row, col)
+        return None
+
+    def count_cells(self, sheet, bounds):
+        """How many cells are stored in a rectangle ``(r1, c1, r2, c2)``."""
+        r1, c1, r2, c2 = bounds
+        return self.db.execute(
+            f"SELECT count(*) FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS}",
+            (sheet, r1, r2, c1, c2),
+        ).fetchone()[0] + self.grid.count(sheet, (r1, c1, r2, c2))
+
+    def sheet_cells_after(self, sheet, after, limit):
+        """``(position, id, row, col, decode)`` of one sheet's cells.
+
+        In import order, from just after the opaque ``position`` a previous
+        record gave (0 to start), at most ``limit`` records. ``decode()``
+        returns the stored node.
+        """
+        end, _ = self._layout_info()
+        produced = 0
+        if after < _LATE:
+            top, left = divmod(after, _COLUMN_SPAN)
+            for row, col, record, raw in self._sheet_merge(
+                sheet,
+                (max(top, 1), 1, 1 << 31, 1 << 31),
+                "SELECT row,col,id,data FROM nodes WHERE sheet IS ? AND seq<=? "
+                f"AND {_CELL_KINDS} AND (row>? OR (row=? AND col>?)) "
+                "ORDER BY row,col,seq",
+                (sheet, end, top, top, left),
+                accept=lambda r, c: (r, c) > (top, left),
+            ):
+                if produced >= limit:
+                    return
+                produced += 1
+                position = row * _COLUMN_SPAN + col
+                if record:
+                    yield position, record[2], row, col, partial(_unpack, record[3])
+                else:
+                    yield (
+                        position,
+                        cell_id(sheet, row, col),
+                        row,
+                        col,
+                        partial(self._grid_node, sheet, row, col, raw),
+                    )
+            after = _LATE
+        for seq, node_id, row, col, data in self.db.execute(
+            "SELECT seq,id,row,col,data FROM nodes NOT INDEXED "
+            f"WHERE sheet IS ? AND seq>? AND {_CELL_KINDS} ORDER BY seq LIMIT ?",
+            (sheet, max(end, after - _LATE), limit - produced),
+        ):
+            yield _LATE + seq, node_id, row, col, partial(_unpack, data)
+
+    def row_nodes(self, sheet, row, columns):
+        """``{column: node}`` for the nodes stored in some columns of a row."""
+        found = {
+            col: _unpack(data)
+            for col, data in self.db.execute(
+                "SELECT col,data FROM nodes WHERE sheet IS ? AND row=? "
+                "AND col IN (" + ",".join("?" for _ in columns) + ")",
+                (sheet, row, *columns),
+            )
+        }
+        if sheet in self.grid.sheets:
+            for col in columns:
+                if col not in found:
+                    node = self.grid.get(sheet, row, col)
+                    if node is not None:
+                        found[col] = node
+        return found
+
+    def numeric_value_ids(self, ranges, limit):
+        """Ids of cells whose saved value is a number in one of ``ranges``.
+
+        ``ranges`` are ``(low, high)`` pairs. Only values spelled with digits
+        and number punctuation count: a text such as "12 rue" casts to 12 and
+        must not be read as a number. Import order, at most ``limit`` ids.
+        """
+        clause = " OR ".join(
+            "CAST(search_value AS REAL) BETWEEN ? AND ?" for _ in ranges
+        )
+        formats = self.grid.formats
+
+        def accept(_sheet, _row, _col, raw):
+            # The text form a node's search_value would hold, filtered as the
+            # SQL above filters it: str(value), never a date's ISO text.
+            value, fmt, _ = raw
+            kind, _, date_kind, _ = formats[fmt]
+            if kind == "b" or date_kind:
+                return False
+            if kind == "n":
+                number = float(value)
+            elif _numeric_search_value(value):
+                number = sqlite_real(value)
+            else:
+                return False
+            return any(low <= number <= high for low, high in ranges)
+
+        ids = []
+        if limit <= 0:
+            return ids
+        for source, *item in self._import_order(
+            where=f"{_CELL_KINDS} AND search_value GLOB '*[0-9]*' "
+            "AND search_value NOT GLOB '*[^0-9.eE+-]*' "
+            f"AND ({clause})",
+            args=[bound for pair in ranges for bound in pair],
+            accept=accept,
+        ):
+            ids.append(item[0][1] if source == "node" else cell_id(*item[:3]))
+            if len(ids) >= limit:
+                break
+        return ids
+
+    def nodes_by_sheet_and_pattern(self):
+        """``(position, id, kind, sheet, pattern)`` of every node.
+
+        Grouped by sheet, then by formula pattern (``''`` for none, and for
+        a node without a sheet), in import order inside each group. A
+        position is a unique integer; a grid cell's is negative.
+        """
+        sheets = {
+            sheet for (sheet,) in self.db.execute("SELECT DISTINCT sheet FROM nodes")
+        }
+        for name in sorted(sheets | set(self.grid.sheets), key=lambda n: n or ""):
+            yield from self._unpatterned(name)
+            yield from self.db.execute(
+                "SELECT seq,id,kind,coalesce(sheet,''),pattern_id FROM nodes "
+                "WHERE sheet IS ? AND pattern_id IS NOT NULL ORDER BY pattern_id,seq",
+                (name,),
+            )
+
+    def _unpatterned(self, sheet):
+        """Nodes of one sheet without a formula pattern, and its grid cells."""
+        info = self.grid.sheets.get(sheet)
+        if info is None:
+            yield from self.db.execute(
+                "SELECT seq,id,kind,coalesce(sheet,''),'' FROM nodes "
+                "WHERE sheet IS ? AND pattern_id IS NULL ORDER BY seq",
+                (sheet,),
+            )
+            return
+        end, _ = self._layout_info()
+        yield from self.db.execute(
+            "SELECT seq,id,kind,sheet,'' FROM nodes WHERE sheet=? AND seq<=? "
+            f"AND pattern_id IS NULL AND NOT {_CELL_KINDS} ORDER BY seq",
+            (sheet, end),
+        )
+        for row, col, record, _ in self._sheet_merge(
+            sheet,
+            None,
+            "SELECT row,col,seq,id,kind FROM nodes WHERE sheet=? AND seq<=? "
+            f"AND pattern_id IS NULL AND {_CELL_KINDS} ORDER BY row,col,seq",
+            (sheet, end),
+        ):
+            if record:
+                yield record[2], record[3], record[4], sheet, ""
+            else:
+                position = -((info.no << 34) | (row << 14) | col)
+                yield position, cell_id(sheet, row, col), "input", sheet, ""
+        yield from self.db.execute(
+            "SELECT seq,id,kind,sheet,'' FROM nodes WHERE sheet=? AND seq>? "
+            "AND pattern_id IS NULL ORDER BY seq",
+            (sheet, end),
+        )
+
+    # A derived database that attaches this index under ``schema`` aggregates
+    # it in SQLite, without moving millions of rows through Python; these
+    # return the SQL that reads the index's own tables for such a query.
+
+    def attached_pattern_sizes_sql(self, schema):
+        """SQL of ``(sheet, pattern_id, size)``, ``''`` for none, per group."""
+        return (
+            "SELECT sheet,pattern_id,sum(size) size FROM ("
+            "SELECT coalesce(sheet,'') sheet,coalesce(pattern_id,'') pattern_id,"
+            f"count(*) size FROM {schema}.nodes "
+            "GROUP BY coalesce(sheet,''),coalesce(pattern_id,'') "
+            f"UNION ALL SELECT name,'',cells FROM {schema}.grid_sheets "
+            "WHERE cells>0) GROUP BY sheet,pattern_id"
+        )
+
+    def attached_edges_sql(self, schema):
+        """SQL of ``(source, target)`` for every edge a lineage view keeps.
+
+        Edges to an array member whose owner was chosen among overlapping
+        declared arrays by an older import are left out
+        (``_array_edge_filter``).
+        """
+        return (
+            f"SELECT e.source source,e.target target FROM {schema}.edges e "
+            f"JOIN {schema}.nodes t ON t.id=e.target "
+            f"WHERE {_array_edge_filter(self, schema=schema)}"
+        )
+
+    def bracketed_formula_nodes(self):
+        """``(id, node)`` of nodes whose formula holds a ``[``, in table order.
+
+        External references (``[1]Sheet!A1``) are among them; structured
+        references are too, so a caller still checks each formula.
+        """
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE formula IS NOT NULL "
+            "AND instr(formula,'[')>0"
+        ):
+            yield node_id, _unpack(data)
+
+    def range_nodes(self):
+        """``(id, node)`` of every range node, in table order."""
+        for node_id, data in self.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range'"
+        ):
+            yield node_id, _unpack(data)
+
+    def sheet_cells(self, sheet):
+        """The stored nodes of one sheet's cells, row by row, as stored.
+
+        Unlike ``self[id]`` the nodes are not resolved for array ownership.
+        """
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            None,
+            f"SELECT row,col,data FROM nodes WHERE sheet=? AND {_CELL_KINDS} "
+            "ORDER BY row,col",
+            (sheet,),
+        ):
+            yield (
+                _unpack(record[2]) if record else self._grid_node(sheet, row, col, raw)
+            )
+
+    def cell_records(self, sheet, *, exclude=(), limit):
+        """``(row, col, decode)`` of one sheet's cells, row by row.
+
+        Cells inside any ``exclude`` rectangle ``(r1, c1, r2, c2)`` are left
+        out; at most ``limit`` records. ``decode()`` returns the stored node.
+        """
+        clauses, args = ["sheet=?", "row IS NOT NULL", "col IS NOT NULL"], [sheet]
+        for r1, c1, r2, c2 in exclude:
+            clauses.append("NOT (row BETWEEN ? AND ? AND col BETWEEN ? AND ?)")
+            args.extend((r1, r2, c1, c2))
+        produced = 0
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            None,
+            "SELECT row,col,data FROM nodes WHERE "
+            + " AND ".join(clauses)
+            + f" AND {_CELL_KINDS} ORDER BY row,col LIMIT ?",
+            (*args, limit),
+            accept=lambda r, c: (
+                not any(r1 <= r <= r2 and c1 <= c <= c2 for r1, c1, r2, c2 in exclude)
+            ),
+        ):
+            if produced >= limit:
+                return
+            produced += 1
+            if record:
+                yield row, col, partial(_unpack, record[2])
+            else:
+                yield row, col, partial(self._grid_node, sheet, row, col, raw)
+
+    def window_records(self, sheet, bounds, max_record_bytes):
+        """The stored records of a rectangle's cells, for a bounded reader.
+
+        Yields each record as stored (zlib-compressed JSON, see ``_pack``) so
+        the caller can bound its inflation before decoding it, which protects
+        against a hostile file. A record over ``max_record_bytes`` is yielded
+        as ``None`` without being read.
+        """
+        r1, c1, r2, c2 = bounds
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            (r1, c1, r2, c2),
+            "SELECT row,col,CASE WHEN length(data)<=? THEN data END "
+            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            f"AND col BETWEEN ? AND ? AND {_CELL_KINDS} ORDER BY row,col",
+            (max_record_bytes, sheet, r1, r2, c1, c2),
+        ):
+            if record:
+                yield record[2]
+            else:
+                # Packed like a stored record, for the same bounded decoder.
+                packed = _pack(self._grid_node(sheet, row, col, raw))
+                yield packed if len(packed) <= max_record_bytes else None
+
+    def node_inventory(self):
+        """``(sheet, kind, count)`` for every sheet (``None`` for names)."""
+        counts = {
+            (sheet, kind): count
+            for sheet, kind, count in self.db.execute(
+                "SELECT sheet,kind,count(*) FROM nodes GROUP BY sheet,kind"
+            )
+        }
+        for name, info in self.grid.sheets.items():
+            if info.cells:
+                counts[name, "input"] = counts.get((name, "input"), 0) + info.cells
+        return sorted(
+            ((sheet, kind, count) for (sheet, kind), count in counts.items()),
+            key=lambda item: (item[0] is not None, item[0] or "", item[1]),
+        )
+
+    def name_records(self):
+        """``(id, sheet, node)`` of every defined name, in import order."""
+        for node_id, sheet, data in self.db.execute(
+            "SELECT id,sheet,data FROM nodes WHERE kind='name' ORDER BY seq"
+        ):
+            yield node_id, sheet, _unpack(data)
+
+    def sheet_records(self, sheet):
+        """``(id, kind, row, col, decode)`` of one sheet's nodes, row by row.
+
+        Names excluded. ``decode()`` returns the stored node; a caller that
+        skips a record never pays for decoding it.
+        """
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            None,
+            "SELECT row,col,id,kind,data FROM nodes WHERE sheet IS ? "
+            "AND kind!='name' ORDER BY row,col,seq",
+            (sheet,),
+        ):
+            if record:
+                yield (
+                    record[2],
+                    record[3],
+                    record[0],
+                    record[1],
+                    partial(_unpack, record[4]),
+                )
+            else:
+                yield (
+                    cell_id(sheet, row, col),
+                    "input",
+                    row,
+                    col,
+                    partial(self._grid_node, sheet, row, col, raw),
+                )
+
+    # Region detection (``data_regions``) reads cells by kind.
+
+    def import_sheets(self):
+        """The sheets the import read cells from, in reading order."""
+        return list(self._layout_info()[1])
+
+    def literal_spans(self, sheet):
+        """``{col: (first row, last row)}`` of the literal cells read at import."""
+        end, _ = self._layout_info()
+        spans = {
+            col: (first, last)
+            for col, first, last in self.db.execute(
+                "SELECT col,min(row),max(row) FROM nodes WHERE sheet=? "
+                "AND kind='input' AND seq<=? AND row IS NOT NULL GROUP BY col",
+                (sheet, end),
+            )
+        }
+        info = self.grid.sheets.get(sheet)
+        if info is not None and info.cells:
+            for col, first, last in self.db.execute(
+                "SELECT col,min(r1),max(r2) FROM grid_runs WHERE sheet_no=? "
+                "GROUP BY col",
+                (info.no,),
+            ):
+                known = spans.get(col)
+                spans[col] = (
+                    (first, last)
+                    if known is None
+                    else (min(first, known[0]), max(last, known[1]))
+                )
+        return spans
+
+    def formula_positions(self, sheet, bounds=None):
+        """``(row, col)`` of formula cells and array results, row by row."""
+        sql = (
+            "SELECT row,col FROM nodes WHERE sheet=? "
+            "AND kind IN ('cell','array_result') AND row IS NOT NULL"
+        )
+        args = [sheet]
+        if bounds is not None:
+            r1, c1, r2, c2 = bounds
+            sql += " AND row BETWEEN ? AND ? AND col BETWEEN ? AND ?"
+            args += [r1, r2, c1, c2]
+        return self.db.execute(sql + " ORDER BY row,col", args).fetchall()
+
+    def literal_values(self, sheet, bounds, *, rows=None):
+        """``(row, col, saved value, type)`` of the literal cells in bounds.
+
+        Row by row; ``type`` is ``number``, ``date``, ``text``, ``boolean``,
+        ``error`` or ``unreadable``. A date gives its serial. ``rows`` stops
+        after that many rows holding values.
+        """
+        r1, c1, r2, c2 = bounds
+        formats = self.grid.formats
+        seen, last = 0, None
+        for row, col, record, raw in self._sheet_merge(
+            sheet,
+            (r1, c1, r2, c2),
+            "SELECT row,col,data FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            "AND col BETWEEN ? AND ? AND kind='input' ORDER BY row,col",
+            (sheet, r1, r2, c1, c2),
+        ):
+            node = _unpack(record[2]) if record else None
+            if node is not None and node.get("provenance") == "saved_blank":
+                continue  # a referenced blank, not a saved value
+            if row != last:
+                seen += 1
+                last = row
+                if rows is not None and seen > rows:
+                    return
+            if node is not None:
+                kind = node.get("sourceDataType")
+                value = node.get("cached_comparison_value", node.get("value"))
+                if node.get("diagnostics"):
+                    label = "unreadable"
+                elif kind == "d" or (
+                    kind == "n"
+                    and node.get("value") != node.get("cached_comparison_value")
+                ):
+                    label = "date"
+                else:
+                    label = _VALUE_TYPES.get(kind, "text")
+                yield row, col, value, label
+            else:
+                value, fmt, _ = raw
+                kind, _, date_kind, _ = formats[fmt]
+                yield (
+                    row,
+                    col,
+                    bool(value) if kind == "b" else value,
+                    "date" if date_kind else _VALUE_TYPES[kind],
+                )
+
     def prepare_input_selection(self):
+        # The selection is keyed by position, so it is read back in sheet order
+        # by walking its own rows. Joining a bare id list to ``nodes`` in that
+        # order made SQLite walk the whole position index instead: 1.6 s per
+        # read for 75 inputs of a 2.7-million-node index (critical review F26).
         self.db.execute(
             "CREATE TEMP TABLE IF NOT EXISTS selected_inputs "
-            "(id TEXT PRIMARY KEY) WITHOUT ROWID"
+            "(sheet TEXT NOT NULL, row INTEGER NOT NULL, col INTEGER NOT NULL, "
+            "id TEXT NOT NULL, PRIMARY KEY (sheet, row, col, id)) WITHOUT ROWID"
         )
         self.db.execute("DELETE FROM selected_inputs")
+        # Grid cells of selected ranges stay rectangles: a range of a million
+        # literals is never copied cell by cell. Rectangles are kept disjoint.
+        self._selected_rects: dict[str, list[tuple[int, int, int, int]]] = {}
 
     def select_input(self, node_id):
-        self.db.execute("INSERT OR IGNORE INTO selected_inputs VALUES (?)", (node_id,))
+        found = self._grid_cell(node_id)
+        if found is not None:
+            self.db.execute(
+                "INSERT OR IGNORE INTO selected_inputs VALUES (?,?,?,?)",
+                (*found[:3], node_id),
+            )
+            return
+        self.db.execute(
+            "INSERT OR IGNORE INTO selected_inputs SELECT coalesce(sheet,''),"
+            "coalesce(row,0),coalesce(col,0),id FROM nodes WHERE id=?",
+            (node_id,),
+        )
 
     def select_range_inputs(self, sheet, bounds):
         r1, c1, r2, c2 = bounds
         self.db.execute(
-            "INSERT OR IGNORE INTO selected_inputs SELECT id FROM nodes "
-            "WHERE sheet=? AND row BETWEEN ? AND ? AND col BETWEEN ? AND ? "
-            "AND kind='input'",
+            "INSERT OR IGNORE INTO selected_inputs SELECT sheet,row,col,id "
+            "FROM nodes WHERE sheet=? AND row BETWEEN ? AND ? "
+            "AND col BETWEEN ? AND ? AND kind='input'",
             (sheet, r1, r2, c1, c2),
         )
+        if sheet in self.grid.sheets:
+            rects = self._selected_rects.setdefault(sheet, [])
+            pieces = [(r1, c1, r2, c2)]
+            for existing in rects:
+                pieces = [
+                    part for piece in pieces for part in _subtract(piece, existing)
+                ]
+            rects.extend(pieces)
+
+    def _selection(self):
+        """``(sheet, row, col, node data | None, raw | None)``, in sheet order.
+
+        Selected nodes and grid cells, each position once, ordered by sheet,
+        row and column like the selection table.
+        """
+        table = (
+            (sheet, row, col, 0, data, node_id)
+            for sheet, row, col, node_id, data in self.db.execute(
+                "SELECT s.sheet,s.row,s.col,s.id,n.data FROM selected_inputs s "
+                "LEFT JOIN nodes n ON n.id=s.id ORDER BY s.sheet,s.row,s.col,s.id"
+            )
+        )
+        ranges = [
+            heapq.merge(
+                *(
+                    _labelled(sheet, self.grid.scan(sheet, rect))
+                    for rect in self._selected_rects[sheet]
+                ),
+                key=_merge_key4,
+            )
+            for sheet in sorted(self._selected_rects)
+        ]
+        previous = None
+        for sheet, row, col, _, data, extra in heapq.merge(
+            table, *ranges, key=_merge_key4
+        ):
+            position = (sheet, row, col)
+            if position == previous and data is None:
+                continue  # a grid cell selected alone and by a range
+            previous = position
+            if data is not None:
+                yield sheet, row, col, data, None
+            elif isinstance(extra, str):
+                found = self._grid_cell(extra)
+                if found is not None:
+                    yield sheet, row, col, None, found[3]
+            else:
+                yield sheet, row, col, None, extra
 
     def selected_inputs(self):
+        """Selected literal inputs as stored nodes, by sheet, row and column."""
+        for sheet, row, col, data, raw in self._selection():
+            yield (
+                _unpack(data)
+                if data is not None
+                else self._grid_node(sheet, row, col, raw)
+            )
+
+    def selected_stored_inputs(self):
+        """The selected inputs stored as nodes; grid cells never have diagnostics."""
         for (data,) in self.db.execute(
-            "SELECT n.data FROM selected_inputs s JOIN nodes n ON n.id=s.id "
-            "ORDER BY n.sheet,n.row,n.col"
+            "SELECT n.data FROM selected_inputs s CROSS JOIN nodes n ON n.id=s.id "
+            "ORDER BY s.sheet,s.row,s.col,s.id"
         ):
             yield _unpack(data)
 
+    def selected_input_cells(self):
+        """What the engine needs of each selected input, in sheet order.
+
+        A stored node as such; for a grid cell only its position, saved
+        value (a date's serial) and storage type, without building a node.
+        """
+        formats = self.grid.formats
+        for sheet, row, col, data, raw in self._selection():
+            if data is not None:
+                yield _unpack(data)
+                continue
+            value, fmt, _ = raw
+            kind = formats[fmt][0]
+            yield {
+                "sheet": sheet,
+                "row": row,
+                "column": col,
+                "cached_comparison_value": bool(value) if kind == "b" else value,
+                "sourceDataType": kind,
+            }
+
     def selected_input_count(self):
-        return self.db.execute("SELECT count(*) FROM selected_inputs").fetchone()[0]
+        total = self.db.execute("SELECT count(*) FROM selected_inputs").fetchone()[0]
+        for sheet, rects in self._selected_rects.items():
+            total += sum(self.grid.count(sheet, rect) for rect in rects)
+            for row, col in self.db.execute(
+                "SELECT row,col FROM selected_inputs s WHERE sheet=? "
+                "AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id=s.id)",
+                (sheet,),
+            ):
+                if any(r1 <= row <= r2 and c1 <= col <= c2 for r1, c1, r2, c2 in rects):
+                    total -= 1
+        return total
 
     def selected_input_sample(self, limit):
-        return [
+        """The first ``limit`` selected input ids in text order."""
+        found = [
             r[0]
             for r in self.db.execute(
                 "SELECT id FROM selected_inputs ORDER BY id LIMIT ?", (limit,)
             )
         ]
+        for sheet, rects in self._selected_rects.items():
+            found.extend(self._first_grid_ids(sheet, rects, limit))
+        return sorted(set(found))[:limit]
+
+    def _first_grid_ids(self, sheet, rects, limit):
+        """The ``limit`` smallest ids, as text, of grid cells in ``rects``.
+
+        Ids of one sheet compare by column letters, then by row digits as
+        text; every id of column ``A`` sorts before any of ``AA``, then ``B``.
+        """
+        from linexcel.refs import num_to_col
+
+        info = self.grid.sheets[sheet]
+        columns = sorted(
+            {
+                c
+                for _, c1, _, c2 in rects
+                for c in self.grid.columns_with_runs(info, c1, c2)
+            },
+            key=num_to_col,
+        )
+        found: list[str] = []
+        for col in columns:
+            if len(found) >= limit:
+                break
+            rows = []
+            for r1, c1, r2, c2 in rects:
+                if not c1 <= col <= c2:
+                    continue
+                if col > GRID_COLUMNS:
+                    rows.extend(
+                        r
+                        for (r,) in self.db.execute(
+                            "SELECT row FROM grid_wide WHERE sheet_no=? AND col=? "
+                            "AND row BETWEEN ? AND ? AND value IS NOT NULL",
+                            (info.no, col, r1, r2),
+                        )
+                    )
+                elif col <= info.width:
+                    rows.extend(
+                        r
+                        for (r,) in self.db.execute(
+                            f'SELECT row FROM "{info.table}" WHERE row BETWEEN ? '
+                            f"AND ? AND c{col} IS NOT NULL",
+                            (r1, r2),
+                        )
+                    )
+            letters = num_to_col(col)
+            for row in heapq.nsmallest(limit - len(found), rows, key=str):
+                found.append(f"{quote_sheet(sheet)}!{letters}{row}")
+        return found
 
     def node(self, node_id):
         row = self.db.execute(
@@ -531,11 +1915,48 @@ class WorkbookIndex(Mapping):
         ).fetchone()
         if row:
             return self._decode(row, context=True)
+        found = self._grid_cell(node_id)
+        if found is not None:
+            return self._finish(self._grid_node(*found), None, context=True)
         member = self.implicit_array_member(node_id)
         return self._decode((_pack(member), None), context=True) if member else None
 
 
+def _merge_key(item):
+    return item[0], item[1], item[2]
+
+
+def _labelled(sheet, cells):
+    """Grid cells of one sheet as selection rows ``(sheet, row, col, 1, ...)``."""
+    for row, col, *raw in cells:
+        yield sheet, row, col, 1, None, raw
+
+
+def _merge_key4(item):
+    return item[0], item[1], item[2], item[3]
+
+
+def _subtract(rect, other):
+    """``rect`` minus ``other``, as at most four disjoint rectangles."""
+    r1, c1, r2, c2 = rect
+    o1, d1, o2, d2 = other
+    if o1 > r2 or o2 < r1 or d1 > c2 or d2 < c1:
+        return [rect]
+    pieces = []
+    if r1 < o1:
+        pieces.append((r1, c1, o1 - 1, c2))
+    if o2 < r2:
+        pieces.append((o2 + 1, c1, r2, c2))
+    top, bottom = max(r1, o1), min(r2, o2)
+    if c1 < d1:
+        pieces.append((top, c1, bottom, d1 - 1))
+    if d2 < c2:
+        pieces.append((top, d2 + 1, bottom, c2))
+    return pieces
+
+
 def _schema(db):
+    db.executescript(GRID_SCHEMA)
     db.executescript("""
         PRAGMA journal_mode=DELETE;
         PRAGMA synchronous=NORMAL;
@@ -570,7 +1991,21 @@ def _schema(db):
     """)
 
 
-def _read_source(path, store):
+def _read_in_transaction(db) -> None:
+    """Commit what the import has read so far and read on inside a transaction.
+
+    Outside a transaction every statement takes and releases the database
+    file lock: about 200 µs a statement on Windows against about 1 µs inside
+    one, as for readers (critical review F24). Grid storage writes literal
+    cells in batches, so nothing else keeps a transaction open between two
+    commits, and the per-cell shared-string lookups would each pay it.
+    """
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN")
+
+
+def _read_source(path, store, budget=None):
     """Index literals and formula text in one forward XML pass per sheet."""
     from linexcel.lazy import _INPUT_ERROR_KINDS, _id, _json, _name_literal
 
@@ -588,6 +2023,7 @@ def _read_source(path, store):
         prop = workbook.find("{*}workbookPr")
         epoch1904 = prop is not None and prop.get("date1904", "0") in {"1", "true"}
         epoch = CALENDAR_MAC_1904 if epoch1904 else CALENDAR_WINDOWS_1900
+        store.begin_grid(epoch1904=epoch1904)
         formats = ["General"]
         style_part = next(
             (
@@ -598,18 +2034,49 @@ def _read_source(path, store):
             "xl/styles.xml",
         )
         if style_part in archive.namelist():
-            root = ET.fromstring(archive.read(style_part))
-            custom = {
-                int(e.attrib["numFmtId"]): e.get("formatCode", "General")
-                for e in root.findall("{*}numFmts/{*}numFmt")
-            }
-            formats = [
-                custom.get(
-                    int(e.get("numFmtId", "0")),
-                    BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+            try:
+                root = ET.fromstring(archive.read(style_part))
+                custom = {
+                    int(e.attrib["numFmtId"]): e.get("formatCode", "General")
+                    for e in root.findall("{*}numFmts/{*}numFmt")
+                }
+                formats = [
+                    custom.get(
+                        int(e.get("numFmtId", "0")),
+                        BUILTIN_FORMATS.get(int(e.get("numFmtId", "0")), "General"),
+                    )
+                    for e in root.findall("{*}cellXfs/{*}xf")
+                ] or ["General"]
+            except (
+                ET.ParseError,
+                ValueError,
+                KeyError,
+                zipfile.BadZipFile,
+                OSError,
+            ) as exc:
+                # Only the default style stays known. A cell with any other
+                # style index keeps an unknown value (see the per-cell check
+                # below) instead of a guessed number, date or duration.
+                formats = ["General"]
+                diagnostics.append(
+                    {
+                        "part": style_part,
+                        "message": "Styles part unreadable: number formats are "
+                        "unknown, so saved values of styled cells are unknown. "
+                        f"{type(exc).__name__}: {exc}",
+                    }
                 )
-                for e in root.findall("{*}cellXfs/{*}xf")
-            ] or ["General"]
+        elif any(v[0].endswith("/styles") for v in rels.values()):
+            # Declared but absent: the same unknown values as an unreadable
+            # part, and the workbook must say so (critical review F17).
+            diagnostics.append(
+                {
+                    "part": style_part,
+                    "message": "Styles part declared by the workbook is missing: "
+                    "number formats are unknown, so saved values of styled cells "
+                    "are unknown.",
+                }
+            )
         # Elapsed-format detection does not strip literals itself. A quoted
         # "[h]" label on a date must not turn its cache into a timedelta.
         format_kinds = [
@@ -624,7 +2091,10 @@ def _read_source(path, store):
             ),
             "xl/sharedStrings.xml",
         )
-        if string_part in archive.namelist():
+        strings_declared = any(v[0].endswith("/sharedStrings") for v in rels.values())
+        strings_present = string_part in archive.namelist()
+        missing_strings = 0
+        if strings_present:
             try:
                 for index, element in enumerate(
                     _stream_elements(archive, string_part, "si")
@@ -691,15 +2161,26 @@ def _read_source(path, store):
                     links[str(index)] = PureWindowsPath(unquote(target)).name
         for definition in workbook.findall("{*}definedNames/{*}definedName"):
             local = definition.get("localSheetId")
-            scope = (
-                sheets[int(local)]["name"]
-                if local is not None and int(local) < len(sheets)
-                else None
-            )
             name = definition.get("name", "")
             if not name:
                 diagnostics.append({"message": "Unnamed defined-name entry skipped."})
                 continue
+            scope = None
+            if local is not None:
+                position = int(local) if re.fullmatch(r"\d+", local.strip()) else -1
+                if not 0 <= position < len(sheets):
+                    # An unknown scope could bind the wrong name. Skip it so that
+                    # formulas reading it stay unresolved and refused.
+                    diagnostics.append(
+                        {
+                            "part": "xl/workbook.xml",
+                            "message": f"Defined name {name!r} skipped: invalid "
+                            f"localSheetId {local!r}. Formulas that use it are "
+                            "not resolved.",
+                        }
+                    )
+                    continue
+                scope = sheets[position]["name"]
             nid = f"name:{scope or '*'}:{name}"
             names[(scope, name.casefold())] = nid
             node = {
@@ -712,19 +2193,44 @@ def _read_source(path, store):
                 "cached_value": None,
                 "cache_status": "unknown",
                 "dependencies": [],
-                "diagnostics": [],
+                "diagnostics": [NOT_ANALYZED],
             }
             literal = _name_literal(node)
             if literal is not None:
                 _, value, kind = literal
                 node.update(value=value, valueKind=kind, provenance="defined_constant")
             store.put(node)
-        for sheet in sheets:
+        # Worksheet XML sizes, for the reading rate of a time stop.
+        members = set(archive.namelist())
+        sizes = [
+            archive.getinfo(s["part"]).file_size if s["part"] in members else 0
+            for s in sheets
+        ]
+        # Bytes of worksheet XML read when time stopped the reading, if it did.
+        bytes_read, formulas_read, stopped_at = 0, 0, None
+        rolled_back = (0, 0)
+        if budget:
+            budget.start_reading()
+        for sheet, size in zip(sheets, sizes):
             row_number = 0
             column_number = 0
             previous_address = None
             row_hidden = False
             hidden_columns = []
+            if budget:
+                # The final margin grows with the formulas read.
+                budget.formulas_seen = formulas_read
+            stop = budget.exhausted(store.path, formulas_read) if budget else None
+            if stop:
+                if stop == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read
+                _not_imported(sheet, stop, diagnostics)
+                sheet.pop("part", None)
+                continue
+            _read_in_transaction(db)
+            first_seq = db.execute("SELECT coalesce(max(seq),0) FROM nodes").fetchone()[
+                0
+            ]
             try:
                 if not sheet["part"]:
                     raise ValueError("Worksheet relationship is missing")
@@ -942,6 +2448,13 @@ def _read_source(path, store):
                                                 rect.c2,
                                             ),
                                         )
+                                        store.note_array(
+                                            sheet["name"],
+                                            rect.r1,
+                                            rect.c1,
+                                            rect.r2,
+                                            rect.c2,
+                                        )
                                         if (
                                             form_type == "array"
                                             and formula_element.text
@@ -1018,6 +2531,8 @@ def _read_source(path, store):
                                         (int(raw),),
                                     ).fetchone()
                                     if hit is None:
+                                        if not strings_present:
+                                            missing_strings += 1
                                         raise ValueError(f"Missing shared string {raw}")
                                     value = hit[0]
                                 elif cell_type in {"str", "e"}:
@@ -1137,14 +2652,30 @@ def _read_source(path, store):
                                     if formula is not None
                                     else "saved_input",
                                     "dependencies": [],
-                                    "diagnostics": problems,
+                                    "diagnostics": problems
+                                    if formula is None
+                                    else [*problems, NOT_ANALYZED],
                                 }
                                 store.put(node)
                                 sheet[
                                     "formulas" if formula is not None else "inputs"
                                 ] += 1
                                 if (sheet["formulas"] + sheet["inputs"]) % 10000 == 0:
-                                    db.commit()
+                                    _read_in_transaction(db)
+                                    # The reserve protects the sheets read
+                                    # whole; this sheet's own formulas are
+                                    # analyzed as far as time allows. The
+                                    # final margin counts them all.
+                                    if budget:
+                                        budget.formulas_seen = (
+                                            formulas_read + sheet["formulas"]
+                                        )
+                                    if budget and (
+                                        stop := budget.exhausted(
+                                            store.path, formulas_read
+                                        )
+                                    ):
+                                        raise _ImportStopError(stop, source.tell())
                             stack[-2].remove(element)
                             element.clear()
                         elif tag == "mergeCell":
@@ -1209,6 +2740,26 @@ def _read_source(path, store):
                             stack[-2].remove(element)
                             element.clear()
                         stack.pop()
+            except _ImportStopError as stopped:
+                # Only a budget check raises it: ``budget`` is set here.
+                if stopped.reason == "time_budget" and stopped_at is None:
+                    stopped_at = bytes_read + stopped.position
+                    # What the rolled-back part held, for the reading rate.
+                    rolled_back = (sheet["formulas"], sheet["inputs"])
+                # Roll the sheet back: nothing of it is published, so no cell
+                # of it can be mistaken for the whole sheet.
+                name = sheet["name"]
+                store.discard_grid_sheet(name)
+                db.execute("DELETE FROM nodes WHERE seq>?", (first_seq,))
+                for table in (
+                    "shared",
+                    "arrays",
+                    "array_definitions",
+                    "merge_definitions",
+                    "table_definitions",
+                ):
+                    db.execute(f"DELETE FROM {table} WHERE sheet=?", (name,))
+                _not_imported(sheet, stopped.reason, diagnostics)
             except (
                 ET.ParseError,
                 ValueError,
@@ -1220,8 +2771,28 @@ def _read_source(path, store):
                 sheet["status"] = "partial"
                 sheet["diagnostics"].append(message)
                 diagnostics.append({"sheet": sheet["name"], "message": message})
+            if sheet["status"] != "not_imported":
+                bytes_read += size
+                formulas_read += sheet["formulas"]
+            if budget:
+                budget.formulas_seen = formulas_read
             sheet.pop("part", None)
             db.commit()
+        if not strings_present and (strings_declared or missing_strings):
+            # Without the part every text cell is unreadable, never empty. A
+            # cell says so; the workbook must too, or the index reads as
+            # complete (critical review F17).
+            declared = " declared by the workbook" if strings_declared else ""
+            diagnostics.append(
+                {
+                    "part": string_part,
+                    "message": f"Shared-string part{declared} is missing: "
+                    f"{missing_strings} text cell(s) are unreadable, never empty "
+                    "values.",
+                }
+            )
+    store.finish_grid()
+    db.commit()
     return (
         {
             "sheets": [s["name"] for s in sheets],
@@ -1229,19 +2800,84 @@ def _read_source(path, store):
             "dateSystem": "1904" if epoch1904 else "1900",
             "calculationSettings": calculation_settings,
             "diagnostics": diagnostics,
+            # Completed into the index's importTimings by build_index.
+            "importTimings": {
+                "bytesRead": bytes_read if stopped_at is None else stopped_at,
+                "bytesTotal": sum(sizes),
+                "readStopped": stopped_at is not None,
+                "formulasRead": formulas_read + rolled_back[0],
+                "valuesRead": sum(s["inputs"] for s in sheets) + rolled_back[1],
+            },
         },
         names,
         links,
     )
 
 
-def _index_dependencies(store, metadata, names, links, refs_dir):
+def _reference_feature(reference: str) -> str:
+    """Capability registry feature for one reference that failed to resolve."""
+    if reference.endswith("#"):
+        return "arrays_and_spills"
+    qualifier, _ = split_sheet_prefix(reference)
+    if qualifier and "[" in qualifier:
+        return "external_references"
+    if qualifier and ":" in qualifier:
+        return "three_dimensional_references"
+    return "references"
+
+
+_LOCAL_SCOPE = re.compile(r"_xlfn\.(?=(?:LET|LAMBDA)\s*\()", re.IGNORECASE)
+_PARAMETER = re.compile(r"_xlpm\.", re.IGNORECASE)
+
+
+def _local_names(formula: str, tokens) -> set[str]:
+    """Upper-cased LET/LAMBDA names bound by one formula, without prefixes.
+
+    Reuses the static ``analyze`` rule (``resolver._bound_names``). Excel saves
+    ``LET(x,…)`` as ``_xlfn.LET(_xlpm.x,…)``; that rule only recognises the
+    bare spelling, so both prefixes are removed before parsing. An expression
+    the parser refuses binds nothing, which leaves its names unresolved and
+    the calculation refused.
+    """
+    if not any(
+        t.type == "FUNC"
+        and t.subtype == "OPEN"
+        and t.value[:-1].upper().removeprefix("_XLFN.") in {"LET", "LAMBDA"}
+        for t in tokens
+    ):
+        return set()
+    import formualizer as fz
+
+    from linexcel.engine import is_too_deep
+    from linexcel.resolver import _bound_names
+
+    expression = _PARAMETER.sub("", _LOCAL_SCOPE.sub("", formula))
+    if not expression.startswith("="):
+        expression = "=" + expression
+    if is_too_deep(expression):
+        return set()
+    try:
+        return _bound_names(fz.parse(expression).to_dict())
+    except Exception:
+        return set()
+
+
+def _index_dependencies(store, metadata, names, links, refs_dir, budget=None):
+    """Extract each formula's sources, in reading order, within ``budget``.
+
+    At the budget's deadline the analysis stops after the node in hand: the
+    nodes it did not reach keep ``NOT_ANALYZED`` and their sheets are marked
+    partial; every value read stays published.
+    """
     from linexcel.lazy import _DYNAMIC, _VOLATILE, _id, _pattern_signature
 
     db = store.db
     sheets = metadata["sheets"]
     lookup = {sheet.casefold(): sheet for sheet in sheets}
     partial = {s["name"] for s in metadata["sheetDetails"] if s["status"] != "complete"}
+    not_imported = {
+        s["name"] for s in metadata["sheetDetails"] if s["status"] == "not_imported"
+    }
     from linexcel.external_index import ExternalSources
 
     with tempfile.TemporaryDirectory(
@@ -1389,7 +3025,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         "dependencies": array_anchors,
                         "diagnostics": [],
                     }
-                if rect.sheet in partial:
+                if rect.sheet in not_imported:
+                    node["diagnostics"].append(
+                        "Source worksheet was not imported within the import's "
+                        "budget; its cells are unknown, never blank."
+                    )
+                elif rect.sheet in partial:
                     node["diagnostics"].append(
                         "Source worksheet is incomplete; missing cells "
                         "cannot be treated as "
@@ -1419,7 +3060,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
             # New blank/range nodes have no formulas. A keyset cursor stays bounded
             # and remains valid across commits and node updates.
             last = 0
-            while True:
+            stopped = False
+            while not stopped:
                 batch = db.execute(
                     (
                         "SELECT seq,data FROM nodes WHERE seq>? "
@@ -1431,8 +3073,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                 if not batch:
                     break
                 for seq, data in batch:
+                    if budget is not None and budget.analysis_exhausted():
+                        stopped = True
+                        break
                     last = seq
                     node = _unpack(data)
+                    node["diagnostics"] = _without_not_analyzed(node["diagnostics"])
                     if node["kind"] == "cell":
                         region = db.execute(
                             (
@@ -1469,6 +3115,12 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             def resolve_dynamic(reference, current_sheet):
                                 member = dependency(reference, current_sheet, node)
                                 resolved = store[member]
+                                # A formula the analysis has not reached yet
+                                # carries NOT_ANALYZED until it does: its
+                                # source text is read as it was before.
+                                resolved["diagnostics"] = _without_not_analyzed(
+                                    resolved.get("diagnostics", [])
+                                )
                                 expression = _binding_expression(resolved)
                                 if expression is None or resolved.get("diagnostics"):
                                     raise ValueError(
@@ -1530,7 +3182,28 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                             node["threeDimensionalArguments"] = [
                                 value for value, valid in spans.items() if valid
                             ]
+                        local = _local_names(node["formula"], tokens)
                         for token in tokens:
+                            if (
+                                local
+                                and token.type == "OPERAND"
+                                and token.subtype == "RANGE"
+                                and split_sheet_prefix(token.value)[0] is None
+                            ):
+                                body = token.value
+                                parameter = body.lower().startswith("_xlpm.")
+                                bare = body[6:] if parameter else body
+                                # A bare name that is also a defined name keeps
+                                # that dependency: a superset never hides a
+                                # source. Excel's _xlpm. marks a parameter.
+                                if bare.upper() in local and (
+                                    parameter
+                                    or not (
+                                        names.get((node.get("sheet"), bare.casefold()))
+                                        or names.get((None, bare.casefold()))
+                                    )
+                                ):
+                                    continue
                             if token.type == "FUNC" and token.subtype == "OPEN":
                                 function = (
                                     token.value[:-1].upper().removeprefix("_XLFN.")
@@ -1547,22 +3220,34 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                                     dep = dependency(
                                         token.value, node.get("sheet"), node
                                     )
-                                except ValueError as exc:
+                                except Exception as exc:
+                                    # Each reference is extracted on its own: a
+                                    # failure names that reference and keeps the
+                                    # later ones. The diagnostic still refuses
+                                    # calculation of this formula.
                                     from linexcel.structured_refs import (
                                         TableReferenceError,
                                     )
 
-                                    if not isinstance(exc, TableReferenceError):
-                                        raise
+                                    if isinstance(exc, TableReferenceError):
+                                        code, feature = exc.code, "structured_tables"
+                                        message = str(exc)
+                                    else:
+                                        code = "reference_unresolved"
+                                        feature = _reference_feature(token.value)
+                                        message = (
+                                            f"Reference {token.value} could not be "
+                                            f"resolved: {exc}"
+                                        )
                                     node.setdefault("capabilityDiagnostics", []).append(
                                         {
-                                            "code": exc.code,
-                                            "feature": "structured_tables",
+                                            "code": code,
+                                            "feature": feature,
                                             "reference": token.value,
-                                            "message": str(exc),
+                                            "message": message,
                                         }
                                     )
-                                    node["diagnostics"].append(str(exc))
+                                    node["diagnostics"].append(message)
                                     continue
                                 node.setdefault("reference_bindings", {})[
                                     token.value
@@ -1606,6 +3291,8 @@ def _index_dependencies(store, metadata, names, links, refs_dir):
                         )
                     store.put(node)
                 db.commit()
+            if stopped:
+                _not_analyzed(store, metadata, last)
             # Arrays can include saved literal-looking cells. Mark them in the
             # index so target closures refuse cached array results consistently.
             for sheet, r1, c1, r2, c2 in db.execute("SELECT * FROM arrays"):
@@ -1654,8 +3341,13 @@ def build_index(
     refs_dir: Path | None = None,
     *,
     filename: str | None = None,
+    budget: ImportBudget | None = None,
 ) -> dict:
-    "Publish a complete disk index atomically; preserve any previous index on failure."
+    """Publish a disk index atomically; preserve any previous index on failure.
+
+    With a ``budget``, sheets the import cannot read within it are published
+    as not imported, with their reason, instead of failing the whole import.
+    """
     path, index_path = Path(path), Path(index_path)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(
@@ -1672,6 +3364,16 @@ def build_index(
                 macro_only = source.read(8).startswith(OLE_MAGIC) or (
                     (filename or path.name).lower().endswith(".xlam")
                 )
+            import time
+
+            started = time.perf_counter()
+            marks = {}
+
+            def mark(phase, since):
+                now = time.perf_counter()
+                marks[phase] = now - since
+                return now
+
             if macro_only:
                 metadata: dict[str, Any] = {
                     "sheets": [],
@@ -1679,24 +3381,79 @@ def build_index(
                     "diagnostics": [],
                     "macroOnly": True,
                 }
+                timings: dict[str, Any] = {
+                    "bytesRead": 0,
+                    "bytesTotal": 0,
+                    "readStopped": False,
+                    "formulasRead": 0,
+                    "valuesRead": 0,
+                }
+                now = mark("reading", started)
+                now = mark("dependencies", now)
             else:
-                metadata, names, links = _read_source(path, store)
-                _index_dependencies(store, metadata, names, links, refs_dir)
+                metadata, names, links = _read_source(path, store, budget)
+                timings = metadata.pop("importTimings")
+                now = mark("reading", started)
+                _index_dependencies(store, metadata, names, links, refs_dir, budget)
+                now = mark("dependencies", now)
             from linexcel.link_facts import index_facts
 
             index_facts(path, store, metadata)
+            now = mark("facts", now)
             metadata["vba"] = index_vba(store, path, refs_dir, filename=filename)
+            now = mark("vba", now)
+            from linexcel.data_regions import REGION_MIN_CELLS, index_regions
+
+            values = {s["name"]: s["inputs"] for s in metadata["sheetDetails"]}
+            fits = None if budget is None else budget.regions_fit
+
+            def describe(sheet):
+                # A sheet too small for a region costs nothing to look at.
+                count = values.get(sheet, 0)
+                return count < REGION_MIN_CELLS or fits is None or fits(count)
+
+            metadata["dataRegions"] = index_regions(
+                store, None if budget is None else describe
+            )
+            now = mark("regions", now)
+            skipped = set(metadata["dataRegions"].get("skipped", {}).get("sheets", []))
+            unanalyzed = sum(
+                s.get("unanalyzedFormulas", 0) for s in metadata["sheetDetails"]
+            )
+            timings.update(
+                {phase: round(seconds, 3) for phase, seconds in marks.items()},
+                rest=round(marks["facts"] + marks["vba"], 3),
+                formulasAnalyzed=max(0, timings["formulasRead"] - unanalyzed),
+                formulasNotAnalyzed=unanalyzed,
+                regionValues=sum(
+                    count for sheet, count in values.items() if sheet not in skipped
+                ),
+                regionSheetsSkipped=len(skipped),
+            )
+            metadata["importTimings"] = timings
+            if budget is not None and (timings["readStopped"] or unanalyzed or skipped):
+                proposal = budget.proposal(timings)
+                if proposal is not None:
+                    proposal["cause"] = [
+                        cause
+                        for cause, applies in (
+                            ("reading", timings["readStopped"]),
+                            ("analysis", unanalyzed > 0),
+                            ("regions", bool(skipped)),
+                        )
+                        if applies
+                    ]
+                    metadata["importEstimate"] = proposal
             metadata["diagnostics"].extend(
                 {"phase": "VBA", "message": warning}
                 for warning in metadata["vba"]["warnings"]
             )
-            counts = dict(
-                store.db.execute("SELECT kind,count(*) FROM nodes GROUP BY kind")
-            )
+            inventory = store.node_inventory()
+            counts: dict[str, int] = {}
+            for _, kind, count in sorted(inventory, key=lambda item: item[1]):
+                counts[kind] = counts.get(kind, 0) + count
             per_sheet = {}
-            for sheet, kind, count in store.db.execute(
-                "SELECT sheet,kind,count(*) FROM nodes GROUP BY sheet,kind"
-            ):
+            for sheet, kind, count in inventory:
                 per_sheet.setdefault(sheet or "defined names", {})[kind] = count
             pattern_count, copied, copied_cells = store.db.execute(
                 "SELECT count(*),coalesce(sum(member_count>1),0),coalesce(sum(CASE "
@@ -1781,8 +3538,14 @@ def build_index(
             metadata["tableCount"] = store.db.execute(
                 "SELECT count(*) FROM table_definitions"
             ).fetchone()[0]
+            # Up to the metadata; the commit and the publication follow.
+            timings["total"] = round(time.perf_counter() - started, 3)
             store.db.execute(
                 "INSERT INTO metadata VALUES ('meta',?)", (_dump(metadata),)
+            )
+            store.db.execute(
+                "INSERT OR REPLACE INTO metadata VALUES ('schemaVersion',?)",
+                (str(SCHEMA_VERSION),),
             )
             store.db.commit()
         os.replace(temp_path, index_path)
@@ -1850,6 +3613,21 @@ def _edge_count(store):
     return total
 
 
+def _with_source_kinds(store, rows):
+    """Edge rows ``(source, target, source kind, target kind)``.
+
+    The source kind comes from a ``LEFT JOIN`` on ``nodes``: an input source
+    that is a grid cell has none there. An edge whose source is neither a
+    node nor a grid cell is left out, as an inner join left it out before.
+    """
+    for source, target, source_kind, target_kind in rows:
+        if source_kind is None:
+            if store._grid_cell(source) is None:
+                continue
+            source_kind = "input"
+        yield source, target, source_kind, target_kind
+
+
 def _edges_for_nodes(store, ids):
     from linexcel.macros import static_edge_record
 
@@ -1858,13 +3636,16 @@ def _edges_for_nodes(store, ids):
     placeholders = ",".join("?" for _ in ids)
     rows = store.db.execute(
         "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
-        "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+        "LEFT JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
         f"WHERE e.target IN ({placeholders}) "
         f"AND e.source IN ({placeholders}) AND {_array_edge_filter(store)} "
         "ORDER BY e.source,e.target",
         ids + ids,
     )
-    return [static_edge_record(s, t, sk, tk) for s, t, sk, tk in rows]
+    return [
+        static_edge_record(s, t, sk, tk)
+        for s, t, sk, tk in _with_source_kinds(store, rows)
+    ]
 
 
 def _pattern(store, row, member_limit=MAX_PAGE_SIZE):
@@ -1891,34 +3672,140 @@ def _pattern(store, row, member_limit=MAX_PAGE_SIZE):
 def graph_page(
     index_path: Path, *, offset=0, limit=200, sheet=None, query=None, kind=None
 ) -> dict:
+    from itertools import islice
+
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
-        where, args = _filters(sheet, query, kind)
-        # An exact Excel reference uses the unique id index. Substring search
-        # remains available when no exact node matches.
-        if (
-            query
-            and store.db.execute(
-                "SELECT 1 FROM nodes WHERE id=?" + (" AND sheet=?" if sheet else ""),
+        # An exact Excel reference uses the unique id index, or the grid.
+        # Substring search remains available when no exact node matches.
+        exact = None
+        if query:
+            hit = store.db.execute(
+                "SELECT data,pattern_id,kind,sheet FROM nodes WHERE id=?"
+                + (" AND sheet=?" if sheet else ""),
                 [query, sheet] if sheet else [query],
             ).fetchone()
-        ):
-            where, args = " WHERE id=?", [query]
-            if kind:
-                where += " AND kind=?"
-                args.append(kind)
-        total = store.db.execute("SELECT count(*) FROM nodes" + where, args).fetchone()[
-            0
-        ]
-        nodes = [
-            store._decode(row, context=True)
-            for row in store.db.execute(
-                "SELECT data,pattern_id FROM nodes"
-                + where
-                + " ORDER BY seq LIMIT ? OFFSET ?",
-                args + [limit, offset],
-            )
-        ]
+            if hit is not None:
+                exact = (hit[2], lambda: store._decode(hit[:2], context=True))
+            else:
+                found = store._grid_cell(query)
+                if found is not None and (not sheet or found[0] == sheet):
+                    exact = (
+                        "input",
+                        lambda: store._finish(
+                            store._grid_node(*found), None, context=True
+                        ),
+                    )
+        if exact is not None:
+            matches = [exact[1]] if not kind or exact[0] == kind else []
+            total = len(matches)
+            nodes = [make() for make in matches[offset : offset + limit]]
+        else:
+            where, args = _filters(sheet, query, kind)
+            total = store.db.execute("SELECT count(*) FROM nodes" + where, args)
+            total = total.fetchone()[0]
+            where, args = _filters(None, query, kind)
+            condition = where.removeprefix(" WHERE ")
+            accept = None
+            if query:
+                from linexcel.refs import num_to_col
+
+                like = _like_search(query)
+                search = store.grid.search_text
+                needle = _ascii_lower(query)
+                prefixes: dict[str, tuple[str, bool, bool]] = {}
+                letters: dict[int, str] = {}
+                columns: dict[tuple[str, int], bool] = {}
+                # The row number ends an id, so a query without a digit can
+                # only lie in ``Sheet!B``: one test per sheet and column.
+                digits = any(c.isdigit() for c in needle)
+
+                def accept(name, row, col, raw):
+                    # The id, ``Sheet!B12``, built once per sheet and column.
+                    prefix = prefixes.get(name)
+                    if prefix is None:
+                        text = quote_sheet(name) + "!"
+                        # Past its sheet prefix an id holds letters and digits
+                        # only. Unless the query lies in the prefix, it must
+                        # be an end of the prefix followed by such characters.
+                        lower = _ascii_lower(text)
+                        possible = any(
+                            lower.endswith(needle[:cut])
+                            and set(needle[cut:]) <= _ADDRESS
+                            for cut in range(len(needle) + 1)
+                        )
+                        prefix = prefixes[name] = (text, like(text), possible)
+                    if prefix[1]:
+                        return True
+                    if prefix[2]:
+                        if not digits:
+                            hit = columns.get((name, col))
+                            if hit is None:
+                                hit = columns[(name, col)] = like(
+                                    prefix[0] + num_to_col(col)
+                                )
+                            if hit:
+                                return True
+                        else:
+                            column = letters.get(col)
+                            if column is None:
+                                column = letters[col] = num_to_col(col)
+                            if like(prefix[0] + column + str(row)):
+                                return True
+                    value = raw[0]
+                    if type(value) is str:
+                        # The grid keeps text with a text type and no date
+                        # kind, so its search text is the text itself.
+                        return needle in _ascii_lower(value)
+                    return like(search(raw))
+
+            grid = kind in {None, "input"}
+            if grid and accept is not None:
+                # One pass keeps the page and counts the grid cells that
+                # match. Counting first read every grid cell twice when few
+                # matched: 10.4 s on 2.5 million cells against 3.6 s with
+                # schema 4 (batch 2 ter).
+                page, matched = store._search(
+                    sheet=sheet,
+                    where=condition,
+                    args=args,
+                    accept=accept,
+                    wanted=offset + limit,
+                )
+                total += matched
+                nodes = [
+                    store._decode(
+                        store.db.execute(
+                            "SELECT data,pattern_id FROM nodes WHERE id=?",
+                            (item[1],),
+                        ).fetchone(),
+                        context=True,
+                    )
+                    if source == "node"
+                    else store._finish(store._grid_node(*item), None, context=True)
+                    for source, item in page[offset:]
+                ]
+            else:
+                if grid:
+                    names = [sheet] if sheet else list(store.grid.sheets)
+                    total += sum(store.grid.count(name) for name in names)
+                nodes = [
+                    store._decode(item[0][6:], context=True)
+                    if source == "node"
+                    else store._finish(store._grid_node(*item), None, context=True)
+                    for source, *item in islice(
+                        store._import_order(
+                            data=True,
+                            sheet=sheet,
+                            where=condition,
+                            args=args,
+                            grid=grid,
+                            accept=accept,
+                        ),
+                        offset,
+                        offset + limit,
+                    )
+                ]
         patterns = []
         for key in dict.fromkeys(n["patternId"] for n in nodes if n.get("patternId")):
             row = store.db.execute(
@@ -1951,30 +3838,34 @@ def structure_page(index_path: Path, *, part="nodes", offset=0, limit=200) -> di
         raise ValueError("Unknown structure part")
     offset, limit = max(0, int(offset)), max(1, min(MAX_PAGE_SIZE, int(limit)))
     with WorkbookIndex(index_path) as store:
-        total = (
-            store.db.execute("SELECT count(*) FROM nodes").fetchone()[0]
-            if part == "nodes"
-            else _edge_count(store)
-        )
+        total = len(store) if part == "nodes" else _edge_count(store)
         if part == "nodes":
-            items = [
-                {"id": nid, "kind": kind, "sheet": sheet}
-                for nid, kind, sheet in store.db.execute(
-                    "SELECT id,kind,sheet FROM nodes ORDER BY seq LIMIT ? OFFSET ?",
-                    (limit, offset),
-                )
-            ]
+            from itertools import islice
+
+            items = []
+            for source, *item in islice(store._import_order(), offset, offset + limit):
+                if source == "node":
+                    nid, kind, sheet = item[0][1:4]
+                    items.append({"id": nid, "kind": kind, "sheet": sheet})
+                else:
+                    items.append(
+                        {"id": cell_id(*item[:3]), "kind": "input", "sheet": item[0]}
+                    )
         else:
             from linexcel.macros import static_edge_record
 
             items = [
                 static_edge_record(source, target, sk, tk)
-                for source, target, sk, tk in store.db.execute(
-                    "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
-                    "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
-                    f"WHERE {_array_edge_filter(store)} "
-                    "ORDER BY e.source,e.target LIMIT ? OFFSET ?",
-                    (limit, offset),
+                for source, target, sk, tk in _with_source_kinds(
+                    store,
+                    store.db.execute(
+                        "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
+                        "LEFT JOIN nodes s ON s.id=e.source "
+                        "JOIN nodes t ON t.id=e.target "
+                        f"WHERE {_array_edge_filter(store)} "
+                        "ORDER BY e.source,e.target LIMIT ? OFFSET ?",
+                        (limit, offset),
+                    ),
                 )
             ]
         return {
@@ -2017,12 +3908,139 @@ def patterns_page(index_path: Path, *, offset=0, limit=200, sheet=None) -> dict:
         }
 
 
+_MEMBER_KINDS = ("cell", "input", "array_result")
+
+
+class _RangeMembership:
+    """Range membership from indexed coordinates, without decoding cell blobs.
+
+    A range node has no edge from its member cells in the ``edges`` table, so a
+    cell read only through ``SUM(C2:C11)`` would otherwise look unused.
+    ``lineage_ranges`` (written by ``link_facts.index_facts``) holds the local
+    range bounds; an older index without it decodes its range nodes instead.
+    """
+
+    def __init__(self, store):
+        self.store = store
+        self.indexed = bool(
+            store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lineage_ranges'"
+            ).fetchone()
+        )
+
+    def _fallback_ranges(self, sheet):
+        for nid, data in self.store.db.execute(
+            "SELECT id,data FROM nodes WHERE kind='range' AND sheet=?", (sheet,)
+        ):
+            node = _unpack(data)
+            if not node.get("external") and node.get("bounds"):
+                yield nid, node["bounds"]
+
+    def bounds(self, node_id, sheet):
+        if self.indexed:
+            row = self.store.db.execute(
+                "SELECT r1,c1,r2,c2 FROM lineage_ranges WHERE node=?", (node_id,)
+            ).fetchone()
+            return list(row) if row else None
+        return next(
+            (b for nid, b in self._fallback_ranges(sheet) if nid == node_id), None
+        )
+
+    def containing(self, sheet, row, col, limit):
+        """Local ranges that contain one cell, at most ``limit``."""
+        if self.indexed:
+            return [
+                r[0]
+                for r in self.store.db.execute(
+                    "SELECT node FROM lineage_ranges WHERE sheet=? "
+                    "AND ? BETWEEN r1 AND r2 AND ? BETWEEN c1 AND c2 "
+                    "ORDER BY node LIMIT ?",
+                    (sheet.lower(), row, col, limit),
+                )
+            ]
+        return sorted(
+            nid
+            for nid, (r1, c1, r2, c2) in self._fallback_ranges(sheet)
+            if r1 <= row <= r2 and c1 <= col <= c2
+        )[:limit]
+
+    def members(self, sheet, bounds, limit):
+        """Indexed cells inside a range, in sheet order, at most ``limit``."""
+        from itertools import islice
+
+        return list(islice(self.store.range_members(sheet, bounds), limit))
+
+    def edges(self, ids):
+        """Membership relations (member -> range) among already selected nodes."""
+        if not ids:
+            return []
+        marks = ",".join("?" for _ in ids)
+        rows = self.store.db.execute(
+            f"SELECT id,kind,sheet,row,col FROM nodes WHERE id IN ({marks})", ids
+        ).fetchall()
+        stored = {row[0] for row in rows}
+        for nid in ids:
+            if nid not in stored and (found := self.store._grid_cell(nid)):
+                rows.append((nid, "input", *found[:3]))
+        ranges = [
+            (nid, sheet, b)
+            for nid, kind, sheet, _, _ in rows
+            if kind == "range" and (b := self.bounds(nid, sheet))
+        ]
+        cells = [r for r in rows if r[1] in _MEMBER_KINDS and r[3] is not None]
+        return [
+            {"source": cell, "target": rid, "kind": "range"}
+            for rid, rsheet, (r1, c1, r2, c2) in ranges
+            for cell, _, sheet, row, col in cells
+            if sheet.lower() == rsheet.lower() and r1 <= row <= r2 and c1 <= col <= c2
+        ]
+
+
+def _adjacent(store, membership, node_id, condition, limit):
+    """Direct sources and usages of one node, including range membership.
+
+    One bounded query per relation family; each family returns at most
+    ``limit`` rows, which keeps the caller's ``truncated`` flag exact.
+    """
+    found = {
+        row[0]
+        for row in store.db.execute(
+            (
+                "SELECT e.source AS neighbor FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.target=? AND {condition} "
+                "UNION SELECT e.target FROM edges e "
+                "JOIN nodes t ON t.id=e.target "
+                f"WHERE e.source=? AND {condition} "
+                "ORDER BY neighbor LIMIT ?"
+            ),
+            (node_id, node_id, limit),
+        )
+    }
+    position = store.db.execute(
+        "SELECT kind,sheet,row,col FROM nodes WHERE id=?", (node_id,)
+    ).fetchone()
+    if position is None and (cell := store._grid_cell(node_id)):
+        position = ("input", *cell[:3])
+    if position:
+        kind, sheet, row, col = position
+        if kind == "range" and sheet:
+            bounds = membership.bounds(node_id, sheet)
+            if bounds:
+                found.update(membership.members(sheet, bounds, limit))
+        elif kind in _MEMBER_KINDS and sheet and row is not None:
+            found.update(membership.containing(sheet, row, col, limit))
+    return sorted(found)
+
+
 def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> dict:
     """Read an undirected neighborhood with independent depth and node budgets.
 
     A deeper traversal never expands the HTTP node budget. ``truncated`` means
     an eligible node within the requested depth was omitted by that budget;
     neighbors beyond the requested depth are intentionally outside the view.
+    Range membership counts as a relation: a cell read through a range reaches
+    that range, and a range reaches its indexed member cells.
     """
     limit = max(1, min(MAX_PAGE_SIZE, int(limit)))
     depth = max(0, min(MAX_NEIGHBORHOOD_DEPTH, int(depth)))
@@ -2033,23 +4051,18 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
         frontier = [node_id]
         truncated = False
         condition = _array_edge_filter(store)
+        membership = _RangeMembership(store)
         for _ in range(depth):
             if not frontier:
                 break
             following = []
             for current in frontier:
-                rows = store.db.execute(
-                    (
-                        "SELECT e.source AS neighbor FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.target=? AND {condition} "
-                        "UNION SELECT e.target FROM edges e "
-                        "JOIN nodes t ON t.id=e.target "
-                        f"WHERE e.source=? AND {condition} "
-                        "ORDER BY neighbor LIMIT ?"
-                    ),
-                    (current, current, limit + 1),
-                )
+                rows = [
+                    (neighbor,)
+                    for neighbor in _adjacent(
+                        store, membership, current, condition, limit + 1
+                    )
+                ]
                 for row in rows:
                     if row[0] in ids:
                         continue
@@ -2064,10 +4077,14 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
                 break
             frontier = following
         nodes = [store.node(nid) for nid in ids]
+        edges = sorted(
+            _edges_for_nodes(store, list(ids)) + membership.edges(list(ids)),
+            key=lambda e: (e["source"], e["target"], e["kind"]),
+        )
         return {
             "lazy": True,
             "nodes": nodes,
-            "edges": _edges_for_nodes(store, list(ids)),
+            "edges": edges,
             "formulaPatterns": [
                 _pattern(
                     store,
@@ -2094,6 +4111,8 @@ def graph_neighborhood(index_path: Path, node_id: str, limit=200, depth=1) -> di
 
 def evidence_graph(index_path: Path, node_id: str | None = None) -> dict:
     """Small deterministic evidence sample, with exact workbook-level counts."""
+    from itertools import islice
+
     if node_id:
         with WorkbookIndex(index_path) as store:
             node = store.node(node_id)
@@ -2132,23 +4151,33 @@ def evidence_graph(index_path: Path, node_id: str | None = None) -> dict:
             if len(sheets) > 1
             else sheets
         )
+
+        def import_ids(**selection):
+            for source, *item in store._import_order(**selection):
+                yield item[0][1] if source == "node" else cell_id(*item[:3])
+
+        # Formulas first, in import order; then any other node.
         for sheet in selected:
             row = store.db.execute(
-                (
-                    "SELECT id FROM nodes WHERE sheet=? ORDER BY kind='cell' DESC,seq "
-                    "LIMIT 1"
-                ),
+                "SELECT id FROM nodes WHERE sheet=? AND kind='cell' ORDER BY seq "
+                "LIMIT 1",
                 (sheet,),
             ).fetchone()
-            if row:
-                ids.append(row[0])
-        for row in store.db.execute(
-            "SELECT id FROM nodes ORDER BY kind='cell' DESC,seq LIMIT 36"
-        ):
+            first = row[0] if row else next(import_ids(sheet=sheet), None)
+            if first:
+                ids.append(first)
+        cells = [
+            row[0]
+            for row in store.db.execute(
+                "SELECT id FROM nodes WHERE kind='cell' ORDER BY seq LIMIT 36"
+            )
+        ]
+        others = import_ids(where="kind!='cell'")
+        for nid in [*cells, *islice(others, 36 - len(cells))]:
             if len(ids) >= 18:
                 break
-            if row[0] not in ids:
-                ids.append(row[0])
+            if nid not in ids:
+                ids.append(nid)
         return {
             "lazy": True,
             "nodes": [store.node(nid) for nid in ids],
@@ -2168,12 +4197,7 @@ def export_structure(index_path: Path) -> dict:
     from linexcel.macros import static_edge_record
 
     with WorkbookIndex(index_path) as store:
-        nodes = [
-            store._decode(row, context=True)
-            for row in store.db.execute(
-                "SELECT data,pattern_id FROM nodes ORDER BY seq"
-            )
-        ]
+        nodes = list(store.values(context=True))
         patterns = [
             _pattern(store, row, member_limit=row[1])
             for row in store.db.execute(
@@ -2183,11 +4207,14 @@ def export_structure(index_path: Path) -> dict:
         ]
         edges = [
             static_edge_record(s, t, sk, tk)
-            for s, t, sk, tk in store.db.execute(
-                "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
-                "JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
-                f"WHERE {_array_edge_filter(store)} "
-                "ORDER BY e.source,e.target"
+            for s, t, sk, tk in _with_source_kinds(
+                store,
+                store.db.execute(
+                    "SELECT e.source,e.target,s.kind,t.kind FROM edges e "
+                    "LEFT JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target "
+                    f"WHERE {_array_edge_filter(store)} "
+                    "ORDER BY e.source,e.target"
+                ),
             )
         ]
         return {
