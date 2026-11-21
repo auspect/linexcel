@@ -53,6 +53,25 @@ GATES: dict[str, Gate] = {
         "npm ci --prefix frontend; then npm run build --prefix frontend"
         " and commit the bundle",
     ),
+    # Exit 3: only the findings recorded in known_findings.json still fail.
+    "lineage": Gate(
+        (
+            "python",
+            ".agents/skills/check-group-precedents/scripts/check_group_precedents.py",
+            "--quick",
+        ),
+        "read the counterexample above and .agents/skills/check-group-precedents",
+        frozenset({0, 3}),
+    ),
+    "lineage-mutants": Gate(
+        (
+            "python",
+            ".agents/skills/check-group-precedents/scripts/check_group_precedents.py",
+            "--mutants",
+        ),
+        "a MISSED or STALE variant means the lineage check got weaker; see"
+        " .agents/skills/check-group-precedents",
+    ),
 }
 
 

@@ -84,6 +84,10 @@ Read the last line:
 
 The expected result is `RESULT: PASS`, exit 0.
 
+CI runs `--quick` and `--mutants` as the `lineage` and `lineage-mutants` gates
+of `scripts/check.py`, and the commit hook runs `lineage`. Run the same gates
+locally with `uv run python scripts/check.py lineage lineage-mutants`.
+
 Each violation is told as a workbook: which cells hold which formulas, what
 the group node is wired to, and which cells have no edge. For example:
 

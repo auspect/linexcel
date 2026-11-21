@@ -28,6 +28,14 @@ language = "system"
 pass_filenames = false
 types_or = ["python", "pyi"]
 
+[[repos.hooks]]
+id = "lineage"
+name = "range lineage, exhaustive quick check"
+entry = "uv run python scripts/check.py lineage"
+language = "system"
+pass_filenames = false
+types_or = ["python", "pyi"]
+
 # Faster than CI on purpose: CI also runs the slow tests, on every Python version.
 [[repos.hooks]]
 id = "pytest"
