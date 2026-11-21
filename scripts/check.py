@@ -42,11 +42,12 @@ GATES: dict[str, Gate] = {
     ),
     "viewer-captures": Gate(
         ("python", "scripts/capture_viewer.py", "--check"),
-        "run the capture commands printed above and commit imgs/",
+        "uv run python scripts/capture_viewer.py, then commit imgs/",
     ),
     "app-captures": Gate(
         ("python", "scripts/capture_app.py", "--check"),
-        "run the capture commands printed above and commit imgs/",
+        "recapture with scripts/capture_app.py (commands in its docstring),"
+        " then commit imgs/",
     ),
     "frontend": Gate(
         ("npm", "run", "check", "--prefix", "frontend"),

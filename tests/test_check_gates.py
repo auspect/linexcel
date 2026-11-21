@@ -98,6 +98,25 @@ def test_every_gate_named_in_ci_and_hook_exists(gates):
     assert not unknown, f"Not a gate of {SCRIPT}: {unknown}"
 
 
+def test_gate_hooks_run_on_every_commit():
+    """Only a gate knows which files it reads; a hook pattern copy goes stale."""
+    filtered = [
+        hook["id"]
+        for hook in prek_hooks()
+        if gates_called(hook["entry"])
+        and (
+            not hook.get("always_run")
+            or hook.get("pass_filenames", True)
+            or hook.keys() & {"files", "exclude", "types", "types_or", "exclude_types"}
+        )
+    ]
+    assert not filtered, (
+        f"prek.toml hooks {filtered} filter the files that fire them. A gate of"
+        f" {SCRIPT} decides its own inputs: set always_run = true and"
+        " pass_filenames = false, with no files or types filter"
+    )
+
+
 def test_ci_runs_every_gate(gates):
     in_ci = {
         name
