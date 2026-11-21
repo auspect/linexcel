@@ -143,13 +143,6 @@ def main():
                             kind=failure["kind"],
                             message=f"{exc}. {failure['summary']}",
                         )
-                    if failure["kind"] == "memory_limit":
-                        memory = request.get("memoryMb")
-                        budget = f" de {memory} Mio" if memory is not None else ""
-                        capture_error["message"] = (
-                            f"Budget mémoire{budget} insuffisant pour le rendu "
-                            f"des captures. Augmentez le budget puis réessayez. {exc}"
-                        )
     path = root / "result.json"
     path.write_text(json.dumps(output, ensure_ascii=False, allow_nan=False), "utf-8")
 

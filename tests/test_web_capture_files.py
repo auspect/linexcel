@@ -171,9 +171,5 @@ def test_capture_worker_preserves_renderer_failure(
     assert error["renderer"] == "LibreOffice"
     assert error["exitCode"] == exit_code
     assert error["kind"] == (windows_kind if os.name == "nt" else "WorkbookRenderError")
+    # The coordinator words memory failures; the worker keeps the renderer's.
     assert str(exit_code) in error["message"]
-    if os.name == "nt" and windows_kind == "memory_limit":
-        assert "512 Mio" in error["message"]
-        assert "Augmentez le budget" in error["message"]
-    if windows_kind == "stack_overflow":
-        assert "insuffisant" not in error["message"]

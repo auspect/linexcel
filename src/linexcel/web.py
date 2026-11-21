@@ -33,6 +33,13 @@ from urllib.parse import parse_qs, urlsplit
 
 from linexcel.ask import AskLimits
 from linexcel.catalog import CatalogLimits
+from linexcel.web_limits import (
+    LIMIT_KINDS,
+    MAX_TASK_SECONDS,
+    MiB,
+    TaskDefaults,
+    limit_message,
+)
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OPERATIONS = {
@@ -160,6 +167,10 @@ class WebConfig:
             raise ValueError(
                 "mount_path must be empty or /path without a trailing slash"
             )
+
+    @property
+    def task_defaults(self) -> TaskDefaults:
+        return TaskDefaults.for_server(self.total_memory_mb, self.max_workers)
 
 
 class APIError(Exception):
@@ -354,24 +365,27 @@ class TaskStore:
             raise APIError(404, "Classeur introuvable")
         return path
 
-    def budget(self, value: Any, *, default_seconds: int = 120) -> dict:
+    def budget(self, value: Any, operation: str) -> dict:
         if not isinstance(value, dict):
             raise APIError(400, "Budget invalide")
+        defaults = self.config.task_defaults
         seconds, memory = (
-            value.get("seconds", default_seconds),
-            value.get("memoryMb", 512),
+            value.get("seconds", defaults.seconds_for(operation)),
+            value.get("memoryMb", defaults.memory_mb),
         )
         if (
             isinstance(seconds, bool)
             or not isinstance(seconds, (float, int))
             or not math.isfinite(seconds)
-            or not 0 < seconds <= 3600
+            or not 0 < seconds <= MAX_TASK_SECONDS
             or isinstance(memory, bool)
             or not isinstance(memory, int)
             or not 128 <= memory <= self.config.total_memory_mb
         ):
             raise APIError(
-                400, "Budget : 0–3600 secondes et mémoire dans la limite serveur"
+                400,
+                f"Budget : 0–{MAX_TASK_SECONDS} secondes "
+                "et mémoire dans la limite serveur",
             )
         tokens = value.get("tokens", self.config.ai_token_budget)
         if (
@@ -388,8 +402,14 @@ class TaskStore:
         pending = sum(t["status"] not in TERMINAL for t in self.tasks.values())
         if pending >= self.config.max_pending_tasks:
             raise APIError(429, "File des opérations pleine ; réessayez plus tard")
-        if self._storage_bytes() >= self.config.max_storage_mb * 1048576:
-            raise APIError(413, "Stockage plein ; supprimez des classeurs")
+        self.require_storage(self._storage_bytes())
+
+    def require_storage(self, needed_bytes: int) -> None:
+        if needed_bytes > self.config.max_storage_mb * MiB:
+            raise APIError(
+                413,
+                limit_message("storage_limit", self.config, used_bytes=needed_bytes),
+            )
 
     def _storage_bytes(self) -> int:
         size = 0
@@ -434,7 +454,7 @@ class TaskStore:
         return name, data
 
     def create(self, owner: str, body: dict) -> dict:
-        budget = self.budget(body.get("budget", {}), default_seconds=600)
+        budget = self.budget(body.get("budget", {}), "import")
         workbook = self._file(body.get("workbook"))
         workspace_name = body.get("name") or workbook[0]
         if not isinstance(workspace_name, str) or len(workspace_name) > 200:
@@ -449,12 +469,11 @@ class TaskStore:
             raise APIError(413, "Import trop volumineux")
         with self.lock:
             self._has_capacity()
-            used = self._storage_bytes()
-            if (
-                used + self.uploads.remaining_bytes() + sum(len(d) for _, d in files)
-                > self.config.max_storage_mb * 1048576
-            ):
-                raise APIError(413, "Stockage plein ; supprimez des classeurs")
+            self.require_storage(
+                self._storage_bytes()
+                + self.uploads.remaining_bytes()
+                + sum(len(d) for _, d in files)
+            )
             project_id = uuid.uuid4().hex
             path = self.root / owner / "projects" / project_id
             (path / "references").mkdir(parents=True)
@@ -765,13 +784,7 @@ class TaskStore:
             raise APIError(
                 400, "Utilisez la préparation de question et son autorisation"
             )
-        if operation in AI_OPERATIONS | {
-            "import",
-            "build_graph",
-            "export_html",
-        } and isinstance(budget, dict):
-            budget = {"seconds": 600, **budget}
-        budget = self.budget(budget)
+        budget = self.budget(budget, operation)
         options = {} if options is None else options
         if not isinstance(options, dict):
             raise APIError(400, "Options invalides")
@@ -1319,6 +1332,10 @@ class TaskStore:
         started = time.monotonic()
         job = None
         reason = None
+        quota = self.config.max_storage_mb * MiB
+        # A scan walks the whole data directory: seconds once it holds
+        # thousands of files. Space it out; the exact check below still runs.
+        next_scan = started
         with (root / "stderr.txt").open("wb") as log:
             process = subprocess.Popen(
                 command,
@@ -1351,9 +1368,13 @@ class TaskStore:
                     if memory.exceeded(process.pid):
                         reason = "memory_limit"
                         break
-                    if self._storage_bytes() > self.config.max_storage_mb * 1048576:
-                        reason = "storage_limit"
-                        break
+                    scanned = time.monotonic()
+                    if scanned >= next_scan:
+                        if self._storage_bytes() > quota:
+                            reason = "storage_limit"
+                            break
+                        took = time.monotonic() - scanned
+                        next_scan = scanned + max(1.0, 20 * took)
                     if event.wait(min(0.05, remaining)):
                         reason = "cancelled"
                         break
@@ -1378,32 +1399,50 @@ class TaskStore:
         # A fast child can finish between polls: enforce limits before publishing.
         # Disk-backed indexes may be much larger than the compressed source.
         # Enforce the explicit storage quota, never a multiple of upload size.
-        if self._storage_bytes() > self.config.max_storage_mb * 1048576:
+        used = self._storage_bytes()
+        if used > quota:
             reason = "storage_limit"
+        evidence = memory.evidence()
+        # Windows reports a job cap hit exactly. A descendant such as the
+        # renderer then dies with an unrelated code, like a stack overflow.
+        memory_cap_hit = job is not None and job.memory_limit_hit
+        if job is not None:
+            evidence["memoryPeakMiB"] = (
+                round(job.peak_bytes / MiB, 3) if job.peak_bytes is not None else None
+            )
+
+        def named(error: dict) -> dict:
+            if error["kind"] not in LIMIT_KINDS:
+                return error
+            message = limit_message(
+                error["kind"],
+                self.config,
+                operation=task["operation"],
+                seconds=task["budget"]["seconds"],
+                memory_mb=request["memoryMb"],
+                used_bytes=used,
+            )
+            return {**error, "message": message}
+
         if reason or process.returncode or not (root / "result.json").exists():
             with (root / "stderr.txt").open("rb") as errors:
                 diagnostic = errors.read(16384).decode("utf-8", "replace")
             from linexcel.execution import _failure_details
 
             failure = _failure_details("crashed", process.returncode, diagnostic)
-            kind = reason or failure["kind"]
-            message = reason or failure["summary"]
-            if kind == "memory_limit":
-                message = (
-                    f"Budget mémoire de {request['memoryMb']} Mio insuffisant pour "
-                    "cette opération. Augmentez le budget puis réessayez ; "
-                    "le classeur et les autres résultats restent accessibles."
-                )
+            kind = reason or ("memory_limit" if memory_cap_hit else failure["kind"])
             return {
-                "error": {
-                    "kind": kind,
-                    "message": message,
-                    "diagnostic": ""
-                    if task["operation"] in AI_OPERATIONS
-                    else diagnostic,
-                    "exitCode": process.returncode,
-                    **memory.evidence(),
-                }
+                "error": named(
+                    {
+                        "kind": kind,
+                        "message": reason or failure["summary"],
+                        "diagnostic": ""
+                        if task["operation"] in AI_OPERATIONS
+                        else diagnostic,
+                        "exitCode": process.returncode,
+                        **evidence,
+                    }
+                )
             }
         if (root / "result.json").stat().st_size > MAX_RESULT_BYTES:
             return {
@@ -1414,7 +1453,18 @@ class TaskStore:
                     "restent disponibles.",
                 }
             }
-        return _read(root / "result.json")
+        output = _read(root / "result.json")
+        error = output.get("error")
+        if not isinstance(error, dict):
+            return output
+        if memory_cap_hit or error.get("kind") in {"memory_limit", "MemoryError"}:
+            # Linux reports RLIMIT_AS exhaustion as a bare MemoryError.
+            error = {
+                **error,
+                "kind": "memory_limit",
+                "diagnostic": error.get("message", ""),
+            }
+        return {"error": named({**error, **evidence})}
 
 
 class WebApp:
@@ -1963,6 +2013,7 @@ class WebApp:
         if parts == ["api", "config"] and method == "GET":
             from linexcel.web_upload import CHUNK_BYTES
 
+            defaults = self.config.task_defaults
             return {
                 "session": {
                     "localProfile": self.local_profile is not None,
@@ -1985,6 +2036,14 @@ class WebApp:
                     "memoryMb": self.config.total_memory_mb,
                     "uploadMb": self.config.max_upload_mb,
                     "retentionDays": self.config.retention_days,
+                    "storageMb": self.config.max_storage_mb,
+                    "storageUsedMb": round(self.store._storage_bytes() / MiB),
+                    "maxSeconds": MAX_TASK_SECONDS,
+                    "defaults": {
+                        "longSeconds": defaults.long_seconds,
+                        "seconds": defaults.seconds,
+                        "memoryMb": defaults.memory_mb,
+                    },
                 },
             }
         if parts == ["api", "health"] and method == "GET":
@@ -2127,14 +2186,17 @@ def serve(args) -> int:
             self.request.settimeout(60)
             super().setup()
 
+    from linexcel.web_limits import launcher_limits
+
+    limits = launcher_limits(args.data_dir, args.memory_mb, args.max_storage_mb)
     app = create_app(
         args.data_dir,
         mount_path=args.mount_path,
         max_workers=args.workers,
-        total_memory_mb=args.memory_mb,
+        total_memory_mb=limits.memory_mb,
         retention_days=args.retention_days,
         max_upload_mb=args.max_upload_mb,
-        max_storage_mb=args.max_storage_mb,
+        max_storage_mb=limits.storage_mb,
         allow_local_import=not args.no_local_import,
         local_profile=True,
         ai_enabled=args.ai,
@@ -2175,6 +2237,16 @@ def serve(args) -> int:
                 else url
             )
             print(f"Linexcel : {access_url}", flush=True)
+            defaults = TaskDefaults.for_server(limits.memory_mb, args.workers)
+            print(
+                f"Limites : mémoire {limits.memory_mb} MiB pour {args.workers} "
+                f"opérations simultanées, {defaults.memory_mb} MiB par opération "
+                f"(--memory-mb) ; stockage {limits.storage_mb} MiB, dont "
+                f"{round(limits.storage_used_bytes / MiB)} MiB utilisés "
+                f"(--max-storage-mb) ; durée {defaults.long_seconds} s par import, "
+                f"graphe, capture ou rapport, {defaults.seconds} s par recalcul ciblé.",
+                flush=True,
+            )
             if getattr(args, "open_browser", False):
                 threading.Thread(
                     target=_open_serve_browser, args=(access_url,), daemon=True

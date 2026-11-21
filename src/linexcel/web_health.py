@@ -12,19 +12,14 @@ from typing import Any
 
 def directory_health(config) -> dict:
     """Read-only CLI probe, including while a server owns the workspace lock."""
+    from linexcel.web_limits import directory_bytes
+
     root = Path(config.data_dir).resolve()
-
-    def size():
-        total = 0
-        for path in root.rglob("*"):
-            try:
-                if path.is_file():
-                    total += path.stat().st_size
-            except OSError:
-                pass
-        return total
-
-    return health(SimpleNamespace(root=root, config=config, _storage_bytes=size))
+    return health(
+        SimpleNamespace(
+            root=root, config=config, _storage_bytes=lambda: directory_bytes(root)
+        )
+    )
 
 
 def health(store) -> dict:
