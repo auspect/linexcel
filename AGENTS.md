@@ -41,6 +41,20 @@ boxes and notice scoping across tabs. Preserve each run separately and inspect i
 before delivering a PR. If a required local dependency prevents completion,
 report the failed stage explicitly instead of declaring validation successful.
 
+# Rules and what enforces them
+
+Every gate CI and the commit hook run is defined once, in `scripts/check.py`.
+Run them all with `uv run python scripts/check.py` (the `frontend` gate needs
+`npm ci --prefix frontend` once). A rule belongs here only when a check fails
+without it; when a rule here is broken anyway, fix the check.
+
+| Rule | Enforced by | Command |
+|---|---|---|
+| CI and the commit hook run the same gate commands; a gate tool is never called directly | `tests/test_check_gates.py` (direct calls, a gate missing from `ci.yml`, an unknown gate name) | `uv run pytest tests/test_check_gates.py` |
+| Every pull request is checked, whatever its base branch | `tests/test_check_gates.py::test_pull_requests_are_checked_whatever_their_base` | `uv run pytest tests/test_check_gates.py` |
+| A range's lineage reaches every cell between its two ends | `lineage` and `lineage-mutants` gates (`.agents/skills/check-group-precedents`), CI job `lineage` | `uv run python scripts/check.py lineage lineage-mutants` |
+| README captures match the sources they were taken from, checked on every commit | `viewer-captures` and `app-captures` gates; `test_gate_hooks_run_on_every_commit` forbids a file pattern on a gate hook | `uv run python scripts/check.py viewer-captures app-captures` |
+
 # Formualizer
 
 Before relying on what formualizer can or cannot do, and before upgrading it,
