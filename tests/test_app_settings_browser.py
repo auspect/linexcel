@@ -444,9 +444,15 @@ def test_lines_built_from_numbers_follow_a_language_switch(browser):
         playwright.expect(page.locator(".limits-line")).to_contain_text(
             "Limits: 25 min · 45 s · 4.5 GB"
         )
+        playwright.expect(page.locator("#connection")).to_have_text("Server connected")
         page.locator("#ui-language").select_option("fr")
         playwright.expect(page.locator(".limits-line")).to_contain_text(
             "Limites : 25 min · 45 s · 4,5 Go"
+        )
+        # At once: the header must not wait for the next two-second poll to
+        # leave the previous language.
+        playwright.expect(page.locator("#connection")).to_have_text(
+            "Serveur connecté", timeout=250
         )
         playwright.expect(page.locator("#storage")).to_contain_text("1,9 Go sur 138 Go")
         _open_settings(page)
