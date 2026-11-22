@@ -908,3 +908,43 @@ def test_open_options_float_without_stretching_the_toolbar(graph_app):
     # The centre stays readable: the fit is not computed under an open panel.
     assert focused["zoom"] >= min(closed["zoom"], 0.5)
     assert not errors
+
+
+def test_cards_with_the_same_links_keep_the_order_their_links_were_given(graph_app):
+    """Cards of one layer that have the same links can be drawn in any order
+    without adding a crossing, so the layout library is free to choose. Dagre
+    1 kept the order in which the server lists the sources of a cell; with
+    Dagre 3 they came out last to first: Errors!B12 read B8 down to B2. The
+    order of the links decides, down a column on a wide canvas and along a
+    row on a tall one, whatever the order of the nodes and of their ids."""
+    page, _, _, errors, _ = graph_app
+    page.locator("#tab-graph").click()
+    page.wait_for_function("()=>document.querySelector('#graph-canvas')._flow")
+    sources = ["Summary!C8", "name:*:RebateRate", "Assumptions!D8", "Summary!C6"]
+    case = {
+        "center": "Total!C1",
+        "nodes": [
+            {"id": node, "kind": "input" if node != "Total!C1" else "cell"}
+            for node in [*sorted(sources), "Total!C1"]
+        ],
+        "edges": [{"source": node, "target": "Total!C1"} for node in sources],
+    }
+    page.locator("#graph-canvas").evaluate(
+        """(e,c)=>{
+      const g=LinexcelGraph.compressNeighborhood(c.nodes,c.edges,c.center);
+      e._flow.render(g.nodes.map(n=>({...n,original:n,title:n.label||n.id,
+        tone:n.id===c.center?'focus':''})),g.edges);
+    }""",
+        case,
+    )
+    page.wait_for_timeout(120)
+    boxes = page.locator("#graph-canvas").evaluate(
+        "e=>e._flow.getNodes().map(n=>({...e._flow.getNodeBounds(n.id),id:n.id}))"
+    )
+    cards = {box["id"]: box for box in boxes}
+    assert set(sources) <= set(cards), sorted(cards)
+    in_a_column = len({round(cards[node]["x1"]) for node in sources}) == 1
+    axis = "y1" if in_a_column else "x1"
+    drawn = sorted(sources, key=lambda node: cards[node][axis])
+    assert drawn == sources, {node: round(cards[node][axis]) for node in sources}
+    assert not errors

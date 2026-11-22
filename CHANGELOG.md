@@ -200,6 +200,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings. It started at one minute in 1.20.0. An import with a short
   duration publishes what it read, and a duration that Diagnostics proposes
   can be under a minute. Zero is refused.
+- Update Dagre to 3.1.3 and the build-only Vite dependency to 8.3.8, and
+  rebuild the offline graph bundle of `linexcel serve`. The graph looks the
+  same. Dagre 3 alone drew the sources of a cell last to first, `Errors!B12`
+  reading B8 down to B2: the layout now keeps cards that share their links
+  in the order the server gives those links, whatever the library chooses.
+  `THIRD_PARTY_NOTICES.md` gives the bundled versions.
 
 ### Documentation
 
