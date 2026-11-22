@@ -216,7 +216,9 @@ ConvertTo-Json -InputObject @($results) -Depth 5 -Compress
         check=True,
         capture_output=True,
         text=True,
-        timeout=15,
+        # Windows PowerShell alone took more than 15 s to start on a busy CI
+        # runner. The limit only guards against a hang.
+        timeout=120,
     )
     observations = json.loads(result.stdout)
     assert [item["value"] for item in observations] == [

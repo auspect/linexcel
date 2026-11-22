@@ -319,9 +319,9 @@ def test_an_idle_workspace_only_checks_the_connection(browser):
     try:
         playwright.expect(page.locator("#storage")).to_contain_text("1,9 Go sur 138 Go")
         server.requested.clear()
-        page.wait_for_timeout(5000)  # Two polls and more.
+        # Two heartbeats, however long the machine takes to send them.
+        _wait_for(page, lambda: len(server.requested) >= 2)
         assert set(server.requested) == {"config"}, server.requested
-        assert len(server.requested) >= 2, server.requested
         playwright.expect(page.locator("#connection")).to_have_attribute(
             "data-state", "ok"
         )

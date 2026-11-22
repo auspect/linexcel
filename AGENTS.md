@@ -58,6 +58,7 @@ without it; when a rule here is broken anyway, fix the check.
 | An operation stopped by a limit names the limit, its value and the setting or option that raises it, in French and English | `tests/test_web_limits.py` (`*_names_*` tests) and `tests/test_app_captures_browser.py::test_limit_failures_read_in_english`, which reads the Operations and Captures tabs | `uv run --extra screenshots pytest tests/test_web_limits.py tests/test_app_captures_browser.py` |
 | The sidebar and the settings show no French text in the English interface | `tests/test_app_settings_browser.py::test_english_sidebar_and_settings_show_no_french` | `uv run --extra screenshots pytest tests/test_app_settings_browser.py` |
 | At 1440, 824 and 390 px every control can be clicked at its centre, nothing scrolls sideways, and phone controls are at least 44 px; an exception is listed in the test with its reason | `tests/test_app_layout_invariants.py` | `uv run --extra screenshots pytest tests/test_app_layout_invariants.py` |
+| A browser test does not depend on the speed of the machine: it waits for a state of the page, never for a fixed pause before reading one | CI job `viewer-browser`, which also runs the browser tests on pages slowed four times | `LINEXCEL_CPU_THROTTLE=4 uv run --extra screenshots pytest tests/test_viewer*.py tests/test_app*.py tests/test_ui_navigation_polish.py -m "not ai"` |
 
 # Formualizer
 

@@ -45,3 +45,35 @@ def build_lineage_workbook() -> bytes:
 @pytest.fixture()
 def lineage_excel() -> bytes:
     return build_lineage_workbook()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def slow_browser():
+    """Run every browser page on a slowed processor when asked to.
+
+    ``LINEXCEL_CPU_THROTTLE=6`` divides the speed of each Chromium page by
+    six. A test that reads the page before the page has finished passes on a
+    quiet machine and fails on a busy CI runner; slowed, it fails here too,
+    every time. Use it to reproduce such a failure and to prove its fix.
+    """
+    import os
+
+    rate = float(os.environ.get("LINEXCEL_CPU_THROTTLE") or 1)
+    if rate <= 1:
+        yield
+        return
+    from playwright.sync_api import Browser
+
+    new_page = Browser.new_page
+
+    def throttled(self, *args, **kwargs):
+        page = new_page(self, *args, **kwargs)
+        session = page.context.new_cdp_session(page)
+        session.send("Emulation.setCPUThrottlingRate", {"rate": rate})
+        return page
+
+    Browser.new_page = throttled
+    try:
+        yield
+    finally:
+        Browser.new_page = new_page
