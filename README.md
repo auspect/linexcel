@@ -48,8 +48,8 @@ uvx linexcel serve --open --port 8765
 #### Large workbooks
 
 A large workbook needs time and disk space at import, and little memory. On
-one Windows 11 machine with an SSD, a 20 MB workbook takes a few minutes and
-0.3 GiB of disk space, and an 89 MB workbook about 20 minutes and 1.1 GiB. An
+one Windows 11 machine with an SSD, a 20 MB workbook takes 3 minutes and
+0.3 GiB of disk space, and an 89 MB workbook 14 minutes and 1.1 GiB. An
 import that runs out of time publishes what it read, and Diagnostics proposes
 a longer duration.
 

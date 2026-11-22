@@ -216,7 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update [Open a large workbook in the web application](https://auspect.github.io/linexcel/guide/large-workbooks/)
   for the per-sheet grids: the indexes of the 6, 20, 50 and 89 MB workbooks
-  take 134 MiB to 1.1 GiB, where 1.20.0 took 161 MiB to 8.2 GiB. The page
+  take 134 MiB to 1.1 GiB, where 1.20.0 took 161 MiB to 8.2 GiB, and import
+  in 1 min 11 s to 13 min 42 s, where 1.20.0 took 1 min 10 s to 21 min 6 s. The page
   also covers `--import-seconds`, what an import that runs out of time
   publishes, and the reimport that a workspace of an earlier version asks
   for. Two README sentences still gave the limits of 1.19: 600 seconds for

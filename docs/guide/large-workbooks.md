@@ -14,21 +14,23 @@ These imports ran on one Windows 11 machine with 16 logical processors, 31 GiB
 of memory and an SSD. Cells with formulas cost time and disk space. Plain
 values go in one grid per sheet and cost little.
 
-| Workbook | File size | Indexed cells | Index on disk | Peak memory of the import |
-| --- | --- | --- | --- | --- |
-| Public transport model, `.xlsm` with VBA, 79,529 formulas | 6 MB | 125,365 | 134 MiB | 95 MiB |
-| Generated ledger and forecast, `.xlsm` with VBA | 20 MB | 2,709,922 | 317 MiB | 101 MiB |
-| The same model with more ledger rows, `.xlsm` with VBA | 50 MB | 6,773,384 | 793 MiB | 159 MiB |
-| The same model, larger again, `.xlsm` with VBA | 89 MB | 11,970,736 | 1.1 GiB | 214 MiB |
+| Workbook | File size | Indexed cells | Import | Index on disk | Peak memory of the import |
+| --- | --- | --- | --- | --- | --- |
+| Public transport model, `.xlsm` with VBA, 79,529 formulas | 6 MB | 125,365 | 1 min 11 s | 134 MiB | 96 MiB |
+| Generated ledger and forecast, `.xlsm` with VBA | 20 MB | 2,709,922 | 3 min 17 s | 317 MiB | 101 MiB |
+| The same model with more ledger rows, `.xlsm` with VBA | 50 MB | 6,773,384 | 8 min 14 s | 793 MiB | 159 MiB |
+| The same model, larger again, `.xlsm` with VBA | 89 MB | 11,970,736 | 13 min 42 s | 1.1 GiB | 213 MiB |
+
+The import column is the import itself, without the transfer of the file
+through the browser. The machine ran little else: 11% to 18% of its
+processors were busy before each import.
 
 Plan for an index of about 15 to 25 times the size of the file when the
-workbook holds many formulas. Larger files were not measured.
+workbook holds many formulas, and for about 9 to 12 seconds of import for
+each megabyte. Larger files were not measured.
 
-Version 1.20.0 imported these four workbooks in 1 min 10 s, 4 min 51 s,
-11 min 9 s and 21 min 6 s on that machine while it did nothing else. The
-current code was not timed on a quiet machine. Compared with 1.20.0 under the
-same load, it was about as fast on the 6 MB model and faster on the 20 MB
-one. Plan for about 10 to 15 seconds of import for each megabyte.
+Version 1.20.0 imported the same four workbooks in 1 min 10 s, 4 min 51 s,
+11 min 9 s and 21 min 6 s, with indexes of 161 MiB to 8.2 GiB.
 
 The 122 sheet captures of the 6 MB workbook took 2 min 43 s. LibreOffice
 renders them, and it needed more than 1,024 MiB of memory.
@@ -137,7 +139,7 @@ The import reads every cell and every formula once. It does not use several
 processors. 60 minutes is the longest duration of an operation: an import
 that needs more publishes what it could import in 60 minutes, as a partial
 import. If the rates above hold for larger files, that is a workbook of about
-240 MB on that machine, and a smaller one on a slower machine. No file of that
+300 MB on that machine, and a smaller one on a slower machine. No file of that
 size was measured.
 
 An import of tens of megabytes takes several minutes. You can open another
