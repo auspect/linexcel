@@ -246,10 +246,23 @@ class Navigation:
             tap_graph_node(self.page, node_id)
 
     def remember_canvas(self):
-        self.page.locator(".react-flow__controls-zoomin").click()
-        self.page.locator("#graph-canvas").focus()
-        self.page.keyboard.press("ArrowRight")
-        return self.page.locator("#graph-canvas").evaluate(
+        canvas = self.page.locator("#graph-canvas")
+        camera = "e=>JSON.stringify(e._flow.getViewport())"
+        # The zoom button and the arrow key move the camera on a later frame:
+        # read it only once each move has been applied.
+        for move in (
+            lambda: self.page.locator(".react-flow__controls-zoomin").click(),
+            lambda: (canvas.focus(), self.page.keyboard.press("ArrowRight")),
+        ):
+            before = canvas.evaluate(camera)
+            move()
+            self.page.wait_for_function(
+                "before=>JSON.stringify(document.querySelector('#graph-canvas')"
+                "._flow.getViewport())!==before",
+                arg=before,
+            )
+        self.settle_canvas()
+        return canvas.evaluate(
             """element => {
                 const cy=element._flow; window.navigationCanvas=cy;
                 return {zoom:cy.getViewport().zoom,pan:cy.getViewport(),
@@ -257,8 +270,18 @@ class Navigation:
             }"""
         )
 
+    def settle_canvas(self):
+        """Wait until the camera has not moved for ten frames in a row."""
+        self.page.locator("#graph-canvas").evaluate(
+            """e=>new Promise(done=>{let last='',still=0;const step=()=>{
+              const now=JSON.stringify(e._flow.getViewport());
+              still=now===last?still+1:0;last=now;
+              still>=10?done():requestAnimationFrame(step)};step()})"""
+        )
+
     def assert_canvas(self, remembered):
         canvas = self.page.locator("#graph-canvas")
+        self.settle_canvas()
         assert canvas.evaluate("e=>e._flow===window.navigationCanvas")
         assert (
             canvas.evaluate(
@@ -267,6 +290,38 @@ class Navigation:
             )
             == remembered
         )
+
+    def settle(self):
+        """Wait until the page has started what it was going to start.
+
+        The page delays an automatic calculation by 180 ms. A fixed pause
+        in the test is too short on a slow machine. This waits inside the
+        page, behind the timers it has already set, then until the server
+        has seen nothing new for a moment.
+        """
+        self.page.evaluate(
+            """()=>new Promise(done=>setTimeout(()=>requestAnimationFrame(
+              ()=>requestAnimationFrame(done)),300))"""
+        )
+        seen, quiet = None, 0
+        while quiet < 6:
+            now = [(t["nodeId"], t["status"]) for t in self.tasks.values()]
+            quiet = quiet + 1 if now == seen else 0
+            seen = now
+            self.page.wait_for_timeout(50)
+        return seen
+
+    def kept_calculations(self):
+        """Cells whose calculation the page started and did not cancel.
+
+        The page cancels the automatic calculation of a cell when the user
+        moves on, and waits 180 ms before it starts one. A fast run leaves a
+        cell before that and nothing starts; on a slow machine the
+        calculation starts and is cancelled. Both are right, so a test reads
+        what was kept, once the page has been quiet for half a second.
+        """
+        seen = self.settle()
+        return [node for node, status in seen if status != "cancelled"]
 
     def assert_bounded(self):
         for _, path, query in self.requests:
@@ -376,7 +431,7 @@ def test_old_manual_preference_cannot_block_calculation_behind_saved_reply(navig
         app.page.wait_for_timeout(10)
     assert any(k == "saved_result" for _, _, k, _ in app.held)
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1"]
     app.release("saved_result", "Calc!B1")
     app.assert_bounded()
@@ -388,7 +443,7 @@ def test_first_graph_visit_does_not_calculate_an_unselected_formula(navigation):
     open_workspace_menu(app.page)
     app.page.locator("[data-project='p']").click()
     app.page.locator("#tab-graph").click()
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert app.evaluations == []
     # Workbook navigation is structural; automatic evaluation requires an
     # explicit formula access through a card, search, grid, list or deep link.
@@ -403,7 +458,7 @@ def test_saved_reply_error_does_not_block_calculation_or_next_node(navigation):
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B1")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     playwright.expect(
         app.page.locator("#graph-preview .node-access-error")
@@ -414,7 +469,7 @@ def test_saved_reply_error_does_not_block_calculation_or_next_node(navigation):
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B2"]
     app.assert_bounded()
 
@@ -445,7 +500,7 @@ def test_known_node_opens_while_its_neighbors_wait_and_latest_click_wins(navigat
     heading = app.page.locator("#graph-preview .graph-reader-heading h3")
     playwright.expect(heading).to_contain_text("B1")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     assert any(
         node == "Calc!B1" for _, _, kind, node in app.held if kind == "neighborhood"
@@ -453,15 +508,17 @@ def test_known_node_opens_while_its_neighbors_wait_and_latest_click_wins(navigat
     app.tap("Calc!B2")
     playwright.expect(heading).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    assert app.evaluations[-1]["nodeId"] == "Calc!B1"
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
     app.release("neighborhood", "Calc!B2")
     app.release("neighborhood", "Calc!B1")
     playwright.expect(heading).to_contain_text("B3")
-    app.page.wait_for_timeout(250)
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B3"]
+    # B3, the last click, is the only calculation that stays, and it was
+    # started once.
+    assert app.kept_calculations() == ["Calc!B3"]
+    started = [x["nodeId"] for x in app.evaluations]
+    assert started[0] == "Calc!B1" and started.count("Calc!B3") == 1, started
     app.assert_bounded()
 
 
@@ -497,7 +554,7 @@ def test_neighborhood_error_keeps_known_cell_and_navigation_available(navigation
     app.tap("Calc!B3")
     playwright.expect(heading).to_contain_text("B3")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert app.evaluations[-1]["nodeId"] == "Calc!B3"
     app.assert_bounded()
 
@@ -520,8 +577,9 @@ def test_history_restores_previous_camera_and_recalculates_access(navigation):
     playwright.expect(heading).to_contain_text("B2")
     app.assert_canvas(remembered)
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
-    assert [x["nodeId"] for x in app.evaluations] == ["Calc!B2", "Calc!B2"]
+    # Coming back calculates B2 again, and only that calculation stays.
+    assert app.kept_calculations() == ["Calc!B2"]
+    assert [x["nodeId"] for x in app.evaluations].count("Calc!B2") == 2
     app.assert_bounded()
 
 
@@ -576,7 +634,7 @@ def test_cached_access_and_failed_manual_refresh_keep_navigation_available(
         "11"
     )
     playwright.expect(result).to_contain_text("999")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert app.evaluations == []
     playwright.expect(app.page.locator("#graph-calculation-steps")).to_contain_text(
         "999"
@@ -596,7 +654,7 @@ def test_cached_access_and_failed_manual_refresh_keep_navigation_available(
         app.page.locator("#graph-preview .graph-reader-heading h3")
     ).to_contain_text("B2")
     app.page.wait_for_function("document.querySelector('#graph-recalculate').disabled")
-    app.page.wait_for_timeout(250)
+    app.settle()
     assert [x["nodeId"] for x in app.evaluations] == ["Calc!B1", "Calc!B2"]
     app.assert_bounded()
 
