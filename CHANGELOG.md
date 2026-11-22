@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] — 2026-11-22
+
 ### Added
 
 - Describe each block of at least 10,000 saved values without formulas as a
