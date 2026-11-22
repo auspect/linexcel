@@ -394,3 +394,166 @@ def test_after_a_timeout_the_sheets_shown_are_said_to_be_the_previous_index(
         assert not errors
     finally:
         page.close()
+
+
+def _import_task(task_id="imp1", *, result=None):
+    return {
+        "id": task_id,
+        "projectId": "p1",
+        "operation": "import",
+        "status": "succeeded",
+        "progress": {"phase": "succeeded"},
+        "createdAt": 1,
+        "finishedAt": 2,
+        "result": result,
+        "resultAvailable": True,
+    }
+
+
+def _complete_graph():
+    return {
+        "nodes": GRAPH["nodes"][2:],
+        "edges": GRAPH["edges"],
+        "meta": {
+            "status": "complete",
+            "sheetDetails": [
+                {
+                    "name": "First",
+                    "status": "complete",
+                    "formulas": 1,
+                    "diagnostics": [],
+                }
+            ],
+            "diagnostics": [],
+        },
+    }
+
+
+def _open_import_status(page):
+    open_workspace_menu(page)
+    if not page.locator("#import-panel").evaluate("e => e.open"):
+        page.locator("#import-panel > summary").click()
+    status = page.locator("#upload-status")
+    status.wait_for()
+    return status.inner_text()
+
+
+@pytest.mark.parametrize("viewport", VIEWPORTS)
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_a_partial_import_says_so_in_operations_and_the_import_form(
+    browser, viewport, language
+):
+    """A partial import whose task result is omitted from the project snapshot
+    must read as partial and point to Diagnostics in Operations and the import
+    form, never as a plain completion."""
+    page, errors = open_app(browser, viewport, language, tasks=[_import_task()])
+    partial = "Import partiel" if language == "fr" else "Partial import"
+    completed = "Terminée" if language == "fr" else "Completed"
+    ready_old = (
+        "Classeur prêt à explorer."
+        if language == "fr"
+        else "Workbook ready to explore."
+    )
+    form_old = (
+        "Import structurel terminé."
+        if language == "fr"
+        else "Structural import completed."
+    )
+    try:
+        page.locator("#tab-tasks").click()
+        ready = page.locator("#import-ready")
+        ready.wait_for()
+        ready_text = ready.inner_text()
+        assert partial in ready_text, ready_text
+        assert "Diagnostics" in ready_text, ready_text
+        assert ready_old not in ready_text, ready_text
+
+        entry = page.locator("#task-list .task").first
+        entry.wait_for()
+        entry_text = entry.inner_text()
+        assert partial in entry_text, entry_text
+        assert "Diagnostics" in entry_text, entry_text
+        assert completed not in entry_text, entry_text
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+
+        upload_text = _open_import_status(page)
+        assert partial in upload_text, upload_text
+        assert "Diagnostics" in upload_text, upload_text
+        assert form_old not in upload_text, upload_text
+        assert not errors
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("viewport", VIEWPORTS)
+@pytest.mark.parametrize("language", ["fr", "en"])
+def test_a_complete_import_keeps_its_completion_wording(browser, viewport, language):
+    """A complete import reads unchanged in Operations and the import form."""
+    page, errors = open_app(
+        browser,
+        viewport,
+        language,
+        tasks=[_import_task()],
+        graph=_complete_graph(),
+    )
+    partial = "Import partiel" if language == "fr" else "Partial import"
+    completed = "Terminée" if language == "fr" else "Completed"
+    ready_expected = (
+        "Classeur prêt à explorer."
+        if language == "fr"
+        else "Workbook ready to explore."
+    )
+    form_expected = (
+        "Import structurel terminé."
+        if language == "fr"
+        else "Structural import completed."
+    )
+    try:
+        page.locator("#tab-tasks").click()
+        ready = page.locator("#import-ready")
+        ready.wait_for()
+        ready_text = ready.inner_text()
+        assert ready_expected in ready_text, ready_text
+        assert partial not in ready_text, ready_text
+
+        entry = page.locator("#task-list .task").first
+        entry.wait_for()
+        entry_text = entry.inner_text()
+        assert completed in entry_text, entry_text
+        assert partial not in entry_text, entry_text
+        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
+
+        upload_text = _open_import_status(page)
+        assert upload_text == form_expected, upload_text
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_sheet_details_alone_mark_the_import_partial_in_operations_and_form(browser):
+    """When meta.status is absent, a non-complete sheet in sheetDetails still
+    marks the import partial, matching Diagnostics."""
+    sheet_only_partial = {
+        **GRAPH,
+        "meta": {
+            "sheetDetails": META["sheetDetails"],
+            "diagnostics": [],
+        },
+    }
+    page, errors = open_app(
+        browser,
+        (1440, 900),
+        "en",
+        tasks=[_import_task()],
+        graph=sheet_only_partial,
+    )
+    try:
+        page.locator("#tab-tasks").click()
+        entry_text = page.locator("#task-list .task").first.inner_text()
+        assert "Partial import" in entry_text and "Diagnostics" in entry_text
+        assert "Completed" not in entry_text
+        upload_text = _open_import_status(page)
+        assert "Partial import" in upload_text and "Diagnostics" in upload_text
+        assert not errors
+    finally:
+        page.close()
