@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Label an import that published a partial index as partial in Operations and
+  in the import form of `linexcel serve`, pointing to Diagnostics in French
+  and English. Because project snapshots omit task results until loaded, both
+  read as a completed import with "Workbook ready to explore." while
+  Diagnostics reported a partial import. Complete imports read unchanged.
 - Keep the outcome of an operation in `linexcel serve` when Windows still
   holds one of its files for a moment after it stops. The operation ended as
   `persistence_error` with a sharing violation, whatever had happened to it:
