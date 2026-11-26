@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0.17.6, ty 0.0.112 and PyYAML 6.0.4. Keep formualizer 0.14.0: 0.15.0
   calculates legacy array formulas in place, which linexcel's handling of
   spilled ranges does not support yet (`docs/formualizer_upgrade_plan.md`).
+- Update Dagre to 3.1.4 and the build-only Vite dependency to 8.4.0, and
+  rebuild the offline graph bundle of `linexcel serve`.
+  `THIRD_PARTY_NOTICES.md` gives the bundled versions.
 
 ## [1.21.0] — 2026-11-22
 
