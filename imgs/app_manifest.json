@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "capturedAt": "2026-11-26T23:21:07.906393+00:00",
+  "capturedAt": "2026-11-27T00:31:31.563090+00:00",
   "uiLanguage": "en",
   "documentation": {
     "status": "skipped",
@@ -16,7 +16,7 @@
   },
   "sources": {
     "src/linexcel/assets/app.html": "a31a8e24256c440171540c9490d98a113d4824e7c8346dd221c8a423e217397e",
-    "src/linexcel/assets/app-graph.js": "f902a7b31360cfff73c4b4523af6fda0e6c7e38ac6593ba79d28da85f60d49e8",
+    "src/linexcel/assets/app-graph.js": "86f507569c7704cca401983f1930df302020d8c274e964fe338ea9b8693beb75",
     "src/linexcel/assets/app-graph.css": "5a20eef46a351741211dbaf34d6759fc82a551bfccedf13f5e6ca9b7545223be",
     "validation_workbooks.py": "ded18b6896d065a7fbf90694be23211cffab9c9120700f99aa6842526a41a951",
     "scripts/capture_app.py": "e4e55bbca65eefc3598d1cefefe5b859fc8c46c44b63e79ca11a161c7975a22d"
@@ -47,7 +47,7 @@
     },
     "app_node_documented.png": {
       "caption": "Full cell detail with source formula, saved value and targeted calculation; AI documentation skipped",
-      "sha256": "7ea445383d8e816212a7a4824376b2c498450862fad1eac18d15a49ecd86a189",
+      "sha256": "e8bef130bc4f4b78c49731286874e2b0a56010184c30ccb1947dbfc179d1604d",
       "pixels": [
         2880,
         1800
@@ -55,7 +55,7 @@
     },
     "app_captures.png": {
       "caption": "Sheet capture gallery and the selected full-resolution image",
-      "sha256": "c644733116b3d44c00be78483f3730f5e22a9232c429c23edc6c7327cf0a5b6b",
+      "sha256": "66e5caa756313f2263ced167942e57143a3bdb3db7316255d03bd2215f57923e",
       "pixels": [
         2880,
         1800
@@ -71,7 +71,7 @@
     }
   },
   "capture": {
-    "taskId": "6767478da1444ca49b6f125df1d1b1ff",
+    "taskId": "2d41e75205a74cc5bf0c5cae7991d8c7",
     "imageCount": 4
   },
   "modelRequestsDuringCapture": 0
