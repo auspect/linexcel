@@ -407,8 +407,8 @@ is bundled. React Flow attribution remains visible in the graph.
 | scheduler | 0.28.0 | MIT |
 | @xyflow/react | 12.12.1 | MIT |
 | @xyflow/system | 0.0.84 | MIT |
-| @dagrejs/dagre | 3.1.4 | MIT |
-| @dagrejs/graphlib | 4.0.8 | MIT |
+| @dagrejs/dagre | 3.1.3 | MIT |
+| @dagrejs/graphlib | 4.0.6 | MIT |
 | classcat | 5.0.5 | MIT |
 | zustand | 4.5.7 | MIT |
 | use-sync-external-store | 1.7.0 | MIT |
