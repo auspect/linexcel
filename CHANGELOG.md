@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Update httpx to 0.29.0 and the OpenAI client to 3.60.0 (`ai` extra),
+  mkdocs-material to 9.8.2 (`docs` extra), and the development tools ruff
+  0.17.6, ty 0.0.112 and PyYAML 6.0.4. Keep formualizer 0.14.0: 0.15.0
+  calculates legacy array formulas in place, which linexcel's handling of
+  spilled ranges does not support yet (`docs/formualizer_upgrade_plan.md`).
+- Update the build-only Vite dependency to 8.4.0 and rebuild the offline
+  graph bundle of `linexcel serve`; the graph looks the same. Keep Dagre
+  3.1.3: 3.1.4 lays out denser graphs differently, and in the stress
+  workbook's overview it moved sheets without cross-sheet links to the last
+  layer.
+
 ## [1.21.0] — 2026-11-22
 
 ### Added

@@ -101,7 +101,7 @@ def test_criteria_keep_sql_like_characters_literal(mode, formula, expected):
     strict=True,
     raises=AssertionError,
     reason="0.14.0 copied COUNTIF families treat literal _/% as wildcards; "
-    "upstream fix is unreleased (2026-11-13 upgrade-plan addendum).",
+    "fixed in 0.15.0 (2026-11-13 and 2026-11-27 upgrade-plan addenda).",
 )
 @pytest.mark.parametrize("criterion", ["a_c", "50%"])
 def test_copied_countif_families_keep_sql_like_characters_literal(mode, criterion):
@@ -227,9 +227,46 @@ def test_saved_dynamic_spill_recalculates(mode):
     assert engine.get_value("S", 1, 3) == 6
 
 
+@pytest.mark.skipif(
+    FORMUALIZER_VERSION < Version("0.15.0"),
+    reason="Before 0.15.0 cycles are detected statically: every cell of the loop, "
+    "taken or not, and its dependents read #CIRC!.",
+)
+def test_loop_through_an_untaken_branch_is_calculated():
+    """formualizer 0.15.0 detects cycles at run time by default (upstream #570).
+
+    A1 and B1 refer to each other only through the branch of A1 that is not
+    taken, so they calculate. C1 and D1 really loop and still read #CIRC!.
+
+    Native engine only. ``_open_workbook`` sets ``iterate_max_iterations``,
+    which switches ``cycle_policy`` to ``iterate`` in 0.14.0 and 0.15.0 alike,
+    so C1 and D1 iterate there (99, 100) on both versions; ``_cycle_unavailable``
+    keeps their file values because the workbook does not enable iteration.
+    """
+    engine = _evaluate_workbook(
+        {
+            "A1": "=IF(FALSE,B1,1)",
+            "B1": "=A1+1",
+            "C1": "=IF(TRUE,D1,1)",
+            "D1": "=C1+1",
+            "E1": "=SUM(A1:B1)",
+        },
+        "native",
+    )
+    circular = {"type": "Error", "kind": "Circ"}
+
+    assert [engine.get_value("S", 1, column) for column in range(1, 6)] == [
+        1,
+        2,
+        circular,
+        circular,
+        3,
+    ]
+
+
 @pytest.mark.parametrize("formula", ["=SUM(A7:$A$5)", "=SUM(B5:A7)"])
 def test_bounded_reversed_range_raises_ref(mode, formula):
-    """formualizer 0.10.1 and 0.14.0 raise #REF! on bounded reversed ranges.
+    """formualizer 0.10.1, 0.14.0 and 0.15.0 raise #REF! on bounded reversed ranges.
 
     Upstream: https://github.com/PSU3D0/formualizer/issues/599.
     When a release calculates these ranges, update the limit in
@@ -253,7 +290,7 @@ def test_bounded_reversed_range_raises_ref(mode, formula):
 
 @pytest.mark.parametrize("formula", ["=SUM(B:A)", "=SUM(7:5)"])
 def test_whole_axis_reversed_range_returns_ref(mode, formula):
-    """formualizer 0.10.1 and 0.14.0 return #REF! on whole-axis reversed ranges.
+    """formualizer 0.10.1, 0.14.0 and 0.15.0 return #REF! on whole-axis reversed ranges.
 
     Upstream: https://github.com/PSU3D0/formualizer/issues/599.
     When a release calculates these ranges, update the limit in

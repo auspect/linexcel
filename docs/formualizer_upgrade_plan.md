@@ -6,6 +6,74 @@
 > [local acceptance](manual_validation.md) and the
 > [continuous improvement plan](continuous_improvement_plan.md).
 
+## Addendum du 27 novembre 2026 : formualizer 0.15.0 évaluée, verrou maintenu sur 0.14.0
+
+L'inventaire en ligne donnait **0.14.0** installé et verrouillé, et **0.15.0**
+publiée. `inventory.py --compare 0.15.0` ne trouve aucun nom public ajouté ni
+retiré. Le [changelog amont](https://github.com/PSU3D0/formualizer/blob/main/CHANGELOG.md)
+annonce surtout des corrections de calcul (critères texte et dates, `IPMT`,
+`PPMT`, `WORKDAY`, fonctions complexes, formules matricielles héritées) et
+quatre changements de comportement : historique d'annulation borné, critères
+de dates, critères texte par repli de casse Unicode et détection des cycles à
+l'exécution par défaut (`EvaluationConfig.cycle_detection = "runtime"`).
+
+**Le verrou reste sur 0.14.0** : avec 0.15.0, la suite complète échoue sur
+**13 des 18 tests** de `tests/test_batch_source_regions.py`, qui passent tous
+sous 0.14.0. Leur classeur porte une formule matricielle héritée
+(`<f t="array" ref="A1:B3">` sans métadonnée de tableau dynamique `cm`), avec
+des enfants mis en cache périmés. Sonde sur le moteur natif :
+
+| Version | A1:B3 pour `SEQUENCE(3,2)` | A1:B3 pour `SEQUENCE(2,2)` | `SUM(ANCHORARRAY(A1))` |
+| --- | --- | --- | --- |
+| 0.14.0 | `#SPILL!` en A1, caches 999 ailleurs | idem | `#REF!` |
+| 0.15.0 | 1 à 6 | 1 à 4, puis `#N/A` en A3:B3 | `#REF!` |
+
+0.15.0 calcule donc ces formules en place, dans leur étendue fixe, comme Excel
+le fait pour une formule matricielle héritée. Le traitement des débordements
+de linexcel, écrit pour le comportement de 0.14.0, ne suit plus :
+`SUM(A1#)` donne `#REF!` au lieu de 21 dans l'analyse, et un changement
+d'étendue n'est plus détecté, si bien que ses dépendants sont présentés comme
+des valeurs recalculées au lieu de garder la valeur du fichier
+(`test_changed_array_extent_and_dependents_are_not_certified`). Adopter 0.15.0
+demande de revoir ce traitement et de décider si ces cas de test doivent
+décrire une formule héritée ou un tableau dynamique enregistré par Excel
+(`cm="1"` et `xl/metadata.xml`, comme `_saved_dynamic_spill`). La sélection du
+workflow de compatibilité n'inclut pas ce fichier : son canal *latest* ne
+voit donc pas cette rupture.
+
+Le défaut des familles `COUNTIF` copiées consigné le 13 novembre est corrigé
+en 0.15.0 : `test_copied_countif_families_keep_sql_like_characters_literal`
+y passe dans les deux modes, avec le résultat attendu de 10. Son attente
+d'échec stricte reste limitée à 0.14.0.
+
+Une sonde sur le moteur natif, avec A1 `=IF(FALSE,B1,1)`, B1 `=A1+1`,
+C1 `=IF(TRUE,D1,1)` et D1 `=C1+1` :
+
+| Version | A1, B1 | C1, D1 | `SUM(A1:B1)` |
+| --- | --- | --- | --- |
+| 0.14.0 | `#CIRC!` | `#CIRC!` | `#CIRC!` |
+| 0.15.0 | 1, 2 | `#CIRC!` | 3 |
+
+Le contrat `test_loop_through_an_untaken_branch_is_calculated`, ignoré avant
+0.15.0, fixe ce comportement. Le chemin de linexcel ne change pas : la même
+sonde par `_open_workbook` donne 1, 2, 99, 100 et 3 sous 0.14.0 comme sous
+0.15.0. Affecter `iterate_max_iterations` bascule `cycle_policy` sur
+`iterate` dans les deux versions, si bien que le moteur itère même quand le
+classeur n'active pas l'itération. `_cycle_unavailable` voit alors un cycle
+vivant et conserve les valeurs du fichier pour les cellules cycliques et
+leurs dépendants. Ce comportement antérieur n'est pas corrigé ici.
+
+Le commentaire de `lazy.py` sur `set_values_batch` resterait vrai : un appel
+unique coûte environ 7 µs par cellule pour 10 000 lignes et 140 à 165 µs pour
+250 000, en 0.14.0 comme en 0.15.0, contre 6 à 9 µs par blocs de 10 000 lignes
+(temps processeur, données synthétiques, machine chargée ; deux passes
+alternées).
+
+Sous 0.15.0, les contrats du moteur passent (**60 tests**), et la sélection du
+workflow de compatibilité passe ses **2 373 tests**. Sous 0.14.0, les contrats
+donnent 46 succès, 1 test ignoré et 4 échecs attendus ; sur le plancher
+0.10.1, 17 succès et 43 tests ignorés par leurs gardes de version.
+
 ## Addendum du 13 novembre 2026 : revue des dépendances et critères copiés
 
 L'inventaire en ligne confirme que la version installée, le verrou et la
